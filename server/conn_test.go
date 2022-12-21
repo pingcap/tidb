@@ -732,6 +732,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	tk.MustExec("use test;")
 	tk.MustExec("CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
+	tk.MustExec("create table t(a int, b int);")
 	for i := 0; i < 10; i++ {
 		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
 		tk.MustExec(str)
@@ -761,6 +762,12 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
 	require.NoError(t, err)
+	err = cc.handleQuery(context.Background(), "insert /*+ max_execution_time(10) */ into t value(sleep(1), sleep(1));")
+	require.Error(t, err)
+	err = cc.handleQuery(context.Background(), "update /*+ max_execution_time(10) */ t set a = sleep(1);")
+	require.Error(t, err)
+	err = cc.handleQuery(context.Background(), "delete /*+ max_execution_time(1) */ from t where a = sleep(1);")
+	require.Error(t, err)
 }
 
 func TestShutDown(t *testing.T) {

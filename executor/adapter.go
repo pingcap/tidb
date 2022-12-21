@@ -362,6 +362,14 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 	return planner.IsReadOnly(a.StmtNode, vars)
 }
 
+func (a *ExecStmt) ignoreMaxExecutionTime() bool {
+	switch a.StmtNode.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return true
+	}
+	return !a.IsReadOnly(a.Ctx.GetSessionVars())
+}
+
 // RebuildPlan rebuilds current execute statement plan.
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
@@ -528,7 +536,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
 		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
-		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+		if a.ignoreMaxExecutionTime() {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
