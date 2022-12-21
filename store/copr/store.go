@@ -20,8 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	atomicutil "go.uber.org/atomic"
-
 	"github.com/pingcap/errors"
 	tidb_config "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -76,9 +74,8 @@ func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.
 // Store wraps tikv.KVStore and provides coprocessor utilities.
 type Store struct {
 	*kvStore
-	coprCache            *coprCache
-	replicaReadSeed      uint32
-	clusterMinMppVersion *atomicutil.Int64
+	coprCache       *coprCache
+	replicaReadSeed uint32
 }
 
 // NewStore creates a new store instance.
@@ -89,10 +86,9 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 	}
 	/* #nosec G404 */
 	return &Store{
-		kvStore:              &kvStore{store: s},
-		coprCache:            coprCache,
-		replicaReadSeed:      rand.Uint32(),
-		clusterMinMppVersion: atomicutil.NewInt64(kv.MaxMppVersion),
+		kvStore:         &kvStore{store: s},
+		coprCache:       coprCache,
+		replicaReadSeed: rand.Uint32(),
 	}, nil
 }
 
@@ -118,8 +114,7 @@ func (s *Store) GetClient() kv.Client {
 // GetMPPClient gets a mpp client instance.
 func (s *Store) GetMPPClient() kv.MPPClient {
 	return &MPPClient{
-		store:                s.kvStore,
-		clusterMinMppVersion: s.clusterMinMppVersion,
+		store: s.kvStore,
 	}
 }
 

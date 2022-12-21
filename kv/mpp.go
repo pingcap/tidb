@@ -21,6 +21,7 @@ import (
 
 	atomicutil "go.uber.org/atomic"
 
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 )
 
@@ -33,9 +34,9 @@ const (
 
 	// MppVersionV1 supports TiFlash version [v6.7.0, ~]
 	// Features: data compression in exchange operator;
-	MppVersionV1             int64  = 1
-	MppVersionV1StoreVersion string = "6.7.0"
-	MppVersionV1Feature      string = "exchange data compression"
+	MppVersionV1                      int64  = 1
+	MppVersionV1DefaultClusterVersion string = "6.8.0"
+	MppVersionV1Feature               string = "exchange data compression"
 
 	// MppVersionV2 int64 = MppVersionV1 * 2
 	// MppVersionV3 int64 = MppVersionV1 * 3
@@ -44,7 +45,7 @@ const (
 	MaxMppVersion int64 = MppVersionV1
 )
 
-var ClusterMinMppVersion = atomicutil.NewInt64(MaxMppVersion)
+var ClusterMinMppVersion = atomicutil.NewInt64(MppVersionV0)
 
 // MPPTaskMeta means the meta info such as location of a mpp task.
 type MPPTaskMeta interface {
@@ -112,6 +113,8 @@ type MPPClient interface {
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
+	// GetClusterMinMppVersion get min-mpp-version, max-mpp-version, alive-cnt of tiflash stores
+	GetClusterMinMppVersion(ctx context.Context, tiflashStores []*metapb.Store) (int64, int64, int)
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

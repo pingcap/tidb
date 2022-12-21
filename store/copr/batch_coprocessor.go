@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stathat/consistent"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
@@ -308,8 +307,6 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	}
 	cache := kvStore.GetRegionCache()
 	storeTaskMap := make(map[uint64]*batchCopTask)
-	minMppVersion := int64(math.MaxInt64)
-	maxMppVersion := int64(math.MinInt64)
 	// storeCandidateRegionMap stores all the possible store->region map. Its content is
 	// store id -> region signature -> region info. We can see it as store id -> region lists.
 	storeCandidateRegionMap := make(map[uint64]map[string]RegionInfo)
@@ -328,26 +325,12 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 			storeTaskMap[taskStoreID] = batchTask
 		}
 	} else {
+		logutil.BgLogger().Info("detecting available mpp stores")
 		// decide the available stores
 		stores := cache.RegionCache.GetTiFlashStores()
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wg.Add(len(stores))
-		logutil.BgLogger().Info("Start to detect available mpp stores", zap.Int("total store count", len(stores)))
-		defer func() {
-			var cnt int
-			func() {
-				mu.Lock()
-				defer mu.Unlock()
-				cnt = len(storeTaskMap)
-			}()
-			var mppInfo string
-			if cnt != 0 {
-				mppInfo = fmt.Sprintf("min mpp-version %d, max mpp-version %d", minMppVersion, maxMppVersion)
-			}
-			logutil.BgLogger().Info("Finish detecting mpp stores", zap.Int("available store count", cnt), zap.String("mpp info", mppInfo))
-		}()
-
 		cur := time.Now()
 		for i := range stores {
 			go func(idx int) {
@@ -356,17 +339,15 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 
 				var lastAny any
 				var ok bool
-				func() {
-					mu.Lock()
-					defer mu.Unlock()
-
-					if lastAny, ok = mppStoreLastFailTime.Load(s.GetAddr()); ok && cur.Sub(lastAny.(time.Time)) < 100*time.Millisecond {
-						// The interval time is so short that may happen in a same query, so we needn't to check again.
-						return
-					} else if !ok {
-						lastAny = time.Time{}
-					}
-				}()
+				mu.Lock()
+				if lastAny, ok = mppStoreLastFailTime.Load(s.GetAddr()); ok && cur.Sub(lastAny.(time.Time)) < 100*time.Millisecond {
+					// The interval time is so short that may happen in a same query, so we needn't to check again.
+					mu.Unlock()
+					return
+				} else if !ok {
+					lastAny = time.Time{}
+				}
+				mu.Unlock()
 
 				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), &tikvrpc.Request{
 					Type:    tikvrpc.CmdMPPAlive,
@@ -381,12 +362,9 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 						errMsg = err.Error()
 					}
 					logutil.BgLogger().Warn("Store is not ready", zap.String("store address", s.GetAddr()), zap.String("err message", errMsg))
-					func() {
-						mu.Lock()
-						defer mu.Unlock()
-
-						mppStoreLastFailTime.Store(s.GetAddr(), time.Now())
-					}()
+					mu.Lock()
+					mppStoreLastFailTime.Store(s.GetAddr(), time.Now())
+					mu.Unlock()
 					return
 				}
 
@@ -395,20 +373,13 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					return
 				}
 
-				mppVersion := resp.Resp.(*mpp.IsAliveResponse).MppVersion
-
-				func() {
-					mu.Lock()
-					defer mu.Unlock()
-
-					storeTaskMap[s.StoreID()] = &batchCopTask{
-						storeAddr: s.GetAddr(),
-						cmdType:   originalTasks[0].cmdType,
-						ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
-					}
-					minMppVersion = mathutil.Min(minMppVersion, mppVersion)
-					maxMppVersion = mathutil.Max(maxMppVersion, mppVersion)
-				}()
+				mu.Lock()
+				defer mu.Unlock()
+				storeTaskMap[s.StoreID()] = &batchCopTask{
+					storeAddr: s.GetAddr(),
+					cmdType:   originalTasks[0].cmdType,
+					ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
+				}
 			}(i)
 		}
 		wg.Wait()

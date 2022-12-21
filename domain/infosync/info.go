@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
@@ -470,24 +471,58 @@ func CheckTiKVVersion(stores []*metapb.Store, minVersion semver.Version) error {
 }
 
 func CheckAndInitTiFlashStoreInfo(store kv.Storage, stores []*metapb.Store) error {
-	mppVersionV1StoreVersion := *semver.New(kv.MppVersionV1StoreVersion)
+	tiflashStores := make([]*metapb.Store, 0)
+
 	// check TiFlash store info
 	for _, s := range stores {
 		// empty version means the store is a mock store.
 		if s.Version == "" {
 			continue
 		}
+		if engine.IsTiFlash(s) {
+			tiflashStores = append(tiflashStores, s)
+		}
+	}
+
+	mppClient := store.GetMPPClient()
+	var msg string
+
+	if mppClient != nil {
+		// if all tiflash stores are alived and min-mpp-version
+		minMppVersion, _, availableCnt := mppClient.GetClusterMinMppVersion(context.Background(), tiflashStores)
+		if availableCnt == len(tiflashStores) {
+			if minMppVersion > kv.MaxMppVersion {
+				logutil.BgLogger().Info("min mpp-version in TiFlash stores is bigger than TiDB", zap.Int64("tiflash", minMppVersion), zap.Int64("tidb", kv.MaxMppVersion))
+				minMppVersion = kv.MaxMppVersion
+			}
+			kv.ClusterMinMppVersion.Store(minMppVersion)
+			logutil.BgLogger().Info("update TiDB mpp-version", zap.Int64("value", minMppVersion))
+			return nil
+		}
+		msg = fmt.Sprintf("%d TiFlash stores may be down", len(tiflashStores)-availableCnt)
+	} else {
+		msg = "mpp client not found"
+	}
+
+	logutil.BgLogger().Info("start to check mpp-version by cluster stores version", zap.String("resion", msg))
+
+	minMppVersion := kv.MaxMppVersion
+
+	// if env is mock || any tiflash store is down, make sure min cluster version is GE than required version
+	for _, s := range tiflashStores {
 		// use TiKV & TiFlash version to detect the minimal one.
 		ver, err := semver.NewVersion(removeVAndHash(s.Version))
 		if err != nil {
 			return errors.Trace(errors.Annotate(err, "invalid TiFlash version"))
 		}
-		v := ver.Compare(mppVersionV1StoreVersion)
-		if v < 0 {
-			kv.ClusterMinMppVersion.Store(kv.MppVersionV0)
-			break
+
+		if v := ver.Compare(*semver.New(kv.MppVersionV1DefaultClusterVersion)); v < 0 {
+			minMppVersion = mathutil.Min(minMppVersion, kv.MppVersionV0)
 		}
+		// check mpp-version v2 if necessary
 	}
+	kv.ClusterMinMppVersion.Store(minMppVersion)
+	logutil.BgLogger().Info("update TiDB mpp-version", zap.Int64("value", minMppVersion))
 	return nil
 }
 
