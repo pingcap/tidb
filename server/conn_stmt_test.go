@@ -396,5 +396,4 @@ func TestCursorExistsFlag(t *testing.T) {
 	// COM_QUERY after fetch
 	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComQuery}, "select * from t"...)))
 	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
-
 }
