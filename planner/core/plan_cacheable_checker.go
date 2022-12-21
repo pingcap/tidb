@@ -96,10 +96,10 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
-			// do not cache native insert-stmt like 'insert into t values (...)' since
+			// do not cache insert-values-stmt like 'insert into t values (...)' since
 			// no performance benefit and to save memory.
 			checker.cacheable = false
-			checker.reason = "ignore native insert-stmt"
+			checker.reason = "ignore insert-values-stmt"
 			return in, true
 		}
 		for _, hints := range node.TableHints {
