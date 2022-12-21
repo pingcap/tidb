@@ -345,17 +345,8 @@ func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.T
 	}
 
 	for _, fk := range info.AddForeignKeys {
-		if droppingIdx := findIndexByColumns(tbInfo, droppingIndexes, fk.Cols...); droppingIdx != nil && findIndexByColumns(tbInfo, remainIndexes, fk.Cols...) == nil {
+		if droppingIdx := model.FindIndexByColumns(tbInfo, droppingIndexes, fk.Cols...); droppingIdx != nil && model.FindIndexByColumns(tbInfo, remainIndexes, fk.Cols...) == nil {
 			return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(droppingIdx.Name)
-		}
-	}
-	return nil
-}
-
-func findIndexByColumns(tbInfo *model.TableInfo, indexes []*model.IndexInfo, cols ...model.CIStr) *model.IndexInfo {
-	for _, index := range indexes {
-		if model.IsIndexPrefixCovered(tbInfo, index, cols...) {
-			return index
 		}
 	}
 	return nil

@@ -1980,7 +1980,7 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		if handleCol != nil && len(fk.Cols) == 1 && handleCol.Name.L == fk.Cols[0].L {
 			continue
 		}
-		if model.FindIndexByColumns(tbInfo, fk.Cols...) != nil {
+		if model.FindIndexByColumns(tbInfo, tbInfo.Indices, fk.Cols...) != nil {
 			continue
 		}
 		idxName := fk.Name
@@ -6578,7 +6578,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	if err != nil {
 		return err
 	}
-	if model.FindIndexByColumns(t.Meta(), fkInfo.Cols...) == nil {
+	if model.FindIndexByColumns(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
 		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
