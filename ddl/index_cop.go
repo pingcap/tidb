@@ -166,13 +166,8 @@ func (c *copReqSender) run() {
 	}
 }
 
-<<<<<<< HEAD
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64) *copReqSenderPool {
-	poolSize := int(variable.GetDDLReorgWorkerCounter() * copReadConcurrencyFactor)
-=======
 func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage) *copReqSenderPool {
-	poolSize := copReadChunkPoolSize()
->>>>>>> 51cce4578e (ddl: use latest ts to read record for adding index (#40081))
+	poolSize := int(variable.GetDDLReorgWorkerCounter() * copReadConcurrencyFactor)
 	idxBufPool := make(chan []*indexRecord, poolSize)
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
