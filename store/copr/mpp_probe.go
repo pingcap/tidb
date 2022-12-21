@@ -91,7 +91,9 @@ func (t *MPPSotreState) detect(ctx context.Context, detectPeriod time.Duration, 
 }
 
 func (t *MPPSotreState) isRecovery(ctx context.Context, recoveryTTL time.Duration) bool {
-	t.lock.Lock()
+	if !t.lock.TryLock() {
+		return false
+	}
 	defer t.lock.Unlock()
 
 	t.lastLookupTime = time.Now()
@@ -213,9 +215,9 @@ func (t *MPPFailedStoreProbe) stop() {
 	if !t.isStop.CompareAndSwap(false, true) {
 		return
 	}
-	logutil.BgLogger().Info("stop background task")
 	t.cancel()
 	t.wg.Wait()
+	logutil.BgLogger().Info("stop background task")
 }
 
 // Delete clean store from failed map
