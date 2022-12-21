@@ -332,7 +332,6 @@ go_test(
         "utils_test.go",
         "window_test.go",
         "write_concurrent_test.go",
-        "write_test.go",
     ],
     data = glob(["testdata/**"]),
     embed = [":executor"],
