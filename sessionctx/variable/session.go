@@ -1372,37 +1372,6 @@ func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
 	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
 }
 
-// planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
-// in order to control the used memory
-const planReplayerSessionFinishedTaskKeyLen = 128
-
-// AddPlanReplayerFinishedTaskKey record finished task key in session
-func (s *SessionVars) AddPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) {
-	if len(s.PlanReplayerFinishedTaskKey) >= planReplayerSessionFinishedTaskKeyLen {
-		s.initializePlanReplayerFinishedTaskKey()
-	}
-	s.PlanReplayerFinishedTaskKey[key] = struct{}{}
-}
-
-func (s *SessionVars) initializePlanReplayerFinishedTaskKey() {
-	s.PlanReplayerFinishedTaskKey = make(map[replayer.PlanReplayerTaskKey]struct{}, planReplayerSessionFinishedTaskKeyLen)
-}
-
-// CheckPlanReplayerFinishedTaskKey check whether the key exists
-func (s *SessionVars) CheckPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) bool {
-	if s.PlanReplayerFinishedTaskKey == nil {
-		s.initializePlanReplayerFinishedTaskKey()
-		return false
-	}
-	_, ok := s.PlanReplayerFinishedTaskKey[key]
-	return ok
-}
-
-// IsPlanReplayerCaptureEnabled indicates whether capture or continues capture enabled
-func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
-	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
-}
-
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
 // thread safety
 func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool chunk.Allocator) *chunk.Chunk {
