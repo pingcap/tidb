@@ -26,7 +26,7 @@ var (
 	errQueueIsFull = errors.New("the queue is full")
 
 	// errQueueIsReleased will be returned when trying to insert item to a released worker queue.
-	errQueueIsReleased = errors.New("the queue length is zero")
+	errQueueIsReleased = errors.New("the queue is released could not accept item anymore")
 )
 
 type loopQueue[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
