@@ -283,7 +283,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "tiflash_failed_mpp_store",
+			Name:      "tiflash_failed_store",
 			Help:      "Statues of failed tiflash mpp store,-1 means detector heartbeat,0 means reachable,1 means abnormal.",
 		}, []string{LblAddress})
 

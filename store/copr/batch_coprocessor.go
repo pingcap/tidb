@@ -335,15 +335,15 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 				s := stores[idx]
 
 				// check if store is failed already.
-				ok := GlobalMPPFailedStoreProbe.IsRecovery(ctx, s.GetAddr(), ttl)
+				ok := GlobalMPPFailedStoreProber.IsRecovery(ctx, s.GetAddr(), ttl)
 				if !ok {
 					return
 				}
 
 				tikvClient := kvStore.GetTiKVClient()
-				err := detectMPPStore(ctx, tikvClient, s.GetAddr(), DetectTimeoutLimit)
-				if err != nil {
-					GlobalMPPFailedStoreProbe.Add(ctx, s.GetAddr(), tikvClient)
+				ok = detectMPPStore(ctx, tikvClient, s.GetAddr(), DetectTimeoutLimit)
+				if !ok {
+					GlobalMPPFailedStoreProber.Add(ctx, s.GetAddr(), tikvClient)
 					return
 				}
 

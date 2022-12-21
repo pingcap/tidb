@@ -62,7 +62,7 @@ type ProbeTest map[string]*mockDetectClient
 
 func (t ProbeTest) add(ctx context.Context) {
 	for k, v := range t {
-		GlobalMPPFailedStoreProbe.Add(ctx, k, v)
+		GlobalMPPFailedStoreProber.Add(ctx, k, v)
 	}
 }
 
@@ -78,16 +78,16 @@ func (t ProbeTest) reSetErrortestype(to string) {
 
 func (t ProbeTest) judge(ctx context.Context, test *testing.T, recoveryTTL time.Duration, need bool) {
 	for k := range t {
-		ok := GlobalMPPFailedStoreProbe.IsRecovery(ctx, k, recoveryTTL)
+		ok := GlobalMPPFailedStoreProber.IsRecovery(ctx, k, recoveryTTL)
 		require.Equal(test, need, ok)
 	}
 }
 
 func failedStoreSizeJudge(ctx context.Context, test *testing.T, need int) {
 	var l int
-	GlobalMPPFailedStoreProbe.scan(ctx)
+	GlobalMPPFailedStoreProber.scan(ctx)
 	time.Sleep(time.Second / 10)
-	GlobalMPPFailedStoreProbe.failedMPPStores.Range(func(k, v interface{}) bool {
+	GlobalMPPFailedStoreProber.failedMPPStores.Range(func(k, v interface{}) bool {
 		l++
 		return true
 	})
@@ -99,7 +99,7 @@ func testFlow(ctx context.Context, probetestest ProbeTest, test *testing.T, flow
 	for _, to := range flow {
 		probetestest.reSetErrortestype(to)
 
-		GlobalMPPFailedStoreProbe.scan(ctx)
+		GlobalMPPFailedStoreProber.scan(ctx)
 		time.Sleep(time.Second / 10) //wait detect goroutine finish
 
 		var need bool
@@ -112,15 +112,15 @@ func testFlow(ctx context.Context, probetestest ProbeTest, test *testing.T, flow
 
 	lastTo := flow[len(flow)-1]
 	cleanRecover := func(need int) {
-		GlobalMPPFailedStoreProbe.maxRecoveryTimeLimit = 0 - time.Second
+		GlobalMPPFailedStoreProber.maxRecoveryTimeLimit = 0 - time.Second
 		failedStoreSizeJudge(ctx, test, need)
-		GlobalMPPFailedStoreProbe.maxRecoveryTimeLimit = MaxRecoveryTimeLimit
+		GlobalMPPFailedStoreProber.maxRecoveryTimeLimit = MaxRecoveryTimeLimit
 	}
 
 	cleanObsolet := func(need int) {
-		GlobalMPPFailedStoreProbe.maxObsoletTimeLimit = 0 - time.Second
+		GlobalMPPFailedStoreProber.maxObsoletTimeLimit = 0 - time.Second
 		failedStoreSizeJudge(ctx, test, need)
-		GlobalMPPFailedStoreProbe.maxObsoletTimeLimit = MaxObsoletTimeLimit
+		GlobalMPPFailedStoreProber.maxObsoletTimeLimit = MaxObsoletTimeLimit
 	}
 
 	if lastTo == Error {
@@ -137,13 +137,13 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 
 	notExistAddress := "not exist address"
 
-	GlobalMPPFailedStoreProbe.detectPeriod = 0 - time.Second
+	GlobalMPPFailedStoreProber.detectPeriod = 0 - time.Second
 
 	// check not exist address
-	ok := GlobalMPPFailedStoreProbe.IsRecovery(ctx, notExistAddress, 0)
+	ok := GlobalMPPFailedStoreProber.IsRecovery(ctx, notExistAddress, 0)
 	require.True(t, ok)
 
-	GlobalMPPFailedStoreProbe.scan(ctx)
+	GlobalMPPFailedStoreProber.scan(ctx)
 
 	probetestest := map[string]*mockDetectClient{
 		testimeout: {errortestype: testimeout},
@@ -158,20 +158,20 @@ func TestMPPFailedStoreProbe(t *testing.T) {
 
 func TestMPPFailedStoreProbeGoroutineTask(t *testing.T) {
 	// Confirm that multiple tasks are not allowed
-	GlobalMPPFailedStoreProbe.lock.Lock()
-	GlobalMPPFailedStoreProbe.Run()
-	GlobalMPPFailedStoreProbe.lock.Unlock()
+	GlobalMPPFailedStoreProber.lock.Lock()
+	GlobalMPPFailedStoreProber.Run()
+	GlobalMPPFailedStoreProber.lock.Unlock()
 
-	GlobalMPPFailedStoreProbe.Run()
-	GlobalMPPFailedStoreProbe.Stop()
+	GlobalMPPFailedStoreProber.Run()
+	GlobalMPPFailedStoreProber.Stop()
 }
 
 func TestMPPFailedStoreAssertFailed(t *testing.T) {
 	ctx := context.Background()
 
-	GlobalMPPFailedStoreProbe.failedMPPStores.Store("errorinfo", nil)
-	GlobalMPPFailedStoreProbe.scan(ctx)
+	GlobalMPPFailedStoreProber.failedMPPStores.Store("errorinfo", nil)
+	GlobalMPPFailedStoreProber.scan(ctx)
 
-	GlobalMPPFailedStoreProbe.failedMPPStores.Store("errorinfo", nil)
-	GlobalMPPFailedStoreProbe.IsRecovery(ctx, "errorinfo", 0)
+	GlobalMPPFailedStoreProber.failedMPPStores.Store("errorinfo", nil)
+	GlobalMPPFailedStoreProber.IsRecovery(ctx, "errorinfo", 0)
 }
