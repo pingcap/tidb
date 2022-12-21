@@ -115,7 +115,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 			return
 		}
 		if handler.downloadedFilename == "plan_replayer" {
-			err = handlePlanReplayerContinuesCaptureFile(file, content, handler)
+			content, err = handlePlanReplayerContinuesCaptureFile(content, path, handler)
 			if err != nil {
 				writeError(w, err)
 				return
@@ -219,34 +219,51 @@ func isExists(path string) (bool, error) {
 	return true, nil
 }
 
-func handlePlanReplayerContinuesCaptureFile(file *os.File, content []byte, handler downloadFileHandler) error {
+func handlePlanReplayerContinuesCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
 	if !strings.Contains(handler.filePath, "continues_replayer") {
-		return nil
+		return content, nil
 	}
 	b := bytes.NewReader(content)
 	zr, err := zip.NewReader(b, int64(len(content)))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	startTS, err := loadSQLMetaFile(zr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if startTS == 0 {
-		return nil
+		return content, nil
 	}
 	tbls, err := loadSchemaMeta(zr, handler.is)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, tbl := range tbls {
 		jsonStats, err := handler.statsHandle.DumpHistoricalStatsBySnapshot(tbl.dbName, tbl.info, startTS)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		tbl.jsonStats = jsonStats
 	}
-	return dumpJSONStatsIntoZip(tbls, file)
+	newPath, err := dumpJSONStatsIntoZip(tbls, content, path)
+	if err != nil {
+		return nil, err
+	}
+	//nolint: gosec
+	file, err := os.Open(newPath)
+	if err != nil {
+		return nil, err
+	}
+	content, err = io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	err = file.Close()
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
 }
 
 func loadSQLMetaFile(z *zip.Reader) (uint64, error) {
@@ -309,23 +326,49 @@ func loadSchemaMeta(z *zip.Reader, is infoschema.InfoSchema) (map[int64]*tblInfo
 	return r, nil
 }
 
-func dumpJSONStatsIntoZip(tbls map[int64]*tblInfo, file *os.File) error {
-	zw := zip.NewWriter(file)
+func dumpJSONStatsIntoZip(tbls map[int64]*tblInfo, content []byte, path string) (string, error) {
+	zr, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		return "", err
+	}
+	newPath := fmt.Sprintf("%v_copy.zip", path[0:len(path)-4])
+	zf, err := os.Create(newPath)
+	if err != nil {
+		return "", err
+	}
+	zw := zip.NewWriter(zf)
+	for _, f := range zr.File {
+		err = zw.Copy(f)
+		if err != nil {
+			logutil.BgLogger().Error("copy plan replayer zip file failed", zap.Error(err))
+			return "", err
+		}
+	}
 	for _, tbl := range tbls {
 		w, err := zw.Create(fmt.Sprintf("stats/%v.%v.json", tbl.dbName, tbl.tblName))
 		if err != nil {
-			return err
+			return "", err
 		}
 		data, err := json.Marshal(tbl.jsonStats)
 		if err != nil {
-			return err
+			return "", err
 		}
 		_, err = w.Write(data)
 		if err != nil {
-			return err
+			return "", err
 		}
 	}
-	return nil
+	err = zw.Close()
+	if err != nil {
+		logutil.BgLogger().Error("Closing file failed", zap.Error(err))
+		return "", err
+	}
+	err = zf.Close()
+	if err != nil {
+		logutil.BgLogger().Error("Closing file failed", zap.Error(err))
+		return "", err
+	}
+	return newPath, nil
 }
 
 type tblInfo struct {
