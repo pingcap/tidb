@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -86,10 +85,6 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 		return nil, errors.Trace(err)
 	}
 
-	// run a background probe process for mpp
-	globalMPPFailedStoreProbe.run()
-	logutil.BgLogger().Info("run a background probe process for mpp")
-
 	/* #nosec G404 */
 	return &Store{
 		kvStore:         &kvStore{store: s},
@@ -100,9 +95,6 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 
 // Close releases resources allocated for coprocessor.
 func (s *Store) Close() {
-	logutil.BgLogger().Info("store close")
-	globalMPPFailedStoreProbe.stop()
-
 	if s.coprCache != nil {
 		s.coprCache.cache.Close()
 	}

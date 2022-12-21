@@ -30,7 +30,8 @@ import (
 	"go.uber.org/zap"
 )
 
-var globalMPPFailedStoreProbe *MPPFailedStoreProbe
+// GlobalMPPFailedStoreProbe mpp failed store probe
+var GlobalMPPFailedStoreProbe *MPPFailedStoreProbe
 
 const (
 	// DetectPeriod detect period
@@ -120,8 +121,7 @@ func (t MPPFailedStoreProbe) scan(ctx context.Context) {
 		state, ok := v.(*MPPSotreState)
 		if !ok {
 			logutil.BgLogger().Warn("MPPSotreState struct assert failed,will be clean",
-				zap.String("address", address),
-				zap.Any("state", v))
+				zap.String("address", address))
 			t.Delete(address)
 			return
 		}
@@ -175,8 +175,7 @@ func (t *MPPFailedStoreProbe) IsRecovery(ctx context.Context, address string, re
 	state, ok := v.(*MPPSotreState)
 	if !ok {
 		logutil.BgLogger().Warn("MPPSotreState struct assert failed,will be clean",
-			zap.String("address", address),
-			zap.Any("state", v))
+			zap.String("address", address))
 		t.Delete(address)
 		return false
 	}
@@ -186,7 +185,7 @@ func (t *MPPFailedStoreProbe) IsRecovery(ctx context.Context, address string, re
 
 // Run a loop of scan
 // there can be only one background task
-func (t *MPPFailedStoreProbe) run() {
+func (t *MPPFailedStoreProbe) Run() {
 	if !t.lock.TryLock() {
 		return
 	}
@@ -201,23 +200,24 @@ func (t *MPPFailedStoreProbe) run() {
 		for {
 			select {
 			case <-t.ctx.Done():
-				logutil.BgLogger().Info("ctx.done")
+				logutil.BgLogger().Debug("ctx.done")
 				return
 			case <-ticker.C:
 				t.scan(t.ctx)
 			}
 		}
 	}()
+	logutil.BgLogger().Debug("run a background probe process for mpp")
 }
 
-// Delete clean store from failed map
-func (t *MPPFailedStoreProbe) stop() {
+// Stop stop background goroutine
+func (t *MPPFailedStoreProbe) Stop() {
 	if !t.isStop.CompareAndSwap(false, true) {
 		return
 	}
 	t.cancel()
 	t.wg.Wait()
-	logutil.BgLogger().Info("stop background task")
+	logutil.BgLogger().Debug("stop background task")
 }
 
 // Delete clean store from failed map
@@ -253,7 +253,7 @@ func init() {
 	ctx, cancel := context.WithCancel(context.Background())
 	isStop := atomic.Bool{}
 	isStop.Swap(true)
-	globalMPPFailedStoreProbe = &MPPFailedStoreProbe{
+	GlobalMPPFailedStoreProbe = &MPPFailedStoreProbe{
 		failedMPPStores:      &sync.Map{},
 		lock:                 &sync.Mutex{},
 		isStop:               &isStop,
