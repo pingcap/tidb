@@ -33,7 +33,7 @@ type MPPTask struct {
 	Meta         MPPTaskMeta // on which store this task will execute
 	ID           int64       // mppTaskID
 	StartTs      uint64
-	QueryTs      uint64 // timestamp of query execution, used for TiFlash miniTSO schedule
+	QueryTs      uint64 // timestamp of query execution, used for TiFlash minTSO schedule
 	LocalQueryID uint64 // unique mpp query id in local tidb memory.
 	ServerID     uint64
 	TableID      int64 // physical table id
@@ -79,7 +79,7 @@ type MPPDispatchRequest struct {
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
 	SchemaVar    int64
 	StartTs      uint64
-	QueryTs      uint64 // timestamp of query execution, used for TiFlash miniTSO schedule
+	QueryTs      uint64 // timestamp of query execution, used for TiFlash minTSO schedule
 	LocalQueryID uint64
 	ServerID     uint64
 	ID           int64 // identify a single task

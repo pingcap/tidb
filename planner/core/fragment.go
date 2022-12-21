@@ -106,12 +106,11 @@ func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, queryTs uint64
 var mppTaskID int64 = 1
 
 // AllocMPPTaskID allocates task id for mpp tasks.
-// In TiFlash, MPP task manager will use this MPPTaskID and MPPQueryID to distinguish mpp queries.
 func AllocMPPTaskID() int64 {
 	return atomic.AddInt64(&mppTaskID, 1)
 }
 
-// AllocMPPQueryID allocates query id for mpp queries, just reuse mppTaskID.
+// AllocMPPQueryID allocates local query id for mpp queries, just reuse mppTaskID.
 func AllocMPPQueryID() uint64 {
 	return uint64(atomic.AddInt64(&mppTaskID, 1))
 }
