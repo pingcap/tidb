@@ -133,7 +133,7 @@ func TestSystemVars(t *testing.T) {
 		{
 			// sem invisible variable
 			inSessionStates: false,
-			varName:         variable.TiDBAllowRemoveAutoInc,
+			varName:         variable.TiDBConfig,
 		},
 		{
 			// noop variables
