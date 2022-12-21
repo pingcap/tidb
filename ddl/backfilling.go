@@ -127,6 +127,7 @@ func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
 // 1: add-index
 // 2: modify-column-type
 // 3: clean-up global index
+// 4: reorganize partition (copy data between partitions)
 //
 // They all have a write reorganization state to back fill data into the rows existed.
 // Backfilling is time consuming, to accelerate this process, TiDB has built some sub

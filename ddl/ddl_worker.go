@@ -807,6 +807,8 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		w.sess.rollback()
 		return 0, err
 	}
+	//TODO: Remove these two debug lines
+	logutil.BgLogger().Info("HandleDDLJobTable", zap.Uint64("txn.StartTS TSO", txn.StartTS()))
 	// Only general DDLs are allowed to be executed when TiKV is disk full.
 	if w.tp == addIdxWorker && job.IsRunning() {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
@@ -1023,6 +1025,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 		if err != nil {
 			w.unlockSeqNum(err)
+			logutil.Logger(w.logCtx).Info("[ddl] DDL job failed.",
+				zap.Error(err))
 			return errors.Trace(err)
 		} else if job == nil {
 			// No job now, return and retry getting later.

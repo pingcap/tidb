@@ -5251,7 +5251,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 func TestReorgPartitionFailConcurrent(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartConcurrent"
+	schemaName := "ReorgPartFailConcurrent"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
 	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
@@ -5476,7 +5476,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 func TestReorgPartitionFailInject(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartConcurrent"
+	schemaName := "ReorgPartFailInjectConcurrent"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
 	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
@@ -5533,7 +5533,7 @@ func TestReorgPartitionFailInject(t *testing.T) {
 func TestReorgPartitionRollback(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	schemaName := "ReorgPartConcurrent"
+	schemaName := "ReorgPartRollback"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
 	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +

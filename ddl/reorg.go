@@ -793,6 +793,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 		sess.rollback()
 		return err
 	}
+	logutil.BgLogger().Info("UpdateReorgMeta", zap.Uint64("txn.StartTS TSO", txn.StartTS()))
 	rh := newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load())
 	err = rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
 	err1 := sess.commit()

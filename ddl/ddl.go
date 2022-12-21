@@ -1404,6 +1404,9 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	//TODO: Remove these two debug lines
+	txn, _ := sess.txn()
+	logutil.BgLogger().Info("GetDDLInfoWithNewTxn", zap.Uint64("txn.StartTS TSO", txn.StartTS()))
 	info, err := GetDDLInfo(s)
 	sess.rollback()
 	return info, err
@@ -1587,6 +1590,9 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 	if err != nil {
 		return nil, err
 	}
+	//TODO: Remove these two debug lines
+	txn, _ := sess.txn()
+	logutil.BgLogger().Info("cancelConcurrencyJobs", zap.Uint64("txn.StartTS TSO", txn.StartTS()))
 
 	idsStr := make([]string, 0, len(ids))
 	for idx, id := range ids {
