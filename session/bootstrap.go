@@ -412,6 +412,7 @@ const (
 		modify_count bigint(64) NOT NULL,
 		count bigint(64) NOT NULL,
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
+    	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version (table_id, version),
 		KEY table_create_time (table_id, create_time)
@@ -476,6 +477,26 @@ const (
          Password text,
          PRIMARY KEY (Host,User,Password_timestamp )
         ) COMMENT='Password history for user accounts' `
+
+	// CreateTTLTableStatus is a table about TTL task schedule
+	CreateTTLTableStatus = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_table_status (
+		table_id bigint(64) PRIMARY KEY,
+        parent_table_id bigint(64),
+        table_statistics text DEFAULT NULL,
+		last_job_id varchar(64) DEFAULT NULL,
+		last_job_start_time timestamp NULL DEFAULT NULL,
+		last_job_finish_time timestamp NULL DEFAULT NULL,
+		last_job_ttl_expire timestamp NULL DEFAULT NULL,
+        last_job_summary text DEFAULT NULL,
+		current_job_id varchar(64) DEFAULT NULL,
+		current_job_owner_id varchar(64) DEFAULT NULL,
+		current_job_owner_addr varchar(256) DEFAULT NULL,
+		current_job_owner_hb_time timestamp,
+		current_job_start_time timestamp NULL DEFAULT NULL,
+		current_job_ttl_expire timestamp NULL DEFAULT NULL,
+		current_job_state text DEFAULT NULL,
+		current_job_status varchar(64) DEFAULT NULL,
+  		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -710,11 +731,15 @@ const (
 	version106 = 106
 	// version107 add columns related to password expiration into mysql.user
 	version107 = 107
+	// version108 adds the table tidb_ttl_table_status
+	version108 = 108
+	// version109 add column source to mysql.stats_meta_history
+	version109 = 109
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version107
+var currentBootstrapVersion int64 = version109
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -826,6 +851,8 @@ var (
 		upgradeToVer105,
 		upgradeToVer106,
 		upgradeToVer107,
+		upgradeToVer108,
+		upgradeToVer109,
 	}
 )
 
@@ -2155,9 +2182,23 @@ func upgradeToVer107(s Session, ver int64) {
 	if ver >= version107 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N',"+
-		"ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),"+
-		"ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N'")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP DEFAULT CURRENT_TIMESTAMP()")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED DEFAULT NULL")
+}
+
+func upgradeToVer108(s Session, ver int64) {
+	if ver >= version108 {
+		return
+	}
+	doReentrantDDL(s, CreateTTLTableStatus)
+}
+
+func upgradeToVer109(s Session, ver int64) {
+	if ver >= version109 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
 }
 
 func writeOOMAction(s Session) {
@@ -2264,6 +2305,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreatePlanReplayerTaskTable)
 	// Create stats_meta_table_locked table
 	mustExecute(s, CreateStatsTableLocked)
+	// Create tidb_ttl_table_status table
+	mustExecute(s, CreateTTLTableStatus)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.

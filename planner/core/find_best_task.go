@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -741,7 +742,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 }
 
 func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property.PhysicalProperty) string {
-	if !ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain || len(candidates) == len(ds.possibleAccessPaths) {
+	if len(candidates) == len(ds.possibleAccessPaths) {
 		return ""
 	}
 	if len(candidates) == 1 && len(candidates[0].path.Ranges) == 0 {
@@ -806,7 +807,30 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		planCounter.Dec(1)
 		return nil, 1, nil
 	}
-
+	if ds.isForUpdateRead && ds.ctx.GetSessionVars().TxnCtx.IsExplicit {
+		hasPointGetPath := false
+		for _, path := range ds.possibleAccessPaths {
+			if ds.isPointGetPath(path) {
+				hasPointGetPath = true
+				break
+			}
+		}
+		tblName := ds.tableInfo.Name
+		ds.possibleAccessPaths, err = filterPathByIsolationRead(ds.ctx, ds.possibleAccessPaths, tblName, ds.DBName)
+		if err != nil {
+			return nil, 1, err
+		}
+		if hasPointGetPath {
+			newPaths := make([]*util.AccessPath, 0)
+			for _, path := range ds.possibleAccessPaths {
+				// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path (#39543)
+				if path.StoreType != kv.TiFlash {
+					newPaths = append(newPaths, path)
+				}
+			}
+			ds.possibleAccessPaths = newPaths
+		}
+	}
 	t = ds.getTask(prop)
 	if t != nil {
 		cntPlan = 1
@@ -865,10 +889,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	pruningInfo := ds.getPruningInfo(candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.invalid() && pruningInfo != "" {
-			if ds.ctx.GetSessionVars().StmtCtx.OptimInfo == nil {
-				ds.ctx.GetSessionVars().StmtCtx.OptimInfo = make(map[int]string)
+			warnErr := errors.New(pruningInfo)
+			if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(warnErr)
+			} else {
+				ds.ctx.GetSessionVars().StmtCtx.AppendExtraNote(warnErr)
 			}
-			ds.ctx.GetSessionVars().StmtCtx.OptimInfo[t.plan().ID()] = pruningInfo
 		}
 	}()
 
@@ -912,13 +938,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			return &rootTask{
 				p: dual,
 			}, cntPlan, nil
-		}
-
-		// if the path is the point get range path with for update lock, we should forbid tiflash as it's store path.
-		if path.StoreType == kv.TiFlash && ds.isForUpdateRead && ds.ctx.GetSessionVars().TxnCtx.IsExplicit {
-			if ds.isPointGetConditions() {
-				continue
-			}
 		}
 
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
@@ -1912,64 +1931,34 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(_ *expression.Schema, stats *pro
 	return is
 }
 
-// isPointGetConditions indicates whether the conditions are point-get-able.
+// isPointGetPath indicates whether the conditions are point-get-able.
 // eg: create table t(a int, b int,c int unique, primary (a,b))
 // select * from t where a = 1 and b = 1 and c =1;
-// the datasource can access by primary key(a,b) or unique key (c) which are both point-get-able
-func (ds *DataSource) isPointGetConditions() bool {
-	t, _ := ds.is.TableByID(ds.physicalTableID)
-	columns := map[string]struct{}{}
-	for _, cond := range ds.allConds {
-		s, ok := cond.(*expression.ScalarFunction)
-		if !ok {
-			return false
-		}
-		if s.FuncName.L != ast.EQ || (s.FuncName.L == ast.In && len(s.GetArgs()) != 2) {
-			return false
-		}
-		arg0 := s.GetArgs()[0]
-		arg1 := s.GetArgs()[1]
-		_, ok1 := arg0.(*expression.Constant)
-		col, ok2 := arg1.(*expression.Column)
-		if ok1 && ok2 {
-			columns[t.Meta().FindColumnNameByID(col.ID)] = struct{}{}
-			continue
-		}
-		col, ok1 = arg0.(*expression.Column)
-		_, ok2 = arg1.(*expression.Constant)
-		if ok1 && ok2 {
-			columns[t.Meta().FindColumnNameByID(col.ID)] = struct{}{}
-			continue
-		}
+// the datasource can access by primary key(a,b) or unique key c which are both point-get-able
+func (ds *DataSource) isPointGetPath(path *util.AccessPath) bool {
+	if len(path.Ranges) < 1 {
+		return false
 	}
-	return ds.findPKOrUniqueIndexMatchColumns(columns)
-}
-
-func (ds *DataSource) findPKOrUniqueIndexMatchColumns(columns map[string]struct{}) bool {
-	for _, idx := range ds.tableInfo.Indices {
-		if !idx.Unique && !idx.Primary {
-			continue
+	if !path.IsIntHandlePath {
+		if path.Index == nil {
+			return false
 		}
-		if idx.HasPrefixIndex() {
-			continue
+		if !path.Index.Unique || path.Index.HasPrefixIndex() {
+			return false
 		}
-		if len(idx.Columns) > len(columns) {
-			continue
-		}
-		flag := true
-		for _, idxCol := range idx.Columns {
-			_, ok := columns[idxCol.Name.String()]
-			if !ok {
-				flag = false
-				break
+		idxColsLen := len(path.Index.Columns)
+		for _, ran := range path.Ranges {
+			if len(ran.LowVal) != idxColsLen {
+				return false
 			}
 		}
-		if !flag {
-			continue
-		}
-		return true
 	}
-	return false
+	for _, ran := range path.Ranges {
+		if !ran.IsPointNonNullable(ds.ctx) {
+			return false
+		}
+	}
+	return true
 }
 
 // convertToTableScan converts the DataSource to table scan.
@@ -1999,7 +1988,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 	}
-	if prop.TaskTp == property.MppTaskType {
+	// In disaggregated tiflash mode, only MPP is allowed, Cop and BatchCop is deprecated.
+	if prop.TaskTp == property.MppTaskType || config.GetGlobalConfig().DisaggregatedTiFlash && ts.StoreType == kv.TiFlash {
 		if ts.KeepOrder {
 			return invalidTask, nil
 		}

@@ -43,8 +43,15 @@ type InfoCache struct {
 }
 
 // NewCache creates a new InfoCache.
-func NewCache(capcity int) *InfoCache {
-	return &InfoCache{cache: make([]InfoSchema, 0, capcity)}
+func NewCache(capacity int) *InfoCache {
+	return &InfoCache{cache: make([]InfoSchema, 0, capacity)}
+}
+
+// Reset resets the cache.
+func (h *InfoCache) Reset(capacity int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cache = make([]InfoSchema, 0, capacity)
 }
 
 // GetLatest gets the newest information schema.
