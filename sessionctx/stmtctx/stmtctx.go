@@ -209,8 +209,15 @@ type StatementContext struct {
 		copied  uint64
 		touched uint64
 
-		message        string
-		warnings       []SQLWarn
+		message  string
+		warnings []SQLWarn
+		// extraWarnings record the extra warnings and are only used by the slow log only now.
+		// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
+		// not under such conditions now, it is considered as an extra warning.
+		// extraWarnings would not be printed through SHOW WARNINGS, but we want to always output them through the slow
+		// log to help diagnostics, so we store them here separately.
+		extraWarnings []SQLWarn
+
 		execDetails    execdetails.ExecDetails
 		allExecDetails []*execdetails.DetailsNeedP90
 	}
@@ -299,8 +306,6 @@ type StatementContext struct {
 		LogOnExceed [2]memory.LogOnExceed
 	}
 
-	// OptimInfo maps Plan.ID() to optimization information when generating Plan.
-	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
@@ -809,6 +814,47 @@ func (sc *StatementContext) AppendError(warn error) {
 	defer sc.mu.Unlock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
+	}
+}
+
+// GetExtraWarnings gets extra warnings.
+func (sc *StatementContext) GetExtraWarnings() []SQLWarn {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.mu.extraWarnings
+}
+
+// SetExtraWarnings sets extra warnings.
+func (sc *StatementContext) SetExtraWarnings(warns []SQLWarn) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.extraWarnings = warns
+}
+
+// AppendExtraWarning appends an extra warning with level 'Warning'.
+func (sc *StatementContext) AppendExtraWarning(warn error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.mu.extraWarnings) < math.MaxUint16 {
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelWarning, warn})
+	}
+}
+
+// AppendExtraNote appends an extra warning with level 'Note'.
+func (sc *StatementContext) AppendExtraNote(warn error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.mu.extraWarnings) < math.MaxUint16 {
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelNote, warn})
+	}
+}
+
+// AppendExtraError appends an extra warning with level 'Error'.
+func (sc *StatementContext) AppendExtraError(warn error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.mu.extraWarnings) < math.MaxUint16 {
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelError, warn})
 	}
 }
 
