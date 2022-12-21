@@ -191,12 +191,12 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	flashbackTSString := oracle.GetTimeFromTS(flashbackTS).String()
 
 	// Check is there a upgrade during [flashbackTS, now)
-	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='tidb_server_version' as of timestamp '%s'", flashbackTSString)
+	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb as of timestamp '%s' where VARIABLE_NAME='tidb_server_version'", flashbackTSString)
 	rows, err := newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history `tidb_server_version` failed, can't do flashback")
 	}
-	sql = fmt.Sprintf("select 1 from mysql.tidb where VARIABLE_NAME='tidb_server_version' and VARIABLE_VALUE=%d", rows[0].GetInt64(0))
+	sql = fmt.Sprintf("select 1 from mysql.tidb where VARIABLE_NAME='tidb_server_version' and VARIABLE_VALUE=%s", rows[0].GetString(0))
 	rows, err = newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
 	if err != nil {
 		return errors.Trace(err)
