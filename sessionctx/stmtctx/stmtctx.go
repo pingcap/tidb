@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -868,10 +869,15 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 
 	err = errors.Cause(err)
 	if e, ok := err.(*errors.Error); !ok ||
-		(e.Code() != mysql.ErrTruncatedWrongValue &&
-			e.Code() != mysql.ErrDataTooLong &&
-			e.Code() != mysql.ErrTruncatedWrongValueForField &&
-			e.Code() != mysql.WarnDataTruncated) {
+		(e.Code() != errno.ErrTruncatedWrongValue &&
+			e.Code() != errno.ErrDataTooLong &&
+			e.Code() != errno.ErrTruncatedWrongValueForField &&
+			e.Code() != errno.ErrWarnDataOutOfRange &&
+			e.Code() != errno.ErrDataOutOfRange &&
+			e.Code() != errno.ErrBadNumber &&
+			e.Code() != errno.ErrWrongValueForType &&
+			e.Code() != errno.ErrDatetimeFunctionOverflow &&
+			e.Code() != errno.WarnDataTruncated) {
 		return err
 	}
 
