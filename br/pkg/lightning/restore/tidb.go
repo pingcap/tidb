@@ -155,7 +155,6 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment, &res)
 
 	retStmts := make([]string, 0, len(stmts))
-loop:
 	for _, stmt := range stmts {
 		switch node := stmt.(type) {
 		case *ast.CreateDatabaseStmt:
@@ -175,9 +174,6 @@ loop:
 			node.Tables[0].Schema = model.NewCIStr(dbName)
 			node.Tables[0].Name = model.NewCIStr(tblName)
 			node.IfExists = true
-		default:
-			// ignore other statements
-			continue loop
 		}
 		if err := stmt.Restore(ctx); err != nil {
 			return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)

@@ -120,8 +120,10 @@ func TestCreateTableIfNotExistsStmt(t *testing.T) {
 	require.Equal(t, []string{"CREATE TABLE IF NOT EXISTS `testdb`.`ba``r` (`x` INT);"},
 		createSQLIfNotExistsStmt("create table foo(x int);", "ba`r"))
 
-	// conditional comments should be removed
+	// conditional comments
 	require.Equal(t, []string{
+		"SET NAMES 'binary';",
+		"SET @@SESSION.`FOREIGN_KEY_CHECKS`=0;",
 		"CREATE TABLE IF NOT EXISTS `testdb`.`m` (`z` DOUBLE) ENGINE = InnoDB AUTO_INCREMENT = 8343230 DEFAULT CHARACTER SET = UTF8;",
 	},
 		createSQLIfNotExistsStmt(`
@@ -131,11 +133,20 @@ func TestCreateTableIfNotExistsStmt(t *testing.T) {
 		`, "m"))
 
 	// create view
-	// all set statements are ignored
 	require.Equal(t, []string{
+		"SET NAMES 'binary';",
 		"DROP TABLE IF EXISTS `testdb`.`m`;",
 		"DROP VIEW IF EXISTS `testdb`.`m`;",
+		"SET @`PREV_CHARACTER_SET_CLIENT`=@@`character_set_client`;",
+		"SET @`PREV_CHARACTER_SET_RESULTS`=@@`character_set_results`;",
+		"SET @`PREV_COLLATION_CONNECTION`=@@`collation_connection`;",
+		"SET @@SESSION.`character_set_client`=`utf8`;",
+		"SET @@SESSION.`character_set_results`=`utf8`;",
+		"SET @@SESSION.`collation_connection`=`utf8_general_ci`;",
 		"CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`192.168.198.178` SQL SECURITY DEFINER VIEW `testdb`.`m` (`s`) AS SELECT `s` FROM `db1`.`v1` WHERE `i`<2;",
+		"SET @@SESSION.`character_set_client`=@`PREV_CHARACTER_SET_CLIENT`;",
+		"SET @@SESSION.`character_set_results`=@`PREV_CHARACTER_SET_RESULTS`;",
+		"SET @@SESSION.`collation_connection`=@`PREV_COLLATION_CONNECTION`;",
 	},
 		createSQLIfNotExistsStmt(`
 			/*!40101 SET NAMES binary*/;
