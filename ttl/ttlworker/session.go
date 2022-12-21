@@ -16,17 +16,21 @@ package ttlworker
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 type sessionPool interface {
@@ -57,9 +61,48 @@ func getSession(pool sessionPool) (session.Session, error) {
 		return nil, errors.Errorf("%T cannot be casted to sqlexec.SQLExecutor", sctx)
 	}
 
-	se := session.NewSession(sctx, exec, func() {
+	originalRetryLimit := sctx.GetSessionVars().RetryLimit
+	originalEnable1PC := sctx.GetSessionVars().Enable1PC
+	originalEnableAsyncCommit := sctx.GetSessionVars().EnableAsyncCommit
+	se := session.NewSession(sctx, exec, func(se session.Session) {
+		_, err = se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
+		if err != nil {
+			logutil.BgLogger().Error("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
+		}
+
+		if !originalEnable1PC {
+			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=OFF")
+			terror.Log(err)
+		}
+
+		if !originalEnableAsyncCommit {
+			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=OFF")
+			terror.Log(err)
+		}
+
 		pool.Put(resource)
 	})
+
+	// store and set the retry limit to 0
+	_, err = se.ExecuteSQL(context.Background(), "set tidb_retry_limit=0")
+	if err != nil {
+		se.Close()
+		return nil, err
+	}
+
+	// set enable 1pc to ON
+	_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=ON")
+	if err != nil {
+		se.Close()
+		return nil, err
+	}
+
+	// set enable async commit to ON
+	_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=ON")
+	if err != nil {
+		se.Close()
+		return nil, err
+	}
 
 	// Force rollback the session to guarantee the session is not in any explicit transaction
 	if _, err = se.ExecuteSQL(context.Background(), "ROLLBACK"); err != nil {
