@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util/gpool"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -236,6 +237,9 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 	}
 	go func() {
 		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
+			}
 			close(closeCh)
 			close(taskCh)
 		}()
@@ -280,6 +284,9 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 	}
 	go func() {
 		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
+			}
 			close(closeCh)
 			close(taskCh)
 		}()
