@@ -17,7 +17,10 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/log"
 	"math"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -297,7 +300,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if err != nil {
 		return nil, 0, err
 	}
-	finalPlan, err := postOptimize(sctx, physical)
+	finalPlan, err := postOptimize(ctx, sctx, physical)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -377,7 +380,7 @@ func mergeContinuousSelections(p PhysicalPlan) {
 	}
 }
 
-func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, error) {
+func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, error) {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	err := prunePhysicalColumns(sctx, plan)
@@ -389,7 +392,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, err
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
-	handleFineGrainedShuffle(sctx, plan)
+	handleFineGrainedShuffle(ctx, sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
@@ -653,7 +656,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 // < 0: fine grained shuffle is disabled.
 // > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
 // == 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefStreamCountWhenMaxThreadsNotSet.
-func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
+func handleFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan) {
 	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
 	if streamCount < 0 {
 		return
@@ -661,22 +664,22 @@ func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
 	if streamCount == 0 {
 		if sctx.GetSessionVars().TiFlashMaxThreads > 0 {
 			streamCount = sctx.GetSessionVars().TiFlashMaxThreads
-		} else {
-			streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
 		}
 	}
-	setupFineGrainedShuffle(uint64(streamCount), plan)
+	var tiflashServerCount uint64 = 0
+	var streamCountUInt = uint64(streamCount)
+	setupFineGrainedShuffle(ctx, sctx, &streamCountUInt, &tiflashServerCount, plan)
 }
 
-func setupFineGrainedShuffle(streamCount uint64, plan PhysicalPlan) {
+func setupFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, streamCount * uint64, tiflashServerCount * uint64, plan PhysicalPlan) {
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
 			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*basePhysicalPlan, 1)}
-			setupFineGrainedShuffleInternal(tableReader.tablePlan, &helper, streamCount)
+			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCount, tiflashServerCount)
 		}
 	} else {
 		for _, child := range plan.Children() {
-			setupFineGrainedShuffle(streamCount, child)
+			setupFineGrainedShuffle(ctx, sctx, streamCount, tiflashServerCount, child)
 		}
 	}
 }
@@ -687,16 +690,19 @@ const (
 	unknown shuffleTarget = iota
 	window
 	joinBuild
+	hashAgg
 )
 
 type fineGrainedShuffleHelper struct {
 	shuffleTarget shuffleTarget
 	plans         []*basePhysicalPlan
+	joinKeysCount int
 }
 
 func (h *fineGrainedShuffleHelper) clear() {
 	h.shuffleTarget = unknown
 	h.plans = h.plans[:0]
+	h.joinKeysCount = 0
 }
 
 func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysicalPlan) {
@@ -704,14 +710,36 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysical
 	h.plans = append(h.plans, p)
 }
 
-func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuffleHelper, streamCount uint64) {
+// getTiFlashServerInfo returns server count and minimal logical cpus among servers
+// return 0,0 if any err happens
+func getTiFlashServerInfo(ctx context.Context, sctx sessionctx.Context) (int, int) {
+	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, diagnosticspb.ServerInfoType_HardwareInfo, set.NewStringSet("tiflash"), set.NewStringSet())
+	if err != nil {
+		return 0, 0
+	}
+	var min_logical_cores = 1000
+	var server_count = 0
+	for _, row := range rows {
+		if row[4].GetString() == "cpu-logical-cores" {
+			server_count++
+			logical_cpus, err := strconv.Atoi(row[5].GetString())
+			if err == nil && logical_cpus < min_logical_cores {
+				min_logical_cores = logical_cpus
+			}
+		}
+	}
+	log.Error(fmt.Sprintf("Cluster Hardware info: %d, server_count: %d, min logical_cores: %d", len(rows), server_count, min_logical_cores))
+	return server_count, min_logical_cores
+}
+
+func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan, helper *fineGrainedShuffleHelper, streamCount * uint64, tiflashServerCount * uint64) {
 	switch x := plan.(type) {
 	case *PhysicalWindow:
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
 		helper.updateTarget(window, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
 	case *PhysicalSort:
 		if x.IsPartialSort {
 			// Partial sort will keep the data partition.
@@ -720,58 +748,90 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 			// Global sort will break the data partition.
 			helper.clear()
 		}
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
 	case *PhysicalSelection:
 		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
 	case *PhysicalProjection:
 		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
 	case *PhysicalExchangeReceiver:
 		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
 	case *PhysicalHashAgg:
-		// HashAgg is not implemented for now.
-		helper.clear()
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+		helper.updateTarget(hashAgg, &x.basePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
 	case *PhysicalHashJoin:
 		child0 := x.children[0]
 		child1 := x.children[1]
-		if x.InnerChildIdx == 0 {
+		buildChild := child0
+		probChild := child1
+		joinKeys := x.LeftJoinKeys
+		if x.InnerChildIdx != 0 {
 			// Child0 is build side.
-			child0Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
-			setupFineGrainedShuffleInternal(child0, &child0Helper, streamCount)
-
-			// HashJoin is not implemented for now.
-			helper.clear()
-			setupFineGrainedShuffleInternal(child1, helper, streamCount)
-		} else {
-			// Child1 is build side.
-			child1Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
-			setupFineGrainedShuffleInternal(child1, &child1Helper, streamCount)
-
-			// HashJoin is not implemented for now.
-			helper.clear()
-			setupFineGrainedShuffleInternal(child0, helper, streamCount)
+			buildChild = child1
+			joinKeys = x.RightJoinKeys
+			probChild = child0
 		}
+		if len(joinKeys) > 0 { // Not cross join
+			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
+			buildHelper.plans = append(buildHelper.plans, &x.basePhysicalPlan)
+			buildHelper.joinKeysCount = len(joinKeys)
+			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCount, tiflashServerCount)
+		} else {
+			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
+			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCount, tiflashServerCount)
+		}
+		// don't reply on prob side's fineGrainedShuffle attribute
+		helper.clear()
+		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCount, tiflashServerCount)
 	case *PhysicalExchangeSender:
 		if x.ExchangeType == tipb.ExchangeType_Hash {
-			if helper.shuffleTarget == window {
-				// Set up stream count for all plans based on shuffle target type.
-				// Currently, only enable fine grained shuffle if the shuffle target is window.
-				x.TiFlashFineGrainedShuffleStreamCount = streamCount
+			// Set up stream count for all plans based on shuffle target type.
+			switch helper.shuffleTarget {
+			case window:
+				if *streamCount == 0 {
+					*streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
+				}
+				x.TiFlashFineGrainedShuffleStreamCount = *streamCount
 				for _, p := range helper.plans {
-					p.TiFlashFineGrainedShuffleStreamCount = streamCount
+					p.TiFlashFineGrainedShuffleStreamCount = *streamCount
+				}
+			case hashAgg:
+				if *streamCount == 0 {
+					*streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
+				}
+				x.TiFlashFineGrainedShuffleStreamCount = *streamCount
+				for _, p := range helper.plans {
+					p.TiFlashFineGrainedShuffleStreamCount = *streamCount
+				}
+			case joinBuild:
+				// Support hashJoin only when shuffle hash keys equals to join keys
+				if len(x.HashCols) == helper.joinKeysCount {
+					if *streamCount == 0 {
+						//*streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
+						// serverInfos, err := infoschema.GetTiFlashServerInfo(sctx)
+						serverCount, logicalCpus := getTiFlashServerInfo(ctx, sctx)
+						if serverCount != 0 && logicalCpus > 1 {
+							*tiflashServerCount = uint64(serverCount)
+							*streamCount = uint64(logicalCpus / 2)
+						}
+						log.Error(fmt.Sprintf("%d %d %d", x.Schema().Len(), *streamCount, *tiflashServerCount))
+						x.TiFlashFineGrainedShuffleStreamCount = *streamCount
+						for _, p := range helper.plans {
+							p.TiFlashFineGrainedShuffleStreamCount = *streamCount
+						}
+					}
 				}
 			}
 		}
 		// exchange sender will break the data partition.
 		helper.clear()
-		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
 	default:
 		for _, child := range x.Children() {
 			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
-			setupFineGrainedShuffleInternal(child, &childHelper, streamCount)
+			setupFineGrainedShuffleInternal(ctx, sctx, child, &childHelper, streamCount, tiflashServerCount)
 		}
 	}
 }

@@ -177,7 +177,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
 	//nolint: prealloc
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
@@ -310,58 +310,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 	e.retrieved = true
-
-	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	if err != nil {
-		return nil, err
-	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
-
-	type result struct {
-		idx  int
-		rows [][]types.Datum
-		err  error
-	}
-	wg := sync.WaitGroup{}
-	ch := make(chan result, len(serversInfo))
-	infoTp := e.serverInfoType
-	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
-	for i, srv := range serversInfo {
-		address := srv.Address
-		remote := address
-		if srv.ServerType == "tidb" {
-			remote = srv.StatusAddr
-		}
-		wg.Add(1)
-		go func(index int, remote, address, serverTP string) {
-			util.WithRecovery(func() {
-				defer wg.Done()
-				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
-				if err != nil {
-					ch <- result{idx: index, err: err}
-					return
-				}
-				partRows := serverInfoItemToRows(items, serverTP, address)
-				ch <- result{idx: index, rows: partRows}
-			}, nil)
-		}(i, remote, address, srv.ServerType)
-	}
-	wg.Wait()
-	close(ch)
-	// Keep the original order to make the result more stable
-	var results []result //nolint: prealloc
-	for result := range ch {
-		if result.err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
-			continue
-		}
-		results = append(results, result)
-	}
-	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
-	for _, result := range results {
-		finalRows = append(finalRows, result.rows...)
-	}
-	return finalRows, nil
+	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, e.serverInfoType, e.extractor.NodeTypes, e.extractor.Instances)
 }
 
 func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
@@ -426,28 +375,6 @@ func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
 		})
 	}
 	return serversInfo
-}
-
-func filterClusterServerInfo(serversInfo []infoschema.ServerInfo, nodeTypes, addresses set.StringSet) []infoschema.ServerInfo {
-	if len(nodeTypes) == 0 && len(addresses) == 0 {
-		return serversInfo
-	}
-
-	filterServers := make([]infoschema.ServerInfo, 0, len(serversInfo))
-	for _, srv := range serversInfo {
-		// Skip some node type which has been filtered in WHERE clause
-		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
-		if len(nodeTypes) > 0 && !nodeTypes.Exist(srv.ServerType) {
-			continue
-		}
-		// Skip some node address which has been filtered in WHERE clause
-		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
-		if len(addresses) > 0 && !addresses.Exist(srv.Address) {
-			continue
-		}
-		filterServers = append(filterServers, srv)
-	}
-	return filterServers
 }
 
 type clusterLogRetriever struct {
@@ -515,7 +442,7 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 
 	instances := e.extractor.Instances
 	nodeTypes := e.extractor.NodeTypes
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, instances)
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, nodeTypes, instances)
 
 	var levels = make([]diagnosticspb.LogLevel, 0, len(e.extractor.LogLevels))
 	for l := range e.extractor.LogLevels {
