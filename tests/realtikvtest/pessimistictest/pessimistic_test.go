@@ -2816,6 +2816,31 @@ func TestAsyncCommitCalTSFail(t *testing.T) {
 	tk2.MustExec("commit")
 }
 
+func TestAsyncCommitAndForeignKey(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := createAsyncCommitTestKit(t, store)
+
+	tk.MustExec("drop table if exists t_parent, t_child")
+	tk.MustExec("create table t_parent (id int primary key)")
+	tk.MustExec("create table t_child (id int primary key, pid int, foreign key (pid) references t_parent(id) on delete cascade on update cascade)")
+	tk.MustExec("insert into t_parent values (1),(2),(3),(4)")
+	tk.MustExec("insert into t_child values (1,1),(2,2),(3,3)")
+
+	tk.MustExec("set tidb_enable_1pc = true")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("delete from t_parent where id in (1,4)")
+	tk.MustExec("update t_parent set id=22 where id=2")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t_parent order by id").Check(testkit.Rows("3", "22"))
+	tk.MustQuery("select * from t_child order by id").Check(testkit.Rows("2 22", "3 3"))
+}
+
 func TestChangeLockToPut(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
