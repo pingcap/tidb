@@ -1562,3 +1562,32 @@ func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {
 	require.NoError(t, err)
 	return diff
 }
+
+func TestTestMultiSchemaAddForeignKey(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (a int, b int);")
+	tk.MustExec("alter table t2 add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
+	tk.MustExec("alter table t2 add column c int, add column d int")
+	tk.MustExec("alter table t2 add foreign key (c) references t1(id), add foreign key (d) references t1(id), add index(c), add index(d)")
+	tk.MustExec("drop table t2")
+	tk.MustExec("create table t2 (a int, b int, index idx1(a), index idx2(b));")
+	tk.MustGetErrMsg("alter table t2 drop index idx1, drop index idx2, add foreign key (a) references t1(id), add foreign key (b) references t1(id)",
+		"[ddl:1553]Cannot drop index 'idx1': needed in a foreign key constraint")
+	tk.MustExec("alter table t2 drop index idx1, drop index idx2")
+	tk.MustExec("alter table t2 add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  KEY `fk_1` (`a`),\n" +
+		"  KEY `fk_2` (`b`),\n" +
+		"  CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `test`.`t1` (`id`),\n" +
+		"  CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `test`.`t1` (`id`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t2")
+	tk.MustExec("create table t2 (a int, b int, index idx0(a,b), index idx1(a), index idx2(b));")
+	tk.MustExec("alter table t2 drop index idx1, add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
+}
