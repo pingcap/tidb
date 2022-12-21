@@ -42,9 +42,10 @@ func TestCPUValue(t *testing.T) {
 			}
 		}()
 	}
-	time.Sleep(30 * time.Second)
-	require.Greater(t, Observer.observe(), 0.0)
-	require.Less(t, Observer.observe(), 1.0)
+	Observer.Start()
+	time.Sleep(5 * time.Second)
+	require.GreaterOrEqual(t, GetCPUUsage(), 0.0)
+	require.Less(t, GetCPUUsage(), 1.0)
 	Observer.Stop()
 	close(exit)
 	wg.Wait()

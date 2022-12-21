@@ -56,11 +56,13 @@ func NewCPUObserver() *Observer {
 
 // Start starts the cpu observer.
 func (c *Observer) Start() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
 	c.wg.Add(1)
 	go func() {
-		defer c.wg.Done()
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer func() {
+			ticker.Stop()
+			c.wg.Done()
+		}()
 		for {
 			select {
 			case <-ticker.C:
