@@ -331,7 +331,7 @@ func dumpJSONStatsIntoZip(tbls map[int64]*tblInfo, content []byte, path string) 
 	if err != nil {
 		return "", err
 	}
-	newPath := fmt.Sprintf("%v_copy.zip", path[0:len(path)-4])
+	newPath := fmt.Sprintf("copy_%v.zip", path[0:len(path)-4])
 	zf, err := os.Create(newPath)
 	if err != nil {
 		return "", err
