@@ -1650,8 +1650,9 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 	tk2.MustExec("set @@foreign_key_checks=1;")
 	tk2.MustExec("use test")
 	passCases := []struct {
-		ddl1 string
-		ddl2 string
+		prepare []string
+		ddl1    string
+		ddl2    string
 	}{
 		{
 			ddl1: "alter  table t2 add constraint fk_1 foreign key (a) references t1(a)",
@@ -1660,6 +1661,17 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 		{
 			ddl1: "alter table t2 drop foreign key fk_1",
 			ddl2: "alter table t2 drop foreign key fk_2",
+		},
+		{
+			prepare: []string{
+				"alter  table t2 drop index a",
+			},
+			ddl1: "alter  table t2 add index(a)",
+			ddl2: "alter  table t2 add constraint fk_1 foreign key (a) references t1(a)",
+		},
+		{
+			ddl1: "alter  table t2 drop index c",
+			ddl2: "alter  table t2 add constraint fk_2 foreign key (b) references t1(b)",
 		},
 	}
 	for _, ca := range passCases {
@@ -1696,6 +1708,12 @@ func TestForeignKeyAndConcurrentDDL(t *testing.T) {
 			err1: "[schema:1091]Can't DROP 'fk_1'; check that column/key exists",
 			ddl2: "alter table t2 drop foreign key fk_1",
 			err2: "[schema:1091]Can't DROP 'fk_1'; check that column/key exists",
+		},
+		{
+			ddl1: "alter table t2 drop index a",
+			err1: "[ddl:1553]Cannot drop index 'a': needed in a foreign key constraint",
+			ddl2: "alter  table t2 add constraint fk_1 foreign key (a) references t1(a)",
+			err2: "[ddl:-1]Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'",
 		},
 	}
 	tk.MustExec("drop table t1,t2")
