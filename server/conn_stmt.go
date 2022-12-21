@@ -158,7 +158,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
-	if !useCursor {
+	if useCursor {
+		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+		defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
+	} else {
 		// not using streaming ,can reuse chunk
 		cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 	}
@@ -260,14 +263,14 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		BinaryArgs: args,
 		PrepStmt:   prepStmt,
 	}
-	if useCursor {
-		vars.SetStatusFlag(mysql.ServerStatusCursorExists, true)
-	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
+		if useCursor {
+			vars.SetStatusFlag(mysql.ServerStatusCursorExists, false)
+		}
 		return false, cc.writeOK(ctx)
 	}
 	// since there are multiple implementations of ResultSet (the rs might be wrapped), we have to unwrap the rs before
@@ -298,7 +301,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.
-		err = cc.writeEOF(ctx, cc.ctx.Status()|mysql.ServerStatusCursorExists)
+		err = cc.writeEOF(ctx, cc.ctx.Status())
 		if err != nil {
 			return false, err
 		}
@@ -320,6 +323,8 @@ const (
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	cc.ctx.GetSessionVars().StartTime = time.Now()
 	cc.ctx.GetSessionVars().ClearAlloc(nil, false)
+	cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {
@@ -348,7 +353,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status()|mysql.ServerStatusCursorExists, int(fetchSize))
+	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
