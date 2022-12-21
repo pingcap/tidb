@@ -98,19 +98,20 @@ func init() {
 }
 
 var (
-	errUnknownFieldType        = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
-	errInvalidSequence         = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
-	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
-	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
-	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
-	errAccessDeniedNoPassword  = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
-	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
-	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
-	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
-	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
-	errNotSupportedAuthMode    = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
-	errNetPacketTooLarge       = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
-	errMustChangePassword      = dbterror.ClassServer.NewStd(errno.ErrMustChangePassword)
+	errUnknownFieldType           = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
+	errInvalidSequence            = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
+	errInvalidType                = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
+	errNotAllowedCommand          = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
+	errAccessDenied               = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
+	errAccessDeniedNoPassword     = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
+	errConCount                   = dbterror.ClassServer.NewStd(errno.ErrConCount)
+	errSecureTransportRequired    = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
+	errMultiStatementDisabled     = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
+	errNewAbortingConnection      = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
+	errNotSupportedAuthMode       = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
+	errNetPacketTooLarge          = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
+	errMustChangePassword         = dbterror.ClassServer.NewStd(errno.ErrMustChangePassword)
+	errNotAllowedWithActiveCursor = dbterror.ClassServer.NewStd(errno.ErrNotAllowedWithActiveCursor)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.

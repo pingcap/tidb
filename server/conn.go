@@ -1344,6 +1344,13 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
+	// only allow "FETCH" and "CLOSE" with an active cursor
+	// NOTE: commit is also not allowed. Users have to close the active statement before commit
+	if vars.ActiveCursorStmtID != 0 {
+		if !cc.isAllowedWithActiveCursor(cmd, data) {
+			return errNotAllowedWithActiveCursor
+		}
+	}
 
 	dataStr := string(hack.String(data))
 	switch cmd {
@@ -2598,6 +2605,18 @@ func (cc *clientConn) handleRefresh(ctx context.Context, subCommand byte) error 
 		}
 	}
 	return cc.writeOK(ctx)
+}
+
+// isAllowedWithActiveCursor returns whether the current command is allowed with an active cursor
+func (cc *clientConn) isAllowedWithActiveCursor(cmd byte, data []byte) bool {
+	if cmd == mysql.ComStmtFetch || cmd == mysql.ComStmtClose {
+		stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
+		if stmtID == cc.ctx.GetSessionVars().ActiveCursorStmtID {
+			return true
+		}
+	}
+
+	return false
 }
 
 var _ fmt.Stringer = getLastStmtInConn{}

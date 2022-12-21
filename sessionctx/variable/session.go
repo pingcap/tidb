@@ -1339,6 +1339,9 @@ type SessionVars struct {
 
 	// ProtectedTSList holds a list of timestamps that should delay GC.
 	ProtectedTSList protectedTSList
+
+	// ActiveCursorStmtID indicates the stmtID of the active cursor. If it's 0, there is no active cursor
+	ActiveCursorStmtID int
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session

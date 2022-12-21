@@ -298,6 +298,9 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		if err != nil {
 			return false, err
 		}
+		// set the active cursor
+		cc.ctx.GetSessionVars().ActiveCursorStmtID = stmt.ID()
+
 		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)
@@ -681,6 +684,9 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	}
 
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
+	if stmtID == cc.ctx.GetSessionVars().ActiveCursorStmtID {
+		cc.ctx.GetSessionVars().ActiveCursorStmtID = 0
+	}
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt != nil {
 		return stmt.Close()

@@ -1799,3 +1799,51 @@ func TestExtensionChangeUser(t *testing.T) {
 	require.Equal(t, expectedConnInfo.Error, logInfo.Error)
 	require.Equal(t, *(expectedConnInfo.ConnectionInfo), *(logInfo.ConnectionInfo))
 }
+
+func TestOnlyAllowFetchCloseWithActiveCursor(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	ctx := context.Background()
+	c := CreateMockConn(t, srv)
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1)")
+
+	stmt, _, _, err := c.Context().Prepare("select * from t")
+	require.NoError(t, err)
+
+	// execute with cursor fetch will set ActiveCursorStmtID
+	err = c.Dispatch(ctx, append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	))
+	require.NoError(t, err)
+	require.Equal(t, c.Context().Session.GetSessionVars().ActiveCursorStmtID, stmt.ID())
+
+	// execute another statement is not allowed
+	err = c.Dispatch(ctx, append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID()+1)),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	))
+	require.ErrorIs(t, err, errNotAllowedWithActiveCursor)
+
+	// close another statement is also not allowed
+	err = c.Dispatch(ctx, append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtClose}, uint32(stmt.ID()+1)),
+	))
+	require.ErrorIs(t, err, errNotAllowedWithActiveCursor)
+
+	// close this statement is allowed
+	err = c.Dispatch(ctx, append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtClose}, uint32(stmt.ID())),
+	))
+	require.NoError(t, err)
+
+	// after closing the statement, other statement is allowed
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+}
