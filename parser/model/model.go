@@ -757,9 +757,6 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
 	}
 
-	if t.Partition != nil {
-		nt.Partition = t.Partition.Clone()
-	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
 	}
@@ -1330,15 +1327,15 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
-func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName string) int {
+func (t *TableInfo) FindPartitionDefinitionByName(partitionDefinitionName string) *PartitionDefinition {
 	lowConstrName := strings.ToLower(partitionDefinitionName)
-	definitions := pi.Definitions
+	definitions := t.Partition.Definitions
 	for i := range definitions {
 		if definitions[i].Name.L == lowConstrName {
-			return i
+			return &t.Partition.Definitions[i]
 		}
 	}
-	return -1
+	return nil
 }
 
 // IndexColumn provides index column info.

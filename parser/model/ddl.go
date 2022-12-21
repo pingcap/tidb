@@ -165,9 +165,8 @@ var actionMap = map[ActionType]string{
 	ActionFlashbackCluster:              "flashback cluster",
 	ActionRecoverSchema:                 "flashback schema",
 	ActionReorganizePartition:           "alter table reorganize partition",
-
-	ActionAlterTTLInfo:   "alter table ttl",
-	ActionAlterTTLRemove: "alter table no_ttl",
+	ActionAlterTTLInfo:                  "alter table ttl",
+	ActionAlterTTLRemove:                "alter table no_ttl",
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",

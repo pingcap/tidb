@@ -1253,7 +1253,6 @@ func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, op
 
 func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
-	// TODO: Double write to AddingDefinitions!
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1308,7 +1307,6 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 		return errors.Trace(err)
 	}
 
-	// TODO: Double write to AddingDefinitions!
 	tbl := t.GetPartition(pid)
 	return tbl.RemoveRecord(ctx, h, r)
 }
@@ -1351,8 +1349,6 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-
-	// TODO: Double write to AddingDefinitions!
 
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
