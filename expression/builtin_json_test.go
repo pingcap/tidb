@@ -386,6 +386,47 @@ func TestJSONRemove(t *testing.T) {
 	}
 }
 
+func TestJSONMemberOf(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONMemberOf]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		err      error
+	}{
+		{[]interface{}{`1`, `a:1`}, 1, types.ErrInvalidJSONText},
+
+		{[]interface{}{1, `[1, 2]`}, 1, nil},
+		{[]interface{}{1, `[1]`}, 1, nil},
+		{[]interface{}{1, `[0]`}, 0, nil},
+		{[]interface{}{1, `[1]`}, 1, nil},
+		{[]interface{}{1, `[[1]]`}, 0, nil},
+		{[]interface{}{"1", `[1]`}, 0, nil},
+		{[]interface{}{"1", `["1"]`}, 1, nil},
+		{[]interface{}{`{"a":1}`, `{"a":1}`}, 0, nil},
+		{[]interface{}{`{"a":1}`, `[{"a":1}]`}, 0, nil},
+		{[]interface{}{`{"a":1}`, `[{"a":1}, 1]`}, 0, nil},
+		{[]interface{}{`{"a":1}`, `["{\"a\":1}"]`}, 1, nil},
+		{[]interface{}{`{"a":1}`, `["{\"a\":1}", 1]`}, 1, nil},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input...)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err, tt.input)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if tt.err == nil {
+			require.NoError(t, err, tt.input)
+			if tt.expected == nil {
+				require.True(t, d.IsNull(), tt.input)
+			} else {
+				require.Equal(t, int64(tt.expected.(int)), d.GetInt64(), tt.input)
+			}
+		} else {
+			require.True(t, tt.err.(*terror.Error).Equal(err), tt.input)
+		}
+	}
+}
+
 func TestJSONContains(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONContains]
@@ -463,6 +504,71 @@ func TestJSONContains(t *testing.T) {
 	for _, cs := range cases {
 		_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(cs.arg1, cs.arg2)))
 		require.True(t, types.ErrInvalidJSONData.Equal(err))
+	}
+}
+
+func TestJSONOverlaps(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONOverlaps]
+	tbl := []struct {
+		input    []any
+		expected any
+		err      error
+	}{
+		{[]any{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONText},
+		{[]any{`a:1`, `1`}, 1, types.ErrInvalidJSONText},
+		{[]any{nil, `1`}, nil, nil},
+		{[]any{`1`, nil}, nil, nil},
+
+		{[]any{`[1, 2]`, `[2,3]`}, 1, nil},
+		{[]any{`[1, 2]`, `[2]`}, 1, nil},
+		{[]any{`[1, 2]`, `2`}, 1, nil},
+		{[]any{`[{"a":1}]`, `{"a":1}`}, 1, nil},
+		{[]any{`[{"a":1}]`, `{"a":1,"b":2}`}, 0, nil},
+		{[]any{`[{"a":1}]`, `{"a":2}`}, 0, nil},
+		{[]any{`{"a":[1,2]}`, `{"a":[1]}`}, 0, nil},
+		{[]any{`{"a":[1,2]}`, `{"a":[2,1]}`}, 0, nil},
+		{[]any{`[1,1,1]`, `1`}, 1, nil},
+		{[]any{`1`, `1`}, 1, nil},
+		{[]any{`0`, `1`}, 0, nil},
+		{[]any{`[[1,2], 3]`, `[1,[2,3]]`}, 0, nil},
+		{[]any{`[[1,2], 3]`, `[1,3]`}, 1, nil},
+		{[]any{`{"a":1,"b":10,"d":10}`, `{"a":5,"e":10,"f":1,"d":20}`}, 0, nil},
+		{[]any{`[4,5,"6",7]`, `6`}, 0, nil},
+		{[]any{`[4,5,6,7]`, `"6"`}, 0, nil},
+
+		{[]any{`[2,3]`, `[1, 2]`}, 1, nil},
+		{[]any{`[2]`, `[1, 2]`}, 1, nil},
+		{[]any{`2`, `[1, 2]`}, 1, nil},
+		{[]any{`{"a":1}`, `[{"a":1}]`}, 1, nil},
+		{[]any{`{"a":1,"b":2}`, `[{"a":1}]`}, 0, nil},
+		{[]any{`{"a":2}`, `[{"a":1}]`}, 0, nil},
+		{[]any{`{"a":[1]}`, `{"a":[1,2]}`}, 0, nil},
+		{[]any{`{"a":[2,1]}`, `{"a":[1,2]}`}, 0, nil},
+		{[]any{`1`, `[1,1,1]`}, 1, nil},
+		{[]any{`1`, `1`}, 1, nil},
+		{[]any{`1`, `0`}, 0, nil},
+		{[]any{`[1,[2,3]]`, `[[1,2], 3]`}, 0, nil},
+		{[]any{`[1,3]`, `[[1,2], 3]`}, 1, nil},
+		{[]any{`{"a":5,"e":10,"f":1,"d":20}`, `{"a":1,"b":10,"d":10}`}, 0, nil},
+		{[]any{`6`, `[4,5,"6",7]`}, 0, nil},
+		{[]any{`"6"`, `[4,5,6,7]`}, 0, nil},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input...)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err, tt.input)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if tt.err == nil {
+			require.NoError(t, err, tt.input)
+			if tt.expected == nil {
+				require.True(t, d.IsNull(), tt.input)
+			} else {
+				require.Equal(t, int64(tt.expected.(int)), d.GetInt64(), tt.input)
+			}
+		} else {
+			require.True(t, tt.err.(*terror.Error).Equal(err), tt.input)
+		}
 	}
 }
 
