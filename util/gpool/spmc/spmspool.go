@@ -19,10 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util/gpool"
-	"go.uber.org/zap"
 )
 
 // Pool is a single producer, multiple consumer goroutine pool.
@@ -245,9 +243,6 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 			}
 			for _, task := range tasks {
 				wg.Add(1)
-				if err != nil {
-					log.Fatal("fail to static", zap.Error(err))
-				}
 				task := pooltask.Task[T]{
 					Task: task,
 				}
@@ -287,9 +282,6 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 				return
 			}
 			wg.Add(1)
-			if err != nil {
-				log.Fatal("fail to static", zap.Error(err))
-			}
 			t := pooltask.Task[T]{
 				Task: task,
 			}
