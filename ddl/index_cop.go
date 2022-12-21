@@ -96,9 +96,9 @@ type copReqSenderPool struct {
 	resultsCh chan idxRecResult
 	results   generic.SyncMap[int, struct{}]
 
-	ctx     context.Context
-	copCtx  *copContext
-	startTS uint64
+	ctx    context.Context
+	copCtx *copContext
+	store  kv.Storage
 
 	senders []*copReqSender
 	wg      sync.WaitGroup
@@ -132,7 +132,12 @@ func (c *copReqSender) run() {
 		curTaskID = task.id
 		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
 			zap.Int("id", task.id), zap.String("task", task.String()))
-		rs, err := p.copCtx.buildTableScan(p.ctx, p.startTS, task.startKey, task.excludedEndKey())
+		ver, err := p.store.CurrentVersion(kv.GlobalTxnScope)
+		if err != nil {
+			p.resultsCh <- idxRecResult{id: task.id, err: err}
+			return
+		}
+		rs, err := p.copCtx.buildTableScan(p.ctx, ver.Ver, task.startKey, task.excludedEndKey())
 		if err != nil {
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
@@ -161,7 +166,7 @@ func (c *copReqSender) run() {
 	}
 }
 
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64) *copReqSenderPool {
+func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage) *copReqSenderPool {
 	poolSize := int(variable.GetDDLReorgWorkerCounter() * copReadConcurrencyFactor)
 	idxBufPool := make(chan []*indexRecord, poolSize)
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
@@ -175,7 +180,7 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64
 		results:    generic.NewSyncMap[int, struct{}](10),
 		ctx:        ctx,
 		copCtx:     copCtx,
-		startTS:    startTS,
+		store:      store,
 		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
 		wg:         sync.WaitGroup{},
 		idxBufPool: idxBufPool,
