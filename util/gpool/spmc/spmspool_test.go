@@ -19,9 +19,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/gpool"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,7 +46,7 @@ func TestPool(t *testing.T) {
 		case task := <-taskCh:
 			return task, nil
 		default:
-			return 0, errors.New("not job")
+			return 0, gpool.ErrProducerClosed
 		}
 	}
 	// add new task
@@ -106,7 +106,7 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 					default:
 						select {
 						case <-exitCh:
-							return struct{}{}, errors.New("not job")
+							return struct{}{}, gpool.ErrProducerClosed
 						default:
 						}
 					}
@@ -162,7 +162,7 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 					default:
 						select {
 						case <-exitCh:
-							return struct{}{}, errors.New("not job")
+							return struct{}{}, gpool.ErrProducerClosed
 						default:
 						}
 					}
@@ -215,7 +215,7 @@ func TestBenchPool(t *testing.T) {
 				default:
 					select {
 					case <-exitCh:
-						return struct{}{}, errors.New("not job")
+						return struct{}{}, gpool.ErrProducerClosed
 					default:
 					}
 				}

@@ -175,8 +175,8 @@ func (p *Pool[T, U, C, CT, TF]) addWaiting(delta int) {
 	p.waiting.Add(int32(delta))
 }
 
-// Release closes this pool and releases the worker queue.
-func (p *Pool[T, U, C, CT, TF]) Release() {
+// release closes this pool and releases the worker queue.
+func (p *Pool[T, U, C, CT, TF]) release() {
 	if !p.state.CompareAndSwap(gpool.OPENED, gpool.CLOSED) {
 		return
 	}
@@ -204,7 +204,7 @@ func (p *Pool[T, U, C, CT, TF]) ReleaseAndWait() {
 	}
 
 	close(p.stopCh)
-	p.Release()
+	p.release()
 	for {
 		if p.Running() == 0 && p.heartbeatDone.Load() == 1 {
 			return

@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/gpool"
 )
 
 const (
@@ -52,7 +52,7 @@ func BenchmarkGPool(b *testing.B) {
 			if ok {
 				return struct{}{}, nil
 			}
-			return struct{}{}, errors.New("not job")
+			return struct{}{}, gpool.ErrProducerClosed
 		}
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(6), WithResultChanLen(10))
 		exitCh := make(chan struct{})
