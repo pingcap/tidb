@@ -15,8 +15,6 @@
 package sessionstates
 
 import (
-	"time"
-
 	"github.com/pingcap/tidb/errno"
 	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -79,7 +77,6 @@ type SessionStates struct {
 	FoundInPlanCache     bool                         `json:"in-plan-cache,omitempty"`
 	FoundInBinding       bool                         `json:"in-binding,omitempty"`
 	SequenceLatestValues map[int64]int64              `json:"seq-values,omitempty"`
-	MPPStoreLastFailTime map[string]time.Time         `json:"store-fail-time,omitempty"`
 	LastAffectedRows     int64                        `json:"affected-rows,omitempty"`
 	LastInsertID         uint64                       `json:"last-insert-id,omitempty"`
 	Warnings             []stmtctx.SQLWarn            `json:"warnings,omitempty"`
