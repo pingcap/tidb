@@ -67,7 +67,11 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command, is
 				zap.Int("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()),
 				zap.Bool("isLimit", isLimit))
-			pool.Pool.Tune(concurrency, isLimit)
+			if pool.Pool.Running() < con {
+				pool.Pool.DecreaseTask()
+			} else {
+				pool.Pool.Tune(concurrency, isLimit)
+			}
 		case scheduler.Overclock:
 			if pool.Pool.Running() < con {
 				pool.Pool.BoostTask()
@@ -83,7 +87,11 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command, is
 
 				zap.String("name", pool.Pool.Name()),
 				zap.Bool("isLimit", isLimit))
-			pool.Pool.Tune(concurrency, isLimit)
+			if pool.Pool.Running() < con {
+				pool.Pool.BoostTask()
+			} else {
+				pool.Pool.Tune(concurrency, isLimit)
+			}
 		}
 	}
 }

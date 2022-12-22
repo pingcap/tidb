@@ -198,6 +198,7 @@ func (s *Statistic) Static() (DoneFunc, error) {
 	}, nil
 }
 
+// Start starts the statistic.
 func (s *Statistic) Start() {
 	s.wg.Run(func() {
 		for {
@@ -217,6 +218,7 @@ func (s *Statistic) Start() {
 	})
 }
 
+// Stop stops the statistic.
 func (s *Statistic) Stop() {
 	close(s.exit)
 	s.wg.Wait()

@@ -160,12 +160,17 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int, isLimit bool) {
 	}
 }
 
-// BoostTask is used to boost the pool.
+// BoostTask is used to boost the number of  task in the pool.
 func (p *Pool[T, U, C, CT, TF]) BoostTask() {
 	if tid, boostTask := p.taskManager.Boost(); boostTask != nil {
 		p.taskManager.AddSubTask(tid, boostTask.Clone())
 		p.taskCh <- boostTask
 	}
+}
+
+// DecreaseTask is used to decrease the number of  task in the pool.
+func (p *Pool[T, U, C, CT, TF]) DecreaseTask() {
+	p.taskManager.Decrease()
 }
 
 // Running returns the number of workers currently running.

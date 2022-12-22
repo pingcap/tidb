@@ -148,3 +148,6 @@ func (*MockGPool) Name() string {
 
 // BoostTask is only for test
 func (*MockGPool) BoostTask() {}
+
+// DecreaseTask is only for test
+func (*MockGPool) DecreaseTask() {}

@@ -20,6 +20,7 @@ import "time"
 type GorotinuePool interface {
 	BoostTask()
 	Cap() int
+	DecreaseTask()
 	GetQueueSize() int64
 	InFlight() int64
 	// LongRTT is to represent the baseline latency by tracking a measurement of the long term, less volatile RTT.
@@ -29,7 +30,6 @@ type GorotinuePool interface {
 	MaxPASS() uint64
 	MinRT() uint64
 	Name() string
-	Release()
 	Running() int
 	// ShortRTT is to represent the current system latency by tracking a measurement of the short time, and more volatile RTT.
 	ShortRTT() uint64

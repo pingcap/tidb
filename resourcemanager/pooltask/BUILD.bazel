@@ -1,10 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "pooltask",
     srcs = [
         "stat.go",
-        "stat_collector.go",
         "task.go",
         "task_manager.go",
         "task_manager_iterator.go",
@@ -19,4 +18,10 @@ go_library(
         "@org_golang_x_sys//cpu",
         "@org_uber_go_atomic//:atomic",
     ],
+)
+
+go_test(
+    name = "pooltask_test",
+    srcs = ["task_test.go"],
+    embed = [":pooltask"],
 )
