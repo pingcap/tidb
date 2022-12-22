@@ -183,6 +183,21 @@ func (tk *AsyncTestKit) MustExec(ctx context.Context, sql string, args ...interf
 	}
 }
 
+// MustGetErrMsg executes a sql statement and assert its error message.
+func (tk *AsyncTestKit) MustGetErrMsg(ctx context.Context, sql string, errStr string) {
+	err := tk.ExecToErr(ctx, sql)
+	tk.require.EqualError(err, errStr)
+}
+
+// ExecToErr executes a sql statement and discard results.
+func (tk *AsyncTestKit) ExecToErr(ctx context.Context, sql string, args ...interface{}) error {
+	res, err := tk.Exec(ctx, sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	return err
+}
+
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *AsyncTestKit) MustQuery(ctx context.Context, sql string, args ...interface{}) *Result {
