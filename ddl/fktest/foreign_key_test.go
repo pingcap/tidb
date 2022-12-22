@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -1563,7 +1564,7 @@ func getLatestSchemaDiff(t *testing.T, tk *testkit.TestKit) *model.SchemaDiff {
 	return diff
 }
 
-func TestTestMultiSchemaAddForeignKey(t *testing.T) {
+func TestMultiSchemaAddForeignKey(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@foreign_key_checks=1;")
@@ -1590,4 +1591,20 @@ func TestTestMultiSchemaAddForeignKey(t *testing.T) {
 	tk.MustExec("drop table t2")
 	tk.MustExec("create table t2 (a int, b int, index idx0(a,b), index idx1(a), index idx2(b));")
 	tk.MustExec("alter table t2 drop index idx1, add foreign key (a) references t1(id), add foreign key (b) references t1(id)")
+}
+
+func TestAddForeignKeyInBigTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	tk.MustExec("create table employee (id bigint auto_increment key, pid bigint)")
+	tk.MustExec("insert into employee (id) values (1),(2),(3),(4),(5),(6),(7),(8)")
+	for i := 0; i < 14; i++ {
+		tk.MustExec("insert into employee (pid) select pid from employee")
+	}
+	tk.MustExec("update employee set pid=id-1 where id>1")
+	start := time.Now()
+	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
+	require.Less(t, time.Since(start), time.Minute)
 }
