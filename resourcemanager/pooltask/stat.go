@@ -66,6 +66,7 @@ func NewStatistic() *Statistic {
 		bucketPerSecond: uint64(time.Second / bucketDuration),
 		longRTT:         mathutil.NewExponentialMovingAverage(0.2, 10),
 		event:           make(chan event, 100),
+		exit:            make(chan struct{}),
 	}
 }
 
