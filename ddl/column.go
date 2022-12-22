@@ -1042,12 +1042,35 @@ func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInf
 	return elements
 }
 
-func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, reorgInfo *reorgInfo) error {
+func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to update table row", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	if reorgInfo.Job.Type == model.ActionReorganizePartition {
-		panic("FIXME: this got reverted and should be brought back")
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		done := false
+		for !done {
+			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
+			if p == nil {
+				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+			}
+			workType := typeReorgPartitionWorker
+			if reorgInfo.Job.Type != model.ActionReorganizePartition {
+				workType = typeUpdateColumnWorker
+				panic("FIXME: See https://github.com/pingcap/tidb/issues/39915")
+			}
+			err := w.writePhysicalTableRecord(w.sessPool, p, workType, reorgInfo)
+			if err != nil {
+				return err
+			}
+			done, err = w.updateReorgInfo(tbl, reorgInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	}
-	return w.writePhysicalTableRecord(w.sessPool, t, typeUpdateColumnWorker, reorgInfo)
+	if tbl, ok := t.(table.PhysicalTable); ok {
+		return w.writePhysicalTableRecord(w.sessPool, tbl, typeUpdateColumnWorker, reorgInfo)
+	}
+	return dbterror.ErrCancelledDDLJob.GenWithStack("internal error for phys tbl id: %d tbl id: %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
@@ -1071,8 +1094,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), reorgInfo)
+		err := w.updatePhysicalTableRow(t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
