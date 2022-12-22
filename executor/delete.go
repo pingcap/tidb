@@ -245,7 +245,8 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	if err != nil {
 		return err
 	}
-	err = e.onRemoveRowForFK(ctx, t, data)
+	tid := t.Meta().ID
+	err = onRemoveRowForFK(ctx, data, e.fkChecks[tid], e.fkCascades[tid])
 	if err != nil {
 		return err
 	}
@@ -253,8 +254,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	return nil
 }
 
-func (e *DeleteExec) onRemoveRowForFK(ctx sessionctx.Context, t table.Table, data []types.Datum) error {
-	fkChecks := e.fkChecks[t.Meta().ID]
+func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, fkc := range fkChecks {
 		err := fkc.deleteRowNeedToCheck(sc, data)
@@ -262,7 +262,6 @@ func (e *DeleteExec) onRemoveRowForFK(ctx sessionctx.Context, t table.Table, dat
 			return err
 		}
 	}
-	fkCascades := e.fkCascades[t.Meta().ID]
 	for _, fkc := range fkCascades {
 		err := fkc.onDeleteRow(sc, data)
 		if err != nil {
