@@ -343,34 +343,36 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	if selected != nil {
 		ds.possibleAccessPaths[0] = selected
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+		var tableName string
+		if ds.TableAsName.O == "" {
+			tableName = ds.tableInfo.Name.O
+		} else {
+			tableName = ds.TableAsName.O
+		}
+		var sb strings.Builder
+		if selected.IsTablePath() {
+			// TODO: primary key / handle / real name?
+			sb.WriteString(fmt.Sprintf("handle of %s is selected since the path only has point ranges", tableName))
+		} else {
+			if selected.Index.Unique {
+				sb.WriteString("unique ")
+			}
+			sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
+			if isRefinedPath {
+				sb.WriteString(" only fetches limited number of rows")
+			} else {
+				sb.WriteString(" only has point ranges")
+			}
+			if selected.IsSingleScan {
+				sb.WriteString(" with single scan")
+			} else {
+				sb.WriteString(" with double scan")
+			}
+		}
 		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
-			var tableName string
-			if ds.TableAsName.O == "" {
-				tableName = ds.tableInfo.Name.O
-			} else {
-				tableName = ds.TableAsName.O
-			}
-			if selected.IsTablePath() {
-				// TODO: primary key / handle / real name?
-				ds.ctx.GetSessionVars().StmtCtx.AppendNote(fmt.Errorf("handle of %s is selected since the path only has point ranges", tableName))
-			} else {
-				var sb strings.Builder
-				if selected.Index.Unique {
-					sb.WriteString("unique ")
-				}
-				sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
-				if isRefinedPath {
-					sb.WriteString(" only fetches limited number of rows")
-				} else {
-					sb.WriteString(" only has point ranges")
-				}
-				if selected.IsSingleScan {
-					sb.WriteString(" with single scan")
-				} else {
-					sb.WriteString(" with double scan")
-				}
-				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
-			}
+			ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
+		} else {
+			ds.ctx.GetSessionVars().StmtCtx.AppendExtraNote(errors.New(sb.String()))
 		}
 	}
 	return nil
@@ -435,8 +437,10 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		if needConsiderIndexMerge {
 			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
 			warnings := stmtCtx.GetWarnings()
+			extraWarnings := stmtCtx.GetExtraWarnings()
 			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
 			stmtCtx.SetWarnings(warnings)
+			stmtCtx.SetExtraWarnings(extraWarnings)
 			if len(remaining) != 0 {
 				needConsiderIndexMerge = false
 			}

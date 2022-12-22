@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -209,8 +210,15 @@ type StatementContext struct {
 		copied  uint64
 		touched uint64
 
-		message        string
-		warnings       []SQLWarn
+		message  string
+		warnings []SQLWarn
+		// extraWarnings record the extra warnings and are only used by the slow log only now.
+		// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
+		// not under such conditions now, it is considered as an extra warning.
+		// extraWarnings would not be printed through SHOW WARNINGS, but we want to always output them through the slow
+		// log to help diagnostics, so we store them here separately.
+		extraWarnings []SQLWarn
+
 		execDetails    execdetails.ExecDetails
 		allExecDetails []*execdetails.DetailsNeedP90
 	}
@@ -299,8 +307,6 @@ type StatementContext struct {
 		LogOnExceed [2]memory.LogOnExceed
 	}
 
-	// OptimInfo maps Plan.ID() to optimization information when generating Plan.
-	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
@@ -812,6 +818,47 @@ func (sc *StatementContext) AppendError(warn error) {
 	}
 }
 
+// GetExtraWarnings gets extra warnings.
+func (sc *StatementContext) GetExtraWarnings() []SQLWarn {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.mu.extraWarnings
+}
+
+// SetExtraWarnings sets extra warnings.
+func (sc *StatementContext) SetExtraWarnings(warns []SQLWarn) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.extraWarnings = warns
+}
+
+// AppendExtraWarning appends an extra warning with level 'Warning'.
+func (sc *StatementContext) AppendExtraWarning(warn error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.mu.extraWarnings) < math.MaxUint16 {
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelWarning, warn})
+	}
+}
+
+// AppendExtraNote appends an extra warning with level 'Note'.
+func (sc *StatementContext) AppendExtraNote(warn error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.mu.extraWarnings) < math.MaxUint16 {
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelNote, warn})
+	}
+}
+
+// AppendExtraError appends an extra warning with level 'Error'.
+func (sc *StatementContext) AppendExtraError(warn error) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if len(sc.mu.extraWarnings) < math.MaxUint16 {
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelError, warn})
+	}
+}
+
 // HandleTruncate ignores or returns the error based on the StatementContext state.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
@@ -819,6 +866,21 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	if err == nil {
 		return nil
 	}
+
+	err = errors.Cause(err)
+	if e, ok := err.(*errors.Error); !ok ||
+		(e.Code() != errno.ErrTruncatedWrongValue &&
+			e.Code() != errno.ErrDataTooLong &&
+			e.Code() != errno.ErrTruncatedWrongValueForField &&
+			e.Code() != errno.ErrWarnDataOutOfRange &&
+			e.Code() != errno.ErrDataOutOfRange &&
+			e.Code() != errno.ErrBadNumber &&
+			e.Code() != errno.ErrWrongValueForType &&
+			e.Code() != errno.ErrDatetimeFunctionOverflow &&
+			e.Code() != errno.WarnDataTruncated) {
+		return err
+	}
+
 	if sc.IgnoreTruncate {
 		return nil
 	}

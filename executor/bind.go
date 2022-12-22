@@ -63,6 +63,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.reloadBindings()
 	case plannercore.OpSetBindingStatus:
 		return e.setBindingStatus()
+	case plannercore.OpSetBindingStatusByDigest:
+		return e.setBindingStatusByDigest()
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
@@ -112,6 +114,15 @@ func (e *SQLBindExec) setBindingStatus() error {
 		}
 	}
 	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatus(e.normdOrigSQL, bindInfo, e.newStatus)
+	if err == nil && !ok {
+		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
+	}
+	return err
+}
+
+func (e *SQLBindExec) setBindingStatusByDigest() error {
+	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatusByDigest(e.newStatus, e.sqlDigest)
 	if err == nil && !ok {
 		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
