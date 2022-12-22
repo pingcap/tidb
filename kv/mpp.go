@@ -50,7 +50,7 @@ var ClusterMinMppVersion = atomicutil.NewInt64(MppVersionV0)
 
 func FmtMppVersion(v int64) string {
 	if v == MppVersionUnspecified {
-		return fmt.Sprintf("unspecified(now %d)", ClusterMinMppVersion.Load())
+		return fmt.Sprintf("unspecified(use %d)", ClusterMinMppVersion.Load())
 	}
 	return fmt.Sprintf("%d", v)
 }
