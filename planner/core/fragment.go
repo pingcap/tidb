@@ -368,7 +368,7 @@ func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.
 		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
 		ttl = 30 * time.Second
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

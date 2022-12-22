@@ -230,7 +230,19 @@ var (
 			Help:      "Counter of TiFlash queries.",
 		}, []string{LblType, LblResult})
 
+<<<<<<< HEAD
 	PDApiExecutionHistogram = prometheus.NewHistogramVec(
+=======
+	TiFlashFailedMPPStoreState = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tiflash_failed_store",
+			Help:      "Statues of failed tiflash mpp store,-1 means detector heartbeat,0 means reachable,1 means abnormal.",
+		}, []string{LblAddress})
+
+	PDAPIExecutionHistogram = prometheus.NewHistogramVec(
+>>>>>>> aeccf77637 (*: optimize mpp probe (#39932))
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
