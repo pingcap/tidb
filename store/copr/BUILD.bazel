@@ -78,11 +78,7 @@ go_test(
         "//util/paging",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
-<<<<<<< HEAD
-=======
         "@com_github_pingcap_kvproto//pkg/mpp",
-        "@com_github_stathat_consistent//:consistent",
->>>>>>> aeccf77637 (*: optimize mpp probe (#39932))
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//testutils",
