@@ -365,6 +365,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
 	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+		// TODO: remove this CI debug line
+		logutil.BgLogger().Info("canSkipSchemaCheckerDDL returns true")
 		return true
 	}
 	return false
