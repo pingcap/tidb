@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -469,13 +470,23 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJS
 
 	arrayVals := make([]any, 0, len(b.args))
 	f := convertJSON2Tp(b.tp.ArrayType())
-	originVal := b.ctx.GetSessionVars().StmtCtx.OverflowAsWarning
-	b.ctx.GetSessionVars().StmtCtx.OverflowAsWarning = false
+	if f == nil {
+		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAS-ing JSON to the target type")
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	originalOverflowAsWarning := sc.OverflowAsWarning
+	originIgnoreTruncate := sc.IgnoreTruncate
+	originTruncateAsWarning := sc.TruncateAsWarning
+	sc.OverflowAsWarning = false
+	sc.IgnoreTruncate = false
+	sc.TruncateAsWarning = false
 	defer func() {
-		b.ctx.GetSessionVars().StmtCtx.OverflowAsWarning = originVal
+		sc.OverflowAsWarning = originalOverflowAsWarning
+		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.TruncateAsWarning = originTruncateAsWarning
 	}()
 	for i := 0; i < val.GetElemCount(); i++ {
-		item, err := f(b, val.ArrayGetElem(i))
+		item, err := f(sc, val.ArrayGetElem(i))
 		if err != nil {
 			return types.BinaryJSON{}, false, err
 		}
@@ -484,43 +495,51 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJS
 	return types.CreateBinaryJSON(arrayVals), false, nil
 }
 
-func convertJSON2Tp(tp *types.FieldType) func(*castJSONAsArrayFunctionSig, types.BinaryJSON) (any, error) {
+func convertJSON2Tp(tp *types.FieldType) func(*stmtctx.StatementContext, types.BinaryJSON) (any, error) {
 	switch tp.EvalType() {
 	case types.ETString:
-		return func(b *castJSONAsArrayFunctionSig, item types.BinaryJSON) (any, error) {
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON) (any, error) {
 			if item.TypeCode != types.JSONTypeCodeString {
-				return nil, errIncorrectArgs
+				return nil, ErrInvalidJSONForFuncIndex
 			}
-			return types.ProduceStrWithSpecifiedTp(string(item.GetString()), tp, b.ctx.GetSessionVars().StmtCtx, false)
+			return types.ProduceStrWithSpecifiedTp(string(item.GetString()), tp, sc, false)
+		}
+	case types.ETInt:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return types.ConvertJSONToInt(sc, item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
+		}
+	case types.ETReal, types.ETDecimal:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 && item.TypeCode != types.JSONTypeCodeFloat64 {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return types.ConvertJSONToFloat(sc, item)
+		}
+	case types.ETDatetime:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON) (any, error) {
+			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			res := item.GetTime()
+			res.SetType(tp.GetType())
+			if tp.GetType() == mysql.TypeDate {
+				// Truncate hh:mm:ss part if the type is Date.
+				res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+			}
+			return res, nil
+		}
+	case types.ETDuration:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeDuration {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return item.GetDuration(), nil
 		}
 	default:
-		return func(b *castJSONAsArrayFunctionSig, item types.BinaryJSON) (any, error) {
-			switch tp.EvalType() {
-			case types.ETInt:
-				if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
-					return nil, errIncorrectArgs
-				}
-			case types.ETReal, types.ETDecimal:
-				if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 && item.TypeCode != types.JSONTypeCodeFloat64 {
-					return nil, errIncorrectArgs
-				}
-			case types.ETDatetime:
-				if item.TypeCode != types.JSONTypeCodeDatetime {
-					return nil, errIncorrectArgs
-				}
-			case types.ETTimestamp:
-				if item.TypeCode != types.JSONTypeCodeTimestamp {
-					return nil, errIncorrectArgs
-				}
-			case types.ETDuration:
-				if item.TypeCode != types.JSONTypeCodeDate {
-					return nil, errIncorrectArgs
-				}
-			}
-			d := types.NewJSONDatum(item)
-			to, err := d.ConvertTo(b.ctx.GetSessionVars().StmtCtx, tp)
-			return to.GetValue(), err
-		}
+		return nil
 	}
 }
 

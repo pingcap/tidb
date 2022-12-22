@@ -1661,7 +1661,7 @@ func TestCastArrayFunc(t *testing.T) {
 			[]interface{}{int64(-1), 2.1, int64(3)},
 			[]interface{}{int64(-1), 2.1, int64(3)},
 			types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetCharset(charset.CharsetBin).SetCollate(charset.CharsetBin).SetArray(true).BuildP(),
-			false,
+			true,
 			true,
 		},
 	}
