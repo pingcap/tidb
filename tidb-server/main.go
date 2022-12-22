@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	kvstore "github.com/pingcap/tidb/store"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
@@ -292,6 +293,12 @@ func createStoreAndDomain() (kv.Storage, *domain.Domain) {
 	var err error
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
+<<<<<<< HEAD
+=======
+	copr.GlobalMPPFailedStoreProber.Run()
+	err = infosync.CheckTiKVVersion(storage, *semver.New(versioninfo.TiKVMinVersion))
+	terror.MustNil(err)
+>>>>>>> aeccf77637 (*: optimize mpp probe (#39932))
 	// Bootstrap a session to load information schema.
 	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
@@ -767,6 +774,7 @@ func setupTracing() {
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
+	copr.GlobalMPPFailedStoreProber.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
 }

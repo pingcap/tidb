@@ -992,9 +992,12 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
 
+<<<<<<< HEAD
 	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
 	MPPStoreLastFailTime map[string]time.Time
 
+=======
+>>>>>>> aeccf77637 (*: optimize mpp probe (#39932))
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
 
@@ -1193,6 +1196,7 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
+<<<<<<< HEAD
 		Users:                       make(map[string]types.Datum),
 		UserVarTypes:                make(map[string]*types.FieldType),
 		systems:                     make(map[string]string),
@@ -1283,6 +1287,111 @@ func NewSessionVars() *SessionVars {
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
+=======
+		userVars: struct {
+			lock   sync.RWMutex
+			values map[string]types.Datum
+			types  map[string]*types.FieldType
+		}{
+			values: make(map[string]types.Datum),
+			types:  make(map[string]*types.FieldType),
+		},
+		systems:                       make(map[string]string),
+		stmtVars:                      make(map[string]string),
+		PreparedStmts:                 make(map[uint32]interface{}),
+		PreparedStmtNameToID:          make(map[string]uint32),
+		PreparedParams:                make([]types.Datum, 0, 10),
+		TxnCtx:                        &TransactionContext{},
+		RetryInfo:                     &RetryInfo{},
+		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:                 true,
+		AutoIncrementIncrement:        DefAutoIncrementIncrement,
+		AutoIncrementOffset:           DefAutoIncrementOffset,
+		Status:                        mysql.ServerStatusAutocommit,
+		StmtCtx:                       new(stmtctx.StatementContext),
+		AllowAggPushDown:              false,
+		AllowCartesianBCJ:             DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
+		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
+		RetryLimit:                    DefTiDBRetryLimit,
+		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:              kv.PriorityLow,
+		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
+		preferRangeScan:               DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:   DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:        DefOptLimitPushDownThreshold,
+		CorrelationThreshold:          DefOptCorrelationThreshold,
+		CorrelationExpFactor:          DefOptCorrelationExpFactor,
+		cpuFactor:                     DefOptCPUFactor,
+		copCPUFactor:                  DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:   DefOptTiFlashConcurrencyFactor,
+		networkFactor:                 DefOptNetworkFactor,
+		scanFactor:                    DefOptScanFactor,
+		descScanFactor:                DefOptDescScanFactor,
+		seekFactor:                    DefOptSeekFactor,
+		memoryFactor:                  DefOptMemoryFactor,
+		diskFactor:                    DefOptDiskFactor,
+		concurrencyFactor:             DefOptConcurrencyFactor,
+		enableForceInlineCTE:          DefOptForceInlineCTE,
+		EnableVectorizedExpression:    DefEnableVectorizedExpression,
+		CommandValue:                  uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:        DefWaitSplitRegionTimeout,
+		enableIndexMerge:              DefTiDBEnableIndexMerge,
+		NoopFuncsMode:                 TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
+		replicaRead:                   kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:            DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:              DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:           DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:           false,
+		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:               DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:              DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:     DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                 NewSequenceState(),
+		WindowingUseHighPrecision:     true,
+		PrevFoundInPlanCache:          DefTiDBFoundInPlanCache,
+		FoundInPlanCache:              DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:            DefTiDBFoundInBinding,
+		FoundInBinding:                DefTiDBFoundInBinding,
+		SelectLimit:                   math.MaxUint64,
+		AllowAutoRandExplicitInsert:   DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
+		EnableParallelApply:           DefTiDBEnableParallelApply,
+		ShardAllocateStep:             DefTiDBShardAllocateStep,
+		EnableAmendPessimisticTxn:     DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                      kv.NewDefaultTxnScopeVar(),
+		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:             DefTiDBEnableAsyncCommit,
+		Enable1PC:                     DefTiDBEnable1PC,
+		GuaranteeLinearizability:      DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:                DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:          DefTiDBEnableIndexMergeJoin,
+		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
+		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
+		TMPTableSize:                  DefTiDBTmpTableMaxSize,
+		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
+		Rng:                           mathutil.NewWithTime(),
+		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
+		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
+		MaxAllowedPacket:              DefMaxAllowedPacket,
+		TiFlashFastScan:               DefTiFlashFastScan,
+		EnableTiFlashReadForWriteStmt: DefTiDBEnableTiFlashReadForWriteStmt,
+		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
+		HookContext:                   hctx,
+		EnableReuseCheck:              DefTiDBEnableReusechunk,
+		preUseChunkAlloc:              DefTiDBUseAlloc,
+		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+>>>>>>> aeccf77637 (*: optimize mpp probe (#39932))
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1713,6 +1822,81 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// EncodeSessionStates saves session states into SessionStates.
+func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	// Encode user-defined variables.
+	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
+	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.userVars.types))
+	s.userVars.lock.RLock()
+	defer s.userVars.lock.RUnlock()
+	for name, userVar := range s.userVars.values {
+		sessionStates.UserVars[name] = userVar.Clone()
+	}
+	for name, userVarType := range s.userVars.types {
+		sessionStates.UserVarTypes[name] = userVarType.Clone()
+	}
+
+	// Encode other session contexts.
+	sessionStates.PreparedStmtID = s.preparedStmtID
+	sessionStates.Status = s.Status
+	sessionStates.CurrentDB = s.CurrentDB
+	sessionStates.LastTxnInfo = s.LastTxnInfo
+	if s.LastQueryInfo.StartTS != 0 {
+		sessionStates.LastQueryInfo = &s.LastQueryInfo
+	}
+	if s.LastDDLInfo.SeqNum != 0 {
+		sessionStates.LastDDLInfo = &s.LastDDLInfo
+	}
+	sessionStates.LastFoundRows = s.LastFoundRows
+	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
+	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
+	sessionStates.FoundInBinding = s.PrevFoundInBinding
+
+	// Encode StatementContext. We encode it here to avoid circle dependency.
+	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
+	sessionStates.LastInsertID = s.StmtCtx.PrevLastInsertID
+	sessionStates.Warnings = s.StmtCtx.GetWarnings()
+	return
+}
+
+// DecodeSessionStates restores session states from SessionStates.
+func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	// Decode user-defined variables.
+	s.userVars.values = make(map[string]types.Datum, len(sessionStates.UserVars))
+	for name, userVar := range sessionStates.UserVars {
+		s.SetUserVarVal(name, *userVar.Clone())
+	}
+	s.userVars.types = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
+	for name, userVarType := range sessionStates.UserVarTypes {
+		s.SetUserVarType(name, userVarType.Clone())
+	}
+
+	// Decode other session contexts.
+	s.preparedStmtID = sessionStates.PreparedStmtID
+	s.Status = sessionStates.Status
+	s.CurrentDB = sessionStates.CurrentDB
+	s.LastTxnInfo = sessionStates.LastTxnInfo
+	if sessionStates.LastQueryInfo != nil {
+		s.LastQueryInfo = *sessionStates.LastQueryInfo
+	}
+	if sessionStates.LastDDLInfo != nil {
+		s.LastDDLInfo = *sessionStates.LastDDLInfo
+	}
+	s.LastFoundRows = sessionStates.LastFoundRows
+	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
+	s.FoundInPlanCache = sessionStates.FoundInPlanCache
+	s.FoundInBinding = sessionStates.FoundInBinding
+
+	// Decode StatementContext.
+	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
+	s.StmtCtx.SetWarnings(sessionStates.Warnings)
+	return
+}
+
+>>>>>>> aeccf77637 (*: optimize mpp probe (#39932))
 // TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
 	Delta    int64

@@ -202,3 +202,12 @@ func TestAutoCommitNeedNotLinearizability(t *testing.T) {
 		tk.MustExec("COMMIT")
 	}()
 }
+<<<<<<< HEAD
+=======
+
+func TestKill(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("kill connection_id();")
+}
+>>>>>>> aeccf77637 (*: optimize mpp probe (#39932))
