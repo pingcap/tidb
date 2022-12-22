@@ -202,7 +202,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 		return errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return errors.Errorf("Detected upgrade during [%s, now), can't do flashback", flashbackTSString)
+		return errors.Errorf("Detected TiDB upgrade during [%s, now), can't do flashback", flashbackTSString)
 	}
 
 	// Check is there a DDL task at flashbackTS.
@@ -251,7 +251,7 @@ type flashbackID struct {
 
 func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []flashbackID) []flashbackID {
 	var excluded bool
-	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") && !strings.HasPrefix(tableName, "gc_delete_range") {
+	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") && tableName != "gc_delete_range" {
 		excluded = true
 	}
 	flashbackIDs = append(flashbackIDs, flashbackID{

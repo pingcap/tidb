@@ -1,0 +1,11 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "flashbacktest_test",
+    srcs = ["main_test.go"],
+    deps = [
+        "//testkit/testsetup",
+        "//tests/realtikvtest",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
