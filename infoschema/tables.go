@@ -2235,23 +2235,18 @@ func (vt *VirtualTable) Type() table.Type {
 	return table.VirtualTable
 }
 
+// GetTiFlashServerInfo returns all TiFlash server infos
 func GetTiFlashServerInfo(sctx sessionctx.Context) ([]ServerInfo, error) {
 	serversInfo, err := GetStoreServerInfo(sctx)
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = FilterClusterServerInfo(serversInfo, set.NewStringSet("tiflash"), set.NewStringSet())
+	serversInfo = FilterClusterServerInfo(serversInfo, set.NewStringSet(kv.TiFlash.Name()), set.NewStringSet())
 	return serversInfo, nil
 }
 
-// FetchClusterServerInfoWithoutPrivilegeCheck implements the memTableRetriever interface
-func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessionctx.Context, serverInfoType diagnosticspb.ServerInfoType, nodeTypes set.StringSet, instances set.StringSet) ([][]types.Datum, error) {
-	serversInfo, err := GetClusterServerInfo(sctx)
-	if err != nil {
-		return nil, err
-	}
-	serversInfo = FilterClusterServerInfo(serversInfo, nodeTypes, instances)
-
+// FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
+func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessionctx.Context, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -2287,7 +2282,11 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessi
 	var results []result //nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			if recordWarningInStmtCtx {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			} else {
+				log.Warn(result.err.Error())
+			}
 			continue
 		}
 		results = append(results, result)

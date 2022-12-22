@@ -310,7 +310,12 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 	e.retrieved = true
-	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, e.serverInfoType, e.extractor.NodeTypes, e.extractor.Instances)
+	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
+	if err != nil {
+		return nil, err
+	}
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
+	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, e.serverInfoType, true)
 }
 
 func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {

@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
 	"math"
 	"strconv"
 
@@ -666,20 +665,25 @@ func handleFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, plan
 			streamCount = sctx.GetSessionVars().TiFlashMaxThreads
 		}
 	}
-	var tiflashServerCount uint64 = 0
-	var streamCountUInt = uint64(streamCount)
-	setupFineGrainedShuffle(ctx, sctx, &streamCountUInt, &tiflashServerCount, plan)
+	// use two separate cluster info to avoid grpc calls cost
+	serverCountInfo := tiflashClusterInfo{unInitialized, 0}
+	streamCountInfo := tiflashClusterInfo{unInitialized, 0}
+	if streamCount != 0 {
+		streamCountInfo.itemStatus = initialized
+		streamCountInfo.itemValue = uint64(streamCount)
+	}
+	setupFineGrainedShuffle(ctx, sctx, &serverCountInfo, &streamCountInfo, plan)
 }
 
-func setupFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, streamCount * uint64, tiflashServerCount * uint64, plan PhysicalPlan) {
+func setupFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan PhysicalPlan) {
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
 			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*basePhysicalPlan, 1)}
-			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCount, tiflashServerCount)
+			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
 		}
 	} else {
 		for _, child := range plan.Children() {
-			setupFineGrainedShuffle(ctx, sctx, streamCount, tiflashServerCount, child)
+			setupFineGrainedShuffle(ctx, sctx, streamCountInfo, tiflashServerCountInfo, child)
 		}
 	}
 }
@@ -699,6 +703,19 @@ type fineGrainedShuffleHelper struct {
 	joinKeysCount int
 }
 
+type tiflashClusterInfoStatus uint8
+
+const (
+	unInitialized tiflashClusterInfoStatus = iota
+	initialized
+	failed
+)
+
+type tiflashClusterInfo struct {
+	itemStatus tiflashClusterInfoStatus
+	itemValue  uint64
+}
+
 func (h *fineGrainedShuffleHelper) clear() {
 	h.shuffleTarget = unknown
 	h.plans = h.plans[:0]
@@ -710,36 +727,134 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysical
 	h.plans = append(h.plans, p)
 }
 
-// getTiFlashServerInfo returns server count and minimal logical cpus among servers
-// return 0,0 if any err happens
-func getTiFlashServerInfo(ctx context.Context, sctx sessionctx.Context) (int, int) {
-	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, diagnosticspb.ServerInfoType_HardwareInfo, set.NewStringSet("tiflash"), set.NewStringSet())
+// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
+// return false, 0 if any err happens
+func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx sessionctx.Context, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
 	if err != nil {
-		return 0, 0
+		return false, 0
 	}
-	var min_logical_cores = 1000
-	var server_count = 0
+	var kMaxCores uint64 = 10000
+	var minLogicalCores uint64 = kMaxCores // set to a large enough value here
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
-			server_count++
-			logical_cpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logical_cpus < min_logical_cores {
-				min_logical_cores = logical_cpus
+			logicalCpus, err := strconv.Atoi(row[5].GetString())
+			if err == nil && logicalCpus > 0 && uint64(logicalCpus) < minLogicalCores {
+				minLogicalCores = uint64(logicalCpus)
 			}
 		}
 	}
-	log.Error(fmt.Sprintf("Cluster Hardware info: %d, server_count: %d, min logical_cores: %d", len(rows), server_count, min_logical_cores))
-	return server_count, min_logical_cores
+	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
+	if minLogicalCores > 1 && minLogicalCores != kMaxCores {
+		return true, minLogicalCores / 2
+	} else {
+		return false, 0
+	}
 }
 
-func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan, helper *fineGrainedShuffleHelper, streamCount * uint64, tiflashServerCount * uint64) {
+func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, exchangeColLen int, splitLimit uint64) (applyFlag bool, streamCount uint64) {
+	switch (*streamCountInfo).itemStatus {
+	case unInitialized:
+		streamCount = 4 // assume 8c node in cluster as minimal, stream count is 8 / 2 = 4
+	case initialized:
+		streamCount = (*streamCountInfo).itemValue
+	case failed:
+		return false, 0
+	}
+
+	var tiflashServerCount uint64 = 0
+	switch (*tiflashServerCountInfo).itemStatus {
+	case unInitialized:
+		serversInfo, err := infoschema.GetTiFlashServerInfo(sctx)
+		if err != nil {
+			(*tiflashServerCountInfo).itemStatus = failed
+			(*tiflashServerCountInfo).itemValue = 0
+			return false, 0
+		}
+		tiflashServerCount = uint64(len(serversInfo))
+		(*tiflashServerCountInfo).itemStatus = initialized
+		(*tiflashServerCountInfo).itemValue = tiflashServerCount
+	case initialized:
+		tiflashServerCount = (*tiflashServerCountInfo).itemValue
+	case failed:
+		return false, 0
+	}
+
+	// if already exceeds splitLimit, no need to fetch actual logical cores
+	if tiflashServerCount*uint64(exchangeColLen)*streamCount > splitLimit {
+		return false, 0
+	}
+
+	// if streamCount already initialized, and can pass splitLimit check
+	if (*streamCountInfo).itemStatus == initialized {
+		return true, streamCount
+	}
+
+	serversInfo, err := infoschema.GetTiFlashServerInfo(sctx)
+	if err != nil {
+		(*tiflashServerCountInfo).itemStatus = failed
+		(*tiflashServerCountInfo).itemValue = 0
+		return false, 0
+	}
+	flag, streamCount := calculateTiFlashStreamCountUsingMinLogicalCores(ctx, sctx, serversInfo)
+	if !flag {
+		setDefaultStreamCount(streamCountInfo)
+		(*tiflashServerCountInfo).itemStatus = failed
+		return false, 0
+	}
+	(*streamCountInfo).itemStatus = initialized
+	(*streamCountInfo).itemValue = streamCount
+	applyFlag = tiflashServerCount*uint64(exchangeColLen)*streamCount <= splitLimit
+	return applyFlag, streamCount
+}
+
+func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) (streamCount uint64) {
+	switch (*streamCountInfo).itemStatus {
+	case unInitialized:
+		serversInfo, err := infoschema.GetTiFlashServerInfo(sctx)
+		if err != nil {
+			setDefaultStreamCount(streamCountInfo)
+			streamCount = (*streamCountInfo).itemValue
+			break
+		}
+
+		flag, temStreamCount := calculateTiFlashStreamCountUsingMinLogicalCores(ctx, sctx, serversInfo)
+		if !flag {
+			setDefaultStreamCount(streamCountInfo)
+			streamCount = (*streamCountInfo).itemValue
+			(*tiflashServerCountInfo).itemStatus = failed
+			break
+		}
+		streamCount = temStreamCount
+		(*streamCountInfo).itemStatus = initialized
+		(*streamCountInfo).itemValue = streamCount
+
+		if (*tiflashServerCountInfo).itemStatus != initialized {
+			(*tiflashServerCountInfo).itemStatus = initialized
+			(*tiflashServerCountInfo).itemValue = uint64(len(serversInfo))
+		}
+	case initialized:
+		streamCount = (*streamCountInfo).itemValue
+	case failed:
+		setDefaultStreamCount(streamCountInfo)
+		streamCount = (*streamCountInfo).itemValue
+	}
+	return streamCount
+}
+
+func setDefaultStreamCount(streamCountInfo *tiflashClusterInfo) {
+	(*streamCountInfo).itemStatus = initialized
+	(*streamCountInfo).itemValue = variable.DefStreamCountWhenMaxThreadsNotSet
+}
+
+func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
 	switch x := plan.(type) {
 	case *PhysicalWindow:
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
 		helper.updateTarget(window, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalSort:
 		if x.IsPartialSort {
 			// Partial sort will keep the data partition.
@@ -748,19 +863,19 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 			// Global sort will break the data partition.
 			helper.clear()
 		}
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalSelection:
 		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalProjection:
 		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalExchangeReceiver:
 		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashAgg:
 		helper.updateTarget(hashAgg, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashJoin:
 		child0 := x.children[0]
 		child1 := x.children[1]
@@ -777,49 +892,41 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
 			buildHelper.plans = append(buildHelper.plans, &x.basePhysicalPlan)
 			buildHelper.joinKeysCount = len(joinKeys)
-			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCount, tiflashServerCount)
+			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		} else {
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
-			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCount, tiflashServerCount)
+			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		}
 		// don't reply on prob side's fineGrainedShuffle attribute
 		helper.clear()
-		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCount, tiflashServerCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalExchangeSender:
 		if x.ExchangeType == tipb.ExchangeType_Hash {
 			// Set up stream count for all plans based on shuffle target type.
+			var exchangeColLen = x.Schema().Len()
 			switch helper.shuffleTarget {
 			case window:
-				if *streamCount == 0 {
-					*streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
-				}
-				x.TiFlashFineGrainedShuffleStreamCount = *streamCount
+				streamCount := inferFineGrainedShuffleStreamCountForWindow(ctx, sctx, streamCountInfo, tiflashServerCountInfo)
+				x.TiFlashFineGrainedShuffleStreamCount = streamCount
 				for _, p := range helper.plans {
-					p.TiFlashFineGrainedShuffleStreamCount = *streamCount
+					p.TiFlashFineGrainedShuffleStreamCount = streamCount
 				}
 			case hashAgg:
-				if *streamCount == 0 {
-					*streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
-				}
-				x.TiFlashFineGrainedShuffleStreamCount = *streamCount
-				for _, p := range helper.plans {
-					p.TiFlashFineGrainedShuffleStreamCount = *streamCount
+				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColLen, 1200) // 1200: performance test result
+				if applyFlag {
+					x.TiFlashFineGrainedShuffleStreamCount = streamCount
+					for _, p := range helper.plans {
+						p.TiFlashFineGrainedShuffleStreamCount = streamCount
+					}
 				}
 			case joinBuild:
-				// Support hashJoin only when shuffle hash keys equals to join keys
+				// Support hashJoin only when shuffle hash keys equals to join keys due to tiflash implementations
 				if len(x.HashCols) == helper.joinKeysCount {
-					if *streamCount == 0 {
-						//*streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
-						// serverInfos, err := infoschema.GetTiFlashServerInfo(sctx)
-						serverCount, logicalCpus := getTiFlashServerInfo(ctx, sctx)
-						if serverCount != 0 && logicalCpus > 1 {
-							*tiflashServerCount = uint64(serverCount)
-							*streamCount = uint64(logicalCpus / 2)
-						}
-						log.Error(fmt.Sprintf("%d %d %d", x.Schema().Len(), *streamCount, *tiflashServerCount))
-						x.TiFlashFineGrainedShuffleStreamCount = *streamCount
+					applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColLen, 600) // 600: performance test result
+					if applyFlag {
+						x.TiFlashFineGrainedShuffleStreamCount = streamCount
 						for _, p := range helper.plans {
-							p.TiFlashFineGrainedShuffleStreamCount = *streamCount
+							p.TiFlashFineGrainedShuffleStreamCount = streamCount
 						}
 					}
 				}
@@ -827,11 +934,11 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 		}
 		// exchange sender will break the data partition.
 		helper.clear()
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCount, tiflashServerCount)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
 	default:
 		for _, child := range x.Children() {
 			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
-			setupFineGrainedShuffleInternal(ctx, sctx, child, &childHelper, streamCount, tiflashServerCount)
+			setupFineGrainedShuffleInternal(ctx, sctx, child, &childHelper, streamCountInfo, tiflashServerCountInfo)
 		}
 	}
 }
