@@ -20,9 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -36,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -99,9 +103,9 @@ type copReqSenderPool struct {
 	resultsCh chan idxRecResult
 	results   generic.SyncMap[int, struct{}]
 
-	ctx     context.Context
-	copCtx  *copContext
-	startTS uint64
+	ctx    context.Context
+	copCtx *copContext
+	store  kv.Storage
 
 	senders []*copReqSender
 	wg      sync.WaitGroup
@@ -120,6 +124,10 @@ type copReqSender struct {
 func (c *copReqSender) run() {
 	p := c.senderPool
 	defer p.wg.Done()
+	var curTaskID int
+	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
+		p.resultsCh <- idxRecResult{id: curTaskID, err: dbterror.ErrReorgPanic}
+	}, false)
 	for {
 		if util.HasCancelled(c.ctx) {
 			return
@@ -128,13 +136,24 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
+		curTaskID = task.id
 		logutil.BgLogger().Info("[ddl-ingest] start a cop-request task",
 			zap.Int("id", task.id), zap.String("task", task.String()))
-		rs, err := p.copCtx.buildTableScan(p.ctx, p.startTS, task.startKey, task.excludedEndKey())
+		ver, err := p.store.CurrentVersion(kv.GlobalTxnScope)
 		if err != nil {
 			p.resultsCh <- idxRecResult{id: task.id, err: err}
 			return
 		}
+		rs, err := p.copCtx.buildTableScan(p.ctx, ver.Ver, task.startKey, task.excludedEndKey())
+		if err != nil {
+			p.resultsCh <- idxRecResult{id: task.id, err: err}
+			return
+		}
+		failpoint.Inject("MockCopSenderPanic", func(val failpoint.Value) {
+			if val.(bool) {
+				panic("mock panic")
+			}
+		})
 		var done bool
 		var total int
 		for !done {
@@ -153,7 +172,7 @@ func (c *copReqSender) run() {
 	}
 }
 
-func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64) *copReqSenderPool {
+func newCopReqSenderPool(ctx context.Context, copCtx *copContext, store kv.Storage) *copReqSenderPool {
 	poolSize := copReadChunkPoolSize()
 	idxBufPool := make(chan []*indexRecord, poolSize)
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
@@ -167,7 +186,7 @@ func newCopReqSenderPool(ctx context.Context, copCtx *copContext, startTS uint64
 		results:    generic.NewSyncMap[int, struct{}](10),
 		ctx:        ctx,
 		copCtx:     copCtx,
-		startTS:    startTS,
+		store:      store,
 		senders:    make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
 		wg:         sync.WaitGroup{},
 		idxBufPool: idxBufPool,
@@ -437,10 +456,37 @@ func (c *copContext) fetchTableScanResult(ctx context.Context, result distsql.Se
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		rsData := tables.TryGetHandleRestoredDataWrapper(c.tblInfo, hdDt, nil, c.idxInfo)
+		rsData := getRestoreData(c.tblInfo, c.idxInfo, c.pkInfo, hdDt)
 		buf = append(buf, &indexRecord{handle: handle, key: nil, vals: idxDt, rsData: rsData, skip: false})
 	}
 	return buf, false, nil
+}
+
+func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
+	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+		return nil
+	}
+	if pkIdx == nil {
+		return nil
+	}
+	for i, pkIdxCol := range pkIdx.Columns {
+		pkCol := tblInfo.Columns[pkIdxCol.Offset]
+		if !types.NeedRestoredData(&pkCol.FieldType) {
+			// Since the handle data cannot be null, we can use SetNull to
+			// indicate that this column does not need to be restored.
+			handleDts[i].SetNull()
+			continue
+		}
+		tables.TryTruncateRestoredData(&handleDts[i], pkCol, pkIdxCol, targetIdx)
+		tables.ConvertDatumToTailSpaceCount(&handleDts[i], pkCol)
+	}
+	dtToRestored := handleDts[:0]
+	for _, handleDt := range handleDts {
+		if !handleDt.IsNull() {
+			dtToRestored = append(dtToRestored, handleDt)
+		}
+	}
+	return dtToRestored
 }
 
 func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
