@@ -41,11 +41,11 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	vars := kv.NewVariables(&killed)
 	opt := &kv.ClientSendOption{}
 
+	ranges := copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req := &kv.Request{
-		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
-		FixedRowCountHint: []int{1, 1, 3, copr.CopSmallTaskRow},
-		Concurrency:       15,
+		Tp:          kv.ReqTypeDAG,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, copr.CopSmallTaskRow}),
+		Concurrency: 15,
 	}
 	it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
@@ -55,11 +55,11 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	require.Equal(t, smallConc, 1)
 	require.Equal(t, rateLimit.GetCapacity(), 2)
 
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
-		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
-		FixedRowCountHint: []int{1, 1, 3, 3},
-		Concurrency:       15,
+		Tp:          kv.ReqTypeDAG,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
+		Concurrency: 15,
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
@@ -70,11 +70,11 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	require.Equal(t, rateLimit.GetCapacity(), 3)
 
 	// cross-region long range
+	ranges = copr.BuildKeyRanges("a", "z")
 	req = &kv.Request{
-		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "z")),
-		FixedRowCountHint: []int{10},
-		Concurrency:       15,
+		Tp:          kv.ReqTypeDAG,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{10}),
+		Concurrency: 15,
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
@@ -84,11 +84,11 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	require.Equal(t, smallConc, 2)
 	require.Equal(t, rateLimit.GetCapacity(), 3)
 
+	ranges = copr.BuildKeyRanges("a", "z")
 	req = &kv.Request{
-		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "z")),
-		FixedRowCountHint: []int{copr.CopSmallTaskRow + 1},
-		Concurrency:       15,
+		Tp:          kv.ReqTypeDAG,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{copr.CopSmallTaskRow + 1}),
+		Concurrency: 15,
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
@@ -115,12 +115,12 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	vars := kv.NewVariables(&killed)
 	opt := &kv.ClientSendOption{}
 
+	ranges := copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req := &kv.Request{
-		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
-		FixedRowCountHint: []int{1, 1, 3, 3},
-		Concurrency:       15,
-		StoreBatchSize:    1,
+		Tp:             kv.ReqTypeDAG,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
+		Concurrency:    15,
+		StoreBatchSize: 1,
 	}
 	it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
@@ -131,12 +131,12 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 1)
 	require.Equal(t, tasks[1].RowCountHint, 9)
 
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
-		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
-		FixedRowCountHint: []int{1, 1, 3, 3},
-		Concurrency:       15,
-		StoreBatchSize:    3,
+		Tp:             kv.ReqTypeDAG,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
+		Concurrency:    15,
+		StoreBatchSize: 3,
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
@@ -146,12 +146,12 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Equal(t, tasks[0].RowCountHint, 14)
 
 	// paging will disable store batch.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
-		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         kv.NewNonParitionedKeyRanges(copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")),
-		FixedRowCountHint: []int{1, 1, 3, 3},
-		Concurrency:       15,
-		StoreBatchSize:    3,
+		Tp:             kv.ReqTypeDAG,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
+		Concurrency:    15,
+		StoreBatchSize: 3,
 		Paging: struct {
 			Enable        bool
 			MinPagingSize uint64

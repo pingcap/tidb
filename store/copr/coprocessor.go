@@ -112,7 +112,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if req.StoreType == kv.TiDB {
 		// coprocessor on TiDB doesn't support paging
 		req.Paging.Enable = false
-		req.FixedRowCountHint = nil
 	}
 	if req.Tp != kv.ReqTypeDAG {
 		// coprocessor request but type is not DAG
@@ -124,13 +123,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
 		}
-	})
-	if req.RequestSource.RequestSourceInternal || req.Tp != kv.ReqTypeDAG {
-		// disable extra concurrency for internal tasks.
-		req.FixedRowCountHint = nil
-	}
-	failpoint.Inject("disableFixedRowCountHint", func(_ failpoint.Value) {
-		req.FixedRowCountHint = nil
 	})
 	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
 		req.StoreBatchSize = 0
@@ -150,9 +142,19 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		tasks []*copTask
 		err   error
 	)
-	buildTaskFunc := func(ranges []kv.KeyRange) error {
+	tryRowHint := optRowHint(req)
+	buildOpt := &buildCopTaskOpt{
+		req:      req,
+		cache:    c.store.GetRegionCache(),
+		eventCb:  eventCb,
+		respChan: req.KeepOrder,
+	}
+	buildTaskFunc := func(ranges []kv.KeyRange, hints []int) error {
 		keyRanges := NewKeyRanges(ranges)
-		tasksFromRanges, err := buildCopTasks(bo, c.store.GetRegionCache(), keyRanges, req, eventCb)
+		if tryRowHint {
+			buildOpt.rowHints = hints
+		}
+		tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
 		if err != nil {
 			return err
 		}
@@ -194,7 +196,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
 	}
-	if req.FixedRowCountHint != nil {
+	if tryRowHint {
 		var smallTasks int
 		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks)
 		if len(tasks)-smallTasks < it.concurrency {
@@ -292,13 +294,21 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
+type buildCopTaskOpt struct {
+	req      *kv.Request
+	cache    *RegionCache
+	eventCb  trxevents.EventCallback
+	respChan bool
+	rowHints []int
+}
+
+func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
+	req, cache, eventCb, hints := opt.req, opt.cache, opt.eventCb, opt.rowHints
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
 	}
-
 	rangesLen := ranges.Len()
 
 	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
@@ -336,31 +346,30 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
 			hint := -1
 			// calculate the row count hint
-			if req.FixedRowCountHint != nil {
-				startKey, endKey := loc.Ranges.At(i).StartKey, loc.Ranges.At(nextI-1).EndKey
+			if hints != nil {
+				startKey, endKey := loc.Ranges.RefAt(i).StartKey, loc.Ranges.RefAt(nextI-1).EndKey
 				// move to the previous range if startKey of current range is lower than endKey of previous location.
 				// In the following example, task1 will move origRangeIdx to region(i, z).
 				// When counting the row hint for task2, we need to move origRangeIdx back to region(a, h).
 				// |<-      region(a, h)    ->| |<-   region(i, z)   ->|
 				// |<- task1 ->| |<- task2 ->| ...
-				if origRangeIdx > 0 && ranges.At(origRangeIdx-1).EndKey.Cmp(startKey) > 0 {
+				if origRangeIdx > 0 && ranges.RefAt(origRangeIdx-1).EndKey.Cmp(startKey) > 0 {
 					origRangeIdx--
 				}
 				hint = 0
 				for nextOrigRangeIdx := origRangeIdx; nextOrigRangeIdx < ranges.Len(); nextOrigRangeIdx++ {
-					rangeStart := ranges.At(nextOrigRangeIdx).StartKey
+					rangeStart := ranges.RefAt(nextOrigRangeIdx).StartKey
 					if rangeStart.Cmp(endKey) > 0 {
 						origRangeIdx = nextOrigRangeIdx
 						break
 					}
-					hint += req.FixedRowCountHint[nextOrigRangeIdx]
+					hint += hints[nextOrigRangeIdx]
 				}
 			}
 			task := &copTask{
 				region:        loc.Location.Region,
 				bucketsVer:    loc.getBucketVersion(),
 				ranges:        loc.Ranges.Slice(i, nextI),
-				respChan:      make(chan *copResponse, chanSize),
 				cmdType:       cmdType,
 				storeType:     req.StoreType,
 				eventCb:       eventCb,
@@ -368,6 +377,10 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				pagingSize:    pagingSize,
 				requestSource: req.RequestSource,
 				RowCountHint:  hint,
+			}
+			// only keep-order need chan inside task.
+			if req.KeepOrder {
+				task.respChan = make(chan *copResponse, chanSize)
 			}
 			if err = builder.handle(task); err != nil {
 				return nil, err
@@ -1221,7 +1234,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+			req:      worker.req,
+			cache:    worker.store.GetRegionCache(),
+			respChan: false,
+			eventCb:  task.eventCb,
+		})
 		if err != nil {
 			return remains, err
 		}
@@ -1369,7 +1387,12 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return nil, errors.Trace(err)
 			}
-			remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+				req:      worker.req,
+				cache:    worker.store.GetRegionCache(),
+				respChan: false,
+				eventCb:  task.eventCb,
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -1802,4 +1825,19 @@ func BuildKeyRanges(keys ...string) []kv.KeyRange {
 		})
 	}
 	return ranges
+}
+
+func optRowHint(req *kv.Request) bool {
+	opt := true
+	if req.StoreType == kv.TiDB {
+		return false
+	}
+	if req.RequestSource.RequestSourceInternal || req.Tp != kv.ReqTypeDAG {
+		// disable extra concurrency for internal tasks.
+		return false
+	}
+	failpoint.Inject("disableFixedRowCountHint", func(_ failpoint.Value) {
+		opt = false
+	})
+	return opt
 }
