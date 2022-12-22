@@ -291,7 +291,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 		}
 	}
 	// check refer columns should have index.
-	if model.FindIndexByColumns(referTblInfo, fkInfo.RefCols...) == nil {
+	if model.FindIndexByColumns(referTblInfo, referTblInfo.Indices, fkInfo.RefCols...) == nil {
 		return infoschema.ErrForeignKeyNoIndexInParent.GenWithStackByArgs(fkInfo.Name, fkInfo.RefTable)
 	}
 	return nil
@@ -660,7 +660,7 @@ func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, schema string, tbIn
 			return nil
 		}
 	}
-	if model.FindIndexByColumns(tbInfo, fk.Cols...) == nil {
+	if model.FindIndexByColumns(tbInfo, tbInfo.Indices, fk.Cols...) == nil {
 		return errors.Errorf("Failed to add the foreign key constraint. Missing index for '%s' foreign key columns in the table '%s'", fk.Name, tbInfo.Name)
 	}
 	return nil

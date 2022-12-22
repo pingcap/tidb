@@ -252,6 +252,8 @@ const (
 	OpSetBindingStatus
 	// OpSQLBindDropByDigest is used to drop SQL binds by digest
 	OpSQLBindDropByDigest
+	// OpSetBindingStatusByDigest represents the operation to set SQL binding status by sql digest.
+	OpSetBindingStatusByDigest
 )
 
 // SQLBindPlan represents a plan for SQL bind.
