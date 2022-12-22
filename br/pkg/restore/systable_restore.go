@@ -96,7 +96,7 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 			)
 			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to execute %s", sql)
 		}
-		log.Info("successfully restore system database",
+		log.Info("successfully clear system users after restoration",
 			zap.Stringer("database", db.Name),
 			zap.String("sql", sql),
 		)
