@@ -18,8 +18,6 @@ import (
 	"runtime"
 	"sync/atomic"
 	"time"
-
-	"github.com/pingcap/failpoint"
 )
 
 var stats atomic.Pointer[globalMstats]
@@ -35,10 +33,6 @@ func ReadMemStats() (memStats *runtime.MemStats) {
 	} else {
 		memStats = ForceReadMemStats()
 	}
-	failpoint.Inject("ReadMemStats", func(val failpoint.Value) {
-		injectedSize := val.(int)
-		memStats.HeapInuse += uint64(injectedSize)
-	})
 	return
 }
 
