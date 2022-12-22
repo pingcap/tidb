@@ -290,7 +290,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return resp, err
 	case tikvrpc.CmdUnsafeDestroyRange:
 		// Pretend it was done. Unistore does not have and "destroy", and the
-		// keys has already been removed one-by-one before in TODO: WHERE?
+		// keys has already been removed one-by-one before through:
+		// (dr *delRange) startEmulator()
 		resp.Resp = &kvrpcpb.UnsafeDestroyRangeResponse{}
 		return resp, nil
 	default:

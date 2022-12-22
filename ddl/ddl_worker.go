@@ -945,6 +945,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.runningJobs.ids[job.ID] = struct{}{}
 			d.runningJobs.Unlock()
 
+			// TODO: Remove this debug line (only used for CI)
+			logutil.Logger(w.logCtx).Info("handleDDLJobQueue", zap.String("job", job.String()))
 			defer d.deleteRunningDDLJobMap(job.ID)
 
 			// only general ddls allowed to be executed when TiKV is disk full.
