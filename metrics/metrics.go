@@ -182,6 +182,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TokenGauge)
 	prometheus.MustRegister(ConfigStatus)
 	prometheus.MustRegister(TiFlashQueryTotalCounter)
+	prometheus.MustRegister(TiFlashFailedMPPStoreState)
 	prometheus.MustRegister(SmallTxnWriteDuration)
 	prometheus.MustRegister(TxnWriteThroughput)
 	prometheus.MustRegister(LoadSysVarCacheCounter)
@@ -236,6 +237,7 @@ func ToggleSimplifiedMode(simplified bool) {
 		InfoCacheCounters,
 		ReadFromTableCacheCounter,
 		TiFlashQueryTotalCounter,
+		TiFlashFailedMPPStoreState,
 		CampaignOwnerCounter,
 		NonTransactionalDMLCount,
 		MemoryUsage,

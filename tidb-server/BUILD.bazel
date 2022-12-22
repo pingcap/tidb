@@ -28,6 +28,7 @@ go_library(
         "//sessionctx/variable",
         "//statistics",
         "//store",
+        "//store/copr",
         "//store/driver",
         "//store/mockstore",
         "//store/mockstore/unistore/metrics",
