@@ -2185,7 +2185,14 @@ var defaultSysVars = []*SysVar{
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			_, ok := kv.ToExchangeCompressMethod(strings.ToUpper(normalizedValue))
 			if !ok {
-				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(MppExchangeCompress, originalValue)
+				var msg string = kv.ExchangeCompressMethodNONE.Name()
+				for m := kv.ExchangeCompressMethodNONE + 1; m < kv.ExchangeCompressMethodMAX; m += 1 {
+					msg = fmt.Sprintf("%s, %s", msg, m.Name())
+				}
+				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
+					originalValue,
+					MppExchangeCompress, msg)
+				return normalizedValue, err
 			}
 			return normalizedValue, nil
 		},

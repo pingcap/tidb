@@ -66,13 +66,13 @@ func (c *MPPClient) GetClusterMinMppVersion(ctx context.Context, tiflashStores [
 	timeout := 2 * time.Second
 
 	wg.Add(len(tiflashStores))
-	logutil.BgLogger().Info("Start to detect available mpp stores", zap.Int("total store count", len(tiflashStores)))
+	logutil.BgLogger().Info("start to detect available mpp stores", zap.Int("total store count", len(tiflashStores)))
 	defer func() {
 		var mppInfo string
 		if availableCnt != 0 {
 			mppInfo = fmt.Sprintf("min-mpp-version %d, max-mpp-version %d", minMppVersion, maxMppVersion)
 		}
-		logutil.BgLogger().Info("Finish detecting mpp stores", zap.Int("available store count", availableCnt), zap.String("mpp info", mppInfo))
+		logutil.BgLogger().Info("finish detecting mpp stores", zap.Int("available store count", availableCnt), zap.String("mpp info", mppInfo))
 	}()
 
 	for i := range tiflashStores {

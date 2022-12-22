@@ -507,7 +507,7 @@ func CheckAndInitTiFlashStoreInfo(store kv.Storage, stores []*metapb.Store) erro
 		msg = "mpp client not found"
 	}
 
-	logutil.BgLogger().Info("start to check mpp-version by cluster stores version", zap.String("resion", msg))
+	logutil.BgLogger().Info("start to check mpp-version by cluster stores version", zap.String("reason", msg))
 
 	minMppVersion := kv.MaxMppVersion
 

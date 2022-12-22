@@ -140,6 +140,7 @@ const (
 	ExchangeCompressMethodNONE ExchangeCompressMethod = iota
 	ExchangeCompressMethodLZ4
 	ExchangeCompressMethodZSTD
+	ExchangeCompressMethodMAX
 
 	DefaultExchangeCompressMethod ExchangeCompressMethod = ExchangeCompressMethodLZ4
 )

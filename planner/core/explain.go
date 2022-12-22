@@ -805,7 +805,9 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "HashPartition")
 		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.HashCols))
 	}
-	fmt.Fprintf(buffer, ", Compress: %s", p.ExchangeSenderMeta.GetCompress().String())
+	if p.ExchangeSenderMeta != nil {
+		fmt.Fprintf(buffer, ", Compress: %s", p.ExchangeSenderMeta.Compress.String())
+	}
 	if len(p.Tasks) > 0 {
 		fmt.Fprintf(buffer, ", tasks: [")
 		for idx, task := range p.Tasks {

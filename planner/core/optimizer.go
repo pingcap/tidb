@@ -763,6 +763,8 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 				for _, p := range helper.plans {
 					p.TiFlashFineGrainedShuffleStreamCount = streamCount
 				}
+				// Disable compress for now.
+				x.ExchangeSenderMeta = nil
 			}
 		}
 		// exchange sender will break the data partition.
