@@ -112,7 +112,7 @@ type MPPClient interface {
 	// TODO:: This interface will be refined after we support more executors.
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppVersion int64) Response
 	// GetClusterMinMppVersion get min-mpp-version, max-mpp-version, alive-cnt of tiflash stores
 	GetClusterMinMppVersion(ctx context.Context, tiflashStores []*metapb.Store) (int64, int64, int)
 }
