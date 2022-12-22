@@ -16,6 +16,7 @@ package kv
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -46,6 +47,13 @@ const (
 )
 
 var ClusterMinMppVersion = atomicutil.NewInt64(MppVersionV0)
+
+func FmtMppVersion(v int64) string {
+	if v == MppVersionUnspecified {
+		return fmt.Sprintf("unspecified(now %d)", ClusterMinMppVersion.Load())
+	}
+	return fmt.Sprintf("%d", v)
+}
 
 // MPPTaskMeta means the meta info such as location of a mpp task.
 type MPPTaskMeta interface {

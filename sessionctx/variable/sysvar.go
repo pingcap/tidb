@@ -2203,7 +2203,7 @@ var defaultSysVars = []*SysVar{
 			if version >= kv.MppVersionUnspecified && version <= kv.MaxMppVersion {
 				return normalizedValue, nil
 			}
-			err = fmt.Errorf("incorrect value: `%s`. %s options: `%d` unspecified, `%d`, `%d` feature `%s`",
+			err = fmt.Errorf("incorrect value: `%s`. %s options: `%d` unspecified, `%d`, `%d` feature `%s`.",
 				originalValue,
 				MppVersion, kv.MppVersionUnspecified, kv.MppVersionV0, kv.MppVersionV1, kv.MppVersionV1Feature)
 			return normalizedValue, err
@@ -2215,6 +2215,9 @@ var defaultSysVars = []*SysVar{
 			}
 			s.MppVersion = version
 			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return kv.FmtMppVersion(s.MppVersion), nil
 		},
 	},
 }
