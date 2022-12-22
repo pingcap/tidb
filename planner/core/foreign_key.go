@@ -51,6 +51,10 @@ type FKCascade struct {
 	FK         *model.FKInfo
 	FKCols     []*model.ColumnInfo
 	FKIdx      *model.IndexInfo
+	// CascadePlans contains the child cascade plan.
+	// CascadePlans will be filled during execution, so only `explain analyze` statement result contains the cascade plan,
+	// `explain` statement result doesn't contain the cascade plan.
+	CascadePlans []Plan
 }
 
 // FKCascadeType indicates in which (delete/update) statements.
@@ -410,7 +414,7 @@ func buildFKCheck(ctx sessionctx.Context, tbl table.Table, cols []model.CIStr, f
 		}
 	}
 
-	referTbIdxInfo := model.FindIndexByColumns(tblInfo, cols...)
+	referTbIdxInfo := model.FindIndexByColumns(tblInfo, tblInfo.Indices, cols...)
 	if referTbIdxInfo == nil {
 		return nil, failedErr
 	}
@@ -456,7 +460,7 @@ func buildFKCascade(ctx sessionctx.Context, tp FKCascadeType, referredFK *model.
 			return fkCascade, nil
 		}
 	}
-	indexForFK := model.FindIndexByColumns(childTable.Meta(), fk.Cols...)
+	indexForFK := model.FindIndexByColumns(childTable.Meta(), childTable.Meta().Indices, fk.Cols...)
 	if indexForFK == nil {
 		return nil, errors.Errorf("Missing index for '%s' foreign key columns in the table '%s'", fk.Name, childTable.Meta().Name)
 	}

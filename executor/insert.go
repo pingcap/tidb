@@ -158,6 +158,12 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKey)]; found {
+				if tablecodec.IsTempIndexKey(uk.newKey) {
+					if tablecodec.CheckTempIndexValueIsDelete(val) {
+						continue
+					}
+					val = tablecodec.DecodeTempIndexOriginValue(val)
+				}
 				handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 				if err != nil {
 					return err
@@ -262,6 +268,14 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
+			// Since the temp index stores deleted key with marked 'deleteu' for unique key at the end
+			// of value, So if return a key we check and skip deleted key.
+			if tablecodec.IsTempIndexKey(uk.newKey) {
+				if tablecodec.CheckTempIndexValueIsDelete(val) {
+					continue
+				}
+				val = tablecodec.DecodeTempIndexOriginValue(val)
+			}
 			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
 				return err
@@ -327,6 +341,9 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
+	if e.runtimeStats != nil && e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.ctx.GetSessionVars().CurrInsertValues = chunk.Row{}
 	e.ctx.GetSessionVars().CurrInsertBatchExtraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[0:0:0]

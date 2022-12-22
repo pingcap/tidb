@@ -677,7 +677,12 @@ type PhysicalIndexScan struct {
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
-	prop          *property.PhysicalProperty
+
+	// constColsByCond records the constant part of the index columns caused by the access conds.
+	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
+	constColsByCond []bool
+
+	prop *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1748,6 +1753,10 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
+func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
+}
+
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalHashAgg)
@@ -1780,6 +1789,10 @@ func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, pr
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	basePhysicalAgg
+}
+
+func (p *PhysicalStreamAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
 }
 
 // Clone implements PhysicalPlan interface.

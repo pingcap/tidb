@@ -270,7 +270,7 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
 	if !ok {
-		return nil, false
+		return autoid.Allocators{}, false
 	}
 	return tbl.Allocators(nil), true
 }

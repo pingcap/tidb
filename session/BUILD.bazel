@@ -107,7 +107,7 @@ go_library(
 
 go_test(
     name = "session_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",
@@ -136,6 +136,7 @@ go_test(
         "//expression",
         "//kv",
         "//meta",
+        "//meta/autoid",
         "//parser/ast",
         "//parser/auth",
         "//parser/model",

@@ -1712,6 +1712,14 @@ func TestCreateExpressionIndex(t *testing.T) {
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+
+	// https://github.com/pingcap/tidb/issues/39784
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(name varchar(20))")
+	tk.MustExec("insert into t values ('Abc'), ('Bcd'), ('abc')")
+	tk.MustExec("create index idx on test.t((lower(test.t.name)))")
+	tk.MustExec("admin check table t")
 }
 
 func TestCreateUniqueExpressionIndex(t *testing.T) {
@@ -1719,8 +1727,6 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// TODO: Will check why tidb_ddl_enable_fast_reorg could not default be on in another PR.
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("create table t(a int default 0, b int default 0)")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 
@@ -1740,8 +1746,6 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {

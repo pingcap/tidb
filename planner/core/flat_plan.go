@@ -54,23 +54,34 @@ type FlatPhysicalPlan struct {
 // depth-first traversal plus some special rule for some operators.
 type FlatPlanTree []*FlatOperator
 
-// GetSelectPlan skips Insert, Delete and Update at the beginning of the FlatPlanTree.
+// GetSelectPlan skips Insert, Delete, and Update at the beginning of the FlatPlanTree and the foreign key check/cascade plan at the end of the FlatPlanTree.
 // Note:
 //
 //	It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
-//	Since you get a part of the original slice, you need to adjust the FlatOperator.Depth and FlatOperator.ChildrenIdx when using them.
-func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
+//	The second return value is the offset. Because the returned FlatPlanTree is a part of the original slice, you need to minus them by the offset when using the returned FlatOperator.Depth and FlatOperator.ChildrenIdx.
+func (e FlatPlanTree) GetSelectPlan() (FlatPlanTree, int) {
 	if len(e) == 0 {
-		return nil
+		return nil, 0
 	}
+	hasDML := false
 	for i, op := range e {
 		switch op.Origin.(type) {
 		case *Insert, *Delete, *Update:
+			hasDML = true
 		default:
-			return e[i:]
+			if hasDML {
+				for j := i; j < len(e); j++ {
+					switch e[j].Origin.(type) {
+					case *FKCheck, *FKCascade:
+						// The later plans are belong to foreign key check/cascade plans, doesn't belong to select plan, just skip it.
+						return e[i:j], i
+					}
+				}
+			}
+			return e[i:], i
 		}
 	}
-	return nil
+	return nil, 0
 }
 
 // FlatOperator is a simplified operator.
@@ -396,6 +407,13 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 				isLastChild: true,
 			}
 			target, childIdx = f.flattenRecursively(plan.TargetPlan, initInfo, target)
+			childIdxs = append(childIdxs, childIdx)
+		}
+	case *FKCascade:
+		for i, child := range plan.CascadePlans {
+			childCtx.label = Empty
+			childCtx.isLastChild = i == len(plan.CascadePlans)-1
+			target, childIdx = f.flattenRecursively(child, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
 	}

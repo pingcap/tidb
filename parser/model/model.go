@@ -381,8 +381,8 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
-func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
-	for _, index := range tbInfo.Indices {
+func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...CIStr) *IndexInfo {
+	for _, index := range indices {
 		if IsIndexPrefixCovered(tbInfo, index, cols...) {
 			return index
 		}
@@ -446,14 +446,16 @@ const (
 	// However, the convert is missed in some scenarios before v2.1.9, so for all those tables prior to TableInfoVersion3, their
 	// charsets / collations will be converted to lower-case while loading from the storage.
 	TableInfoVersion3 = uint16(3)
-	// TableInfoVersion4 indicates that the auto_increment allocator in TiDB has been separated from
-	// _tidb_rowid allocator. This version is introduced to preserve the compatibility of old tables:
-	// the tables with version < TableInfoVersion4 still use a single allocator for auto_increment and _tidb_rowid.
-	// Also see https://github.com/pingcap/tidb/issues/982.
+	// TableInfoVersion4 is not used.
 	TableInfoVersion4 = uint16(4)
+	// TableInfoVersion5 indicates that the auto_increment allocator in TiDB has been separated from
+	// _tidb_rowid allocator when AUTO_ID_CACHE is 1. This version is introduced to preserve the compatibility of old tables:
+	// the tables with version <= TableInfoVersion4 still use a single allocator for auto_increment and _tidb_rowid.
+	// Also see https://github.com/pingcap/tidb/issues/982.
+	TableInfoVersion5 = uint16(5)
 
 	// CurrLatestTableInfoVersion means the latest table info in the current TiDB.
-	CurrLatestTableInfoVersion = TableInfoVersion4
+	CurrLatestTableInfoVersion = TableInfoVersion5
 )
 
 // ExtraHandleName is the name of ExtraHandle Column.
@@ -548,6 +550,13 @@ type TableInfo struct {
 	StatsOptions *StatsOptions `json:"stats_options"`
 
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
+
+	TTLInfo *TTLInfo `json:"ttl_info"`
+}
+
+// SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
+func (t *TableInfo) SepAutoInc() bool {
+	return t.Version >= TableInfoVersion5 && t.AutoIdCache == 1
 }
 
 // TableCacheStatusType is the type of the table cache status
@@ -746,6 +755,10 @@ func (t *TableInfo) Clone() *TableInfo {
 
 	for i := range t.ForeignKeys {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+	}
+
+	if t.TTLInfo != nil {
+		nt.TTLInfo = t.TTLInfo.Clone()
 	}
 
 	return &nt
@@ -1406,6 +1419,7 @@ type IndexInfo struct {
 	Primary       bool           `json:"is_primary"`   // Whether the index is primary key.
 	Invisible     bool           `json:"is_invisible"` // Whether the index is invisible.
 	Global        bool           `json:"is_global"`    // Whether the index is global.
+	MVIndex       bool           `json:"mv_index"`     // Whether the index is multivalued index.
 }
 
 // Clone clones IndexInfo.
@@ -1736,6 +1750,21 @@ type PolicyInfo struct {
 func (p *PolicyInfo) Clone() *PolicyInfo {
 	cloned := *p
 	cloned.PlacementSettings = p.PlacementSettings.Clone()
+	return &cloned
+}
+
+// TTLInfo records the TTL config
+type TTLInfo struct {
+	ColumnName      CIStr  `json:"column"`
+	IntervalExprStr string `json:"interval_expr"`
+	// `IntervalTimeUnit` is actually ast.TimeUnitType. Use `int` to avoid cycle dependency
+	IntervalTimeUnit int  `json:"interval_time_unit"`
+	Enable           bool `json:"enable"`
+}
+
+// Clone clones TTLInfo
+func (t *TTLInfo) Clone() *TTLInfo {
+	cloned := *t
 	return &cloned
 }
 
