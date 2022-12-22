@@ -229,6 +229,59 @@ var (
 			Name:      "tiflash_query_total",
 			Help:      "Counter of TiFlash queries.",
 		}, []string{LblType, LblResult})
+<<<<<<< HEAD
+=======
+
+	TiFlashFailedMPPStoreState = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tiflash_failed_store",
+			Help:      "Statues of failed tiflash mpp store,-1 means detector heartbeat,0 means reachable,1 means abnormal.",
+		}, []string{LblAddress})
+
+	PDAPIExecutionHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "pd_api_execution_duration_seconds",
+			Help:      "Bucketed histogram of all pd api execution time (s)",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+		}, []string{LblType})
+
+	PDAPIRequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "pd_api_request_total",
+			Help:      "Counter of the pd http api requests",
+		}, []string{LblType, LblResult})
+
+	CPUProfileCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "cpu_profile_total",
+			Help:      "Counter of cpu profiling",
+		})
+
+	LoadTableCacheDurationHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "load_table_cache_seconds",
+			Help:      "Duration (us) for loading table cache.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
+		})
+
+	RCCheckTSWriteConfilictCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "rc_check_ts_conflict_total",
+			Help:      "Counter of WriteConflict caused by RCCheckTS.",
+		}, []string{LblType})
+>>>>>>> aeccf77637 (*: optimize mpp probe (#39932))
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
