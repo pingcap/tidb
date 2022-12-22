@@ -142,7 +142,7 @@ const (
 	ExchangeCompressMethodZSTD
 	ExchangeCompressMethodMAX
 
-	// TODO: use LZ4 as defualt method
+	// TODO: use LZ4 as the defualt method
 	DefaultExchangeCompressMethod ExchangeCompressMethod = ExchangeCompressMethodNONE
 )
 

@@ -488,11 +488,12 @@ func CheckAndInitTiFlashStoreInfo(store kv.Storage, stores []*metapb.Store) erro
 	var msg string
 
 	if mppClient != nil {
-		// if all tiflash stores are alived and min-mpp-version
+		// if all tiflash stores are alive, choose the smallest version
 		minMppVersion, _, availableCnt := mppClient.GetClusterMinMppVersion(context.Background(), tiflashStores)
 		if availableCnt == len(tiflashStores) {
 			if minMppVersion > kv.MaxMppVersion {
-				logutil.BgLogger().Info("min mpp-version in TiFlash stores is bigger than TiDB", zap.Int64("tiflash", minMppVersion), zap.Int64("tidb", kv.MaxMppVersion))
+				logutil.BgLogger().Info("min mpp-version in all TiFlash stores is bigger than max mpp-version of TiDB, need to upgrade TiDB.",
+					zap.Int64("tiflash", minMppVersion), zap.Int64("tidb max mpp-version", kv.MaxMppVersion))
 				minMppVersion = kv.MaxMppVersion
 			}
 			if minMppVersion < kv.MppVersionV0 {
