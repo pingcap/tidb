@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -311,6 +312,13 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 	rangesLen := ranges.Len()
 
+	rangesPerTaskLimit := rangesPerTask
+	failpoint.Inject("setRangesPerTask", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			rangesPerTaskLimit = v
+		}
+	})
+
 	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
 	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
 	if err != nil {
@@ -343,7 +351,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			pagingSize = req.Paging.MinPagingSize
 		}
 		for i := 0; i < rLen; {
-			nextI := mathutil.Min(i+rangesPerTask, rLen)
+			nextI := mathutil.Min(i+rangesPerTaskLimit, rLen)
 			hint := -1
 			// calculate the row count hint
 			if hints != nil {
@@ -724,7 +732,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			// there is a task finished.
 			worker.sendToRespCh(finCopResp, worker.respChan, false)
 		}
-		close(task.respChan)
+		if task.respChan != nil {
+			close(task.respChan)
+		}
 		if worker.finished() {
 			return
 		}
@@ -1381,6 +1391,9 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			},
 		}
 		task := batchedTask.task
+		failpoint.Inject("batchCopRegionError", func() {
+			batchResp.RegionError = &errorpb.Error{}
+		})
 		if regionErr := batchResp.GetRegionError(); regionErr != nil {
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
