@@ -1051,9 +1051,10 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 			if p == nil {
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			workType := typeUpdateColumnWorker
-			if reorgInfo.Job.Type == model.ActionReorganizePartition {
-				workType = typeReorgPartitionWorker
+			workType := typeReorgPartitionWorker
+			if reorgInfo.Job.Type != model.ActionReorganizePartition {
+				workType = typeUpdateColumnWorker
+				panic("FIXME: See https://github.com/pingcap/tidb/issues/39915")
 			}
 			err := w.writePhysicalTableRecord(w.sessPool, p, workType, reorgInfo)
 			if err != nil {
@@ -1091,6 +1092,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 			}
 		}
 	})
+	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		err := w.updatePhysicalTableRow(t, reorgInfo)
 		if err != nil {
@@ -1098,23 +1100,16 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		}
 	}
 
-	var physTbl table.PhysicalTable
-	if tbl, ok := t.(table.PartitionedTable); ok {
-		if len(tbl.Meta().Partition.DroppingDefinitions) > 0 {
-			reorgInfo.PhysicalTableID = tbl.Meta().Partition.DroppingDefinitions[0].ID
-			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
-		} else {
-			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
-		}
-	} else if tbl, ok := t.(table.PhysicalTable); ok {
-		physTbl = tbl
+	if _, ok := t.(table.PartitionedTable); ok {
+		panic("FIXME: this got reverted and needs to be back!")
 	}
 	// Get the original start handle and end handle.
 	currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+	//nolint:forcetypeassert
+	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
