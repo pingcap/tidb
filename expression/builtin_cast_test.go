@@ -719,6 +719,13 @@ func TestCastFuncSig(t *testing.T) {
 			3,
 			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("你好world")}),
 		},
+		// cast json as string
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
+			fmt.Sprintf(`"%s`, curTimeString[:2]),
+			3,
+			chunk.MutRowFromDatums([]types.Datum{jsonTime}),
+		},
 	}
 	for i, c := range castToStringCases2 {
 		args := []Expression{c.before}
@@ -741,6 +748,8 @@ func TestCastFuncSig(t *testing.T) {
 		case 5:
 			stringFunc.tp.SetCharset(charset.CharsetUTF8)
 			sig = &builtinCastStringAsStringSig{stringFunc}
+		case 6:
+			sig = &builtinCastJSONAsStringSig{stringFunc}
 		}
 		res, isNull, err := sig.evalString(c.row.ToRow())
 		require.False(t, isNull)

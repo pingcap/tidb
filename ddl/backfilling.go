@@ -546,9 +546,6 @@ func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 	reorgInfo := scheduler.reorgInfo
 	physicalTableID := reorgInfo.PhysicalTableID
 	var prefix kv.Key
-	if tbl, ok := t.(table.PartitionedTable); ok {
-		t = tbl.GetPartition(physicalTableID)
-	}
 	if reorgInfo.mergingTmpIdx {
 		prefix = t.IndexPrefix()
 	} else {
@@ -810,12 +807,7 @@ func (b *backfillScheduler) initCopReqSenderPool() {
 		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
 		return
 	}
-	ver, err := sessCtx.GetStore().CurrentVersion(kv.GlobalTxnScope)
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl-ingest] cannot init cop request sender", zap.Error(err))
-		return
-	}
-	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, ver.Ver)
+	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore())
 }
 
 func (b *backfillScheduler) canSkipError(err error) bool {

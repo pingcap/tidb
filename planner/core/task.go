@@ -1239,12 +1239,17 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		ret = false
 	}
 
-	if !ret && sc.InExplainStmt {
+	if !ret {
 		storageName := storeType.Name()
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
-		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
+		warnErr := errors.New("Aggregation can not be pushed to " + storageName + " because " + reason)
+		if sc.InExplainStmt {
+			sc.AppendWarning(warnErr)
+		} else {
+			sc.AppendExtraWarning(warnErr)
+		}
 	}
 	return ret
 }
