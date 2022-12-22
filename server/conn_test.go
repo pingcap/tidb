@@ -762,12 +762,6 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
 	require.NoError(t, err)
-	err = cc.handleQuery(context.Background(), "insert /*+ max_execution_time(10) */ into t value(sleep(1), sleep(1));")
-	require.NoError(t, err)
-	err = cc.handleQuery(context.Background(), "update /*+ max_execution_time(10) */ t set a = sleep(1);")
-	require.NoError(t, err)
-	err = cc.handleQuery(context.Background(), "delete /*+ max_execution_time(1) */ from t where a = sleep(1);")
-	require.NoError(t, err)
 }
 
 func TestShutDown(t *testing.T) {
