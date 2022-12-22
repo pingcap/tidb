@@ -142,7 +142,8 @@ const (
 	ExchangeCompressMethodZSTD
 	ExchangeCompressMethodMAX
 
-	DefaultExchangeCompressMethod ExchangeCompressMethod = ExchangeCompressMethodLZ4
+	// TODO: use LZ4 as defualt method
+	DefaultExchangeCompressMethod ExchangeCompressMethod = ExchangeCompressMethodNONE
 )
 
 func (t ExchangeCompressMethod) Name() string {
