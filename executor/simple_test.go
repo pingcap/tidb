@@ -20,9 +20,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/kv"
-
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
