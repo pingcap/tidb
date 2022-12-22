@@ -126,6 +126,7 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 			for _, name := range filterUsers {
 				// we already handle root account before.
 				if strings.ToLower(name) != rootUser {
+					/* #nosec G202: SQL string concatenation */
 					whereClause := fmt.Sprintf("WHERE "+sysPrivilegeTableMap[tableName], name)
 					deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
 						utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
@@ -275,6 +276,7 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 		whereNotClause := ""
 		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
 			// cloud_admin is a special user on tidb cloud, need to skip it.
+			/* #nosec G202: SQL string concatenation */
 			whereNotClause = fmt.Sprintf("WHERE NOT "+sysPrivilegeTableMap[tableName], cloudAdminUser)
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
