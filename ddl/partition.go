@@ -2159,30 +2159,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	return ver, nil
 }
 
-func checkReorgPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, []model.CIStr, *model.PartitionInfo, []model.PartitionDefinition, []model.PartitionDefinition, error) {
-	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
-	if err != nil {
-		return nil, nil, nil, nil, nil, errors.Trace(err)
-	}
-	partInfo := &model.PartitionInfo{}
-	var partNames []model.CIStr
-	err = job.DecodeArgs(&partNames, &partInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, nil, errors.Trace(err)
-	}
-	addingDefs := tblInfo.Partition.AddingDefinitions
-	droppingDefs := tblInfo.Partition.DroppingDefinitions
-	if len(addingDefs) == 0 {
-		addingDefs = []model.PartitionDefinition{}
-	}
-	if len(droppingDefs) == 0 {
-		droppingDefs = []model.PartitionDefinition{}
-	}
-	return tblInfo, partNames, partInfo, droppingDefs, addingDefs, nil
-}
-
 func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
