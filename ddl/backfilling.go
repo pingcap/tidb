@@ -771,9 +771,6 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		case typeReorgPartitionWorker:
 			partWorker, err := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
-				if b.canSkipError(err) {
-					continue
-				}
 				return err
 			}
 			worker, runner = partWorker, partWorker.backfillWorker
