@@ -166,7 +166,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 	defer client.Close()
 	log.Info("start to clear system user for cloud")
-	err = client.ClearSystemUsers(ctx, cfg.FilterSysUsers)
+	err = client.ClearSystemUsers(ctx, cfg.ResetSysUsers)
 
 	if err != nil {
 		return errors.Trace(err)

@@ -62,7 +62,7 @@ const (
 	FlagPiTRBatchSize   = "pitr-batch-size"
 	FlagPiTRConcurrency = "pitr-concurrency"
 
-	FlagFilterSysUsers = "filter-sys-users"
+	FlagResetSysUsers = "reset-sys-users"
 
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
@@ -96,7 +96,7 @@ type RestoreCommonConfig struct {
 	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 
-	FilterSysUsers []string `json:"filter-sys-users" toml:"filter-sys-users"`
+	ResetSysUsers []string `json:"reset-sys-users" toml:"reset-sys-users"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -122,12 +122,12 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"concurrency pd-relative operations like split & scatter.")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
-		"after how long a restore batch would be auto sended.")
+		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
-		"batch size for ddl to create a batch of tabes once.")
+		"batch size for ddl to create a batch of tables once.")
 	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
-	flags.StringArrayP(FlagFilterSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
-	_ = flags.MarkHidden(FlagFilterSysUsers)
+	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
+	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
@@ -156,7 +156,7 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 	}
-	cfg.FilterSysUsers, err = flags.GetStringArray(FlagFilterSysUsers)
+	cfg.ResetSysUsers, err = flags.GetStringArray(FlagResetSysUsers)
 	if err != nil {
 		return errors.Trace(err)
 	}
