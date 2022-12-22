@@ -384,7 +384,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
-	file, fileName, err := replayer.GeneratePlanReplayerFile()
+	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsContinuesCapture)
 	if err != nil {
 		logutil.BgLogger().Warn("generate plan replayer capture task file failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),

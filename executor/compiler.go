@@ -158,14 +158,16 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	if c.Ctx.GetSessionVars().IsPlanReplayerCaptureEnabled() && !c.Ctx.GetSessionVars().InRestrictedSQL {
-		startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
-		if err != nil {
-			return nil, err
-		}
-		if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
-			checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
-		} else {
-			checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
+		if _, ok := stmtNode.(*ast.SelectStmt); ok {
+			startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
+			if err != nil {
+				return nil, err
+			}
+			if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
+				checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
+			} else {
+				checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
+			}
 		}
 	}
 
