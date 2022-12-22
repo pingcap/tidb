@@ -333,3 +333,11 @@ func keyWithPrefix(prefix, key string) string {
 
 	return path.Join(prefix, key)
 }
+
+// SetEtcdCliByNamespace is used to add a etcd namespace prefix befor etcd path.
+func SetEtcdCliByNamespace(cli *clientv3.Client, namespacePrefix string) {
+	cli.KV = namespace.NewKV(cli.KV, namespacePrefix)
+	cli.Watcher = namespace.NewWatcher(cli.Watcher, namespacePrefix)
+	cli.Lease = namespace.NewLease(cli.Lease, namespacePrefix)
+
+}

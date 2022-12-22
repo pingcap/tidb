@@ -395,3 +395,31 @@ func testSetup(t *testing.T) (context.Context, *Client, *integration.ClusterV3) 
 	etcd := NewClient(cluster.RandClient(), "binlog")
 	return context.Background(), etcd, cluster
 }
+
+func testSetupOriginal(t *testing.T) (context.Context, *clientv3.Client, *integration.ClusterV3) {
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	return context.Background(), cluster.RandClient(), cluster
+}
+
+func TestSetEtcdCliByNamespace(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, origEtcdCli, etcdMockCluster := testSetupOriginal(t)
+	defer etcdMockCluster.Terminate(t)
+
+	namespacePrefix := "testNamespace/"
+	key := "testkey"
+	obj := "test"
+
+	unprefixedKV := origEtcdCli.KV
+	cliNamespace := origEtcdCli
+	SetEtcdCliByNamespace(cliNamespace, namespacePrefix)
+
+	_, err := cliNamespace.Put(ctx, key, obj)
+	require.NoError(t, err)
+
+	// verify that kv pair is empty before set
+	getResp, err := unprefixedKV.Get(ctx, namespacePrefix+key)
+	require.NoError(t, err)
+	require.Len(t, getResp.Kvs, 1)
+
+}

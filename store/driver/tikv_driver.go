@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -88,6 +89,7 @@ func WithPDClientConfig(client config.PDClient) Option {
 
 // TiKVDriver implements engine TiKV.
 type TiKVDriver struct {
+	keyspaceName    string
 	pdConfig        config.PDClient
 	security        config.Security
 	tikvConfig      config.TiKVClient
@@ -117,7 +119,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
-	etcdAddrs, disableGC, err := config.ParsePath(path)
+	etcdAddrs, disableGC, keyspaceName, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -142,7 +144,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 	}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
+	uuid := fmt.Sprintf("tikv-%v-%s", pdCli.GetClusterID(context.TODO()), keyspaceName)
 	if store, ok := mc.cache[uuid]; ok {
 		return store, nil
 	}
@@ -157,11 +159,38 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		return nil, errors.Trace(err)
 	}
 
-	pdClient := tikv.CodecPDClient{Client: pdCli}
-	s, err := tikv.NewKVStore(uuid, &pdClient, spkv, tikv.NewRPCClient(tikv.WithSecurity(d.security)))
+	// ---------------- keyspace logic  ----------------
+	var (
+		pdClient *tikv.CodecPDClient
+	)
+
+	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+		logutil.BgLogger().Info("using API V1.")
+		pdClient = tikv.NewCodecPDClient(tikv.ModeTxn, pdCli)
+	} else {
+		logutil.BgLogger().Info("using API V2.", zap.String("keyspaceName", keyspaceName))
+		pdClient, err = tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdCli, keyspaceName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// If there's setting keyspace-name, then skipped GC worker logic.
+		// It need a group of special tidb nodes to execute GC worker logic.
+		disableGC = true
+	}
+
+	codec := pdClient.GetCodec()
+
+	rpcClient := tikv.NewRPCClient(
+		tikv.WithSecurity(d.security),
+		tikv.WithCodec(codec),
+	)
+
+	s, err := tikv.NewKVStore(uuid, pdClient, spkv, rpcClient)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// ---------------- keyspace logic  ----------------
 	if d.txnLocalLatches.Enabled {
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
@@ -178,6 +207,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		memCache:  kv.NewCacheDB(),
 		enableGC:  !disableGC,
 		coprStore: coprStore,
+		codec:     codec,
 	}
 
 	mc.cache[uuid] = store
@@ -192,6 +222,7 @@ type tikvStore struct {
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
+	codec     tikv.Codec
 }
 
 // Name gets the name of the storage engine
@@ -342,4 +373,8 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 		result = append(result, entries...)
 	}
 	return result, nil
+}
+
+func (s *tikvStore) GetCodec() tikv.Codec {
+	return s.codec
 }

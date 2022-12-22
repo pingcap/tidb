@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -211,6 +212,10 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
+
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
+	storage, dom := createStoreAndDomain(keyspaceName)
+
 	resourcemanager.GlobalResourceManager.Start()
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
@@ -303,9 +308,9 @@ func registerMetrics() {
 	}
 }
 
-func createStoreAndDomain() (kv.Storage, *domain.Domain) {
+func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
-	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
+	fullPath := fmt.Sprintf("%s://%s?keyspaceName=%s", cfg.Store, cfg.Path, keyspaceName)
 	var err error
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)

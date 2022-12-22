@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "keyspace",
+    srcs = ["keyspace.go"],
+    importpath = "github.com/pingcap/tidb/keyspace",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//config",
+        "//kv",
+        "@com_github_tikv_client_go_v2//tikv",
+    ],
+)
+
+go_test(
+    name = "keyspace_test",
+    srcs = ["keyspace_test.go"],
+    embed = [":keyspace"],
+    deps = [
+        "//config",
+        "@com_github_stretchr_testify//suite",
+    ],
+)
