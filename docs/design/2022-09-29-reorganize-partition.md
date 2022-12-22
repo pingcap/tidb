@@ -103,6 +103,42 @@ It will use all these schema change stages:
 
 During the reorganization happens in the background the normal write path needs to check if there are any new partitions in the metadata and also check if the updated/deleted/inserted row would match a new partition, and if so, also do the same operation in the new partition, just like during adding index or modify column operations currently does. (To be implemented in `(*partitionedTable) AddRecord/UpdateRecord/RemoveRecord`)
 
+Example of why an extra state between StateWriteReorganize and StatePublic is needed:
+
+```sql
+-- table:
+CREATE TABLE t (a int) PARTITION BY LIST (a) (PARTITION p0 VALUES IN (1,2,3,4,5), PARTITION p1 VALUES IN (6,7,8,9,10));
+-- during alter operation:
+ALTER TABLE t REORGANIZE PARTITION p0 INTO (PARTITION p0a VALUES IN (1,2,3), PARTITION p0b VALUES IN (4,5));
+```
+
+Partition within parentheses `(p0a [1] p0b [0])` is hidden or to be deleted by GC/DeleteRange. Values in the brackets after the partition `p0a [2]`.
+
+If we go directly from StateWriteReorganize to StatePublic, then clients one schema version behind will not see changes to the new partitions:
+
+| Data (TiKV/Unistore)                    | TiDB client 1                        | TiDB client 2                                                |
+| --------------------------------------- | ------------------------------------ | ------------------------------------------------------------ |
+| p0 [] p1 [] StateWriteReorganize        |                                      |                                                              |
+| p0 [] p1 [] (p0a [] p0b [])             |                                      |                                                              |
+| (p0 []) p1 [] p0a [] p0b [] StatePublic |                                      |                                                              |
+| (p0 []) p1 [] p0a [2] p0b []            | StatePublic INSERT INTO T VALUES (2) |                                                              |
+| (p0 []) p1 [] p0a [2] p0b []            |                                      | StateWriteReorganize SELECT * FROM t => [] (only sees p0,p1) |
+
+
+But if we add a state between StateWriteReorganize and StatePublic and double write to the old partitions during that state it works:
+
+
+| Data (TiKV/Unistore)                              | TiDB client 1                                  | TiDB client 2                                                         |
+| ------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------- |
+| p0 [] p1 [] (p0a [] p0b []) StateWriteReorganize  |                                                |                                                                       |
+| (p0 []) p1 [] p0a [] p0b [] StateDeleteReorganize |                                                |                                                                       |
+| (p0 [2]) p1 [] p0a [2] p0b []                     | StateDeleteReorganize INSERT INTO T VALUES (2) |                                                                       |
+| (p0 [2]) p1 [] p0a [2] p0b []                     |                                                | StateWriteReorganize SELECT * FROM t => [2] (only sees p0,p1)       |
+| (p0 [2]) p1 [] p0a [2] p0b [] StatePublic         |                                                |                                                                       |
+| (p0 [2]) p1 [] p0a [2] p0b [4]                    | StatePublic INSERT INTO T VALUES (4)           |                                                                       |
+| (p0 [2]) p1 [] p0a [2] p0b [4]                    |                                                | StateDeleteReorganize SELECT * FROM t => [2,4] (sees p0a,p0b,p1) |
+
+
 ### Error handling
 
 If any non-retryable error occurs, we will call onDropTablePartition and adjust the logic in that function to also handle the roll back of reorganize partition, in a similar way as it does with model.ActionAddTablePartition.
