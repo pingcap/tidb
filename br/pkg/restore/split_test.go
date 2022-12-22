@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -935,4 +936,45 @@ func TestGetRewriteTableID(t *testing.T) {
 
 	newTableID := restore.GetRewriteTableID(oldTableID, rewriteRules)
 	require.Equal(t, tableID, newTableID)
+}
+
+type mockLogIter struct {
+	next int
+}
+
+func (m *mockLogIter) TryNext(ctx context.Context) iter.IterResult[*backuppb.DataFileInfo] {
+	if m.next > 10000 {
+		return iter.Done[*backuppb.DataFileInfo]()
+	}
+	m.next += 1
+	return iter.Emit(&backuppb.DataFileInfo{
+		StartKey: []byte(fmt.Sprintf("a%d", m.next)),
+		EndKey:   []byte("b"),
+		Length:   1024, // 1 KB
+	})
+}
+
+func TestLogFilesIterWithSplitHelper(t *testing.T) {
+	var tableID int64 = 76
+	var oldTableID int64 = 80
+	rewriteRules := &restore.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(tableID),
+			},
+		},
+	}
+	rewriteRulesMap := map[int64]*restore.RewriteRules{
+		oldTableID: rewriteRules,
+	}
+	mockIter := &mockLogIter{}
+	ctx := context.Background()
+	logIter := restore.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, NewFakeSplitClient())
+	next := 0
+	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
+		require.NoError(t, r.Err)
+		next += 1
+		require.Equal(t, []byte(fmt.Sprintf("a%d", next)), r.Item.StartKey)
+	}
 }
