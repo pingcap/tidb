@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -47,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
-	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -316,56 +314,6 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	}
 	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
 	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, e.serverInfoType, true)
-}
-
-func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(items))
-	for _, v := range items {
-		for _, item := range v.Pairs {
-			row := types.MakeDatums(
-				tp,
-				addr,
-				v.Tp,
-				v.Name,
-				item.Key,
-				item.Value,
-			)
-			rows = append(rows, row)
-		}
-	}
-	return rows
-}
-
-func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
-	opt := grpc.WithInsecure()
-	security := config.GetGlobalConfig().Security
-	if len(security.ClusterSSLCA) != 0 {
-		clusterSecurity := security.ClusterSecurity()
-		tlsConfig, err := clusterSecurity.ToTLSConfig()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
-	}
-	conn, err := grpc.Dial(address, opt)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err := conn.Close()
-		if err != nil {
-			log.Error("close grpc connection error", zap.Error(err))
-		}
-	}()
-
-	cli := diagnosticspb.NewDiagnosticsClient(conn)
-	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
-	defer cancel()
-	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
-	if err != nil {
-		return nil, err
-	}
-	return r.Items, nil
 }
 
 func parseFailpointServerInfo(s string) []infoschema.ServerInfo {

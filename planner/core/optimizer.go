@@ -654,7 +654,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 // TiFlashFineGrainedShuffleStreamCount:
 // < 0: fine grained shuffle is disabled.
 // > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
-// == 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefStreamCountWhenMaxThreadsNotSet.
+// == 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise set status as uninitialized.
 func handleFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan) {
 	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
 	if streamCount < 0 {
@@ -752,14 +752,14 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 	}
 }
 
-func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, exchangeColLen int, splitLimit uint64) (applyFlag bool, streamCount uint64) {
+func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, exchangeColCount int, splitLimit uint64) (applyFlag bool, streamCount uint64) {
 	switch (*streamCountInfo).itemStatus {
 	case unInitialized:
 		streamCount = 4 // assume 8c node in cluster as minimal, stream count is 8 / 2 = 4
 	case initialized:
 		streamCount = (*streamCountInfo).itemValue
 	case failed:
-		return false, 0
+		return false, 0 // probably this path won't reach
 	}
 
 	var tiflashServerCount uint64 = 0
@@ -781,7 +781,7 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Cont
 	}
 
 	// if already exceeds splitLimit, no need to fetch actual logical cores
-	if tiflashServerCount*uint64(exchangeColLen)*streamCount > splitLimit {
+	if tiflashServerCount*uint64(exchangeColCount)*streamCount > splitLimit {
 		return false, 0
 	}
 
@@ -796,26 +796,39 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Cont
 		(*tiflashServerCountInfo).itemValue = 0
 		return false, 0
 	}
-	flag, streamCount := calculateTiFlashStreamCountUsingMinLogicalCores(ctx, sctx, serversInfo)
+	flag, temStreamCount := calculateTiFlashStreamCountUsingMinLogicalCores(ctx, sctx, serversInfo)
 	if !flag {
 		setDefaultStreamCount(streamCountInfo)
 		(*tiflashServerCountInfo).itemStatus = failed
 		return false, 0
 	}
+	streamCount = temStreamCount
 	(*streamCountInfo).itemStatus = initialized
 	(*streamCountInfo).itemValue = streamCount
-	applyFlag = tiflashServerCount*uint64(exchangeColLen)*streamCount <= splitLimit
+	applyFlag = tiflashServerCount*uint64(exchangeColCount)*streamCount <= splitLimit
 	return applyFlag, streamCount
 }
 
 func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) (streamCount uint64) {
 	switch (*streamCountInfo).itemStatus {
 	case unInitialized:
+		if (*tiflashServerCountInfo).itemStatus == failed {
+			setDefaultStreamCount(streamCountInfo)
+			streamCount = (*streamCountInfo).itemValue
+			break
+		}
+
 		serversInfo, err := infoschema.GetTiFlashServerInfo(sctx)
 		if err != nil {
 			setDefaultStreamCount(streamCountInfo)
 			streamCount = (*streamCountInfo).itemValue
+			(*tiflashServerCountInfo).itemStatus = failed
 			break
+		}
+
+		if (*tiflashServerCountInfo).itemStatus == unInitialized {
+			(*tiflashServerCountInfo).itemStatus = initialized
+			(*tiflashServerCountInfo).itemValue = uint64(len(serversInfo))
 		}
 
 		flag, temStreamCount := calculateTiFlashStreamCountUsingMinLogicalCores(ctx, sctx, serversInfo)
@@ -828,11 +841,6 @@ func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx sessi
 		streamCount = temStreamCount
 		(*streamCountInfo).itemStatus = initialized
 		(*streamCountInfo).itemValue = streamCount
-
-		if (*tiflashServerCountInfo).itemStatus != initialized {
-			(*tiflashServerCountInfo).itemStatus = initialized
-			(*tiflashServerCountInfo).itemValue = uint64(len(serversInfo))
-		}
 	case initialized:
 		streamCount = (*streamCountInfo).itemValue
 	case failed:
@@ -897,13 +905,13 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		}
-		// don't reply on prob side's fineGrainedShuffle attribute
+		// don't apply fine grained shuffle for prob side
 		helper.clear()
 		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalExchangeSender:
 		if x.ExchangeType == tipb.ExchangeType_Hash {
 			// Set up stream count for all plans based on shuffle target type.
-			var exchangeColLen = x.Schema().Len()
+			var exchangeColCount = x.Schema().Len()
 			switch helper.shuffleTarget {
 			case window:
 				streamCount := inferFineGrainedShuffleStreamCountForWindow(ctx, sctx, streamCountInfo, tiflashServerCountInfo)
@@ -912,7 +920,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 					p.TiFlashFineGrainedShuffleStreamCount = streamCount
 				}
 			case hashAgg:
-				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColLen, 1200) // 1200: performance test result
+				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 1200) // 1200: performance test result
 				if applyFlag {
 					x.TiFlashFineGrainedShuffleStreamCount = streamCount
 					for _, p := range helper.plans {
@@ -922,7 +930,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 			case joinBuild:
 				// Support hashJoin only when shuffle hash keys equals to join keys due to tiflash implementations
 				if len(x.HashCols) == helper.joinKeysCount {
-					applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColLen, 600) // 600: performance test result
+					applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result
 					if applyFlag {
 						x.TiFlashFineGrainedShuffleStreamCount = streamCount
 						for _, p := range helper.plans {
