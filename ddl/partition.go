@@ -2204,9 +2204,12 @@ type reorgPartitionWorker struct {
 	metricCounter prometheus.Counter
 
 	// Static allocated to limit memory allocations
-	rowRecords []*rowRecord
-	rowDecoder *decoder.RowDecoder
-	rowMap     map[int64]types.Datum
+	rowRecords        []*rowRecord
+	rowDecoder        *decoder.RowDecoder
+	rowMap            map[int64]types.Datum
+	writeColOffsetMap map[int64]int
+	maxOffset         int
+	reorgedTbl        table.PartitionedTable
 
 	// SQL MODE should be ignored for reorganize partition?
 	// TODO: Test with zero date? and NULL timestamp?
@@ -2216,14 +2219,42 @@ type reorgPartitionWorker struct {
 	jobContext *JobContext
 }
 
-func newReorgPartitionWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *reorgPartitionWorker {
-	return &reorgPartitionWorker{
-		backfillWorker: newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeReorgPartitionWorker),
-		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("reorg_partition_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
-		rowDecoder:     decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap),
-		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		jobContext:     jc,
+func newReorgPartitionWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
+	reorgedTbl, err := tables.GetReorganizedPartitionedTable(t)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	pt := t.GetPartitionedTable()
+	if pt == nil {
+		return nil, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+	}
+	partColIDs := pt.GetPartitionColumnIDs()
+	writeColOffsetMap := make(map[int64]int, len(partColIDs))
+	maxOffset := 0
+	for _, col := range pt.Cols() {
+		found := false
+		for _, id := range partColIDs {
+			if col.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		writeColOffsetMap[col.ID] = col.Offset
+		maxOffset = mathutil.Max[int](maxOffset, col.Offset)
+	}
+	return &reorgPartitionWorker{
+		backfillWorker:    newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeReorgPartitionWorker),
+		metricCounter:     metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("reorg_partition_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
+		rowDecoder:        decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap),
+		rowMap:            make(map[int64]types.Datum, len(decodeColMap)),
+		jobContext:        jc,
+		writeColOffsetMap: writeColOffsetMap,
+		maxOffset:         maxOffset,
+		reorgedTbl:        reorgedTbl,
+	}, nil
 }
 
 func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
@@ -2281,7 +2312,6 @@ func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) 
 	return
 }
 
-// Duplicate of updateColumnWorker fetchRowColVals TODO: combine!
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
 	startTime := time.Now()
@@ -2289,35 +2319,11 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
-	reorgedTbl, err := tables.GetReorganizedPartitionedTable(w.table)
-	if err != nil {
-		return nil, nil, true, errors.Trace(err)
-	}
-	t := w.table.GetPartitionedTable()
-	if t == nil {
-		return nil, nil, true, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
-	}
-	partColIDs := t.GetPartitionColumnIDs()
-	writeColOffsetMap := make(map[int64]int, len(partColIDs))
-	maxOffset := 0
-	for _, col := range w.table.Cols() {
-		found := false
-		for _, id := range partColIDs {
-			if col.ID == id {
-				found = true
-				break
-			}
-		}
-		if !found {
-			continue
-		}
-		writeColOffsetMap[col.ID] = col.Offset
-		maxOffset = mathutil.Max[int](maxOffset, col.Offset)
-	}
-	tmpRow := make([]types.Datum, maxOffset+1)
+
+	tmpRow := make([]types.Datum, w.maxOffset+1)
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err = iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
+	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in reorgPartitionWorker fetchRowColVals", 0)
@@ -2333,20 +2339,20 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, nil
 			}
 
-			_, err = w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
+			_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
 
 			// Set the partitioning columns and calculate which partition to write to
-			for colID, offset := range writeColOffsetMap {
+			for colID, offset := range w.writeColOffsetMap {
 				if d, ok := w.rowMap[colID]; ok {
 					tmpRow[offset] = d
 				} else {
 					return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 				}
 			}
-			p, err := reorgedTbl.GetPartitionByRow(w.sessCtx, tmpRow)
+			p, err := w.reorgedTbl.GetPartitionByRow(w.sessCtx, tmpRow)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
