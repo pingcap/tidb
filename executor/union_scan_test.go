@@ -17,6 +17,7 @@ package executor_test
 import (
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"testing"
 	"time"
 
@@ -425,38 +426,52 @@ func TestIssue28073(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 'flamboyant mcclintock')")
 	tk.MustExec("insert into t2 select * from t1")
 
+	logutil.BgLogger().Info("TestIssue28073 1")
 	tk.MustExec("begin")
+	logutil.BgLogger().Info("TestIssue28073 2")
 	tk.MustExec("insert into t2 (c_int, c_str) values (2, 'romantic grothendieck')")
+	logutil.BgLogger().Info("TestIssue28073 3")
 	tk.MustQuery("select * from t2 left join t1 on t1.c_int = t2.c_int for update").Sort().Check(
 		testkit.Rows(
 			"1 flamboyant mcclintock 1 flamboyant mcclintock",
 			"2 romantic grothendieck <nil> <nil>",
 		))
+	logutil.BgLogger().Info("TestIssue28073 4")
 	tk.MustExec("commit")
+	logutil.BgLogger().Info("TestIssue28073 5")
 
 	// Check no key is written to table ID 0
 	txn, err := store.Begin()
+	logutil.BgLogger().Info("TestIssue28073 6")
 	require.NoError(t, err)
 	start := tablecodec.EncodeTablePrefix(0)
 	end := tablecodec.EncodeTablePrefix(1)
 	iter, err := txn.Iter(start, end)
+	logutil.BgLogger().Info("TestIssue28073 7")
 	require.NoError(t, err)
 
 	exist := false
 	for iter.Valid() {
 		require.Nil(t, iter.Next())
 		exist = true
+		logutil.BgLogger().Info("TestIssue28073 8")
 		break
 	}
 	require.False(t, exist)
 
 	// Another case, left join on partition table should not generate locks on physical ID = 0
 	tk.MustExec("drop table if exists t1, t2;")
+	logutil.BgLogger().Info("TestIssue28073 9")
 	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int, c_str));")
+	logutil.BgLogger().Info("TestIssue28073 10")
 	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int)) partition by hash (c_int) partitions 4;")
+	logutil.BgLogger().Info("TestIssue28073 11")
 	tk.MustExec("insert into t1 (`c_int`, `c_str`) values (1, 'upbeat solomon'), (5, 'sharp rubin');")
+	logutil.BgLogger().Info("TestIssue28073 12")
 	tk.MustExec("insert into t2 (`c_int`, `c_str`) values (1, 'clever haibt'), (4, 'kind margulis');")
+	logutil.BgLogger().Info("TestIssue28073 13")
 	tk.MustExec("begin pessimistic;")
+	logutil.BgLogger().Info("TestIssue28073 14")
 	tk.MustQuery("select * from t1 left join t2 on t1.c_int = t2.c_int for update;").Check(testkit.Rows(
 		"1 upbeat solomon 1 clever haibt",
 		"5 sharp rubin <nil> <nil>",
@@ -464,13 +479,16 @@ func TestIssue28073(t *testing.T) {
 	key, err := hex.DecodeString("7480000000000000005F728000000000000000")
 	require.NoError(t, err)
 	h := helper.NewHelper(store.(helper.Storage))
+	logutil.BgLogger().Info("TestIssue28073 15")
 	resp, err := h.GetMvccByEncodedKey(key)
 	require.NoError(t, err)
 	require.Nil(t, resp.Info.Lock)
 	require.Len(t, resp.Info.Writes, 0)
 	require.Len(t, resp.Info.Values, 0)
 
+	logutil.BgLogger().Info("TestIssue28073 16")
 	tk.MustExec("rollback;")
+	logutil.BgLogger().Info("TestIssue28073 17")
 }
 
 func TestIssue32422(t *testing.T) {

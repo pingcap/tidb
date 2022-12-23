@@ -197,6 +197,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
 				zap.Duration("start time", time.Since(startTime)),
+				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes))
 			return is, false, currentSchemaVersion, relatedChanges, nil
@@ -207,16 +208,25 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
+		// TODO: Remove CI debug
+		logutil.BgLogger().Error("fetchAllSchemasWithTables error",
+			zap.Error(err))
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
+		// TODO: Remove CI debug
+		logutil.BgLogger().Error("fetchPolicies error",
+			zap.Error(err))
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
 	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
 	if err != nil {
+		// TODO: Remove CI debug
+		logutil.BgLogger().Error("fetchPolicies error",
+			zap.Error(err))
 		return nil, false, currentSchemaVersion, nil, err
 	}
 	logutil.BgLogger().Info("full load InfoSchema success",
