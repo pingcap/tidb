@@ -26,8 +26,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/util"
@@ -274,4 +276,31 @@ func TestTiFlashManager(t *testing.T) {
 	require.Equal(t, true, z.Accel)
 
 	CloseTiFlashManager(ctx)
+}
+
+func TestTiFlashManager2(t *testing.T) {
+	{
+		stores := make([]*metapb.Store, 0)
+		stores = append(stores, &metapb.Store{Version: "v6.5.0"})
+		stores = append(stores, &metapb.Store{Version: "v6.7.0"})
+		err := CheckAndInitTiFlashStoreInfo(nil, stores)
+		require.NoError(t, err)
+		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MppVersionV0)
+	}
+	{
+		stores := make([]*metapb.Store, 0)
+		stores = append(stores, &metapb.Store{Version: "v6.7.0-alpha"})
+		stores = append(stores, &metapb.Store{Version: "v6.8.0"})
+		err := CheckAndInitTiFlashStoreInfo(nil, stores)
+		require.NoError(t, err)
+		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MppVersionV0)
+	}
+	{
+		stores := make([]*metapb.Store, 0)
+		stores = append(stores, &metapb.Store{Version: "v6.7.0"})
+		stores = append(stores, &metapb.Store{Version: "v6.8.0"})
+		err := CheckAndInitTiFlashStoreInfo(nil, stores)
+		require.NoError(t, err)
+		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MppVersionV1)
+	}
 }
