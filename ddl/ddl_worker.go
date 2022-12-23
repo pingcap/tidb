@@ -119,7 +119,7 @@ func NewJobContext() *JobContext {
 		cacheSQL:           "",
 		cacheNormalizedSQL: "",
 		cacheDigest:        nil,
-		tp:                 "unknown",
+		tp:                 "",
 	}
 }
 
@@ -761,6 +761,9 @@ func getDDLRequestSource(job *model.Job) string {
 }
 
 func (w *JobContext) setDDLLabelForDiagnosis(job *model.Job) {
+	if w.tp != "" {
+		return
+	}
 	w.tp = getDDLRequestSource(job)
 	w.ddlJobCtx = kv.WithInternalSourceType(w.ddlJobCtx, w.ddlJobSourceType())
 }
