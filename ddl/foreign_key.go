@@ -266,6 +266,9 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	if referTblInfo.TTLInfo != nil {
 		return dbterror.ErrUnsupportedTTLReferencedByFK
 	}
+	if referTblInfo.GetPartitionInfo() != nil || tblInfo.GetPartitionInfo() != nil {
+		return infoschema.ErrForeignKeyOnPartitioned
+	}
 
 	// check refer columns in parent table.
 	for i := range fkInfo.RefCols {
