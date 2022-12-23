@@ -1080,14 +1080,16 @@ func TestInitializeSQLFile(t *testing.T) {
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
 	ctx := context.Background()
-	r := mustExec(t, se, `SHOW VARIABLES LIKE 'query_cache_type'`)
+	r, err := exec(se, `SHOW VARIABLES LIKE 'query_cache_type'`)
+	require.NoError(t, err)
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows()) // not shown in noopvariables mode
 	require.NoError(t, r.Close())
 
-	r = mustExec(t, se, `SHOW VARIABLES LIKE 'tidb_enable_noop_variables'`)
+	r, err = exec(se, `SHOW VARIABLES LIKE 'tidb_enable_noop_variables'`)
+	require.NoError(t, err)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)

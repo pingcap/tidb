@@ -2339,7 +2339,9 @@ func doBootstrapSQLFile(s Session) {
 		if rs != nil {
 			// I don't believe we need to drain the result-set in bootstrap mode
 			// but if required we can do this here in future.
-			rs.Close()
+			if err := rs.Close(); err != nil {
+				logutil.BgLogger().Fatal("unable to close result", zap.Error(err))
+			}
 		}
 	}
 }
