@@ -79,7 +79,7 @@ func (r *TiFlashRecorder) Rewrite(oldID int64, newID int64) {
 	}
 }
 
-func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []string {
+func (r *TiFlashRecorder) GenerateResetAlterTableDDLs(info infoschema.InfoSchema) []string {
 	items := make([]string, 0, len(r.items))
 	r.Iterate(func(id int64, replica model.TiFlashReplicaInfo) {
 		table, ok := info.TableByID(id)
@@ -92,7 +92,17 @@ func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []s
 			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
 			return
 		}
-		altTableSpec, err := alterTableSpecOf(replica)
+		altTableSpec, err := alterTableSpecOf(replica, true)
+		if err != nil {
+			log.Warn("Failed to generate the alter table spec", logutil.ShortError(err), zap.Any("replica", replica))
+			return
+		}
+		items = append(items, fmt.Sprintf(
+			"ALTER TABLE %s %s",
+			utils.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O),
+			altTableSpec),
+		)
+		altTableSpec, err = alterTableSpecOf(replica, false)
 		if err != nil {
 			log.Warn("Failed to generate the alter table spec", logutil.ShortError(err), zap.Any("replica", replica))
 			return
@@ -106,13 +116,48 @@ func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []s
 	return items
 }
 
-func alterTableSpecOf(replica model.TiFlashReplicaInfo) (string, error) {
+func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []string {
+	items := make([]string, 0, len(r.items))
+	r.Iterate(func(id int64, replica model.TiFlashReplicaInfo) {
+		table, ok := info.TableByID(id)
+		if !ok {
+			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
+			return
+		}
+		schema, ok := info.SchemaByTable(table.Meta())
+		if !ok {
+			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
+			return
+		}
+		altTableSpec, err := alterTableSpecOf(replica, false)
+		if err != nil {
+			log.Warn("Failed to generate the alter table spec", logutil.ShortError(err), zap.Any("replica", replica))
+			return
+		}
+		items = append(items, fmt.Sprintf(
+			"ALTER TABLE %s %s",
+			utils.EncloseDBAndTable(schema.Name.O, table.Meta().Name.O),
+			altTableSpec),
+		)
+	})
+	return items
+}
+
+func alterTableSpecOf(replica model.TiFlashReplicaInfo, reset bool) (string, error) {
 	spec := &ast.AlterTableSpec{
 		Tp: ast.AlterTableSetTiFlashReplica,
 		TiFlashReplica: &ast.TiFlashReplicaSpec{
 			Count:  replica.Count,
 			Labels: replica.LocationLabels,
 		},
+	}
+	if reset {
+		spec = &ast.AlterTableSpec{
+			Tp: ast.AlterTableSetTiFlashReplica,
+			TiFlashReplica: &ast.TiFlashReplicaSpec{
+				Count:  0,
+			},
+		}
 	}
 
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
