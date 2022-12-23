@@ -15,11 +15,11 @@
 package core
 
 import (
-	"github.com/pingcap/failpoint"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
