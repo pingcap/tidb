@@ -16,7 +16,6 @@ export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists $DB_NAME;"
 
 # build data on mysql
-run_sql "create database $DB_NAME DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql_file "$DUMPLING_BASE_NAME/data/e2e_foreign_key.sql"
 
 # dumping
