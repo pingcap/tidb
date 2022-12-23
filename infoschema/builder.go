@@ -294,7 +294,8 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 	logutil.BgLogger().Info("applyReorganizePartition",
 		zap.String("diff.Type", diff.Type.String()),
 		zap.Int64("diff.Ver", diff.Version))
-	tblIDs := make([]int64, 0, 2)
+	// Minimum allocation, one partition is reorganized into 1 or more new ones
+	tblIDs := make([]int64, 0, 1+len(diff.AffectedOpts))
 	for _, opt := range diff.AffectedOpts {
 		// TODO: Remove CI debug log
 		logutil.BgLogger().Info("AffectedOpts",

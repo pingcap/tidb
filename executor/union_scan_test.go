@@ -17,7 +17,6 @@ package executor_test
 import (
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"testing"
 	"time"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/benchdaily"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
