@@ -396,7 +396,8 @@ func updateDDLJob2Table(sctx *session, job *model.Job, updateRawArgs bool) error
 // getDDLReorgHandle gets DDL reorg handle.
 func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	rows, err := sess.execute(context.Background(), sql, "get_handle")
+	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job))
+	rows, err := sess.execute(ctx, sql, "get_handle")
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
