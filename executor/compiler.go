@@ -158,7 +158,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	if c.Ctx.GetSessionVars().IsPlanReplayerCaptureEnabled() && !c.Ctx.GetSessionVars().InRestrictedSQL {
-		if _, ok := stmtNode.(*ast.SelectStmt); ok {
+		if isPlanReplayerStmtValid(stmtNode) {
 			startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
 			if err != nil {
 				return nil, err
@@ -170,8 +170,16 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
-
 	return stmt, nil
+}
+
+// we only allowed select/insert/update/delete stmt to be captured
+func isPlanReplayerStmtValid(stmtNode ast.StmtNode) bool {
+	switch stmtNode.(type) {
+	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.InsertStmt:
+		return true
+	}
+	return false
 }
 
 func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
