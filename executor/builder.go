@@ -3527,10 +3527,14 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 		keyColOffsets[i] = offset
 	}
 
-	pe, err := pt.(interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
-	}).PartitionExpr()
-	if err != nil {
+	t, ok := pt.(interface {
+		PartitionExpr() *tables.PartitionExpr
+	})
+	if !ok {
+		return nil
+	}
+	pe := t.PartitionExpr()
+	if pe == nil {
 		return nil
 	}
 
