@@ -12,41 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cpu
+package metrics
 
-import (
-	"runtime"
-	"sync"
-	"testing"
-	"time"
+import "github.com/prometheus/client_golang/prometheus"
 
-	"github.com/stretchr/testify/require"
+var (
+	// EMACPUUsageGauge means exponential moving average of CPU usage
+	EMACPUUsageGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "rm",
+		Name:      "ema_cpu_usage",
+		Help:      "exponential moving average of CPU usage",
+	})
 )
-
-func TestCPUValue(t *testing.T) {
-	Observer := NewCPUObserver()
-	Observer.Start()
-	exit := make(chan struct{})
-	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-exit:
-					return
-				default:
-					runtime.Gosched()
-				}
-			}
-		}()
-	}
-	Observer.Start()
-	time.Sleep(5 * time.Second)
-	require.GreaterOrEqual(t, GetCPUUsage(), 0.0)
-	require.Less(t, GetCPUUsage(), 1.0)
-	Observer.Stop()
-	close(exit)
-	wg.Wait()
-}
