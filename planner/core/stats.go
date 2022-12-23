@@ -415,51 +415,6 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 	return ds.stats, nil
 }
 
-func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression, needPrune bool) error {
-	regularPathCount := len(ds.possibleAccessPaths)
-	// 1. Generate possible IndexMerge paths for `OR`.
-	err := ds.generateIndexMergeOrPaths(indexMergeConds)
-	if err != nil {
-		return err
-	}
-	// 2. Generate possible IndexMerge paths for `AND`.
-	indexMergeAndPath := ds.generateIndexMergeAndPaths(regularPathCount)
-	if indexMergeAndPath != nil {
-		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
-	}
-
-	// 3. If needed, append a warning if no IndexMerge is generated.
-
-	// If without hints, it means that `enableIndexMerge` is true
-	if len(ds.indexMergeHints) == 0 {
-		return nil
-	}
-	// With hints and without generated IndexMerge paths
-	if regularPathCount == len(ds.possibleAccessPaths) {
-		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
-		return nil
-	}
-
-	// 4. If needPrune is true, prune non-IndexMerge paths.
-
-	// Do not need to consider the regular paths in find_best_task().
-	// So we can use index merge's row count as DataSource's row count.
-	if needPrune {
-		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
-		minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
-		for _, path := range ds.possibleAccessPaths {
-			if minRowCount < path.CountAfterAccess {
-				minRowCount = path.CountAfterAccess
-			}
-		}
-		if ds.stats.RowCount > minRowCount {
-			ds.stats = ds.tableStats.ScaleByExpectCnt(minRowCount)
-		}
-	}
-	return nil
-}
-
 // DeriveStats implements LogicalPlan DeriveStats interface.
 func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (_ *property.StatsInfo, err error) {
 	ts.Source.initStats(nil)
