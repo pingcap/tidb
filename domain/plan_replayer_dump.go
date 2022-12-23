@@ -182,7 +182,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	var records []PlanReplayerStatusRecord
 	defer func() {
 		if err != nil {
-			logutil.BgLogger().Error("dump plan replayer failed", zap.Error(err))
+			logutil.BgLogger().Error("[plan-replayer] dump file failed", zap.Error(err))
 		}
 		err = zw.Close()
 		if err != nil {
