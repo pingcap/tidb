@@ -110,10 +110,11 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
 	tk.MustExec("create table employee (id bigint auto_increment key, pid bigint)")
 	tk.MustExec("insert into employee (id) values (1),(2),(3),(4),(5),(6),(7),(8)")
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 14; i++ {
 		tk.MustExec("insert into employee (pid) select pid from employee")
 	}
 	tk.MustExec("update employee set pid=id-1 where id>1")
+	tk.MustQuery("select count(*) from employee").Check(testkit.Rows("131072"))
 	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
 	tk.MustExec("alter table employee drop foreign key fk_1")
 	tk.MustExec("alter table employee drop index fk_1")
