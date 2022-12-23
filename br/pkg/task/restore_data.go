@@ -64,7 +64,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	summary.CollectUint("resolve-ts", resolveTS)
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, false, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -155,7 +155,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
 
 	// since we cannot reset tiflash automaticlly. so we should start it manually
-	if err = client.ResetTiFlashReplicas(ctx, g, mgr); err != nil {
+	if err = client.ResetTiFlashReplicas(ctx, g, mgr.GetStorage()); err != nil {
 		return errors.Trace(err)
 	}
 	progress.Close()
