@@ -2744,7 +2744,7 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sqls := recorder.GenerateAlterTableDDLs(info)
+	sqls := recorder.GenerateResetAlterTableDDLs(info)
 	log.Info("Generating SQLs for resetting TiFlash Replica",
 		zap.Strings("sqls", sqls))
 	return g.UseOneShotSession(storage, false, func(se glue.Session) error {
