@@ -55,6 +55,7 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
+// GetClusterMinMppVersion get the min/max mpp-version from TiFlash stores in cluster
 func (c *MPPClient) GetClusterMinMppVersion(ctx context.Context, tiflashStores []*metapb.Store) (int64, int64, int) {
 	// decide the mpp version of tiflash stores
 	var wg sync.WaitGroup

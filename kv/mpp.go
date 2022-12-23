@@ -22,35 +22,65 @@ import (
 
 	atomicutil "go.uber.org/atomic"
 
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 )
 
 const (
-	MppVersionUnspecified int64 = -1
+	// MppVersionV0 supports TiFlash version [~, ~]
+	MppVersionV0 int64 = iota
 
-	// MppVersionV0 supports TiFlash version [~, v6.6.0]
-	// Used when cluster version <= v6.5.0
-	MppVersionV0 int64 = 0
+	// MppVersionV1 supports TiFlash version [v6.6.x, ~]
+	MppVersionV1
 
-	// MppVersionV1 supports TiFlash version [v6.7.0, ~]
-	// Features: data compression in exchange operator;
-	MppVersionV1                      int64  = 1
-	MppVersionV1DefaultClusterVersion string = "6.8.0"
-	MppVersionV1Feature               string = "exchange data compression"
+	// MppVersionV2
+	// MppVersionV3
 
-	// MppVersionV2 int64 = MppVersionV1 * 2
-	// MppVersionV3 int64 = MppVersionV1 * 3
+	mppVersionMax
 
 	// MaxMppVersion means the latest version used in MPP tasks
-	MaxMppVersion int64 = MppVersionV1
+	MaxMppVersion int64 = mppVersionMax - 1
+
+	// MppVersionUnspecified means the illegal version
+	MppVersionUnspecified int64 = -1
 )
 
-var ClusterMinMppVersion = atomicutil.NewInt64(MppVersionV0)
+// TiDBMppVersion means the max MppVersion can be used in mpp plan
+var TiDBMppVersion = atomicutil.NewInt64(MaxMppVersion)
 
+var mppVersionFeatures = map[int64]string{
+	MppVersionV0: "none",
+	MppVersionV1: "exchange data compression",
+}
+
+// GetMppVersionFeatures return the features for mpp-version
+func GetMppVersionFeatures(mppVersion int64) string {
+	val, ok := mppVersionFeatures[mppVersion]
+	if ok {
+		return val
+	}
+	return ""
+}
+
+var mppVersionDefaultClusterVersion = map[int64]string{
+	MppVersionV1: "6.7.0",
+}
+
+// Default cluster version to use MppVersionV*
+// If TiFlash support MppVersionV* in version A.B.C, set default required cluster version to >= A.(B+1).0
+
+// GetMppVersionDefaultClusterVersion return the minimal cluster version to use mpp-version
+func GetMppVersionDefaultClusterVersion(mppVersion int64) string {
+	val, ok := mppVersionDefaultClusterVersion[mppVersion]
+	if ok {
+		return val
+	}
+	return ""
+}
+
+// FmtMppVersion return
 func FmtMppVersion(v int64) string {
 	if v == MppVersionUnspecified {
-		return fmt.Sprintf("unspecified(use %d)", ClusterMinMppVersion.Load())
+		return fmt.Sprintf("unspecified(use %d)", TiDBMppVersion.Load())
 	}
 	return fmt.Sprintf("%d", v)
 }
@@ -121,8 +151,6 @@ type MPPClient interface {
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppVersion int64) Response
-	// GetClusterMinMppVersion get min-mpp-version, max-mpp-version, alive-cnt of tiflash stores
-	GetClusterMinMppVersion(ctx context.Context, tiflashStores []*metapb.Store) (int64, int64, int)
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
@@ -134,23 +162,38 @@ type MPPBuildTasksRequest struct {
 	PartitionIDAndRanges []PartitionIDAndRanges
 }
 
+// ExchangeCompressMethod means the compress method used in exchange operator
 type ExchangeCompressMethod int
 
 const (
+	// ExchangeCompressMethodNONE means no compression
 	ExchangeCompressMethodNONE ExchangeCompressMethod = iota
+	// ExchangeCompressMethodLZ4 means compress method LZ4
 	ExchangeCompressMethodLZ4
+	// ExchangeCompressMethodZSTD means compress method ZSTD
 	ExchangeCompressMethodZSTD
-	ExchangeCompressMethodMAX
+	// ExchangeCompressMethodUnspecified means unspecified compress method, let TiDB choose one
+	ExchangeCompressMethodUnspecified
 
-	// TODO: use LZ4 as the defualt method
-	DefaultExchangeCompressMethod ExchangeCompressMethod = ExchangeCompressMethodNONE
+	// DefaultExchangeCompressMethod means default compress method
+	DefaultExchangeCompressMethod ExchangeCompressMethod = ExchangeCompressMethodUnspecified
+
+	exchangeCompressMethodUnspecifiedName string = "UNSPECIFIED"
 )
 
+// Name returns the name of ExchangeCompressMethod
 func (t ExchangeCompressMethod) Name() string {
+	if t == ExchangeCompressMethodUnspecified {
+		return exchangeCompressMethodUnspecifiedName
+	}
 	return t.ToMppCompressMethod().String()
 }
 
+// ToExchangeCompressMethod returns the ExchangeCompressMethod from name
 func ToExchangeCompressMethod(name string) (ExchangeCompressMethod, bool) {
+	if name == exchangeCompressMethodUnspecifiedName {
+		return ExchangeCompressMethodUnspecified, true
+	}
 	value, ok := mpp.CompressMethod_value[name]
 	if ok {
 		return ExchangeCompressMethod(value), true
@@ -158,6 +201,7 @@ func ToExchangeCompressMethod(name string) (ExchangeCompressMethod, bool) {
 	return DefaultExchangeCompressMethod, false
 }
 
+// ToMppCompressMethod returns mpp.CompressMethod from kv.ExchangeCompressMethod
 func (t ExchangeCompressMethod) ToMppCompressMethod() mpp.CompressMethod {
 	switch t {
 	case ExchangeCompressMethodNONE:
@@ -167,5 +211,7 @@ func (t ExchangeCompressMethod) ToMppCompressMethod() mpp.CompressMethod {
 	case ExchangeCompressMethodZSTD:
 		return mpp.CompressMethod_ZSTD
 	}
-	return mpp.CompressMethod_LZ4
+
+	// TODO: use LZ4 as the defualt method
+	return mpp.CompressMethod_NONE
 }

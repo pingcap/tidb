@@ -2185,9 +2185,13 @@ var defaultSysVars = []*SysVar{
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			_, ok := kv.ToExchangeCompressMethod(strings.ToUpper(normalizedValue))
 			if !ok {
-				var msg string = kv.ExchangeCompressMethodNONE.Name()
-				for m := kv.ExchangeCompressMethodNONE + 1; m < kv.ExchangeCompressMethodMAX; m += 1 {
-					msg = fmt.Sprintf("%s, %s", msg, m.Name())
+				var msg string
+				for m := kv.ExchangeCompressMethodNONE; m <= kv.ExchangeCompressMethodUnspecified; m += 1 {
+					if m == 0 {
+						msg = m.Name()
+					} else {
+						msg = fmt.Sprintf("%s, %s", msg, m.Name())
+					}
 				}
 				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
 					originalValue,
@@ -2210,10 +2214,13 @@ var defaultSysVars = []*SysVar{
 			if version >= kv.MppVersionUnspecified && version <= kv.MaxMppVersion {
 				return normalizedValue, nil
 			}
-			err = fmt.Errorf("incorrect value: `%s`. %s options: `%d` unspecified(recommended), `%d` no new feature, `%d` features `%s`.",
-				originalValue,
-				MppVersion, kv.MppVersionUnspecified, kv.MppVersionV0, kv.MppVersionV1, kv.MppVersionV1Feature)
-			return normalizedValue, err
+			errMsg := fmt.Sprintf("incorrect value: `%s`. `%s` options: `%d` unspecified(recommended),",
+				originalValue, MppVersion, kv.MppVersionUnspecified)
+			for i := kv.MppVersionV0; i <= kv.MaxMppVersion; i += 1 {
+				errMsg = fmt.Sprintf("%s, `%d` features `%s`", errMsg, i, kv.GetMppVersionFeatures(i))
+			}
+
+			return normalizedValue, errors.New(errMsg)
 		},
 		SetSession: func(s *SessionVars, val string) error {
 			version, err := strconv.ParseInt(val, 10, 64)

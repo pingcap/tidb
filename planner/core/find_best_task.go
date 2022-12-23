@@ -2003,7 +2003,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 
-		mppVersion := kv.ClusterMinMppVersion.Load()
+		mppVersion := kv.TiDBMppVersion.Load()
 		if v := ds.SCtx().GetSessionVars().MppVersion; v != kv.MppVersionUnspecified {
 			mppVersion = v
 		}
