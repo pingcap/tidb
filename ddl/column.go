@@ -1094,13 +1094,15 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		err := w.updatePhysicalTableRow(t, reorgInfo)
+		//nolint:forcetypeassert
+		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
 	if _, ok := t.(table.PartitionedTable); ok {
+		// TODO: Remove this
 		panic("FIXME: this got reverted and needs to be back!")
 	}
 	// Get the original start handle and end handle.
