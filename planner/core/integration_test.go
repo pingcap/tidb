@@ -4935,6 +4935,7 @@ func TestMppFineGrainedJoinAndAgg(t *testing.T) {
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 	fpName2 := "github.com/pingcap/tidb/planner/core/mockTiFlashStreamCountUsingMinLogicalCores"
 	require.NoError(t, failpoint.Enable(fpName2, `return("8")`))
+	defer func() { require.NoError(t, failpoint.Disable(fpName2)) }()
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
