@@ -2732,12 +2732,12 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 	recorder := tiflashrec.New()
 
 	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
+	log.Info("get tiflash store count for resetting TiFlash Replica",
+		zap.Uint64("count", tiFlashStoreCount))
 	for _, s := range allSchema {
 		for _, t := range s.Tables {
-			if t.TiFlashReplica != nil && t.TiFlashReplica.Count > tiFlashStoreCount {
-				if recorder != nil && t.TiFlashReplica != nil {
-					recorder.AddTable(t.ID, *t.TiFlashReplica)
-				}
+			if t.TiFlashReplica != nil && t.TiFlashReplica.Count <= tiFlashStoreCount {
+				recorder.AddTable(t.ID, *t.TiFlashReplica)
 			}
 		}
 	}
