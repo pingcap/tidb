@@ -51,6 +51,7 @@ go_test(
     flaky = True,
     deps = [
         "//infoschema",
+        "//kv",
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",

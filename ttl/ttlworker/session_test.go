@@ -179,7 +179,7 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interf
 	}
 
 	if s.executeSQL != nil {
-		return s.executeSQL(ctx, sql, args)
+		return s.executeSQL(ctx, sql, args...)
 	}
 	return s.rows, s.execErr
 }

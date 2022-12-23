@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	dbsession "github.com/pingcap/tidb/session"
@@ -35,10 +37,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestParallelLockNewJob(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	sessionFactory := func() session.Session {
+func sessionFactory(t *testing.T, store kv.Storage) func() session.Session {
+	return func() session.Session {
 		dbSession, err := dbsession.CreateSession4Test(store)
 		require.NoError(t, err)
 		se := session.NewSession(dbSession, dbSession, nil)
@@ -50,6 +50,12 @@ func TestParallelLockNewJob(t *testing.T) {
 
 		return se
 	}
+}
+
+func TestParallelLockNewJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	sessionFactory := sessionFactory(t, store)
 
 	storedTTLJobRunInterval := variable.TTLJobRunInterval.Load()
 	variable.TTLJobRunInterval.Store(0)
@@ -95,4 +101,25 @@ func TestParallelLockNewJob(t *testing.T) {
 		require.Equal(t, uint64(1), successCounter.Load())
 		successJob.Finish(se, time.Now())
 	}
+}
+
+func TestFinishJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+
+	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
+
+	tk.MustExec("insert into mysql.tidb_ttl_table_status(table_id) values (2)")
+
+	// finish with error
+	m := ttlworker.NewJobManager("test-id", nil, store)
+	se := sessionFactory()
+	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now())
+	require.NoError(t, err)
+	job.SetScanErr(errors.New(`"'an error message contains both single and double quote'"`))
+	job.Finish(se, time.Now())
+
+	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 {\"total_rows\":0,\"success_rows\":0,\"error_rows\":0,\"total_scan_task\":1,\"scheduled_scan_task\":0,\"finished_scan_task\":0,\"scan_task_err\":\"\\\"'an error message contains both single and double quote'\\\"\"}"))
 }
