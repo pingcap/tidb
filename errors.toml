@@ -2411,6 +2411,11 @@ error = '''
 Changing schema from '%-.192s' to '%-.192s' is not allowed.
 '''
 
+["schema:1506"]
+error = '''
+Foreign key clause is not yet supported in conjunction with partitioning
+'''
+
 ["schema:1822"]
 error = '''
 Failed to add the foreign key constraint. Missing index for constraint '%s' in the referenced table '%s'
