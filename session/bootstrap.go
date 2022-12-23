@@ -2323,7 +2323,7 @@ func doBootstrapSQLFile(s Session) {
 		return
 	}
 	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
-	b, err := ioutil.ReadFile(sqlFile)
+	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
 		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
 	}
