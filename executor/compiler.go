@@ -179,6 +179,7 @@ func isPlanReplayerStmtValid(stmtNode ast.StmtNode) bool {
 	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.InsertStmt:
 		return true
 	}
+	logutil.BgLogger().Debug("[plan-replayer-capture] discard")
 	return false
 }
 

@@ -189,22 +189,32 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		sqls = append(sqls, execStmt.Text())
 	}
 	if task.IsCapture {
-		logutil.BgLogger().Debug("[plan-replayer-dump] start to dump plan replayer result",
+		logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
 			zap.String("sql-digest", task.SQLDigest),
 			zap.String("plan-digest", task.PlanDigest),
-			zap.Strings("sql", sqls))
+			zap.Strings("sql", sqls),
+			zap.Bool("isContinues", task.IsContinuesCapture))
 	} else {
-		logutil.BgLogger().Debug("[plan-replayer-dump] start to dump plan replayer result",
+		logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
 			zap.Strings("sqls", sqls))
 	}
 	defer func() {
 		errMsg := ""
 		if err != nil {
-			logutil.BgLogger().Error("[plan-replayer-dump] dump file failed", zap.Error(err))
+			if task.IsCapture {
+				logutil.BgLogger().Info("[plan-replayer-dump] dump file failed",
+					zap.String("sql-digest", task.SQLDigest),
+					zap.String("plan-digest", task.PlanDigest),
+					zap.Strings("sql", sqls),
+					zap.Bool("isContinues", task.IsContinuesCapture))
+			} else {
+				logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
+					zap.Strings("sqls", sqls))
+			}
 			errMsg = err.Error()
 		}
 		err1 := zw.Close()
-		if err != nil {
+		if err1 != nil {
 			logutil.BgLogger().Error("[plan-replayer-dump] Closing zip writer failed", zap.Error(err), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err1.Error()
 		}
