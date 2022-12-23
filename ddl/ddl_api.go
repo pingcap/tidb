@@ -5084,6 +5084,20 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		}
 	}
 
+	if tbl.Meta().Partition != nil {
+		if pt, ok := tbl.(table.PartitionedTable); ok && pt != nil {
+			for _, name := range pt.GetPartitionColumnNames() {
+				if strings.EqualFold(name.L, oldColName.L) {
+					return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+						fmt.Sprintf("RENAME COLUMN '%s' has a partitioning function dependency and cannot be renamed", oldColName.O))
+				}
+			}
+		} else {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"RENAME COLUMN due to partitioned table")
+		}
+	}
+
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 
 	newCol := oldCol.Clone()

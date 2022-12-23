@@ -437,3 +437,15 @@ func testNewContext(store kv.Storage) sessionctx.Context {
 	ctx.Store = store
 	return ctx
 }
+
+func TestIssue40150(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t40150 (a int) PARTITION BY HASH (a) PARTITIONS 2")
+	tk.MustContainErrMsg(`alter table t40150 rename column a to c`, "[ddl:8200]Unsupported RENAME COLUMN 'a' has a partitioning function dependency and cannot be renamed")
+}
