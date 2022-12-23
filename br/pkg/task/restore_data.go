@@ -51,17 +51,17 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 
 	// read the backup meta resolved ts and total tikvs from backup storage
-	var resolveTs uint64
+	var resolveTS uint64
 	_, externStorage, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	resolveTs, numBackupStore, err := ReadBackupMetaData(ctx, externStorage)
+	resolveTS, numBackupStore, err := ReadBackupMetaData(ctx, externStorage)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	summary.CollectUint("resolve-ts", resolveTs)
+	summary.CollectUint("resolve-ts", resolveTS)
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, false, conn.NormalVersionChecker)
@@ -85,6 +85,8 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 		ID:       utils.MakeSafePointID(),
 	}
 
+	// TODO: since data restore does not have tidb up, it looks we can remove this keeper
+	// it requires to do more test, then remove this part of code.
 	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
@@ -131,14 +133,14 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 
 	log.Debug("total tikv", zap.Int("total", numBackupStore), zap.String("progress file", cfg.ProgressFile))
-	// progress = read meta + send recovery + iterate tikv + resolve kv data.
+	// progress = read meta + send recovery + iterate tikv + flashback.
 	progress := g.StartProgress(ctx, cmdName, int64(numBackupStore*4), !cfg.LogProgress)
 	go progressFileWriterRoutine(ctx, progress, int64(numBackupStore*4), cfg.ProgressFile)
 
 	// restore tikv data from a snapshot volume
 	var totalRegions int
 
-	totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr, progress)
+	totalRegions, err = restore.RecoverData(ctx, resolveTS, allStores, mgr, progress, restoreTS, cfg.Concurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}

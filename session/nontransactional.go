@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -43,11 +43,18 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
 // ErrNonTransactionalJobFailure is the error when a non-transactional job fails. The error is returned and following jobs are canceled.
 var ErrNonTransactionalJobFailure = dbterror.ClassSession.NewStd(errno.ErrNonTransactionalJobFailure)
+
+var (
+	nonTransactionalDeleteCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "delete"})
+	nonTransactionalInsertCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "insert"})
+	nonTransactionalUpdateCount = metrics.NonTransactionalDMLCount.With(prometheus.Labels{metrics.LblType: "update"})
+)
 
 // job: handle keys in [start, end]
 type job struct {
@@ -76,6 +83,13 @@ func (j job) String(redacted bool) string {
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
 func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session) (sqlexec.RecordSet, error) {
+	sessVars := se.GetSessionVars()
+	originalReadStaleness := se.GetSessionVars().ReadStaleness
+	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
+	sessVars.ReadStaleness = 0
+	defer func() {
+		sessVars.ReadStaleness = originalReadStaleness
+	}()
 	err := core.Preprocess(ctx, se, stmt)
 	if err != nil {
 		return nil, err
@@ -83,18 +97,26 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	if err := checkConstraint(stmt, se); err != nil {
 		return nil, err
 	}
-	tableName, selectSQL, shardColumnInfo, err := buildSelectSQL(stmt, se)
+
+	tableName, selectSQL, shardColumnInfo, tableSources, err := buildSelectSQL(stmt, se)
 	if err != nil {
 		return nil, err
 	}
+
+	if err := checkConstraintWithShardColumn(se, stmt, tableName, shardColumnInfo, tableSources); err != nil {
+		return nil, err
+	}
+
 	if stmt.DryRun == ast.DryRunQuery {
 		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
 
 	// TODO: choose an appropriate quota.
 	// Use the mem-quota-query as a workaround. As a result, a NT-DML may consume 2x of the memory quota.
-	memTracker := setMemTracker(se)
-	defer memTracker.DetachFromGlobalTracker()
+	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, -1)
+	memTracker.AttachTo(se.GetSessionVars().MemTracker)
+	se.GetSessionVars().MemTracker.SetBytesLimit(se.GetSessionVars().MemQuotaQuery)
+	defer memTracker.Detach()
 	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumnInfo, memTracker)
 	if err != nil {
 		return nil, err
@@ -110,22 +132,58 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactLog)
 }
 
-func setMemTracker(se Session) *memory.Tracker {
-	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, se.GetSessionVars().MemQuotaQuery)
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: se.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		memTracker.SetActionOnExceed(action)
-	case variable.OOMActionLog:
-		fallthrough
+// we require:
+// (1) in an update statement, shard column cannot be updated
+//
+// Note: this is not a comprehensive check.
+// We do this to help user prevent some easy mistakes, at an acceptable maintenance cost.
+func checkConstraintWithShardColumn(se Session, stmt *ast.NonTransactionalDMLStmt,
+	tableName *ast.TableName, shardColumnInfo *model.ColumnInfo, tableSources []*ast.TableSource) error {
+	switch s := stmt.DMLStmt.(type) {
+	case *ast.UpdateStmt:
+		if err := checkUpdateShardColumn(se, s.List, shardColumnInfo, tableName, tableSources, true); err != nil {
+			return err
+		}
+	case *ast.InsertStmt:
+		// FIXME: is it possible to happen?
+		// `insert into t select * from t on duplicate key update id = id + 1` will return an ambiguous column error?
+		if err := checkUpdateShardColumn(se, s.OnDuplicate, shardColumnInfo, tableName, tableSources, false); err != nil {
+			return err
+		}
 	default:
-		action := &memory.LogOnExceed{ConnID: se.GetSessionVars().ConnectionID}
-		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
-		memTracker.SetActionOnExceed(action)
 	}
-	memTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
-	return memTracker
+	return nil
+}
+
+// shard column should not be updated.
+func checkUpdateShardColumn(se Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
+	tableName *ast.TableName, tableSources []*ast.TableSource, isUpdate bool) error {
+	// if the table has alias, the alias is used in assignments, and we should use aliased name to compare
+	aliasedShardColumnTableName := tableName.Name.L
+	for _, tableSource := range tableSources {
+		if tableSource.Source.(*ast.TableName).Name.L == aliasedShardColumnTableName && tableSource.AsName.L != "" {
+			aliasedShardColumnTableName = tableSource.AsName.L
+		}
+	}
+
+	if shardColumnInfo == nil {
+		return nil
+	}
+	for _, assignment := range assignments {
+		sameDB := (assignment.Column.Schema.L == tableName.Schema.L) ||
+			(assignment.Column.Schema.L == "" && tableName.Schema.L == se.GetSessionVars().CurrentDB)
+		if !sameDB {
+			continue
+		}
+		sameTable := (assignment.Column.Table.L == aliasedShardColumnTableName) || (isUpdate && len(tableSources) == 1)
+		if !sameTable {
+			continue
+		}
+		if assignment.Column.Name.L == shardColumnInfo.Name.L {
+			return errors.New("Non-transactional DML, shard column cannot be updated")
+		}
+	}
+	return nil
 }
 
 func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
@@ -147,29 +205,60 @@ func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se Session) error {
 
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.DeleteStmt:
-		if s.TableRefs == nil || s.TableRefs.TableRefs == nil || s.TableRefs.TableRefs.Left == nil {
-			return errors.New("table reference is nil")
+		if err := checkTableRef(s.TableRefs, true); err != nil {
+			return err
 		}
-		if s.TableRefs.TableRefs.Right != nil {
-			return errors.New("Non-transactional delete doesn't support multiple tables")
+		if err := checkReadClauses(s.Limit, s.Order); err != nil {
+			return err
 		}
-		if s.Limit != nil {
-			return errors.New("Non-transactional delete doesn't support limit")
-		}
-		if s.Order != nil {
-			return errors.New("Non-transactional delete doesn't support order by")
-		}
-		metrics.NonTransactionalDeleteCount.Inc()
+		nonTransactionalDeleteCount.Inc()
 	case *ast.UpdateStmt:
-		// TODO: check: (1) single target table (2) more...
-		if s.Limit != nil {
-			return errors.New("Non-transactional update doesn't support limit")
+		if err := checkTableRef(s.TableRefs, true); err != nil {
+			return err
 		}
-		// TODO: metrics
+		if err := checkReadClauses(s.Limit, s.Order); err != nil {
+			return err
+		}
+		nonTransactionalUpdateCount.Inc()
+	case *ast.InsertStmt:
+		if s.Select == nil {
+			return errors.New("Non-transactional insert supports insert select stmt only")
+		}
+		selectStmt, ok := s.Select.(*ast.SelectStmt)
+		if !ok {
+			return errors.New("Non-transactional insert doesn't support non-select source")
+		}
+		if err := checkTableRef(selectStmt.From, true); err != nil {
+			return err
+		}
+		if err := checkReadClauses(selectStmt.Limit, selectStmt.OrderBy); err != nil {
+			return err
+		}
+		nonTransactionalInsertCount.Inc()
 	default:
 		return errors.New("Unsupported DML type for non-transactional DML")
 	}
 
+	return nil
+}
+
+func checkTableRef(t *ast.TableRefsClause, allowMultipleTables bool) error {
+	if t == nil || t.TableRefs == nil || t.TableRefs.Left == nil {
+		return errors.New("table reference is nil")
+	}
+	if !allowMultipleTables && t.TableRefs.Right != nil {
+		return errors.New("Non-transactional statements don't support multiple tables")
+	}
+	return nil
+}
+
+func checkReadClauses(limit *ast.Limit, order *ast.OrderByClause) error {
+	if limit != nil {
+		return errors.New("Non-transactional statements don't support limit")
+	}
+	if order != nil {
+		return errors.New("Non-transactional statements don't support order by")
+	}
 	return nil
 }
 
@@ -375,11 +464,8 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se S
 	originalSelectLimit := se.GetSessionVars().SelectLimit
 	se.GetSessionVars().SelectLimit = math.MaxUint64
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
-	originalReadStaleness := se.GetSessionVars().ReadStaleness
-	se.GetSessionVars().ReadStaleness = 0
 	rss, err := se.Execute(ctx, selectSQL)
 	se.GetSessionVars().SelectLimit = originalSelectLimit
-	se.GetSessionVars().ReadStaleness = originalReadStaleness
 
 	if err != nil {
 		return nil, err
@@ -460,24 +546,30 @@ func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size i
 	return jobs
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (*ast.TableName, string, *model.ColumnInfo, error) {
+func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
+	*ast.TableName, string, *model.ColumnInfo, []*ast.TableSource, error) {
 	// only use the first table
-	tableSource, ok := stmt.DMLStmt.TableSource()
+	join, ok := stmt.DMLStmt.TableRefsJoin()
 	if !ok {
-		return nil, "", nil, errors.New("Non-transactional DML, table source not found")
+		return nil, "", nil, nil, errors.New("Non-transactional DML, table source not found")
 	}
-	tableName, ok := tableSource.Source.(*ast.TableName)
+	tableSources := make([]*ast.TableSource, 0)
+	tableSources, err := collectTableSourcesInJoin(join, tableSources)
+	if err != nil {
+		return nil, "", nil, nil, err
+	}
+	if len(tableSources) == 0 {
+		return nil, "", nil, nil, errors.New("Non-transactional DML, no tables found in table refs")
+	}
+	leftMostTableSource := tableSources[0]
+	leftMostTableName, ok := leftMostTableSource.Source.(*ast.TableName)
 	if !ok {
-		return nil, "", nil, errors.New("Non-transactional DML, table name not found")
+		return nil, "", nil, nil, errors.New("Non-transactional DML, table name not found")
 	}
 
-	// the shard column must be indexed
-	indexed, shardColumnInfo, err := selectShardColumn(stmt, se, tableName, tableSource.AsName)
+	shardColumnInfo, tableName, err := selectShardColumn(stmt, se, tableSources, leftMostTableName, leftMostTableSource)
 	if err != nil {
-		return nil, "", nil, err
-	}
-	if !indexed {
-		return nil, "", nil, errors.Errorf("Non-transactional DML, shard column %s is not indexed", stmt.ShardColumn.Name.L)
+		return nil, "", nil, nil, err
 	}
 
 	var sb strings.Builder
@@ -489,7 +581,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (*ast.TableNa
 			format.RestoreStringWithoutCharset, &sb),
 		)
 		if err != nil {
-			return nil, "", nil, errors.Annotate(err, "Failed to restore where clause in non-transactional DML")
+			return nil, "", nil, nil, errors.Annotate(err, "Failed to restore where clause in non-transactional DML")
 		}
 	} else {
 		sb.WriteString("TRUE")
@@ -497,57 +589,131 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (*ast.TableNa
 	// assure NULL values are placed first
 	selectSQL := fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
 		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
-	return tableName, selectSQL, shardColumnInfo, nil
+	return tableName, selectSQL, shardColumnInfo, tableSources, nil
+}
+
+func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSources []*ast.TableSource,
+	leftMostTableName *ast.TableName, leftMostTableSource *ast.TableSource) (
+	*model.ColumnInfo, *ast.TableName, error) {
+	var indexed bool
+	var shardColumnInfo *model.ColumnInfo
+	var selectedTableName *ast.TableName
+
+	if len(tableSources) == 1 {
+		// single table
+		leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(leftMostTableName.Schema, leftMostTableName.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		selectedTableName = leftMostTableName
+		indexed, shardColumnInfo, err = selectShardColumnFromTheOnlyTable(
+			stmt, leftMostTableName, leftMostTableSource.AsName, leftMostTable)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		// multi table join
+		if stmt.ShardColumn == nil {
+			leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(leftMostTableName.Schema, leftMostTableName.Name)
+			if err != nil {
+				return nil, nil, err
+			}
+			selectedTableName = leftMostTableName
+			indexed, shardColumnInfo, err = selectShardColumnAutomatically(stmt, leftMostTable, leftMostTableName, leftMostTableSource.AsName)
+			if err != nil {
+				return nil, nil, err
+			}
+		} else if stmt.ShardColumn.Schema.L != "" && stmt.ShardColumn.Table.L != "" && stmt.ShardColumn.Name.L != "" {
+			specifiedDbName := stmt.ShardColumn.Schema
+			specifiedTableName := stmt.ShardColumn.Table
+			specifiedColName := stmt.ShardColumn.Name
+
+			// the specified table must be in the join
+			tableInJoin := false
+			var chosenTableName model.CIStr
+			for _, tableSource := range tableSources {
+				tableSourceName := tableSource.Source.(*ast.TableName)
+				tableSourceFinalTableName := tableSource.AsName // precedence: alias name, then table name
+				if tableSourceFinalTableName.O == "" {
+					tableSourceFinalTableName = tableSourceName.Name
+				}
+				if tableSourceName.Schema.L == specifiedDbName.L && tableSourceFinalTableName.L == specifiedTableName.L {
+					tableInJoin = true
+					selectedTableName = tableSourceName
+					chosenTableName = tableSourceName.Name
+					break
+				}
+			}
+			if !tableInJoin {
+				return nil, nil,
+					errors.Errorf(
+						"Non-transactional DML, shard column %s.%s.%s is not in the tables involved in the join",
+						specifiedDbName.L, specifiedTableName.L, specifiedColName.L,
+					)
+			}
+
+			tbl, err := domain.GetDomain(se).InfoSchema().TableByName(specifiedDbName, chosenTableName)
+			if err != nil {
+				return nil, nil, err
+			}
+			indexed, shardColumnInfo, err = selectShardColumnByGivenName(specifiedColName.L, tbl)
+			if err != nil {
+				return nil, nil, err
+			}
+		} else {
+			return nil, nil, errors.New(
+				"Non-transactional DML, shard column must be fully specified (i.e. `BATCH ON dbname.tablename.colname`) when multiple tables are involved",
+			)
+		}
+	}
+	if !indexed {
+		return nil, nil, errors.Errorf("Non-transactional DML, shard column %s is not indexed", stmt.ShardColumn.Name.L)
+	}
+	return shardColumnInfo, selectedTableName, nil
+}
+
+func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.TableSource) ([]*ast.TableSource, error) {
+	if node == nil {
+		return tableSources, nil
+	}
+	switch x := node.(type) {
+	case *ast.Join:
+		var err error
+		tableSources, err = collectTableSourcesInJoin(x.Left, tableSources)
+		if err != nil {
+			return nil, err
+		}
+		tableSources, err = collectTableSourcesInJoin(x.Right, tableSources)
+		if err != nil {
+			return nil, err
+		}
+	case *ast.TableSource:
+		// assert it's a table name
+		if _, ok := x.Source.(*ast.TableName); !ok {
+			return nil, errors.New("Non-transactional DML, table name not found in join")
+		}
+		tableSources = append(tableSources, x)
+	default:
+		return nil, errors.Errorf("Non-transactional DML, unknown type %T in table refs", node)
+	}
+	return tableSources, nil
 }
 
 // it attempts to auto-select a shard column from handle if not specified, and fills back the corresponding info in the stmt,
 // making it transparent to following steps
-func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableName *ast.TableName, tableAsName model.CIStr) (indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
-	tbl, err := domain.GetDomain(se).InfoSchema().TableByName(tableName.Schema, tableName.Name)
-	if err != nil {
-		return false, nil, err
-	}
-	tableInfo := tbl.Meta()
-
-	var shardColumnName string
+func selectShardColumnFromTheOnlyTable(stmt *ast.NonTransactionalDMLStmt, tableName *ast.TableName,
+	tableAsName model.CIStr, tbl table.Table) (
+	indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
 	if stmt.ShardColumn == nil {
-		// auto-detect shard column
-		if tbl.Meta().PKIsHandle {
-			shardColumnInfo = tableInfo.GetPkColInfo()
-		} else if tableInfo.IsCommonHandle {
-			for _, index := range tableInfo.Indices {
-				if index.Primary {
-					if len(index.Columns) == 1 {
-						shardColumnInfo = tableInfo.Columns[index.Columns[0].Offset]
-						break
-					}
-					// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
-					return false, nil, errors.New("Non-transactional DML, the clustered index contains multiple columns. Please specify a shard column")
-				}
-			}
-			if shardColumnInfo == nil {
-				return false, nil, errors.New("Non-transactional DML, the clustered index is not found")
-			}
-		}
-
-		shardColumnName := model.ExtraHandleName.L
-		if shardColumnInfo != nil {
-			shardColumnName = shardColumnInfo.Name.L
-		}
-
-		outputTableName := tableName.Name
-		if tableAsName.L != "" {
-			outputTableName = tableAsName
-		}
-		stmt.ShardColumn = &ast.ColumnName{
-			Schema: tableName.Schema,
-			Table:  outputTableName, // so that table alias works
-			Name:   model.NewCIStr(shardColumnName),
-		}
-		return true, shardColumnInfo, nil
+		return selectShardColumnAutomatically(stmt, tbl, tableName, tableAsName)
 	}
-	shardColumnName = stmt.ShardColumn.Name.L
 
+	return selectShardColumnByGivenName(stmt.ShardColumn.Name.L, tbl)
+}
+
+func selectShardColumnByGivenName(shardColumnName string, tbl table.Table) (
+	indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
+	tableInfo := tbl.Meta()
 	if shardColumnName == model.ExtraHandleName.L && !tableInfo.HasClusteredIndex() {
 		return true, nil, nil
 	}
@@ -578,6 +744,46 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableName 
 		}
 	}
 	return indexed, shardColumnInfo, nil
+}
+
+func selectShardColumnAutomatically(stmt *ast.NonTransactionalDMLStmt, tbl table.Table,
+	tableName *ast.TableName, tableAsName model.CIStr) (bool, *model.ColumnInfo, error) {
+	// auto-detect shard column
+	var shardColumnInfo *model.ColumnInfo
+	tableInfo := tbl.Meta()
+	if tbl.Meta().PKIsHandle {
+		shardColumnInfo = tableInfo.GetPkColInfo()
+	} else if tableInfo.IsCommonHandle {
+		for _, index := range tableInfo.Indices {
+			if index.Primary {
+				if len(index.Columns) == 1 {
+					shardColumnInfo = tableInfo.Columns[index.Columns[0].Offset]
+					break
+				}
+				// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
+				return false, nil, errors.New("Non-transactional DML, the clustered index contains multiple columns. Please specify a shard column")
+			}
+		}
+		if shardColumnInfo == nil {
+			return false, nil, errors.New("Non-transactional DML, the clustered index is not found")
+		}
+	}
+
+	shardColumnName := model.ExtraHandleName.L
+	if shardColumnInfo != nil {
+		shardColumnName = shardColumnInfo.Name.L
+	}
+
+	outputTableName := tableName.Name
+	if tableAsName.L != "" {
+		outputTableName = tableAsName
+	}
+	stmt.ShardColumn = &ast.ColumnName{
+		Schema: tableName.Schema,
+		Table:  outputTableName, // so that table alias works
+		Name:   model.NewCIStr(shardColumnName),
+	}
+	return true, shardColumnInfo, nil
 }
 
 func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (sqlexec.RecordSet, error) {

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/cgroup"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -33,6 +34,11 @@ var MemUsed func() (uint64, error)
 // GetMemTotalIgnoreErr returns the total amount of RAM on this system/container. If error occurs, return 0.
 func GetMemTotalIgnoreErr() uint64 {
 	if memTotal, err := MemTotal(); err == nil {
+		failpoint.Inject("GetMemTotalError", func(val failpoint.Value) {
+			if val, ok := val.(bool); val && ok {
+				memTotal = 0
+			}
+		})
 		return memTotal
 	}
 	return 0

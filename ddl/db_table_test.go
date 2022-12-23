@@ -51,7 +51,7 @@ func TestTableForeignKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("create table t1 (a int, b int, index(a), index(b));")
 	// test create table with foreign key.
 	failSQL := "create table t2 (c int, foreign key (a) references t1(a));"
 	tk.MustGetErrCode(failSQL, errno.ErrKeyColumnDoesNotExits)

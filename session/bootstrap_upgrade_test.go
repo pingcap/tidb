@@ -72,14 +72,15 @@ func TestUpgradeVersion84(t *testing.T) {
 		{"modify_count", "bigint(64)"},
 		{"count", "bigint(64)"},
 		{"version", "bigint(64)"},
+		{"source", "varchar(40)"},
 		{"create_time", "datetime(6)"},
 	}
 	rStatsHistoryTbl, err := tk.Exec(`desc mysql.stats_meta_history`)
 	require.NoError(t, err)
 	req := rStatsHistoryTbl.NewChunk(nil)
 	require.NoError(t, rStatsHistoryTbl.Next(ctx, req))
-	require.Equal(t, 5, req.NumRows())
-	for i := 0; i < 5; i++ {
+	require.Equal(t, 6, req.NumRows())
+	for i := 0; i < 6; i++ {
 		row := req.GetRow(i)
 		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
 		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))

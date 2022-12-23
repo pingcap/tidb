@@ -3766,6 +3766,7 @@ func TestSetVariables(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=1")
 	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("1"))
 	require.True(t, variable.EnableConcurrentDDL.Load())
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
 	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=0")
 	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
 	require.False(t, variable.EnableConcurrentDDL.Load())
@@ -3795,10 +3796,11 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
+	tk.Session()
 
 	var err error
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session()),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)

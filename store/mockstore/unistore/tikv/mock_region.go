@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/oracle"
 	pdclient "github.com/tikv/pd/client"
 	"golang.org/x/exp/slices"
 )
@@ -670,6 +671,8 @@ func (rm *MockRegionManager) AddPeer(regionID, storeID, peerID uint64) {
 type MockPD struct {
 	rm          *MockRegionManager
 	gcSafePoint uint64
+
+	externalTimestamp atomic.Uint64
 }
 
 // NewMockPD returns a new MockPD.
@@ -783,6 +786,30 @@ func (pd *MockPD) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint
 
 // StoreHeartbeat stores the heartbeat.
 func (pd *MockPD) StoreHeartbeat(ctx context.Context, stats *pdpb.StoreStats) error { return nil }
+
+// GetExternalTimestamp returns external timestamp
+func (pd *MockPD) GetExternalTimestamp(ctx context.Context) (uint64, error) {
+	return pd.externalTimestamp.Load(), nil
+}
+
+// SetExternalTimestamp sets external timestamp
+func (pd *MockPD) SetExternalTimestamp(ctx context.Context, newTimestamp uint64) error {
+	p, l := GetTS()
+	currentTSO := oracle.ComposeTS(p, l)
+	if newTimestamp > currentTSO {
+		return errors.New("external timestamp is greater than global tso")
+	}
+	for {
+		externalTimestamp := pd.externalTimestamp.Load()
+		if externalTimestamp > newTimestamp {
+			return errors.New("cannot decrease the external timestamp")
+		}
+
+		if pd.externalTimestamp.CompareAndSwap(externalTimestamp, newTimestamp) {
+			return nil
+		}
+	}
+}
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
 var tsMu = struct {

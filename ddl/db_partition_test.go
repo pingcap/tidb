@@ -1409,7 +1409,7 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	tk.MustExec(`alter table t drop partition p1`)
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "5", "<nil>"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil>", "1", "5"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2245,14 +2245,6 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			"create table nt8 (id int not null, index id_idx (id));",
 			"alter table pt8 exchange partition p0 with table nt8;",
 			dbterror.ErrTablesDifferentMetadata,
-		},
-		{
-			// foreign key test
-			// Partition table doesn't support to add foreign keys in mysql
-			"create table pt9 (id int not null primary key auto_increment,t_id int not null) partition by hash(id) partitions 1;",
-			"create table nt9 (id int not null primary key auto_increment, t_id int not null,foreign key fk_id (t_id) references pt5(id));",
-			"alter table pt9 exchange partition p0 with table nt9;",
-			dbterror.ErrPartitionExchangeForeignKey,
 		},
 		{
 			// Generated column (virtual)
@@ -4068,7 +4060,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	tk.MustQuery("select count(*) from ipt").Check(testkit.Rows("27"))
 
-	tk.MustExec("create table idpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
+	tk.MustExec("create table idpt (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
 	tk.MustQuery("SHOW CREATE TABLE idpt").Check(testkit.Rows(
 		"idpt CREATE TABLE `idpt` (\n" +
 			"  `id` date NOT NULL,\n" +
@@ -4094,7 +4086,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	// if using a month with 31 days.
 	// But managing partitions with the day-part of 29, 30 or 31 will be troublesome, since once the FIRST is not 31
 	// both the ALTER TABLE t FIRST PARTITION and MERGE FIRST PARTITION will have issues
-	tk.MustExec("create table t (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
+	tk.MustExec("create table t (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `id` date NOT NULL,\n" +
@@ -4535,133 +4527,27 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n','\\''\t\n'),` + "\n" +
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
 }
-func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
+
+func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database AlterPartTable")
-	tk.MustExec("use AlterPartTable")
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b))`)
-	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// TODO: Why does it allow 💥 as a latin1 character?
-	tk.MustQuery(`select hex(b) from t where a = 34`).Check(testkit.Rows("3334F09F92A5"))
-	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(200) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery(`select hex(b) from t where a = 34`).Check(testkit.Rows("3334F09F92A5"))
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57",
-		"7 07",
-		"8 08"))
-	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
-		"7 07",
-		"8 08",
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57"))
-	tk.MustExec(`alter table t change b c varchar(200) charset utf8mb4`)
+	schemaName := "modColPartRename"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int, b char) partition by range (a) (partition p0 values less than (10))`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
 	tk.MustExec(`drop table t`)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b)) partition by range (a) ` +
-		`(partition p0 values less than (10),` +
-		` partition p1 values less than (20),` +
-		` partition p2 values less than (30),` +
-		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57",
-		"7 07",
-		"8 08"))
-	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
-		"7 07",
-		"8 08",
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57"))
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`a`)\n" +
-			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-			" PARTITION `p1` VALUES LESS THAN (20),\n" +
-			" PARTITION `p2` VALUES LESS THAN (30),\n" +
-			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(200) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`a`)\n" +
-			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-			" PARTITION `p1` VALUES LESS THAN (20),\n" +
-			" PARTITION `p2` VALUES LESS THAN (30),\n" +
-			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57",
-		"7 07",
-		"8 08"))
-	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
-		"7 07",
-		"8 08",
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57"))
-	tk.MustExec(`alter table t change b c varchar(150) charset utf8mb4`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `c` varchar(150) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`c`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`a`)\n" +
-			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-			" PARTITION `p1` VALUES LESS THAN (20),\n" +
-			" PARTITION `p2` VALUES LESS THAN (30),\n" +
-			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57",
-		"7 07",
-		"8 08"))
-	tk.MustQuery(`select * from t order by c`).Check(testkit.Rows(""+
-		"7 07",
-		"8 08",
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57"))
+	tk.MustExec(`create table t (a char, b char) partition by range columns (a) (partition p0 values less than ('z'))`)
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]New column does not match partition definitions: [ddl:1567]partition column name cannot be found")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b char) partition by list (a) (partition p0 values in (10))`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a char, b char) partition by list columns (a) (partition p0 values in ('z'))`)
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]New column does not match partition definitions: [ddl:1567]partition column name cannot be found")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b char) partition by hash (a) partitions 3`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
 }
 
 func TestDropPartitionKeyColumn(t *testing.T) {

@@ -322,7 +322,7 @@ func TestInsert(t *testing.T) {
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'ch' for key 't.PRIMARY'")
 	tk.MustExec("insert into t(name, b) values(\"测试\", 3)")
 	err = tk.ExecToErr("insert into t(name, b) values(\"测试\", 3)")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '测试' for key 't.PRIMARY'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '\xe6\xb5' for key 't.PRIMARY'")
 }
 
 func TestMultiBatch(t *testing.T) {

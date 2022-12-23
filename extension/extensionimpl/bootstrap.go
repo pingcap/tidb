@@ -63,7 +63,7 @@ func (c *bootstrapContext) SessionPool() extension.SessionPool {
 	return c.sessionPool
 }
 
-// Bootstrap bootstrap all extensions
+// Bootstrap bootstraps all extensions
 func Bootstrap(ctx context.Context, do *domain.Domain) error {
 	extensions, err := extension.GetExtensions()
 	if err != nil {

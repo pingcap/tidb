@@ -29,6 +29,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//util/logutil",
+        "//util/memory",
         "//util/sqlexec",
         "@com_github_google_uuid//:uuid",
         "@com_github_iancoleman_strcase//:strcase",
