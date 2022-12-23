@@ -1599,6 +1599,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
+		ProtectedTSList:       &s.sessionVars.ProtectedTSList,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1987,6 +1988,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
+		s.sessionVars.MemTracker.Detach()
 	}, nil
 }
 
@@ -2048,6 +2050,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
 		se.sessionVars.InspectionTableCache = nil
+		se.sessionVars.MemTracker.Detach()
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
@@ -2088,7 +2091,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		metrics.SessionRestrictedSQLCounter.Inc()
 		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 		ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
-		rs, err := se.ExecuteStmt(ctx, stmt)
+		rs, err := se.ExecuteInternalStmt(ctx, stmt)
 		if err != nil {
 			se.sessionVars.StmtCtx.AppendError(err)
 		}
@@ -2108,6 +2111,18 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
+}
+
+// ExecuteInternalStmt execute internal stmt
+func (s *session) ExecuteInternalStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	origin := s.sessionVars.InRestrictedSQL
+	s.sessionVars.InRestrictedSQL = true
+	defer func() {
+		s.sessionVars.InRestrictedSQL = origin
+		// Restore the goroutine label by using the original ctx after execution is finished.
+		pprof.SetGoroutineLabels(ctx)
+	}()
+	return s.ExecuteStmt(ctx, stmtNode)
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
@@ -2240,7 +2255,7 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
-	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead {
+	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead || vars.InRestrictedSQL {
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"

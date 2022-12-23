@@ -1,3 +1,4 @@
+/*!40014 SET FOREIGN_KEY_CHECKS=0*/;
 /*!40101 SET NAMES binary*/;
 CREATE TABLE `quo``te/table` (
   `quo``te/col` int NOT NULL,
