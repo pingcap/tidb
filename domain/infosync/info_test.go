@@ -297,7 +297,7 @@ func TestTiFlashStoreInfoMppVersion(t *testing.T) {
 		stores := make([]*metapb.Store, 0)
 		stores = append(stores, &metapb.Store{Version: "v6.5.0"})
 		stores = append(stores, &metapb.Store{Version: "v6.7.0"})
-		err := CheckAndInitTiFlashStoreInfo(nil, stores)
+		err := CheckAndInitTiDBMppVersion(nil, stores)
 		require.NoError(t, err)
 		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MppVersionV0)
 	}
@@ -305,7 +305,7 @@ func TestTiFlashStoreInfoMppVersion(t *testing.T) {
 		stores := make([]*metapb.Store, 0)
 		stores = append(stores, &metapb.Store{Version: "v6.7.0-alpha"})
 		stores = append(stores, &metapb.Store{Version: "v6.8.0"})
-		err := CheckAndInitTiFlashStoreInfo(nil, stores)
+		err := CheckAndInitTiDBMppVersion(nil, stores)
 		require.NoError(t, err)
 		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MppVersionV0)
 	}
@@ -313,7 +313,7 @@ func TestTiFlashStoreInfoMppVersion(t *testing.T) {
 		stores := make([]*metapb.Store, 0)
 		stores = append(stores, &metapb.Store{Version: "v6.7.0"})
 		stores = append(stores, &metapb.Store{Version: "v6.8.0"})
-		err := CheckAndInitTiFlashStoreInfo(nil, stores)
+		err := CheckAndInitTiDBMppVersion(nil, stores)
 		require.NoError(t, err)
 		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MppVersionV1)
 	}

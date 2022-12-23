@@ -469,8 +469,12 @@ func CheckTiKVVersion(stores []*metapb.Store, minVersion semver.Version) error {
 	return nil
 }
 
-// CheckAndInitTiFlashStoreInfo checks the cluster store version and update TiDBMppVersion
-func CheckAndInitTiFlashStoreInfo(store kv.Storage, stores []*metapb.Store) error {
+func calcMinStoreReleaseVersion(store kv.Storage) {
+	store.GetMPPClient()
+}
+
+// CheckAndInitTiDBMppVersion checks the cluster store version and update TiDBMppVersion
+func CheckAndInitTiDBMppVersion(store kv.Storage, stores []*metapb.Store) error {
 	var minStoreReleaseVersion *semver.Version
 
 	// all stores must NOT be Tombstone
