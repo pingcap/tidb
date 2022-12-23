@@ -17,12 +17,12 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"math"
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"

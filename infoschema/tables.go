@@ -18,12 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/set"
-	"golang.org/x/exp/slices"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"net"
 	"net/http"
 	"strconv"
@@ -33,7 +27,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -55,9 +51,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 const (
