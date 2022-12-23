@@ -3364,3 +3364,189 @@ func TestAnalyzeTableLRUPut(t *testing.T) {
 	tk.MustExec("analyze table test.t")
 	require.Equal(t, tbl.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
 }
+<<<<<<< HEAD
+=======
+
+func TestUninitializedStatsStatus(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.StatsHandle().SetLease(0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a))")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	tblStats := h.GetTableStats(tblInfo)
+	for _, col := range tblStats.Columns {
+		require.False(t, col.IsStatsInitialized())
+	}
+	for _, idx := range tblStats.Indices {
+		require.False(t, idx.IsStatsInitialized())
+	}
+	tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Check(testkit.Rows())
+	checkStatsPseudo := func() {
+		rows := tk.MustQuery("explain select * from t").Rows()
+		operatorInfo := rows[len(rows)-1][4].(string)
+		require.True(t, strings.Contains(operatorInfo, "stats:pseudo"))
+	}
+	tk.MustExec("set @@tidb_enable_pseudo_for_outdated_stats = true")
+	checkStatsPseudo()
+	tk.MustExec("set @@tidb_enable_pseudo_for_outdated_stats = false")
+	checkStatsPseudo()
+}
+
+func TestStatsLockAndUnlockTable(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+
+	handle := domain.GetDomain(tk.Session()).StatsHandle()
+	tblStats := handle.GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+	tk.MustExec("lock stats t")
+
+	rows := tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 1)
+
+	tk.MustExec("insert into t(a, b) values(1,'a')")
+	tk.MustExec("insert into t(a, b) values(2,'b')")
+
+	tk.MustExec("analyze table test.t")
+	tblStats1 := handle.GetTableStats(tbl.Meta())
+	require.Equal(t, tblStats, tblStats1)
+
+	tableLocked1 := handle.GetTableLockedAndClearForTest()
+	err = handle.LoadLockedTables()
+	require.Nil(t, err)
+	tableLocked2 := handle.GetTableLockedAndClearForTest()
+	require.Equal(t, tableLocked1, tableLocked2)
+
+	tk.MustExec("unlock stats t")
+	rows = tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	tk.MustExec("analyze table test.t")
+	tblStats2 := handle.GetTableStats(tbl.Meta())
+	require.Equal(t, int64(2), tblStats2.Count)
+}
+
+func TestStatsLockAndUnlockTables(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("create table t2(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("analyze table test.t1, test.t2")
+	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.Nil(t, err)
+	tbl2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.Nil(t, err)
+
+	handle := domain.GetDomain(tk.Session()).StatsHandle()
+	tbl1Stats := handle.GetTableStats(tbl1.Meta())
+	for _, col := range tbl1Stats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+	tbl2Stats := handle.GetTableStats(tbl2.Meta())
+	for _, col := range tbl2Stats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+
+	tk.MustExec("lock stats t1, t2")
+
+	rows := tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 2)
+
+	tk.MustExec("insert into t1(a, b) values(1,'a')")
+	tk.MustExec("insert into t1(a, b) values(2,'b')")
+
+	tk.MustExec("insert into t2(a, b) values(1,'a')")
+	tk.MustExec("insert into t2(a, b) values(2,'b')")
+
+	tk.MustExec("analyze table test.t1, test.t2")
+	tbl1Stats1 := handle.GetTableStats(tbl1.Meta())
+	require.Equal(t, tbl1Stats, tbl1Stats1)
+	tbl2Stats1 := handle.GetTableStats(tbl2.Meta())
+	require.Equal(t, tbl2Stats, tbl2Stats1)
+
+	tableLocked1 := handle.GetTableLockedAndClearForTest()
+	err = handle.LoadLockedTables()
+	require.Nil(t, err)
+	tableLocked2 := handle.GetTableLockedAndClearForTest()
+	require.Equal(t, tableLocked1, tableLocked2)
+
+	tk.MustExec("unlock stats test.t1, test.t2")
+	rows = tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	tk.MustExec("analyze table test.t1, test.t2")
+	tbl1Stats2 := handle.GetTableStats(tbl1.Meta())
+	require.Equal(t, int64(2), tbl1Stats2.Count)
+	tbl2Stats2 := handle.GetTableStats(tbl2.Meta())
+	require.Equal(t, int64(2), tbl2Stats2.Count)
+}
+
+func TestIssue39336(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+create table t1 (
+    a datetime(3) default null,
+    b int
+) partition by range (b) (
+    partition p0 values less than (1000),
+    partition p1 values less than (maxvalue)
+)`)
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`
+insert into t1 values
+('1000-00-09 00:00:00.000',    1),
+('1000-00-06 00:00:00.000',    1),
+('1000-00-06 00:00:00.000',    1),
+('2022-11-23 14:24:30.000',    1),
+('2022-11-23 14:24:32.000',    1),
+('2022-11-23 14:24:33.000',    1),
+('2022-11-23 14:24:35.000',    1),
+('2022-11-23 14:25:08.000', 1001),
+('2022-11-23 14:25:09.000', 1001)`)
+	tk.MustExec("analyze table t1 with 0 topn")
+	rows := tk.MustQuery("show analyze status where job_info like 'merge global stats%'").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "finished", rows[0][7])
+}
+>>>>>>> 014159df0a (statistics: fix incorrect datetime value when loading stats (#40084))
