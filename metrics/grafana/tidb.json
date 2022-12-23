@@ -3706,7 +3706,7 @@
             "avg": false,
             "current": false,
             "max": false,
-            "min": false,
+            "min": false,            
             "show": true,
             "total": false,
             "values": false
