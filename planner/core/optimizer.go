@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"math"
 	"strconv"
@@ -666,13 +667,13 @@ func handleFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, plan
 		}
 	}
 	// use two separate cluster info to avoid grpc calls cost
-	serverCountInfo := tiflashClusterInfo{unInitialized, 0}
+	tiflashServerCountInfo := tiflashClusterInfo{unInitialized, 0}
 	streamCountInfo := tiflashClusterInfo{unInitialized, 0}
 	if streamCount != 0 {
 		streamCountInfo.itemStatus = initialized
 		streamCountInfo.itemValue = uint64(streamCount)
 	}
-	setupFineGrainedShuffle(ctx, sctx, &serverCountInfo, &streamCountInfo, plan)
+	setupFineGrainedShuffle(ctx, sctx, &streamCountInfo, &tiflashServerCountInfo, plan)
 }
 
 func setupFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan PhysicalPlan) {
@@ -730,6 +731,14 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysical
 // calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
 // return false, 0 if any err happens
 func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx sessionctx.Context, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
+		intVal, err := strconv.Atoi(val.(string))
+		if err == nil {
+			failpoint.Return(true, uint64(intVal))
+		} else {
+			failpoint.Return(false, 0)
+		}
+	})
 	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
 	if err != nil {
 		return false, 0
@@ -882,8 +891,9 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 		helper.plans = append(helper.plans, &x.basePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashAgg:
-		helper.updateTarget(hashAgg, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*basePhysicalPlan{}}
+		aggHelper.plans = append(aggHelper.plans, &x.basePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashJoin:
 		child0 := x.children[0]
 		child1 := x.children[1]
@@ -929,13 +939,14 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 				}
 			case joinBuild:
 				// Support hashJoin only when shuffle hash keys equals to join keys due to tiflash implementations
-				if len(x.HashCols) == helper.joinKeysCount {
-					applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result
-					if applyFlag {
-						x.TiFlashFineGrainedShuffleStreamCount = streamCount
-						for _, p := range helper.plans {
-							p.TiFlashFineGrainedShuffleStreamCount = streamCount
-						}
+				if len(x.HashCols) != helper.joinKeysCount {
+					break
+				}
+				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result
+				if applyFlag {
+					x.TiFlashFineGrainedShuffleStreamCount = streamCount
+					for _, p := range helper.plans {
+						p.TiFlashFineGrainedShuffleStreamCount = streamCount
 					}
 				}
 			}
