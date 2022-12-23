@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -278,7 +279,20 @@ func TestTiFlashManager(t *testing.T) {
 	CloseTiFlashManager(ctx)
 }
 
-func TestTiFlashManager2(t *testing.T) {
+func TestTiFlashStoreInfoMppVersion(t *testing.T) {
+	{
+		stores := make([]*metapb.Store, 0)
+		stores = append(stores, &metapb.Store{Version: "v6.5.0"})
+		stores = append(stores, &metapb.Store{Version: "v6.7.0"})
+		{
+			err := CheckTiKVVersion(stores, *semver.New("7.0.0"))
+			require.Error(t, err)
+		}
+		{
+			err := CheckTiKVVersion(stores, *semver.New("5.0.0"))
+			require.NoError(t, err)
+		}
+	}
 	{
 		stores := make([]*metapb.Store, 0)
 		stores = append(stores, &metapb.Store{Version: "v6.5.0"})
