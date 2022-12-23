@@ -743,8 +743,8 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 	if err != nil {
 		return false, 0
 	}
-	var kMaxCores uint64 = 10000
-	var minLogicalCores uint64 = kMaxCores // set to a large enough value here
+	var initialMaxCores uint64 = 10000
+	var minLogicalCores uint64 = initialMaxCores // set to a large enough value here
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
 			logicalCpus, err := strconv.Atoi(row[5].GetString())
@@ -754,11 +754,11 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 		}
 	}
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
-	if minLogicalCores > 1 && minLogicalCores != kMaxCores {
+	if minLogicalCores > 1 && minLogicalCores != initialMaxCores {
 		return true, minLogicalCores / 2
-	} else {
-		return false, 0
 	}
+
+	return false, 0
 }
 
 func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, exchangeColCount int, splitLimit uint64) (applyFlag bool, streamCount uint64) {
