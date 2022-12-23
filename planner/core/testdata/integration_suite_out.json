@@ -1969,7 +1969,8 @@
           "  └─TableRangeScan_8 3333.33 923531.15 cop[tikv] table:t range:(1,+inf], keep order:false, stats:pseudo"
         ],
         "Warnings": [
-          "Note 1105 [t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+          "Note 1105 [t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}",
+          "Note 1105 [t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}"
         ]
       },
       {
@@ -2014,7 +2015,8 @@
           "  └─TableRowIDScan_12(Probe) 10.00 2770.59 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
-          "Note 1105 [t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+          "Note 1105 [t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}",
+          "Note 1105 [t,f_g,g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}"
         ]
       },
       {
@@ -2026,6 +2028,7 @@
           "└─TableRowIDScan_13(Probe) 10.00 2770.59 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
+          "Note 1105 [t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}",
           "Note 1105 [t,c_d_e] remain after pruning paths for t given Prop{SortItems: [{test.t.c asc} {test.t.e asc}], TaskTp: rootTask}"
         ]
       }
@@ -6226,9 +6229,9 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), shuffle_join(t1@qb, t@qb) */ * from v12;",
         "Plan": [
-          "Projection 12500.00 root  test.t.a, test.t.b",
-          "└─TableReader 12500.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader 12500.00 root  data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.t.a, test.t.b",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary]",
