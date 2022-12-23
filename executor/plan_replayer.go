@@ -125,7 +125,7 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 
 func (e *PlanReplayerExec) createFile() error {
 	var err error
-	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile()
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(false)
 	if err != nil {
 		return err
 	}
