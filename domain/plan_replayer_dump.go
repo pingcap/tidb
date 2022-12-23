@@ -66,6 +66,10 @@ const (
 	PlanReplayerTaskMetaIsCapture = "isCapture"
 	// PlanReplayerTaskMetaIsContinues indicates whether this task is continues task
 	PlanReplayerTaskMetaIsContinues = "isContinues"
+	// PlanReplayerTaskMetaSQLDigest indicates the sql digest of this task
+	PlanReplayerTaskMetaSQLDigest = "sqlDigest"
+	// PlanReplayerTaskMetaPlanDigest indicates the plan digest of this task
+	PlanReplayerTaskMetaPlanDigest = "planDigest"
 )
 
 type tableNamePair struct {
@@ -194,18 +198,24 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 			zap.Strings("sqls", sqls))
 	}
 	defer func() {
+		errMsg := ""
 		if err != nil {
 			logutil.BgLogger().Error("[plan-replayer-dump] dump file failed", zap.Error(err))
+			errMsg = err.Error()
 		}
-		err = zw.Close()
+		err1 := zw.Close()
 		if err != nil {
 			logutil.BgLogger().Error("[plan-replayer-dump] Closing zip writer failed", zap.Error(err), zap.String("filename", fileName))
+			errMsg = errMsg + "," + err1.Error()
 		}
-		err = zf.Close()
-		if err != nil {
+		err2 := zf.Close()
+		if err2 != nil {
 			logutil.BgLogger().Error("[plan-replayer-dump] Closing zip file failed", zap.Error(err), zap.String("filename", fileName))
+			errMsg = errMsg + "," + err2.Error()
+		}
+		if len(errMsg) > 0 {
 			for i, record := range records {
-				record.FailedReason = err.Error()
+				record.FailedReason = errMsg
 				records[i] = record
 			}
 		}
@@ -311,6 +321,8 @@ func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	varMap[PlanReplayerSQLMetaStartTS] = strconv.FormatUint(task.StartTS, 10)
 	varMap[PlanReplayerTaskMetaIsCapture] = strconv.FormatBool(task.IsCapture)
 	varMap[PlanReplayerTaskMetaIsContinues] = strconv.FormatBool(task.IsContinuesCapture)
+	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
+	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}
