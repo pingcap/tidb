@@ -1666,7 +1666,7 @@ func TestAddForeignKeyInBigTable(t *testing.T) {
 }
 
 func TestForeignKeyWithCacheTable(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@foreign_key_checks=1;")
 	tk.MustExec("use test")
