@@ -127,7 +127,7 @@ func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			generated = true
-			colNames := findColumnNamesInExpr(option.Expr)
+			colNames := FindColumnNamesInExpr(option.Expr)
 			for _, depCol := range colNames {
 				colsMap[depCol.Name.L] = struct{}{}
 			}
@@ -137,8 +137,8 @@ func findDependedColumnNames(colDef *ast.ColumnDef) (generated bool, colsMap map
 	return
 }
 
-// findColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
-func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
+// FindColumnNamesInExpr returns a slice of ast.ColumnName which is referred in expr.
+func FindColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	var c generatedColumnChecker
 	expr.Accept(&c)
 	return c.cols
@@ -268,12 +268,14 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, tbl table.Table, oldCol
 }
 
 type illegalFunctionChecker struct {
-	hasIllegalFunc       bool
-	hasAggFunc           bool
-	hasRowVal            bool // hasRowVal checks whether the functional index refers to a row value
-	hasWindowFunc        bool
-	hasNotGAFunc4ExprIdx bool
-	otherErr             error
+	hasIllegalFunc        bool
+	hasAggFunc            bool
+	hasRowVal             bool // hasRowVal checks whether the functional index refers to a row value
+	hasWindowFunc         bool
+	hasNotGAFunc4ExprIdx  bool
+	hasCastArrayFunc      bool
+	disallowCastArrayFunc bool
+	otherErr              error
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -308,7 +310,14 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 	case *ast.WindowFuncExpr:
 		c.hasWindowFunc = true
 		return inNode, true
+	case *ast.FuncCastExpr:
+		c.hasCastArrayFunc = c.hasCastArrayFunc || node.Tp.IsArray()
+		if c.disallowCastArrayFunc && node.Tp.IsArray() {
+			c.otherErr = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
+			return inNode, true
+		}
 	}
+	c.disallowCastArrayFunc = true
 	return inNode, false
 }
 
@@ -354,6 +363,9 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	}
 	if genType == typeIndex && c.hasNotGAFunc4ExprIdx && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
 		return dbterror.ErrUnsupportedExpressionIndex
+	}
+	if genType == typeColumn && c.hasCastArrayFunc {
+		return expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 	}
 	return nil
 }

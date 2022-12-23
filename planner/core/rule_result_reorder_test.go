@@ -16,33 +16,20 @@ package core_test
 
 import (
 	"fmt"
-	"math"
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPlanCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
@@ -57,8 +44,7 @@ func TestPlanCache(t *testing.T) {
 }
 
 func TestSQLBinding(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -83,8 +69,7 @@ func TestSQLBinding(t *testing.T) {
 }
 
 func TestClusteredIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -106,7 +91,7 @@ func runTestData(t *testing.T, tk *testkit.TestKit, name string) {
 		Plan []string
 	}
 	statsSuiteData := plannercore.GetOrderedResultModeSuiteData()
-	statsSuiteData.GetTestCasesByName(name, t, &input, &output)
+	statsSuiteData.LoadTestCasesByName(name, t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -117,11 +102,11 @@ func runTestData(t *testing.T, tk *testkit.TestKit, name string) {
 }
 
 func TestOrderedResultMode(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t")
@@ -130,8 +115,7 @@ func TestOrderedResultMode(t *testing.T) {
 }
 
 func TestOrderedResultModeOnDML(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -142,11 +126,11 @@ func TestOrderedResultModeOnDML(t *testing.T) {
 }
 
 func TestOrderedResultModeOnSubQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -156,25 +140,26 @@ func TestOrderedResultModeOnSubQuery(t *testing.T) {
 }
 
 func TestOrderedResultModeOnJoin(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, key(b))")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runTestData(t, tk, "TestOrderedResultModeOnJoin")
 }
 
 func TestOrderedResultModeOnOtherOperators(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
@@ -184,8 +169,7 @@ func TestOrderedResultModeOnOtherOperators(t *testing.T) {
 }
 
 func TestOrderedResultModeOnPartitionTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -199,13 +183,14 @@ func TestOrderedResultModeOnPartitionTable(t *testing.T) {
 					partition p1 values less than (200),
 					partition p2 values less than (300),
 					partition p3 values less than (400))`)
-	tk.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows("static"))
+	tk.MustExec(`analyze table thash`)
+	tk.MustExec(`analyze table trange`)
+	tk.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
 	runTestData(t, tk, "TestOrderedResultModeOnPartitionTable")
 }
 
 func TestStableResultSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show variables where variable_name like 'tidb_enable_ordered_result_mode'").Rows()

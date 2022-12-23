@@ -24,8 +24,7 @@ import (
 
 // TestSelectBindingOnGlobalTempTableProhibited covers https://github.com/pingcap/tidb/issues/26377
 func TestSelectBindingOnGlobalTempTableProhibited(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -58,8 +57,7 @@ func TestSelectBindingOnGlobalTempTableProhibited(t *testing.T) {
 
 // TestDMLBindingOnGlobalTempTableProhibited covers https://github.com/pingcap/tidb/issues/27422
 func TestDMLBindingOnGlobalTempTableProhibited(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

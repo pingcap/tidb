@@ -32,8 +32,7 @@ import (
 )
 
 func TestRetryShow(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -47,9 +46,10 @@ func TestRetryShow(t *testing.T) {
 }
 
 func TestNoRetryForCurrentTxn(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -70,9 +70,10 @@ func TestNoRetryForCurrentTxn(t *testing.T) {
 }
 
 func TestRetryPreparedStmt(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -102,8 +103,7 @@ func TestRetryPreparedStmt(t *testing.T) {
 }
 
 func TestAutoIncrementID(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -207,9 +207,10 @@ func TestAutoIncrementID(t *testing.T) {
 
 // test for https://github.com/pingcap/tidb/issues/827
 func TestAutoIncrementWithRetry(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -304,9 +305,10 @@ func TestAutoIncrementWithRetry(t *testing.T) {
 }
 
 func TestRetryCleanTxn(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table retrytxn (a int unique, b int)")
@@ -336,9 +338,10 @@ func TestRetryCleanTxn(t *testing.T) {
 }
 
 func TestRetryUnion(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table history (a int)")
@@ -363,9 +366,10 @@ func TestRetryUnion(t *testing.T) {
 }
 
 func TestRetryResetStmtCtx(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table retrytxn (a int unique, b int)")
@@ -384,9 +388,10 @@ func TestRetryResetStmtCtx(t *testing.T) {
 }
 
 func TestReadOnlyNotInHistory(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
+	tkk := testkit.NewTestKit(t, store)
+	tkk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table history (a int)")
@@ -408,8 +413,7 @@ func TestReadOnlyNotInHistory(t *testing.T) {
 
 // For https://github.com/pingcap/tidb/issues/571
 func TestRetry(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

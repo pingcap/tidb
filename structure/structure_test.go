@@ -27,8 +27,7 @@ import (
 )
 
 func TestString(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -78,8 +77,7 @@ func TestString(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -189,8 +187,7 @@ func TestList(t *testing.T) {
 }
 
 func TestHash(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)

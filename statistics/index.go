@@ -65,6 +65,13 @@ func (idx *Index) dropCMS() {
 	idx.evictedStatus = onlyCmsEvicted
 }
 
+func (idx *Index) dropHist() {
+	idx.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
+	idx.Histogram.Buckets = make([]Bucket, 0)
+	idx.Histogram.scalars = make([]scalar, 0)
+	idx.evictedStatus = allEvicted
+}
+
 func (idx *Index) dropTopN() {
 	originTopNNum := int64(idx.TopN.Num())
 	idx.TopN = nil
@@ -232,7 +239,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
-					totalCount += 1
+					totalCount++
 					continue
 				}
 				count := idx.equalRowCount(lb, realtimeRowCount)
@@ -339,14 +346,30 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 		}
 		colID := colsIDs[i]
 		var (
-			count float64
-			err   error
+			count      float64
+			err        error
+			foundStats bool
 		)
-		if anotherIdxID, ok := coll.ColID2IdxID[colID]; ok && anotherIdxID != idx.Histogram.ID {
-			count, err = coll.GetRowCountByIndexRanges(sctx, anotherIdxID, tmpRan)
-		} else if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
+		if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
+			foundStats = true
 			count, err = coll.GetRowCountByColumnRanges(sctx, colID, tmpRan)
-		} else {
+		}
+		if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
+			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
+			// `GetRowCountByIndexRanges()` when the input `indexRange` is a multi-column range. This
+			// check avoids infinite recursion.
+			for _, idxID := range idxIDs {
+				if idxID == idx.Histogram.ID {
+					continue
+				}
+				foundStats = true
+				count, err = coll.GetRowCountByIndexRanges(sctx, idxID, tmpRan)
+				if err == nil {
+					break
+				}
+			}
+		}
+		if !foundStats {
 			continue
 		}
 		if err != nil {

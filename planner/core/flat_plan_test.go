@@ -64,8 +64,7 @@ func simplifyFlatPlan(p []*core.FlatOperator) []*FlatPhysicalOperatorForTest {
 }
 
 func TestFlatPhysicalPlan(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -76,7 +75,7 @@ func TestFlatPhysicalPlan(t *testing.T) {
 		CTEs [][]*FlatPhysicalOperatorForTest
 	}
 	planSuiteData := core.GetFlatPlanSuiteData()
-	planSuiteData.GetTestCases(t, &input, &output)
+	planSuiteData.LoadTestCases(t, &input, &output)
 	p := parser.New()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 

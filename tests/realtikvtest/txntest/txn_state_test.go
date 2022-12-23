@@ -21,17 +21,16 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBasicTxnState(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -120,8 +119,7 @@ func TestBasicTxnState(t *testing.T) {
 }
 
 func TestEntriesCountAndSize(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -130,17 +128,32 @@ func TestEntriesCountAndSize(t *testing.T) {
 	tk.MustExec("insert into t(a) values (1);")
 	info := tk.Session().TxnInfo()
 	require.Equal(t, uint64(1), info.EntriesCount)
-	require.Equal(t, uint64(29), info.EntriesSize)
 	tk.MustExec("insert into t(a) values (2);")
 	info = tk.Session().TxnInfo()
 	require.Equal(t, uint64(2), info.EntriesCount)
-	require.Equal(t, uint64(58), info.EntriesSize)
 	tk.MustExec("commit;")
 }
 
+func TestMemDBTracker(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	session := tk.Session()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("begin")
+	for i := 0; i < (1 << 10); i++ {
+		tk.MustExec("insert t (id) values (1)")
+	}
+	require.Less(t, int64(1<<(10+4)), session.GetSessionVars().MemDBFootprint.BytesConsumed())
+	require.Greater(t, int64(1<<(14+4)), session.GetSessionVars().MemDBFootprint.BytesConsumed())
+	for i := 0; i < (1 << 14); i++ {
+		tk.MustExec("insert t (id) values (1)")
+	}
+	require.Less(t, int64(1<<(14+4)), session.GetSessionVars().MemDBFootprint.BytesConsumed())
+}
+
 func TestRunning(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -162,8 +175,7 @@ func TestRunning(t *testing.T) {
 }
 
 func TestBlocked(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -189,8 +201,7 @@ func TestBlocked(t *testing.T) {
 }
 
 func TestCommitting(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -218,8 +229,7 @@ func TestCommitting(t *testing.T) {
 }
 
 func TestRollbackTxnState(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -240,8 +250,7 @@ func TestRollbackTxnState(t *testing.T) {
 }
 
 func TestTxnInfoWithPreparedStmt(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -272,8 +281,7 @@ func TestTxnInfoWithPreparedStmt(t *testing.T) {
 }
 
 func TestTxnInfoWithScalarSubquery(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -303,8 +311,7 @@ func TestTxnInfoWithScalarSubquery(t *testing.T) {
 }
 
 func TestTxnInfoWithPSProtocol(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -318,7 +325,7 @@ func TestTxnInfoWithPSProtocol(t *testing.T) {
 	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
 	ch := make(chan interface{})
 	go func() {
-		_, err := tk.Session().ExecutePreparedStmt(context.Background(), idInsert, types.MakeDatums(1))
+		_, err := tk.Session().ExecutePreparedStmt(context.Background(), idInsert, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		ch <- nil
 	}()
@@ -347,12 +354,12 @@ func TestTxnInfoWithPSProtocol(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id1, types.MakeDatums(1))
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id1, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
 	go func() {
-		_, err := tk.Session().ExecutePreparedStmt(context.Background(), id2, types.MakeDatums(1))
+		_, err := tk.Session().ExecutePreparedStmt(context.Background(), id2, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)
 		ch <- nil
 	}()

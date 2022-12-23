@@ -25,7 +25,7 @@ import (
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	buildKeyInfo(p)
 	return p, nil
 }
@@ -70,7 +70,7 @@ func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (p *LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
+func (*LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
 	if len(eqColIDs) == 0 {
 		return false
 	}
@@ -127,10 +127,10 @@ func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	if p.Count == 1 {
-		p.maxOneRow = true
+func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	lt.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if lt.Count == 1 {
+		lt.maxOneRow = true
 	}
 }
 
@@ -266,7 +266,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
 	var latestIndexes map[int64]*model.IndexInfo
 	var changed bool
@@ -311,7 +311,7 @@ func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range is.Source.possibleAccessPaths {
 		if path.IsTablePath() {
@@ -330,7 +330,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (tg *TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = childSchema[0].Keys
 }
 

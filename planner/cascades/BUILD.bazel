@@ -31,6 +31,7 @@ go_library(
 
 go_test(
     name = "cascades_test",
+    timeout = "short",
     srcs = [
         "enforcer_rules_test.go",
         "integration_test.go",
@@ -55,6 +56,7 @@ go_test(
         "//testkit",
         "//testkit/testdata",
         "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

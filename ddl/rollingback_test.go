@@ -30,8 +30,7 @@ import (
 
 // TestCancelJobMeetError is used to test canceling ddl job failure when convert ddl job to a rolling back job.
 func TestCancelAddIndexJobError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
@@ -57,7 +56,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 		jobID    int64
 		res      sqlexec.RecordSet
 	)
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.TableID != tbl.Meta().ID {
 			return
 		}
@@ -78,6 +77,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	// This will hang on stateDeleteOnly, and the job will be canceled.

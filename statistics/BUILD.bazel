@@ -13,6 +13,7 @@ go_library(
         "fmsketch.go",
         "histogram.go",
         "index.go",
+        "merge_worker.go",
         "row_sampler.go",
         "sample.go",
         "scalar.go",
@@ -41,6 +42,7 @@ go_library(
         "//util/chunk",
         "//util/codec",
         "//util/collate",
+        "//util/dbterror",
         "//util/fastrand",
         "//util/hack",
         "//util/logutil",
@@ -62,6 +64,7 @@ go_library(
 
 go_test(
     name = "statistics_test",
+    timeout = "short",
     srcs = [
         "cmsketch_test.go",
         "feedback_test.go",
@@ -98,7 +101,6 @@ go_test(
         "//testkit/testmain",
         "//testkit/testsetup",
         "//types",
-        "//types/json",
         "//util/chunk",
         "//util/codec",
         "//util/collate",

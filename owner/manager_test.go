@@ -40,7 +40,7 @@ func TestSingle(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestCluster(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	originalTTL := owner.ManagerSessionTTL
 	owner.ManagerSessionTTL = 3
@@ -124,9 +124,7 @@ func TestCluster(t *testing.T) {
 		WithInfoCache(ic),
 	)
 
-	go func() {
-		require.NoError(t, d.OwnerManager().CampaignOwner())
-	}()
+	require.NoError(t, d.OwnerManager().CampaignOwner())
 
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
@@ -141,9 +139,7 @@ func TestCluster(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic2),
 	)
-	go func() {
-		require.NoError(t, d1.OwnerManager().CampaignOwner())
-	}()
+	require.NoError(t, d1.OwnerManager().CampaignOwner())
 
 	isOwner = checkOwner(d1, false)
 	require.False(t, isOwner)
@@ -168,9 +164,7 @@ func TestCluster(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic3),
 	)
-	go func() {
-		require.NoError(t, d3.OwnerManager().CampaignOwner())
-	}()
+	require.NoError(t, d3.OwnerManager().CampaignOwner())
 
 	isOwner = checkOwner(d3, false)
 	require.False(t, isOwner)

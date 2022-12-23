@@ -74,17 +74,15 @@ func Unregister(ch ProfileConsumer) {
 // With parallelCPUProfiler, it is possible to have multiple profile consumer at the same time.
 // WARN: Only one running parallelCPUProfiler is allowed in the process, otherwise some profiler may profiling fail.
 type parallelCPUProfiler struct {
-	sync.Mutex
+	ctx            context.Context
 	cs             map[ProfileConsumer]struct{}
 	notifyRegister chan struct{}
-
-	profileData  *ProfileData
-	lastDataSize int
-
+	profileData    *ProfileData
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	lastDataSize   int
+	sync.Mutex
 	started bool
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
 }
 
 // newParallelCPUProfiler crate a new parallelCPUProfiler.

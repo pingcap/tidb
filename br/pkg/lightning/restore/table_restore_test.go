@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	restoremock "github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
@@ -128,6 +129,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 				Type:     mydump.SourceTypeSQL,
 				SortKey:  strconv.Itoa(i),
 				FileSize: 37,
+				RealSize: 37,
 			},
 		})
 	}
@@ -143,6 +145,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 			Type:     mydump.SourceTypeCSV,
 			SortKey:  "99",
 			FileSize: 14,
+			RealSize: 14,
 		},
 	})
 
@@ -426,7 +429,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 		require.NoError(s.T(), err)
 		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 			TableName: filter.Table{Schema: "db", Name: "table"},
-			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i), FileSize: int64(len(str))},
+			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i), FileSize: int64(len(str)), RealSize: int64(len(str))},
 		})
 		total += len(str)
 	}
@@ -1078,8 +1081,8 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 				"max-replicas": 1
 			}`),
 			"(.*)Cluster doesn't have enough space(.*)",
-			false,
-			1,
+			true,
+			0,
 		},
 	}
 
@@ -1123,12 +1126,14 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			targetInfoGetter: targetInfoGetter,
 			srcStorage:       mockStore,
 		}
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil)
 		rc := &Controller{
-			cfg:           cfg,
-			tls:           tls,
-			store:         mockStore,
-			checkTemplate: template,
-			preInfoGetter: preInfoGetter,
+			cfg:                 cfg,
+			tls:                 tls,
+			store:               mockStore,
+			checkTemplate:       template,
+			preInfoGetter:       preInfoGetter,
+			precheckItemBuilder: theCheckBuilder,
 		}
 		var sourceSize int64
 		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
@@ -1136,7 +1141,11 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			return nil
 		})
 		require.NoError(s.T(), err)
-		err = rc.clusterResource(ctx, sourceSize)
+		preInfoGetter.estimatedSizeCache = &EstimateSourceDataSizeResult{
+			SizeWithIndex:    sourceSize,
+			SizeWithoutIndex: sourceSize,
+		}
+		err = rc.clusterResource(ctx)
 		require.NoError(s.T(), err)
 
 		require.Equal(s.T(), ca.expectErrorCount, template.FailedCount(Critical))
@@ -1207,8 +1216,8 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				".*TiKV stores \\(1\\) contains more than 500 empty regions respectively.*",
 				".*Region distribution is unbalanced.*but we expect it should not be less than 0.75.*",
 			},
-			expectResult:   false,
-			expectErrorCnt: 1,
+			expectResult:   true,
+			expectErrorCnt: 0,
 		},
 		{
 			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
@@ -1261,21 +1270,25 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			cfg: cfg,
 			tls: tls,
 		}
+		dbMetas := []*mydump.MDDatabaseMeta{}
 		preInfoGetter := &PreRestoreInfoGetterImpl{
 			cfg:              cfg,
 			targetInfoGetter: targetInfoGetter,
-			dbMetas:          []*mydump.MDDatabaseMeta{},
+			dbMetas:          dbMetas,
 		}
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB())
 		rc := &Controller{
-			cfg:           cfg,
-			tls:           tls,
-			taskMgr:       mockTaskMetaMgr{},
-			checkTemplate: template,
-			preInfoGetter: preInfoGetter,
-			dbInfos:       make(map[string]*checkpoints.TidbDBInfo),
+			cfg:                 cfg,
+			tls:                 tls,
+			taskMgr:             mockTaskMetaMgr{},
+			checkTemplate:       template,
+			preInfoGetter:       preInfoGetter,
+			dbInfos:             make(map[string]*checkpoints.TidbDBInfo),
+			precheckItemBuilder: theCheckBuilder,
 		}
 
-		ctx := WithPreInfoGetterTableStructuresCache(context.Background(), rc.dbInfos)
+		preInfoGetter.dbInfosCache = rc.dbInfos
+		ctx := context.Background()
 		err := rc.checkClusterRegion(ctx)
 		require.NoError(s.T(), err)
 		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(Critical))
@@ -1338,6 +1351,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 								{
 									FileMeta: mydump.SourceFileMeta{
 										FileSize: 1 * units.TiB,
+										RealSize: 1 * units.TiB,
 										Path:     "/testPath",
 									},
 								},
@@ -1353,11 +1367,20 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	mockStore, err := storage.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
-		rc := &Controller{cfg: cfg, checkTemplate: template, store: mockStore}
-		rc.HasLargeCSV(ca.dbMetas)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil)
+		rc := &Controller{
+			cfg:                 cfg,
+			checkTemplate:       template,
+			store:               mockStore,
+			dbMetas:             ca.dbMetas,
+			precheckItemBuilder: theCheckBuilder,
+		}
+		rc.HasLargeCSV(ctx)
 		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(Warn))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))
@@ -1404,29 +1427,34 @@ func (s *tableRestoreSuite) TestEstimate() {
 		targetInfoGetter: mockTarget,
 	}
 	preInfoGetter.Init()
+	theCheckBuilder := NewPrecheckItemBuilder(s.cfg, dbMetas, preInfoGetter, nil)
 	rc := &Controller{
-		cfg:           s.cfg,
-		checkTemplate: template,
-		store:         s.store,
-		backend:       importer,
-		dbMetas:       dbMetas,
-		dbInfos:       dbInfos,
-		ioWorkers:     ioWorkers,
-		preInfoGetter: preInfoGetter,
+		cfg:                 s.cfg,
+		checkTemplate:       template,
+		store:               s.store,
+		backend:             importer,
+		dbMetas:             dbMetas,
+		dbInfos:             dbInfos,
+		ioWorkers:           ioWorkers,
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
-	ctx = WithPreInfoGetterTableStructuresCache(ctx, dbInfos)
-	source, _, _, err := rc.estimateSourceData(ctx)
+	preInfoGetter.dbInfosCache = dbInfos
+	estimateResult, err := preInfoGetter.EstimateSourceDataSize(ctx)
+	s.Require().NoError(err)
+	source := estimateResult.SizeWithIndex
 	// Because this file is small than region split size so we does not sample it.
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), s.tableMeta.TotalSize, source)
+	s.Require().Equal(s.tableMeta.TotalSize, source)
 	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
-	source, _, _, err = rc.estimateSourceData(ctx)
-	require.NoError(s.T(), err)
-	require.Greater(s.T(), source, s.tableMeta.TotalSize)
+	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
+	s.Require().NoError(err)
+	source = estimateResult.SizeWithIndex
+	s.Require().Greater(source, s.tableMeta.TotalSize)
 	rc.cfg.TikvImporter.Backend = config.BackendTiDB
-	source, _, _, err = rc.estimateSourceData(ctx)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), s.tableMeta.TotalSize, source)
+	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
+	s.Require().NoError(err)
+	source = estimateResult.SizeWithIndex
+	s.Require().Equal(s.tableMeta.TotalSize, source)
 }
 
 func (s *tableRestoreSuite) TestSchemaIsValid() {
@@ -1442,6 +1470,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 
 	case2File := "db1.table2.csv"
 	err = mockStore.WriteFile(ctx, case2File, []byte("\"colA\",\"colB\"\n\"a\",\"b\""))
+	require.NoError(s.T(), err)
+
+	case3File := "db1.table3.csv"
+	err = mockStore.WriteFile(ctx, case3File, []byte("\"a\",\"b\""))
 	require.NoError(s.T(), err)
 
 	cases := []struct {
@@ -1805,10 +1837,300 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 				},
 			},
 		},
+		// Case 5:
+		// table has two datafiles for table.
+		// ignore column and extended column are overlapped,
+		// we expect the check failed.
+		{
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db",
+					Table:   "table",
+					Columns: []string{"colA"},
+				},
+			},
+			"extend column colA is also assigned in ignore-column(.*)",
+			1,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db": {
+					Name: "db",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										Name: model.NewCIStr("colA"),
+									},
+									{
+										Name: model.NewCIStr("colB"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db",
+				Name: "table",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
+								Columns: []string{"colA"},
+								Values:  []string{"a"},
+							},
+						},
+					},
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
+								Columns: []string{},
+								Values:  []string{},
+							},
+						},
+					},
+				},
+			},
+		},
+		// Case 6：
+		// table has one datafile for table.
+		// we expect the check failed because csv header contains extend column.
+		{
+			nil,
+			"extend column colA is contained in table(.*)",
+			1,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db": {
+					Name: "db",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										Name: model.NewCIStr("colA"),
+									},
+									{
+										Name: model.NewCIStr("colB"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db",
+				Name: "table",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
+								Columns: []string{"colA"},
+								Values:  []string{"a"},
+							},
+						},
+					},
+				},
+			},
+		},
+		// Case 7：
+		// table has one datafile for table.
+		// we expect the check failed because csv data columns plus extend columns is greater than target schema's columns.
+		{
+			nil,
+			"row count 2 adding with extend column length 1 is larger than columnCount 2 plus ignore column count 0 for(.*)",
+			1,
+			false,
+			map[string]*checkpoints.TidbDBInfo{
+				"db": {
+					Name: "db",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										Name: model.NewCIStr("colA"),
+									},
+									{
+										Name: model.NewCIStr("colB"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db",
+				Name: "table",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case3File,
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
+								Columns: []string{"colA"},
+								Values:  []string{"a"},
+							},
+						},
+					},
+				},
+			},
+		},
+		// Case 8：
+		// table has two datafiles for table.
+		// we expect the check failed because target schema doesn't contain extend column.
+		{
+			nil,
+			"extend column \\[colC\\] don't exist in target table(.*)",
+			1,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db": {
+					Name: "db",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										Name: model.NewCIStr("colA"),
+									},
+									{
+										Name: model.NewCIStr("colB"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db",
+				Name: "table",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
+								Columns: []string{"colC"},
+								Values:  []string{"a"},
+							},
+						},
+					},
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
+								Columns: []string{"colC"},
+								Values:  []string{"b"},
+							},
+						},
+					},
+				},
+			},
+		},
+		// Case 9：
+		// table has two datafiles and extend data for table.
+		// we expect the check succeed.
+		{
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db",
+					Table:   "table",
+					Columns: []string{"colb"},
+				},
+			},
+			"",
+			0,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db": {
+					Name: "db",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										Name: model.NewCIStr("colA"),
+									},
+									{
+										Name:          model.NewCIStr("colB"),
+										DefaultIsExpr: true,
+									},
+									{
+										Name: model.NewCIStr("colC"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db",
+				Name: "table",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
+								Columns: []string{"colC"},
+								Values:  []string{"a"},
+							},
+						},
+					},
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
+								Columns: []string{"colC"},
+								Values:  []string{"b"},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
-	for _, ca := range cases {
-		template := NewSimpleTemplate()
+	for i, ca := range cases {
+		s.T().Logf("running testCase: #%d", i+1)
 		cfg := &config.Config{
 			Mydumper: config.MydumperRuntime{
 				ReadBlockSize: config.ReadBlockSize,
@@ -1830,16 +2152,9 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			srcStorage: mockStore,
 			ioWorkers:  ioWorkers,
 		}
-		rc := &Controller{
-			cfg:           cfg,
-			checkTemplate: template,
-			store:         mockStore,
-			dbInfos:       ca.dbInfos,
-			ioWorkers:     ioWorkers,
-			preInfoGetter: preInfoGetter,
-		}
-		ctx = WithPreInfoGetterTableStructuresCache(ctx, ca.dbInfos)
-		msgs, err := rc.SchemaIsValid(ctx, ca.tableMeta)
+		ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
+		preInfoGetter.dbInfosCache = ca.dbInfos
+		msgs, err := ci.SchemaIsValid(ctx, ca.tableMeta)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), msgs, ca.MsgNum)
 		if len(msgs) > 0 {
@@ -1908,16 +2223,9 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 		srcStorage: mockStore,
 		ioWorkers:  ioWorkers,
 	}
-	rc := &Controller{
-		cfg:           cfg,
-		checkTemplate: NewSimpleTemplate(),
-		store:         mockStore,
-		dbInfos:       dbInfos,
-		ioWorkers:     ioWorkers,
-		preInfoGetter: preInfoGetter,
-	}
-	ctx = WithPreInfoGetterTableStructuresCache(ctx, dbInfos)
-	msgs, err := rc.SchemaIsValid(ctx, &mydump.MDTableMeta{
+	ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
+	preInfoGetter.dbInfosCache = dbInfos
+	msgs, err := ci.SchemaIsValid(ctx, &mydump.MDTableMeta{
 		DB:   "db1",
 		Name: "gbk_table",
 		DataFiles: []mydump.FileInfo{

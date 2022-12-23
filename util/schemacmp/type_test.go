@@ -232,7 +232,6 @@ func TestTypeCompareJoin(t *testing.T) {
 				t.Log(cmp)
 			}
 			require.Regexp(t, tc.compareError, err)
-
 		} else {
 			require.NoError(t, err)
 			require.Equal(t, tc.compareResult, cmp)

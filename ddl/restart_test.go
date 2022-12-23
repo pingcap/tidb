@@ -101,8 +101,7 @@ func testRunInterruptedJob(t *testing.T, store kv.Storage, d *domain.Domain, job
 }
 
 func TestSchemaResume(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	require.True(t, dom.DDL().OwnerManager().IsOwner())
 
@@ -127,8 +126,7 @@ func TestSchemaResume(t *testing.T) {
 }
 
 func TestStat(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	dbInfo, err := testSchemaInfo(store, "test_restart")
 	require.NoError(t, err)
@@ -143,7 +141,7 @@ func TestStat(t *testing.T) {
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo.Name},
+		Args:       []interface{}{true},
 	}
 
 	done := make(chan error, 1)
@@ -169,8 +167,7 @@ LOOP:
 }
 
 func TestTableResume(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	dbInfo, err := testSchemaInfo(store, "test_table")
 	require.NoError(t, err)

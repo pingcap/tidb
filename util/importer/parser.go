@@ -30,17 +30,16 @@ import (
 )
 
 type column struct {
-	idx     int
-	name    string
 	data    *datum
 	tp      *types.FieldType
+	table   *table
+	name    string
 	comment string
 	min     string
 	max     string
-	step    int64
 	set     []string
-
-	table *table
+	idx     int
+	step    int64
 }
 
 func (col *column) String() string {
@@ -121,12 +120,12 @@ func (col *column) parseColumnOptions(ops []*ast.ColumnOption) {
 }
 
 type table struct {
-	name         string
-	columns      []*column
-	columnList   string
 	indices      map[string]*column
 	uniqIndices  map[string]*column
 	unsignedCols map[string]*column
+	name         string
+	columnList   string
+	columns      []*column
 }
 
 func (t *table) printColumns() string {

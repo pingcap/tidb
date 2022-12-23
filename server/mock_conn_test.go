@@ -24,8 +24,7 @@ import (
 )
 
 func TestMockConn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	server := CreateMockServer(t, store)
 	defer server.Close()
 	conn := CreateMockConn(t, server)

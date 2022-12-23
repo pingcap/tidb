@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//sessionctx/stmtctx",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )

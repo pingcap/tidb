@@ -67,9 +67,9 @@ const (
 
 // tsItem is a self-contained complete piece of data for a certain timestamp.
 type tsItem struct {
+	stmtStats stmtstats.StatementStatsItem
 	timestamp uint64
 	cpuTimeMs uint32
-	stmtStats stmtstats.StatementStatsItem
 }
 
 func zeroTsItem() tsItem {
@@ -140,13 +140,12 @@ var _ sort.Interface = &record{}
 // record do not guarantee the tsItems is sorted by timestamp when there is a time jump backward.
 // record is also sortable, and the tsIndex will be updated while sorting the internal tsItems.
 type record struct {
+	// tsIndex is used to quickly find the corresponding tsItems index through timestamp.
+	tsIndex        map[uint64]int
 	sqlDigest      []byte
 	planDigest     []byte
-	totalCPUTimeMs uint64
 	tsItems        tsItems
-
-	// tsIndex is used to quickly find the corresponding tsItems index through timestamp.
-	tsIndex map[uint64]int // timestamp => index of tsItems
+	totalCPUTimeMs uint64
 }
 
 func newRecord(sqlDigest, planDigest []byte) *record {

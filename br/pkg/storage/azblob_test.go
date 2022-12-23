@@ -4,9 +4,13 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -297,5 +301,53 @@ func TestNewAzblobStorage(t *testing.T) {
 		require.Equal(t, "user", b.GetAccountName())
 		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
+}
 
+type fakeClientBuilder struct {
+	Endpoint string
+}
+
+func (b *fakeClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
+	connStr := fmt.Sprintf("DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=%s/devstoreaccount1;", b.Endpoint)
+	return azblob.NewServiceClientFromConnectionString(connStr, getDefaultClientOptions())
+}
+
+func (b *fakeClientBuilder) GetAccountName() string {
+	return "devstoreaccount1"
+}
+
+func TestDownloadRetry(t *testing.T) {
+	var count int32 = 0
+	var lock sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Log(r.URL)
+		if strings.Contains(r.URL.String(), "restype=container") {
+			w.WriteHeader(201)
+			return
+		}
+		lock.Lock()
+		count += 1
+		lock.Unlock()
+		header := w.Header()
+		header.Add("Etag", "0x1")
+		header.Add("Content-Length", "5")
+		w.WriteHeader(200)
+		w.Write([]byte("1234567"))
+	}))
+
+	defer server.Close()
+	t.Log(server.URL)
+
+	options := &backuppb.AzureBlobStorage{
+		Bucket: "test",
+		Prefix: "a/b/",
+	}
+
+	ctx := context.Background()
+	builder := &fakeClientBuilder{Endpoint: server.URL}
+	s, err := newAzureBlobStorageWithClientBuilder(ctx, options, builder)
+	require.NoError(t, err)
+	_, err = s.ReadFile(ctx, "c")
+	require.Error(t, err)
+	require.Less(t, azblobRetryTimes, count)
 }

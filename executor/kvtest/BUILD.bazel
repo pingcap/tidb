@@ -2,11 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "kvtest_test",
+    timeout = "short",
     srcs = [
         "kv_test.go",
         "main_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         "//config",
         "//meta/autoid",

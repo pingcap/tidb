@@ -25,9 +25,9 @@ import (
 )
 
 type flamegraphNode struct {
-	cumValue int64
 	children map[uint64]*flamegraphNode
 	name     string
+	cumValue int64
 }
 
 func newFlamegraphNode() *flamegraphNode {
@@ -104,8 +104,8 @@ func (n *flamegraphNode) sortedChildren() []flamegraphNodeWithLocation {
 }
 
 type flamegraphCollector struct {
-	rows      [][]types.Datum
 	locations map[uint64]*profile.Location
+	rows      [][]types.Datum
 	total     int64
 	rootChild int
 }

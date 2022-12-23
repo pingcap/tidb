@@ -52,16 +52,15 @@ func init() {
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
 type SimpleLRUCache struct {
+	elements map[string]*list.Element
+	// onEvict function will be called if any eviction happened
+	onEvict  func(Key, Value)
+	cache    *list.List
 	capacity uint
 	size     uint
 	// 0 indicates no quota
-	quota    uint64
-	guard    float64
-	elements map[string]*list.Element
-
-	// onEvict function will be called if any eviction happened
-	onEvict func(Key, Value)
-	cache   *list.List
+	quota uint64
+	guard float64
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".

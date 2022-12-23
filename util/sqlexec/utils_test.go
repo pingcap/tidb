@@ -109,9 +109,9 @@ func TestEscapeSQL(t *testing.T) {
 	type TestCase struct {
 		name   string
 		input  string
-		params []interface{}
 		output string
 		err    string
+		params []interface{}
 	}
 	time2, err := time.Parse("2006-01-02 15:04:05", "2018-01-23 04:03:05")
 	require.NoError(t, err)
@@ -401,7 +401,6 @@ func TestEscapeSQL(t *testing.T) {
 				require.Equal(t, v.output, r2)
 				require.NoError(t, e3)
 				require.Equal(t, v.output, r3.String())
-
 			} else {
 				require.Error(t, e1)
 				require.Regexp(t, v.err, e1.Error())
@@ -427,4 +426,28 @@ func TestMustUtils(t *testing.T) {
 	sql := new(strings.Builder)
 	MustFormatSQL(sql, "t")
 	MustEscapeSQL("tt")
+}
+
+func TestEscapeString(t *testing.T) {
+	type testCase struct {
+		input  string
+		output string
+	}
+	tests := []testCase{
+		{
+			input:  "testData",
+			output: "testData",
+		},
+		{
+			input:  `it's all good`,
+			output: `it\'s all good`,
+		},
+		{
+			input:  `+ -><()~*:""&|`,
+			output: `+ -><()~*:\"\"&|`,
+		},
+	}
+	for _, v := range tests {
+		require.Equal(t, v.output, EscapeString(v.input))
+	}
 }

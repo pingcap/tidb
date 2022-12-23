@@ -14,6 +14,7 @@ go_library(
 
 go_test(
     name = "globalconfigsync_test",
+    timeout = "short",
     srcs = ["globalconfig_test.go"],
     flaky = True,
     deps = [
@@ -25,6 +26,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//:client",
         "@io_etcd_go_etcd_tests_v3//integration",
+        "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],
 )

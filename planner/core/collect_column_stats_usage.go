@@ -43,9 +43,14 @@ type columnStatsUsageCollector struct {
 	histNeededCols map[model.TableItemID]struct{}
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
+
+	// collectVisitedTable indicates whether to collect visited table
+	collectVisitedTable bool
+	// visitedtbls indicates the visited table
+	visitedtbls map[int64]struct{}
 }
 
-func newColumnStatsUsageCollector(collectMode uint64) *columnStatsUsageCollector {
+func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *columnStatsUsageCollector {
 	collector := &columnStatsUsageCollector{
 		collectMode: collectMode,
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
@@ -57,6 +62,10 @@ func newColumnStatsUsageCollector(collectMode uint64) *columnStatsUsageCollector
 	}
 	if collectMode&collectHistNeededColumns != 0 {
 		collector.histNeededCols = make(map[model.TableItemID]struct{})
+	}
+	if enabledPlanCapture {
+		collector.collectVisitedTable = true
+		collector.visitedtbls = map[int64]struct{}{}
 	}
 	return collector
 }
@@ -103,6 +112,9 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *Dat
 	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
 	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
 	tblID := ds.TableInfo().ID
+	if c.collectVisitedTable {
+		c.visitedtbls[tblID] = struct{}{}
+	}
 	for _, col := range ds.Schema().Columns {
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
@@ -147,6 +159,10 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *Logica
 }
 
 func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
+	if c.collectVisitedTable {
+		tblID := ds.TableInfo().ID
+		c.visitedtbls[tblID] = struct{}{}
+	}
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
 	for _, col := range columns {
 		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
@@ -283,8 +299,11 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]mode
 	if histNeeded {
 		mode |= collectHistNeededColumns
 	}
-	collector := newColumnStatsUsageCollector(mode)
+	collector := newColumnStatsUsageCollector(mode, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(lp)
+	if collector.collectVisitedTable {
+		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
+	}
 	set2slice := func(set map[model.TableItemID]struct{}) []model.TableItemID {
 		ret := make([]model.TableItemID, 0, len(set))
 		for tblColID := range set {

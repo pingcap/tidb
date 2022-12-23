@@ -26,7 +26,7 @@ import (
 
 func genCastIntAsInt() (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeLonglong))
 	if err != nil {
 		panic(err)
 	}

@@ -67,7 +67,7 @@ func TestAddStatement(t *testing.T) {
 
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.ExecDetail.CommitDetail.Mu.BackoffTypes = make([]string, 0)
+	stmtExecInfo1.ExecDetail.CommitDetail.Mu.PrewriteBackoffTypes = make([]string, 0)
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
@@ -175,9 +175,8 @@ func TestAddStatement(t *testing.T) {
 			MaxWaitTime:       2500,
 		},
 		ExecDetail: &execdetails.ExecDetails{
-			CalleeAddress: "202",
-			BackoffTime:   180,
-			RequestCount:  20,
+			BackoffTime:  180,
+			RequestCount: 20,
 			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime: 500,
 				PrewriteTime:    50000,
@@ -185,15 +184,17 @@ func TestAddStatement(t *testing.T) {
 				LocalLatchTime:  50,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime   int64
-					BackoffTypes        []string
-					SlowestReqTotalTime time.Duration
-					SlowestRegion       uint64
-					SlowestStoreAddr    string
-					SlowestExecDetails  util.TiKVExecDetails
+					CommitBackoffTime    int64
+					PrewriteBackoffTypes []string
+					CommitBackoffTypes   []string
+					SlowestPrewrite      util.ReqDetailInfo
+					CommitPrimary        util.ReqDetailInfo
 				}{
-					CommitBackoffTime: 1000,
-					BackoffTypes:      []string{boTxnLockName},
+					CommitBackoffTime:    1000,
+					PrewriteBackoffTypes: []string{boTxnLockName},
+					CommitBackoffTypes:   []string{},
+					SlowestPrewrite:      util.ReqDetailInfo{},
+					CommitPrimary:        util.ReqDetailInfo{},
 				},
 				WriteKeys:         100000,
 				WriteSize:         1000000,
@@ -212,9 +213,11 @@ func TestAddStatement(t *testing.T) {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: util.TimeDetail{
-				ProcessTime: 1500,
-				WaitTime:    150,
+			DetailsNeedP90: execdetails.DetailsNeedP90{
+				TimeDetail: util.TimeDetail{
+					ProcessTime: 1500,
+					WaitTime:    150,
+				}, CalleeAddress: "202",
 			},
 		},
 		StmtCtx: &stmtctx.StatementContext{
@@ -272,7 +275,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.maxPrewriteRegionNum = stmtExecInfo2.ExecDetail.CommitDetail.PrewriteRegionNum
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummaryElement.maxTxnRetry = stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry
-	expectedSummaryElement.sumBackoffTimes += 1
+	expectedSummaryElement.sumBackoffTimes++
 	expectedSummaryElement.backoffTypes[boTxnLockName] = 1
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
@@ -311,9 +314,8 @@ func TestAddStatement(t *testing.T) {
 			MaxWaitTime:       250,
 		},
 		ExecDetail: &execdetails.ExecDetails{
-			CalleeAddress: "302",
-			BackoffTime:   18,
-			RequestCount:  2,
+			BackoffTime:  18,
+			RequestCount: 2,
 			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime: 50,
 				PrewriteTime:    5000,
@@ -321,15 +323,17 @@ func TestAddStatement(t *testing.T) {
 				LocalLatchTime:  5,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime   int64
-					BackoffTypes        []string
-					SlowestReqTotalTime time.Duration
-					SlowestRegion       uint64
-					SlowestStoreAddr    string
-					SlowestExecDetails  util.TiKVExecDetails
+					CommitBackoffTime    int64
+					PrewriteBackoffTypes []string
+					CommitBackoffTypes   []string
+					SlowestPrewrite      util.ReqDetailInfo
+					CommitPrimary        util.ReqDetailInfo
 				}{
-					CommitBackoffTime: 100,
-					BackoffTypes:      []string{boTxnLockName},
+					CommitBackoffTime:    100,
+					PrewriteBackoffTypes: []string{boTxnLockName},
+					CommitBackoffTypes:   []string{},
+					SlowestPrewrite:      util.ReqDetailInfo{},
+					CommitPrimary:        util.ReqDetailInfo{},
 				},
 				WriteKeys:         10000,
 				WriteSize:         100000,
@@ -348,9 +352,12 @@ func TestAddStatement(t *testing.T) {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: util.TimeDetail{
-				ProcessTime: 150,
-				WaitTime:    15,
+			DetailsNeedP90: execdetails.DetailsNeedP90{
+				TimeDetail: util.TimeDetail{
+					ProcessTime: 150,
+					WaitTime:    15,
+				},
+				CalleeAddress: "302",
 			},
 		},
 		StmtCtx: &stmtctx.StatementContext{
@@ -387,7 +394,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumWriteSize += int64(stmtExecInfo3.ExecDetail.CommitDetail.WriteSize)
 	expectedSummaryElement.sumPrewriteRegionNum += int64(stmtExecInfo3.ExecDetail.CommitDetail.PrewriteRegionNum)
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo3.ExecDetail.CommitDetail.TxnRetry)
-	expectedSummaryElement.sumBackoffTimes += 1
+	expectedSummaryElement.sumBackoffTimes++
 	expectedSummaryElement.backoffTypes[boTxnLockName] = 2
 	expectedSummaryElement.sumMem += stmtExecInfo3.MemMax
 	expectedSummaryElement.sumDisk += stmtExecInfo3.DiskMax
@@ -539,8 +546,8 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.sumMem != ssElement2.sumMem ||
 			ssElement1.maxMem != ssElement2.maxMem ||
 			ssElement1.sumAffectedRows != ssElement2.sumAffectedRows ||
-			ssElement1.firstSeen != ssElement2.firstSeen ||
-			ssElement1.lastSeen != ssElement2.lastSeen {
+			!ssElement1.firstSeen.Equal(ssElement2.firstSeen) ||
+			!ssElement1.lastSeen.Equal(ssElement2.lastSeen) {
 			return false
 		}
 		if len(ssElement1.backoffTypes) != len(ssElement2.backoffTypes) {
@@ -601,9 +608,8 @@ func generateAnyExecInfo() *StmtExecInfo {
 			MaxWaitTime:       1500,
 		},
 		ExecDetail: &execdetails.ExecDetails{
-			CalleeAddress: "129",
-			BackoffTime:   80,
-			RequestCount:  10,
+			BackoffTime:  80,
+			RequestCount: 10,
 			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime: 100,
 				PrewriteTime:    10000,
@@ -611,15 +617,17 @@ func generateAnyExecInfo() *StmtExecInfo {
 				LocalLatchTime:  10,
 				Mu: struct {
 					sync.Mutex
-					CommitBackoffTime   int64
-					BackoffTypes        []string
-					SlowestReqTotalTime time.Duration
-					SlowestRegion       uint64
-					SlowestStoreAddr    string
-					SlowestExecDetails  util.TiKVExecDetails
+					CommitBackoffTime    int64
+					PrewriteBackoffTypes []string
+					CommitBackoffTypes   []string
+					SlowestPrewrite      util.ReqDetailInfo
+					CommitPrimary        util.ReqDetailInfo
 				}{
-					CommitBackoffTime: 200,
-					BackoffTypes:      []string{boTxnLockName},
+					CommitBackoffTime:    200,
+					PrewriteBackoffTypes: []string{boTxnLockName},
+					CommitBackoffTypes:   []string{},
+					SlowestPrewrite:      util.ReqDetailInfo{},
+					CommitPrimary:        util.ReqDetailInfo{},
 				},
 				WriteKeys:         20000,
 				WriteSize:         200000,
@@ -638,9 +646,12 @@ func generateAnyExecInfo() *StmtExecInfo {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: util.TimeDetail{
-				ProcessTime: 500,
-				WaitTime:    50,
+			DetailsNeedP90: execdetails.DetailsNeedP90{
+				TimeDetail: util.TimeDetail{
+					ProcessTime: 500,
+					WaitTime:    50,
+				},
+				CalleeAddress: "129",
 			},
 		},
 		StmtCtx: &stmtctx.StatementContext{

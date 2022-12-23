@@ -16,6 +16,7 @@ package server
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
@@ -31,8 +33,7 @@ import (
 )
 
 func TestDumpStatsAPI(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	driver := NewTiDBDriver(store)
 	client := newTestServerClient()
@@ -59,6 +60,10 @@ func TestDumpStatsAPI(t *testing.T) {
 	statsHandler := &StatsHandler{dom}
 
 	prepareData(t, client, statsHandler)
+	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	require.NoError(t, err)
+	err = dom.GetHistoricalStatsWorker().DumpHistoricalStats(tableInfo.Meta().ID, dom.StatsHandle())
+	require.NoError(t, err)
 
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", statsHandler)
@@ -120,6 +125,33 @@ func TestDumpStatsAPI(t *testing.T) {
 	_, err = fp1.Write(js)
 	require.NoError(t, err)
 	checkData(t, path1, client)
+
+	testDumpPartitionTableStats(t, client, statsHandler)
+}
+
+func testDumpPartitionTableStats(t *testing.T, client *testServerClient, handler *StatsHandler) {
+	preparePartitionData(t, client, handler)
+	check := func(dumpStats bool) {
+		expectedLen := 1
+		if dumpStats {
+			expectedLen = 2
+		}
+		url := fmt.Sprintf("/stats/dump/test/test2?dumpPartitionStats=%v", dumpStats)
+		resp0, err := client.fetchStatus(url)
+		require.NoError(t, err)
+		defer func() {
+			resp0.Body.Close()
+		}()
+		b, err := io.ReadAll(resp0.Body)
+		require.NoError(t, err)
+		jsonTable := &handle.JSONTable{}
+		err = json.Unmarshal(b, jsonTable)
+		require.NoError(t, err)
+		require.NotNil(t, jsonTable.Partitions["global"])
+		require.Len(t, jsonTable.Partitions, expectedLen)
+	}
+	check(false)
+	check(true)
 }
 
 func prepareData(t *testing.T, client *testServerClient, statHandle *StatsHandler) {
@@ -141,7 +173,25 @@ func prepareData(t *testing.T, client *testServerClient, statHandle *StatsHandle
 	tk.MustExec("insert test values (1, 's')")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table test")
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
+	is := statHandle.do.InfoSchema()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+}
+
+func preparePartitionData(t *testing.T, client *testServerClient, statHandle *StatsHandler) {
+	db, err := sql.Open("mysql", client.getDSN())
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	h := statHandle.do.StatsHandle()
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("create table test2(a int) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
+	tk.MustExec("insert into test2 (a) values (1)")
+	tk.MustExec("analyze table test2")
 	is := statHandle.do.InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))

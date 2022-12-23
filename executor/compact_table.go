@@ -66,8 +66,9 @@ func getTiFlashStores(ctx sessionctx.Context) ([]infoschema.ServerInfo, error) {
 type CompactTableTiFlashExec struct {
 	baseExecutor
 
-	tableInfo *model.TableInfo
-	done      bool
+	tableInfo    *model.TableInfo
+	partitionIDs []int64
+	done         bool
 
 	tikvStore tikv.Storage
 }
@@ -139,6 +140,7 @@ func (task *storeCompactTask) work() error {
 	log.Info("Begin compacting table in a store",
 		zap.String("table", task.parentExec.tableInfo.Name.O),
 		zap.Int64("table-id", task.parentExec.tableInfo.ID),
+		zap.Int64s("partition-id", task.parentExec.partitionIDs),
 		zap.String("store-address", task.targetStore.Address),
 	)
 
@@ -146,20 +148,24 @@ func (task *storeCompactTask) work() error {
 	task.lastProgressOutputAt = task.startAt
 
 	if task.parentExec.tableInfo.Partition != nil {
-		// There are partitions, let's do it partition by partition.
 		// There is no need for partition-level concurrency, as TiFlash will limit table compaction one at a time.
-		allPartitions := task.parentExec.tableInfo.Partition.Definitions
+		allPartitions := task.parentExec.partitionIDs
+		if len(allPartitions) == 0 {
+			// There are partitions, but user did not specify partitions.
+			for _, definition := range task.parentExec.tableInfo.Partition.Definitions {
+				allPartitions = append(allPartitions, definition.ID)
+			}
+		}
 		task.allPhysicalTables = len(allPartitions)
 		task.compactedPhysicalTables = 0
-		for _, partition := range allPartitions {
-			stopAllTasks, err = task.compactOnePhysicalTable(partition.ID)
+		for _, partitionID := range allPartitions {
+			stopAllTasks, err = task.compactOnePhysicalTable(partitionID)
 			task.compactedPhysicalTables++
 			if err != nil {
 				// Stop remaining partitions when error happens.
 				break
 			}
 		}
-		// For partition table, there must be no data in task.parentExec.tableInfo.ID. So no need to compact it.
 	} else {
 		task.allPhysicalTables = 1
 		task.compactedPhysicalTables = 0
@@ -172,6 +178,7 @@ func (task *storeCompactTask) work() error {
 			zap.Duration("elapsed", time.Since(task.startAt)),
 			zap.String("table", task.parentExec.tableInfo.Name.O),
 			zap.Int64("table-id", task.parentExec.tableInfo.ID),
+			zap.Int64s("partition-id", task.parentExec.partitionIDs),
 			zap.String("store-address", task.targetStore.Address),
 		)
 	}
@@ -188,6 +195,7 @@ func (task *storeCompactTask) logFailure(otherFields ...zap.Field) {
 	allFields := []zap.Field{
 		zap.String("table", task.parentExec.tableInfo.Name.O),
 		zap.Int64("table-id", task.parentExec.tableInfo.ID),
+		zap.Int64s("partition-id", task.parentExec.partitionIDs),
 		zap.String("store-address", task.targetStore.Address),
 	}
 	log.Warn("Compact table failed", append(allFields, otherFields...)...)
@@ -202,6 +210,7 @@ func (task *storeCompactTask) logProgressOptionally() {
 			zap.Duration("elapsed", time.Since(task.startAt)),
 			zap.String("table", task.parentExec.tableInfo.Name.O),
 			zap.Int64("table-id", task.parentExec.tableInfo.ID),
+			zap.Int64s("partition-id", task.parentExec.partitionIDs),
 			zap.String("store-address", task.targetStore.Address),
 			zap.Int("all-physical-tables", task.allPhysicalTables),
 			zap.Int("compacted-physical-tables", task.compactedPhysicalTables),
@@ -214,14 +223,18 @@ func (task *storeCompactTask) logProgressOptionally() {
 //
 // There are two kind of errors may be returned:
 // A. Error only cancel tasks related with this store, e.g. this store is down even after retry.
-// 		The remaining partitions in this store should be cancelled.
+//
+//	The remaining partitions in this store should be cancelled.
+//
 // B. Error that should cancel tasks of other stores, e.g. CompactErrorCompactInProgress.
-//		The remaining partitions in this store should be cancelled, and tasks of other stores should also be cancelled.
+//
+//	The remaining partitions in this store should be cancelled, and tasks of other stores should also be cancelled.
 //
 // During this function, some "problems" will cause it to early return, e.g. physical table not exist in this
 // store any more (maybe caused by DDL). No errors will be produced so that remaining partitions will continue
 // being compacted.
-// 																	Returns: (stopAllTasks, err)
+//
+//	Returns: (stopAllTasks, err)
 func (task *storeCompactTask) compactOnePhysicalTable(physicalTableID int64) (bool, error) {
 	var startKey []byte = nil
 	for { // This loop is to compact incrementally for all data. Each RPC request will only compact a partial of data.

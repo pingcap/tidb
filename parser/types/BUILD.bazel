@@ -20,6 +20,7 @@ go_library(
 
 go_test(
     name = "types_test",
+    timeout = "short",
     srcs = [
         "etc_test.go",
         "field_type_test.go",

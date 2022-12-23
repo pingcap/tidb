@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +43,7 @@ func TestCodec(t *testing.T) {
 		oldChk.AppendString(2, str)
 		oldChk.AppendString(3, str)
 		oldChk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		oldChk.AppendJSON(5, json.CreateBinary(str))
+		oldChk.AppendJSON(5, types.CreateBinaryJSON(str))
 	}
 
 	codec := NewCodec(colTypes)
@@ -178,7 +177,7 @@ func BenchmarkDecodeToChunkWithVariableType(b *testing.B) {
 		chk.AppendString(2, str)
 		chk.AppendString(3, str)
 		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		chk.AppendJSON(5, json.CreateBinary(str))
+		chk.AppendJSON(5, types.CreateBinaryJSON(str))
 	}
 	codec := &Codec{colTypes}
 	buffer := codec.Encode(chk)

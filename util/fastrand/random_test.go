@@ -35,7 +35,7 @@ func TestRand(t *testing.T) {
 	}
 	sum := 0
 	for i := 0; i < 256; i++ {
-		if arr[i] == false {
+		if !arr[i] {
 			sum++
 		}
 	}

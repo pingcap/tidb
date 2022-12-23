@@ -10,6 +10,7 @@ go_library(
 
 go_test(
     name = "opcode_test",
+    timeout = "short",
     srcs = ["opcode_test.go"],
     embed = [":opcode"],
     flaky = True,

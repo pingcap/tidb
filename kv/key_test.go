@@ -20,7 +20,9 @@ import (
 	"strconv"
 	"testing"
 	"time"
+	"unsafe"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	. "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testutil"
@@ -210,6 +212,18 @@ func TestHandleMap(t *testing.T) {
 	})
 
 	assert.Equal(t, 2, cnt)
+}
+
+func TestKeyRangeDefinition(t *testing.T) {
+	// The struct layout for kv.KeyRange and coprocessor.KeyRange should be exactly the same.
+	// This allow us to use unsafe pointer to convert them and reduce allocation.
+	var r1 KeyRange
+	var r2 coprocessor.KeyRange
+	// Same size.
+	require.Equal(t, unsafe.Sizeof(r1), unsafe.Sizeof(r2))
+	// And same default value.
+	require.Equal(t, (*coprocessor.KeyRange)(unsafe.Pointer(&r1)), &r2)
+	require.Equal(t, &r1, (*KeyRange)(unsafe.Pointer(&r2)))
 }
 
 func BenchmarkIsPoint(b *testing.B) {

@@ -459,6 +459,7 @@ func TestAlterTableSpecRestore(t *testing.T) {
 		{"ROW_FORMAT = tokudb_fast", "ROW_FORMAT = TOKUDB_FAST"},
 		{"ROW_FORMAT = tokudb_small", "ROW_FORMAT = TOKUDB_SMALL"},
 		{"ROW_FORMAT = tokudb_zlib", "ROW_FORMAT = TOKUDB_ZLIB"},
+		{"ROW_FORMAT = tokudb_zstd", "ROW_FORMAT = TOKUDB_ZSTD"},
 		{"ROW_FORMAT = tokudb_quicklz", "ROW_FORMAT = TOKUDB_QUICKLZ"},
 		{"ROW_FORMAT = tokudb_lzma", "ROW_FORMAT = TOKUDB_LZMA"},
 		{"ROW_FORMAT = tokudb_snappy", "ROW_FORMAT = TOKUDB_SNAPPY"},
@@ -535,8 +536,6 @@ func TestAlterTableSpecRestore(t *testing.T) {
 		{"placement policy p1", "PLACEMENT POLICY = `p1`"},
 		{"placement policy p1 comment='aaa'", "PLACEMENT POLICY = `p1` COMMENT = 'aaa'"},
 		{"partition p0 placement policy p1", "PARTITION `p0` PLACEMENT POLICY = `p1`"},
-		{"set tiflash mode normal", "SET TIFLASH MODE NORMAL"},
-		{"set tiflash mode fast", "SET TIFLASH MODE FAST"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*AlterTableStmt).Specs[0]
@@ -826,5 +825,47 @@ func TestRemovePlacementRestore(t *testing.T) {
 			{ca.sourceSQL, ca.expectSQL},
 		}
 		runNodeRestoreTestWithFlagsStmtChange(t, testCases, "%s", extractNodeFunc, f)
+	}
+}
+
+func TestFlashBackDatabaseRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"flashback database M", "FLASHBACK DATABASE `M`"},
+		{"flashback schema M", "FLASHBACK DATABASE `M`"},
+		{"flashback database M to n", "FLASHBACK DATABASE `M` TO `n`"},
+		{"flashback schema M to N", "FLASHBACK DATABASE `M` TO `N`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestTableOptionTTLRestore(t *testing.T) {
+	sourceSQL1 := "create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR"
+	sourceSQL2 := "alter table t ttl_enable = 'OFF'"
+	sourceSQL3 := "alter table t remove ttl"
+	cases := []struct {
+		sourceSQL string
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{sourceSQL1, format.DefaultRestoreFlags, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR"},
+		{sourceSQL1, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "CREATE TABLE `t` (`created_at` DATETIME) /*T![ttl] TTL = `created_at` + INTERVAL 1 YEAR */"},
+		{sourceSQL2, format.DefaultRestoreFlags, "ALTER TABLE `t` TTL_ENABLE = 'OFF'"},
+		{sourceSQL2, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "ALTER TABLE `t` /*T![ttl] TTL_ENABLE = 'OFF' */"},
+		{sourceSQL3, format.DefaultRestoreFlags, "ALTER TABLE `t` REMOVE TTL"},
+		{sourceSQL3, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "ALTER TABLE `t` /*T![ttl] REMOVE TTL */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{ca.sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
 	}
 }

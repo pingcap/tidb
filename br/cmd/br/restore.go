@@ -39,6 +39,22 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
+
+	if cfg.FullBackupType == task.FullBackupTypeEBS {
+		if cfg.Prepare {
+			if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
+				log.Error("failed to restore EBS meta", zap.Error(err))
+				return errors.Trace(err)
+			}
+		} else {
+			if err := task.RunResolveKvData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+				log.Error("failed to restore data", zap.Error(err))
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(command, err)
@@ -61,8 +77,7 @@ func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
 		fmt.Println("# the target cluster is not compatible with the backup data,")
 		fmt.Println("# br cannot restore system tables.")
 	}
-	fmt.Println("# you can use the following command to skip restoring system tables:")
-	fmt.Printf("#    br restore %s --filter '*.*' --filter '!mysql.*' \n", command.Use)
+	fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
 	fmt.Println("#######################################################################")
 }
 
@@ -129,6 +144,7 @@ func newFullRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
 
@@ -183,6 +199,5 @@ func newStreamRestoreCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
 	task.DefineStreamRestoreFlags(command)
-	command.Hidden = true
 	return command
 }

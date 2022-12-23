@@ -21,11 +21,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
@@ -48,6 +50,17 @@ type SessionStatesHandler interface {
 	EncodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 	// DecodeSessionStates decodes a map into session states.
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
+}
+
+// PlanCache is an interface for prepare and non-prepared plan cache
+type PlanCache interface {
+	Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
+	Delete(key kvcache.Key)
+	DeleteAll()
+	Size() int
+	SetCapacity(capacity uint) error
+	Close()
 }
 
 // Context is an interface for transaction and executive args environment.
@@ -106,8 +119,9 @@ type Context interface {
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
-	// PreparedPlanCache returns the cache of the physical plan
-	PreparedPlanCache() *kvcache.SimpleLRUCache
+	// GetPlanCache returns the cache of the physical plan.
+	// isNonPrepared indicates to return the non-prepared plan cache or the prepared plan cache.
+	GetPlanCache(isNonPrepared bool) PlanCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
@@ -166,6 +180,15 @@ type Context interface {
 	ReleaseAdvisoryLock(string) bool
 	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
 	ReleaseAllAdvisoryLocks() int
+	// GetExtensions returns the `*extension.SessionExtensions` object
+	GetExtensions() *extension.SessionExtensions
+	// InSandBoxMode indicates that this Session is in sandbox mode
+	// Ref about sandbox mode: https://dev.mysql.com/doc/refman/8.0/en/expired-password-handling.html
+	InSandBoxMode() bool
+	// EnableSandBoxMode enable the sandbox mode of this Session
+	EnableSandBoxMode()
+	// DisableSandBoxMode enable the sandbox mode of this Session
+	DisableSandBoxMode()
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

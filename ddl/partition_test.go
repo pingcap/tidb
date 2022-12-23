@@ -28,8 +28,7 @@ import (
 )
 
 func TestDropAndTruncatePartition(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	d := domain.DDL()
 	dbInfo, err := testSchemaInfo(store, "test_partition")

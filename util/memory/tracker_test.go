@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
@@ -110,12 +111,14 @@ func TestRelease(t *testing.T) {
 	require.Equal(t, int64(0), parentTracker.BytesConsumed())
 	require.Equal(t, int64(0), tracker.BytesReleased())
 	require.Equal(t, int64(100), parentTracker.BytesReleased())
-	// call GC() twice to workaround as the same way GO does due to GC() returns without finishing sweep
-	// https://github.com/golang/go/issues/45315
-	runtime.GC()
-	runtime.GC()
-	require.Equal(t, int64(0), parentTracker.BytesReleased())
-
+	// finalizer func is called async, need to wait for it to be called
+	for {
+		runtime.GC()
+		if parentTracker.BytesReleased() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
 	waitGroup := sync.WaitGroup{}
 	waitGroup.Add(10)
 	for i := 0; i < 10; i++ {
@@ -132,14 +135,17 @@ func TestRelease(t *testing.T) {
 		}()
 	}
 	waitGroup.Wait()
-	// call GC() twice to workaround as the same way GO does due to GC() returns without finishing sweep
-	// https://github.com/golang/go/issues/45315
-	runtime.GC()
-	runtime.GC()
+	// finalizer func is called async, need to wait for it to be called
+	for {
+		runtime.GC()
+		if parentTracker.BytesReleased() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
 	require.Equal(t, int64(0), tracker.BytesConsumed())
 	require.Equal(t, int64(0), parentTracker.BytesConsumed())
 	require.Equal(t, int64(0), tracker.BytesReleased())
-	require.Equal(t, int64(0), parentTracker.BytesReleased())
 }
 
 func TestBufferedConsumeAndRelease(t *testing.T) {
@@ -162,11 +168,14 @@ func TestBufferedConsumeAndRelease(t *testing.T) {
 	tracker.BufferedRelease(&bufferedReleaseSize, int64(TrackMemWhenExceeds)/2)
 	require.Equal(t, int64(0), parentTracker.BytesConsumed())
 	require.Equal(t, int64(TrackMemWhenExceeds), parentTracker.BytesReleased())
-	// call GC() twice to workaround as the same way GO does due to GC() returns without finishing sweep
-	// https://github.com/golang/go/issues/45315
-	runtime.GC()
-	runtime.GC()
-	require.Equal(t, int64(0), parentTracker.BytesReleased())
+	// finalizer func is called async, need to wait for it to be called
+	for {
+		runtime.GC()
+		if parentTracker.BytesReleased() == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
 }
 
 func TestOOMAction(t *testing.T) {
@@ -190,8 +199,8 @@ func TestOOMAction(t *testing.T) {
 	require.False(t, action1.called)
 	require.False(t, action2.called)
 	tracker.Consume(10000)
-	require.True(t, action1.called)
-	require.False(t, action2.called)
+	require.True(t, action2.called)
+	require.False(t, action1.called)
 	tracker.Consume(10000)
 	require.True(t, action1.called)
 	require.True(t, action2.called)
@@ -201,20 +210,20 @@ func TestOOMAction(t *testing.T) {
 	action1 = &mockAction{}
 	action2 = &mockAction{}
 	action3 := &mockAction{}
-	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
+	tracker.SetActionOnExceed(action1)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
-	tracker.SetActionOnExceed(action3)
+	tracker.FallbackOldAndSetNewActionForSoftLimit(action3)
+	require.False(t, action3.called)
+	require.False(t, action2.called)
 	require.False(t, action1.called)
-	require.False(t, action2.called)
-	require.False(t, action3.called)
 	tracker.Consume(80)
-	require.True(t, action1.called)
+	require.True(t, action3.called)
 	require.False(t, action2.called)
-	require.False(t, action3.called)
+	require.False(t, action1.called)
 	tracker.Consume(20)
-	require.True(t, action1.called)
+	require.True(t, action3.called)
 	require.True(t, action2.called) // SoftLimit fallback
-	require.True(t, action3.called) // HardLimit
+	require.True(t, action1.called) // HardLimit
 
 	// test fallback
 	action1 = &mockAction{}
@@ -227,22 +236,19 @@ func TestOOMAction(t *testing.T) {
 	tracker.FallbackOldAndSetNewAction(action3)
 	tracker.FallbackOldAndSetNewAction(action4)
 	tracker.FallbackOldAndSetNewAction(action5)
-	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed)
-	require.Equal(t, action2, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
-	action2.SetFinished()
+	require.Equal(t, action5, tracker.actionMuForHardLimit.actionOnExceed)
+	require.Equal(t, action4, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action4.SetFinished()
 	require.Equal(t, action3, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
 	action3.SetFinished()
-	action4.SetFinished()
-	require.Equal(t, action5, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action2.SetFinished()
+	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
 }
 
 type mockAction struct {
 	BaseOOMAction
 	called   bool
 	priority int64
-}
-
-func (a *mockAction) SetLogHook(hook func(uint64)) {
 }
 
 func (a *mockAction) Action(t *Tracker) {
@@ -448,7 +454,6 @@ func TestGlobalTracker(t *testing.T) {
 	}()
 	c2.AttachTo(commonTracker)
 	c2.DetachFromGlobalTracker()
-
 }
 
 func parseByteUnit(str string) (int64, error) {

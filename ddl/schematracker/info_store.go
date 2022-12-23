@@ -88,6 +88,15 @@ func (i *InfoStore) TableByName(schema, table model.CIStr) (*model.TableInfo, er
 	return tbl, nil
 }
 
+// TableClonedByName is like TableByName, plus it will clone the TableInfo.
+func (i *InfoStore) TableClonedByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	tbl, err := i.TableByName(schema, table)
+	if err != nil {
+		return nil, err
+	}
+	return tbl.Clone(), nil
+}
+
 // PutTable puts a TableInfo, it will overwrite the old one. If the schema doesn't exist, it will return ErrDatabaseNotExists.
 func (i *InfoStore) PutTable(schemaName model.CIStr, tblInfo *model.TableInfo) error {
 	schemaKey := i.ciStr2Key(schemaName)
@@ -116,6 +125,29 @@ func (i *InfoStore) DeleteTable(schema, table model.CIStr) error {
 	}
 	delete(tables, tableKey)
 	return nil
+}
+
+// AllSchemaNames returns all the schemas' names.
+func (i *InfoStore) AllSchemaNames() []string {
+	names := make([]string, 0, len(i.dbs))
+	for name := range i.dbs {
+		names = append(names, name)
+	}
+	return names
+}
+
+// AllTableNamesOfSchema return all table names of a schema.
+func (i *InfoStore) AllTableNamesOfSchema(schema model.CIStr) ([]string, error) {
+	schemaKey := i.ciStr2Key(schema)
+	tables, ok := i.tables[schemaKey]
+	if !ok {
+		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema)
+	}
+	names := make([]string, 0, len(tables))
+	for name := range tables {
+		names = append(names, name)
+	}
+	return names, nil
 }
 
 // InfoStoreAdaptor convert InfoStore to InfoSchema, it only implements a part of InfoSchema interface to be

@@ -123,9 +123,11 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 		}
 		// The old lock is outdated, clear orphan lock.
 		if now > lease {
-			succ = true
-			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
-				return errors.Trace(err)
+			if newLease > now { // Note the check, don't decrease the lease value!
+				succ = true
+				if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
+					return errors.Trace(err)
+				}
 			}
 			return nil
 		}
@@ -209,11 +211,15 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 				_lease = ts
 			}
 		case CachedTableLockRead:
+			newLease := ts
+			if newLease < lease { // Never, never decrease lease
+				newLease = lease
+			}
 			// Change from READ to INTEND
 			if _, err = h.execSQL(ctx,
 				"update mysql.table_cache_meta set lock_type='INTEND', oldReadLease=%?, lease=%? where tid=%?",
 				lease,
-				ts,
+				newLease,
 				tid); err != nil {
 				return errors.Trace(err)
 			}
@@ -243,13 +249,15 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 			// And then retry changing the lock to WRITE
 			waitAndRetry = waitForLeaseExpire(oldReadLease, now)
 		case CachedTableLockWrite:
-			if err = h.updateRow(ctx, tid, "WRITE", ts); err != nil {
-				return errors.Trace(err)
-			}
-			{
-				_updateLocal = true
-				_lockType = CachedTableLockWrite
-				_lease = ts
+			if ts > lease { // Note the check, don't decrease lease value!
+				if err = h.updateRow(ctx, tid, "WRITE", ts); err != nil {
+					return errors.Trace(err)
+				}
+				{
+					_updateLocal = true
+					_lockType = CachedTableLockWrite
+					_lease = ts
+				}
 			}
 		}
 		return nil

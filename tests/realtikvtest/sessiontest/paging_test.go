@@ -34,8 +34,7 @@ func TestPagingActRowsAndProcessKeys(t *testing.T) {
 		conf.TiKVClient.CoprCache.CapacityMB = 0
 	})
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	session := testkit.NewTestKit(t, store)
 	session.MustExec("use test;")
 	session.MustExec("drop table if exists t;")

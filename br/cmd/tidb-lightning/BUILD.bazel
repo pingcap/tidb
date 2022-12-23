@@ -23,6 +23,7 @@ go_binary(
 
 go_test(
     name = "tidb-lightning_test",
+    timeout = "short",
     srcs = ["main_test.go"],
     embed = [":tidb-lightning_lib"],
     flaky = True,

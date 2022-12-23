@@ -66,13 +66,15 @@ type TiDBManager struct {
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	param := common.MySQLConnectParam{
-		Host:             dsn.Host,
-		Port:             dsn.Port,
-		User:             dsn.User,
-		Password:         dsn.Psw,
-		SQLMode:          dsn.StrSQLMode,
-		MaxAllowedPacket: dsn.MaxAllowedPacket,
-		TLS:              dsn.TLS,
+		Host:                     dsn.Host,
+		Port:                     dsn.Port,
+		User:                     dsn.User,
+		Password:                 dsn.Psw,
+		SQLMode:                  dsn.StrSQLMode,
+		MaxAllowedPacket:         dsn.MaxAllowedPacket,
+		TLSConfig:                dsn.Security.TLSConfig,
+		AllowFallbackToPlaintext: dsn.Security.AllowFallbackToPlaintext,
+		Net:                      dsn.UUID,
 	}
 
 	db, err := param.Connect()
@@ -261,13 +263,10 @@ func LoadSchemaInfo(
 				if m, ok := metric.FromContext(ctx); ok {
 					m.RecordTableCount(metric.TableStatePending, err)
 				}
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			if m, ok := metric.FromContext(ctx); ok {
 				m.RecordTableCount(metric.TableStatePending, err)
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
 			}
 			// Table names are case-sensitive in mydump.MDTableMeta.
 			// We should always use the original tbl.Name in checkpoints.

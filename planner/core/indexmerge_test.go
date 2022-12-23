@@ -59,7 +59,7 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 
 func TestIndexMergePathGeneration(t *testing.T) {
 	var input, output []string
-	indexMergeSuiteData.GetTestCases(t, &input, &output)
+	indexMergeSuiteData.LoadTestCases(t, &input, &output)
 	ctx := context.TODO()
 	sctx := MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
@@ -69,7 +69,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 	for i, tc := range input {
 		stmt, err := parser.ParseOneStmt(tc, "", "")
 		require.NoErrorf(t, err, "case:%v sql:%s", i, tc)
-		err = Preprocess(sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
+		err = Preprocess(context.Background(), sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		builder, _ := NewPlanBuilder().Init(MockContext(), is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)

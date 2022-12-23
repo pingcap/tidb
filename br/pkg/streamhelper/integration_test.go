@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -138,8 +139,10 @@ func TestIntegration(t *testing.T) {
 	metaCli := streamhelper.MetaDataClient{Client: cli}
 	t.Run("TestBasic", func(t *testing.T) { testBasic(t, metaCli, etcd) })
 	t.Run("TestForwardProgress", func(t *testing.T) { testForwardProgress(t, metaCli, etcd) })
-	t.Run("testGetStorageCheckpoint", func(t *testing.T) { testGetStorageCheckpoint(t, metaCli, etcd) })
-	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.TaskEventClient{MetaDataClient: metaCli}) })
+	t.Run("testGetStorageCheckpoint", func(t *testing.T) { testGetStorageCheckpoint(t, metaCli) })
+	t.Run("testGetGlobalCheckPointTS", func(t *testing.T) { testGetGlobalCheckPointTS(t, metaCli) })
+	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+	t.Run("TestStreamCheckpoint", func(t *testing.T) { testStreamCheckpoint(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 }
 
 func TestChecking(t *testing.T) {
@@ -232,7 +235,7 @@ func testForwardProgress(t *testing.T, metaCli streamhelper.MetaDataClient, etcd
 	require.Equal(t, store2Checkpoint, uint64(40))
 }
 
-func testGetStorageCheckpoint(t *testing.T, metaCli streamhelper.MetaDataClient, etcd *embed.Etcd) {
+func testGetStorageCheckpoint(t *testing.T, metaCli streamhelper.MetaDataClient) {
 	var (
 		taskName = "my_task"
 		ctx      = context.Background()
@@ -263,9 +266,47 @@ func testGetStorageCheckpoint(t *testing.T, metaCli streamhelper.MetaDataClient,
 	ts, err := task.GetStorageCheckpoint(ctx)
 	require.NoError(t, err)
 	require.Equal(t, uint64(10002), ts)
+
+	ts, err = task.GetGlobalCheckPointTS(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(10002), ts)
 }
 
-func testStreamListening(t *testing.T, metaCli streamhelper.TaskEventClient) {
+func testGetGlobalCheckPointTS(t *testing.T, metaCli streamhelper.MetaDataClient) {
+	var (
+		taskName = "my_task"
+		ctx      = context.Background()
+		value    = make([]byte, 8)
+	)
+
+	cases := []struct {
+		storeID           string
+		storageCheckPoint uint64
+	}{
+		{
+			"1",
+			10001,
+		}, {
+			"2",
+			10002,
+		},
+	}
+	for _, c := range cases {
+		key := path.Join(streamhelper.StorageCheckpointOf(taskName), c.storeID)
+		binary.BigEndian.PutUint64(value, c.storageCheckPoint)
+		_, err := metaCli.Put(ctx, key, string(value))
+		require.NoError(t, err)
+	}
+
+	task := streamhelper.NewTask(&metaCli, backup.StreamBackupTaskInfo{Name: taskName})
+	task.UploadGlobalCheckpoint(ctx, 1003)
+
+	globalTS, err := task.GetGlobalCheckPointTS(ctx)
+	require.NoError(t, err)
+	require.Equal(t, globalTS, uint64(1003))
+}
+
+func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx, cancel := context.WithCancel(context.Background())
 	taskName := "simple"
 	taskInfo := simpleTask(taskName, 4)
@@ -282,16 +323,41 @@ func testStreamListening(t *testing.T, metaCli streamhelper.TaskEventClient) {
 	first := <-ch
 	require.Equal(t, first.Type, streamhelper.EventAdd)
 	require.Equal(t, first.Name, taskName)
+	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
 	second := <-ch
 	require.Equal(t, second.Type, streamhelper.EventDel)
 	require.Equal(t, second.Name, taskName)
 	third := <-ch
 	require.Equal(t, third.Type, streamhelper.EventAdd)
 	require.Equal(t, third.Name, taskName2)
+	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
 	forth := <-ch
 	require.Equal(t, forth.Type, streamhelper.EventDel)
 	require.Equal(t, forth.Name, taskName2)
 	cancel()
 	_, ok := <-ch
 	require.False(t, ok)
+}
+
+func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	ctx := context.Background()
+	task := "simple"
+	req := require.New(t)
+	getCheckpoint := func() uint64 {
+		resp, err := metaCli.KV.Get(ctx, streamhelper.GlobalCheckpointOf(task))
+		req.NoError(err)
+		if len(resp.Kvs) == 0 {
+			return 0
+		}
+		req.Len(resp.Kvs, 1)
+		return binary.BigEndian.Uint64(resp.Kvs[0].Value)
+	}
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 5))
+	req.EqualValues(5, getCheckpoint())
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 18))
+	req.EqualValues(18, getCheckpoint())
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 16))
+	req.EqualValues(18, getCheckpoint())
+	req.NoError(metaCli.ClearV3GlobalCheckpointForTask(ctx, task))
+	req.EqualValues(0, getCheckpoint())
 }

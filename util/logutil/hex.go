@@ -57,7 +57,7 @@ func prettyPrint(w io.Writer, val reflect.Value) {
 		for i := 0; i < val.NumField(); i++ {
 			fv := val.Field(i)
 			ft := tp.Field(i)
-			if strings.HasPrefix(ft.Name, "XXX_") {
+			if strings.HasPrefix(ft.Name, "XXX") {
 				continue
 			}
 			if i != 0 {

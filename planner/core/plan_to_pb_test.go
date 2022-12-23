@@ -36,7 +36,7 @@ func TestColumnToProto(t *testing.T) {
 		FieldType: *tp,
 	}
 	pc := util.ColumnToProto(col)
-	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
+	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: 11, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
 	require.Equal(t, expect, pc)
 
 	cols := []*model.ColumnInfo{col, col}
@@ -62,7 +62,7 @@ func TestColumnToProto(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 
 	pc = util.ColumnToProto(col)
-	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: -83, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
+	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: -83, ColumnLen: 11, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
 	require.Equal(t, expect, pc)
 	pcs = util.ColumnsToProto(cols, true)
 	for _, v := range pcs {

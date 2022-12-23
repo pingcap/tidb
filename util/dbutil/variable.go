@@ -77,7 +77,7 @@ func ShowGrants(ctx context.Context, db QueryExecutor, user, host string) ([]str
 	var query string
 	if user == "" {
 		// for current user.
-		query = "SHOW GRANTS"
+		query = "SHOW GRANTS FOR CURRENT_USER"
 	} else {
 		query = fmt.Sprintf("SHOW GRANTS FOR '%s'@'%s'", user, host)
 	}

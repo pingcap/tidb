@@ -110,8 +110,7 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 }
 
 func TestIssue15662(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")

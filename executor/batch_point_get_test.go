@@ -31,8 +31,7 @@ import (
 )
 
 func TestBatchPointGetExec(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -79,8 +78,7 @@ func TestBatchPointGetExec(t *testing.T) {
 }
 
 func TestBatchPointGetInTxn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -109,8 +107,7 @@ func TestBatchPointGetInTxn(t *testing.T) {
 }
 
 func TestBatchPointGetCache(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -123,8 +120,7 @@ func TestBatchPointGetCache(t *testing.T) {
 }
 
 func TestIssue18843(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -138,8 +134,7 @@ func TestIssue18843(t *testing.T) {
 }
 
 func TestIssue24562(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -151,8 +146,7 @@ func TestIssue24562(t *testing.T) {
 }
 
 func TestBatchPointGetUnsignedHandleWithSort(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -168,8 +162,7 @@ func TestBatchPointGetUnsignedHandleWithSort(t *testing.T) {
 func TestBatchPointGetLockExistKey(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	testLock := func(rc bool, key string, tableName string) {
 		doneCh := make(chan struct{}, 1)
@@ -311,8 +304,7 @@ func TestBatchPointGetLockExistKey(t *testing.T) {
 }
 
 func TestBatchPointGetIssue25167(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -328,8 +320,7 @@ func TestBatchPointGetIssue25167(t *testing.T) {
 }
 
 func TestCacheSnapShot(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
 	ctx := context.Background()
@@ -355,8 +346,7 @@ func TestCacheSnapShot(t *testing.T) {
 }
 
 func TestPointGetForTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

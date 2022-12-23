@@ -12,6 +12,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/google/uuid"
@@ -29,6 +30,16 @@ const (
 	azblobAccountName      = "azblob.account-name"
 	azblobAccountKey       = "azblob.account-key"
 )
+
+const azblobRetryTimes int32 = 5
+
+func getDefaultClientOptions() *azblob.ClientOptions {
+	return &azblob.ClientOptions{
+		Retry: policy.RetryOptions{
+			MaxRetries: azblobRetryTimes,
+		},
+	}
+}
 
 // AzblobBackendOptions is the options for Azure Blob storage.
 type AzblobBackendOptions struct {
@@ -99,7 +110,7 @@ type sharedKeyClientBuilder struct {
 }
 
 func (b *sharedKeyClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
-	return azblob.NewServiceClientWithSharedKey(b.serviceURL, b.cred, nil)
+	return azblob.NewServiceClientWithSharedKey(b.serviceURL, b.cred, getDefaultClientOptions())
 }
 
 func (b *sharedKeyClientBuilder) GetAccountName() string {
@@ -114,7 +125,7 @@ type tokenClientBuilder struct {
 }
 
 func (b *tokenClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
-	return azblob.NewServiceClient(b.serviceURL, b.cred, nil)
+	return azblob.NewServiceClient(b.serviceURL, b.cred, getDefaultClientOptions())
 }
 
 func (b *tokenClientBuilder) GetAccountName() string {
@@ -285,7 +296,9 @@ func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, e
 		return nil, errors.Annotatef(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
 	defer resp.RawResponse.Body.Close()
-	data, err := io.ReadAll(resp.Body(azblob.RetryReaderOptions{}))
+	data, err := io.ReadAll(resp.Body(azblob.RetryReaderOptions{
+		MaxRetryRequests: int(azblobRetryTimes),
+	}))
 	if err != nil {
 		return nil, errors.Annotatef(err, "Failed to read azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
@@ -343,8 +356,6 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 		prefix += "/"
 	}
 
-	prefixLength := len(prefix)
-
 	listOption := &azblob.ContainerListBlobFlatSegmentOptions{Prefix: &prefix}
 	for {
 		respIter := s.containerClient.ListBlobsFlat(listOption)
@@ -363,7 +374,13 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 		}
 
 		for _, blob := range respIter.PageResponse().Segment.BlobItems {
-			if err := fn((*blob.Name)[prefixLength:], *blob.Properties.ContentLength); err != nil {
+			// when walk on specify directory, the result include storage.Prefix,
+			// which can not be reuse in other API(Open/Read) directly.
+			// so we use TrimPrefix to filter Prefix for next Open/Read.
+			path := strings.TrimPrefix((*blob.Name), s.options.Prefix)
+			// trim the prefix '/' to ensure that the path returned is consistent with the local storage
+			path = strings.TrimPrefix(path, "/")
+			if err := fn(path, *blob.Properties.ContentLength); err != nil {
 				return errors.Trace(err)
 			}
 		}

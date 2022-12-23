@@ -34,11 +34,11 @@ var globalAggregator = newAggregator()
 type aggregator struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
-	statsLen   atomic.Uint32
+	running    *atomic.Bool
 	statsSet   sync.Map // map[*StatementStats]struct{}
 	collectors sync.Map // map[Collector]struct{}
-	running    *atomic.Bool
 	wg         sync.WaitGroup
+	statsLen   atomic.Uint32
 }
 
 // newAggregator creates an empty aggregator.

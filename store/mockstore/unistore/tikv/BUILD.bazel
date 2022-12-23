@@ -61,6 +61,7 @@ go_library(
 
 go_test(
     name = "tikv_test",
+    timeout = "short",
     srcs = [
         "detector_test.go",
         "main_test.go",

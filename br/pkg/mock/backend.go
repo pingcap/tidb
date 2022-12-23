@@ -375,3 +375,16 @@ func (mr *MockEngineWriterMockRecorder) IsSynced() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSynced", reflect.TypeOf((*MockEngineWriter)(nil).IsSynced))
 }
+
+func (m *MockBackend) TotalMemoryConsume() int64 {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TotalMemoryConsume")
+	ret0, _ := ret[0].(int64)
+	return ret0
+}
+
+// LocalWriter indicates an expected call of LocalWriter.
+func (mr *MockBackendMockRecorder) TotalMemoryConsume() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TotalMemoryConsume", reflect.TypeOf((*MockBackend)(nil).OpenEngine))
+}

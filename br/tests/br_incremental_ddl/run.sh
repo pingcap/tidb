@@ -19,6 +19,7 @@ DB="$TEST_NAME"
 TABLE="usertable"
 ROW_COUNT=100
 PATH="tests/$TEST_NAME:bin:$PATH"
+LOG=/$TEST_DIR/backup.log
 
 echo "load data..."
 # create database
@@ -30,9 +31,24 @@ for i in $(seq $ROW_COUNT); do
     run_sql "INSERT INTO ${DB}.${TABLE}(c1) VALUES ($i);"
 done
 
+
+# Do not log to terminal
+unset BR_LOG_TO_TERM
 # full backup
 echo "full backup start..."
-run_br --pd $PD_ADDR backup table -s "local://$TEST_DIR/$DB/full" --db $DB -t $TABLE
+run_br --pd $PD_ADDR backup table -s "local://$TEST_DIR/$DB/full" --db $DB -t $TABLE --log-file $LOG
+
+# when we backup, we should close domain in one shot session.
+# so we can check the log count of `one shot domain closed` to be 1.
+# we will call UseOneShotSession once to get the value global variable.
+one_shot_session_count=$(cat $LOG | grep "one shot session closed" | wc -l | xargs)
+one_shot_domain_count=$(cat $LOG | grep "one shot domain closed" | wc -l | xargs)
+if [ "${one_shot_session_count}" -ne "1" ] || [ "$one_shot_domain_count" -ne "1" ];then
+    echo "TEST: [$TEST_NAME] fail on one shot session check during backup, $one_shot_session_count, $one_shot_domain_count"
+    exit 1
+fi
+rm -rf $LOG
+
 # run ddls
 echo "run ddls..."
 run_sql "RENAME TABLE ${DB}.${TABLE} to ${DB}.${TABLE}1;"
@@ -54,7 +70,21 @@ done
 # incremental backup
 echo "incremental backup start..."
 last_backup_ts=$(run_br validate decode --field="end-version" -s "local://$TEST_DIR/$DB/full" | grep -oE "^[0-9]+")
-run_br --pd $PD_ADDR backup db -s "local://$TEST_DIR/$DB/inc" --db $DB --lastbackupts $last_backup_ts
+run_br --pd $PD_ADDR backup db -s "local://$TEST_DIR/$DB/inc" --db $DB --lastbackupts $last_backup_ts --log-file $LOG
+
+# when we doing incremental backup, we should close domain in one shot session.
+# so we can check the log count of `one shot domain closed` to be 2.
+# we will call UseOneShotSession twice
+# 1. to get the value global variable.
+# 2. to get all ddl jobs with session.
+one_shot_session_count=$(cat $LOG | grep "one shot session closed" | wc -l | xargs)
+one_shot_domain_count=$(cat $LOG | grep "one shot domain closed" | wc -l | xargs)
+if [ "${one_shot_session_count}" -ne "2" ] || [ "$one_shot_domain_count" -ne "2" ];then
+    echo "TEST: [$TEST_NAME] fail on one shot session check during inc backup, $one_shot_session_count, $one_shot_domain_count"
+    exit 1
+fi
+rm -rf $LOG
+BR_LOG_TO_TERM=1
 
 run_sql "DROP DATABASE $DB;"
 # full restore

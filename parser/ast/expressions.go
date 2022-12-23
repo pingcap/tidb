@@ -909,7 +909,6 @@ func (n *PatternLikeExpr) Restore(ctx *format.RestoreCtx) error {
 	if escape != "\\" {
 		ctx.WriteKeyWord(" ESCAPE ")
 		ctx.WriteString(escape)
-
 	}
 	return nil
 }

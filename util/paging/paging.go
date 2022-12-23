@@ -25,16 +25,23 @@ const (
 	MinPagingSize      uint64 = 128
 	maxPagingSizeShift        = 7
 	pagingSizeGrow            = 2
-	MaxPagingSize             = 8192
+	MaxPagingSize             = 50000
 	pagingGrowingSum          = ((2 << maxPagingSizeShift) - 1) * MinPagingSize
 	Threshold          uint64 = 960
 )
 
 // GrowPagingSize grows the paging size and ensures it does not exceed MaxPagingSize
-func GrowPagingSize(size uint64) uint64 {
+func GrowPagingSize(size uint64, max uint64) uint64 {
+	if max < MaxPagingSize {
+		// Defensive programing, for example, call with max = 0.
+		// max should never less than MaxPagingSize.
+		// Otherwise the session variable maybe wrong, or the distsql request does not obey the session variable setting.
+		max = MaxPagingSize
+	}
+
 	size <<= 1
-	if size > MaxPagingSize {
-		return MaxPagingSize
+	if size > max {
+		return max
 	}
 	return size
 }

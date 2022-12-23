@@ -80,11 +80,11 @@ type binlogSuite struct {
 
 const maxRecvMsgSize = 64 * 1024
 
-func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
+func createBinlogSuite(t *testing.T) (s *binlogSuite) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit", `return(true)`))
 
 	s = new(binlogSuite)
-	store, cleanStore := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t)
 	s.store = store
 	unixFile := "/tmp/mock-binlog-pump" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	l, err := net.Listen("unix", unixFile)
@@ -110,7 +110,7 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
 	s.client = binloginfo.MockPumpsClient(binlog.NewPumpClient(clientCon))
 	s.ddl.SetBinlogClient(s.client)
 
-	clean = func() {
+	t.Cleanup(func() {
 		clientCon.Close()
 		err = s.ddl.Stop()
 		require.NoError(t, err)
@@ -119,16 +119,14 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
 		if err != nil {
 			require.EqualError(t, err, fmt.Sprintf("remove %v: no such file or directory", unixFile))
 		}
-		cleanStore()
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit"))
-	}
+	})
 
 	return
 }
 
 func TestBinlog(t *testing.T) {
-	s, clean := createBinlogSuite(t)
-	defer clean()
+	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -270,8 +268,7 @@ func TestBinlog(t *testing.T) {
 }
 
 func TestMaxRecvSize(t *testing.T) {
-	s, clean := createBinlogSuite(t)
-	defer clean()
+	s := createBinlogSuite(t)
 
 	info := &binloginfo.BinlogInfo{
 		Data: &binlog.Binlog{
@@ -389,8 +386,7 @@ func mutationRowsToRows(t *testing.T, mutationRows [][]byte, columnValueOffsets 
 }
 
 func TestBinlogForSequence(t *testing.T) {
-	s, clean := createBinlogSuite(t)
-	defer clean()
+	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -467,8 +463,7 @@ func TestBinlogForSequence(t *testing.T) {
 // Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
 // so it runs last and would not disrupt other tests.
 func TestZIgnoreError(t *testing.T) {
-	s, clean := createBinlogSuite(t)
-	defer clean()
+	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -493,8 +488,7 @@ func TestZIgnoreError(t *testing.T) {
 }
 
 func TestPartitionedTable(t *testing.T) {
-	s, clean := createBinlogSuite(t)
-	defer clean()
+	s := createBinlogSuite(t)
 
 	// This test checks partitioned table write binlog with table ID, rather than partition ID.
 	tk := testkit.NewTestKit(t, s.store)
@@ -519,8 +513,7 @@ func TestPartitionedTable(t *testing.T) {
 }
 
 func TestPessimisticLockThenCommit(t *testing.T) {
-	s, clean := createBinlogSuite(t)
-	defer clean()
+	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -535,8 +528,7 @@ func TestPessimisticLockThenCommit(t *testing.T) {
 }
 
 func TestDeleteSchema(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -726,8 +718,7 @@ func mustGetDDLBinlog(s *binlogSuite, ddlQuery string, t *testing.T) (matched bo
 }
 
 func TestTempTableBinlog(t *testing.T) {
-	s, clean := createBinlogSuite(t)
-	defer clean()
+	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -803,8 +794,7 @@ func TestTempTableBinlog(t *testing.T) {
 }
 
 func TestAlterTableCache(t *testing.T) {
-	s, clean := createBinlogSuite(t)
-	defer clean()
+	s := createBinlogSuite(t)
 
 	// Don't write binlog for 'ALTER TABLE t CACHE|NOCACHE'.
 	// Cached table is regarded as normal table.
@@ -829,8 +819,7 @@ func TestAlterTableCache(t *testing.T) {
 }
 
 func TestIssue28292(t *testing.T) {
-	s, clean := createBinlogSuite(t)
-	defer clean()
+	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")

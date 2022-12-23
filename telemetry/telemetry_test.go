@@ -32,7 +32,7 @@ func TestTrackingID(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
@@ -54,12 +54,11 @@ func TestPreview(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()
@@ -108,12 +107,11 @@ func TestReport(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTest(t)
+	integration.BeforeTestExternal(t)
 
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	defer se.Close()

@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"context"
 	"math"
 	"strings"
 	"time"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 )
@@ -165,7 +165,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := variable.GetSessionOrGlobalSystemVar(sessionVars, "timestamp")
+	timestampStr, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "timestamp")
 	if err != nil {
 		return now, err
 	}

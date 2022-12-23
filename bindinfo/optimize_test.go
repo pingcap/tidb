@@ -23,15 +23,14 @@ import (
 )
 
 func TestOptimizeOnlyOnce(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idxa(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idxa)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/checkOptimizeCountOne", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/checkOptimizeCountOne", "return(\"select * from t\")"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/checkOptimizeCountOne"))
 	}()

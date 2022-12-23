@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -191,7 +190,6 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 func getRandomTime(r *rand.Rand) types.CoreTime {
 	return types.FromDate(r.Intn(2200), r.Intn(10)+1, r.Intn(20)+1,
 		r.Intn(12), r.Intn(60), r.Intn(60), r.Intn(1000000))
-
 }
 
 // dataGenerator is used to generate data for test.
@@ -284,7 +282,7 @@ func (g *defaultGener) gen() interface{} {
 		}
 		return d
 	case types.ETJson:
-		j := new(json.BinaryJSON)
+		j := new(types.BinaryJSON)
 		if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, g.randGen.Int()))); err != nil {
 			panic(err)
 		}
@@ -343,7 +341,7 @@ type constJSONGener struct {
 }
 
 func (g *constJSONGener) gen() interface{} {
-	j := new(json.BinaryJSON)
+	j := new(types.BinaryJSON)
 	if err := j.UnmarshalJSON([]byte(g.jsonStr)); err != nil {
 		panic(err)
 	}
@@ -373,7 +371,7 @@ func (g *decimalJSONGener) gen() interface{} {
 	if err := (&types.MyDecimal{}).FromFloat64(f); err != nil {
 		panic(err)
 	}
-	return json.CreateBinary(f)
+	return types.CreateBinaryJSON(f)
 }
 
 type jsonStringGener struct {
@@ -385,7 +383,7 @@ func newJSONStringGener() *jsonStringGener {
 }
 
 func (g *jsonStringGener) gen() interface{} {
-	j := new(json.BinaryJSON)
+	j := new(types.BinaryJSON)
 	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, g.randGen.Int()))); err != nil {
 		panic(err)
 	}
@@ -430,7 +428,7 @@ func newJSONTimeGener() *jsonTimeGener {
 
 func (g *jsonTimeGener) gen() interface{} {
 	tm := types.NewTime(getRandomTime(g.randGen.Rand), mysql.TypeDatetime, types.DefaultFsp)
-	return json.CreateBinary(tm.String())
+	return types.CreateBinaryJSON(tm)
 }
 
 type rangeDurationGener struct {
@@ -1226,7 +1224,7 @@ func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen
 		case types.ETDuration:
 			col.AppendDuration(v.(types.Duration))
 		case types.ETJson:
-			col.AppendJSON(v.(json.BinaryJSON))
+			col.AppendJSON(v.(types.BinaryJSON))
 		case types.ETString:
 			col.AppendString(v.(string))
 		}
@@ -1516,7 +1514,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			ctx := mock.NewContext()
-			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.BlockEncryptionMode, testCase.aesModes)
 			require.NoError(t, err)
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
@@ -1549,7 +1547,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 
-			if !testAll && (testFunc[baseFuncName] != true && testFunc[funcName] != true) {
+			if !testAll && (!testFunc[baseFuncName] && !testFunc[funcName]) {
 				continue
 			}
 			// do not forget to implement the vectorized method.
@@ -1652,7 +1650,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					require.NoErrorf(t, err, commentf(i))
 					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
-						cmp := json.CompareBinary(val, output.GetJSON(i))
+						cmp := types.CompareBinaryJSON(val, output.GetJSON(i))
 						require.Zero(t, cmp, commentf(i))
 					}
 					i++
@@ -1768,7 +1766,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
 
-			if !testAll && testFunc[baseFuncName] != true && testFunc[funcName] != true {
+			if !testAll && !testFunc[baseFuncName] && !testFunc[funcName] {
 				continue
 			}
 

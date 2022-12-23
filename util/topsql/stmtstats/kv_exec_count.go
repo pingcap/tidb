@@ -38,9 +38,9 @@ func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvEx
 // ensure the semantic of "SQL execution count of TiKV".
 type KvExecCounter struct {
 	stats  *StatementStats
+	marked map[string]struct{} // HashSet<Target>
 	digest SQLPlanDigest
 	mu     sync.Mutex
-	marked map[string]struct{} // HashSet<Target>
 }
 
 // RPCInterceptor returns an interceptor.RPCInterceptor for client-go.

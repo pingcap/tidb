@@ -24,10 +24,10 @@ import (
 // - It can define the size of the pool.
 // - It never get GCed.
 type LocalPool struct {
-	sizePerProc int
-	slots       []*slot
 	newFn       func() interface{}
 	resetFn     func(obj interface{})
+	slots       []*slot
+	sizePerProc int
 }
 
 type slot struct {

@@ -17,6 +17,7 @@ package privileges_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -27,8 +28,7 @@ import (
 )
 
 func TestLoadUserTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -43,6 +43,9 @@ func TestLoadUserTable(t *testing.T) {
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Insert_priv) VALUES ("%", "root1", "admin", "Y")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Update_priv, Show_db_priv, References_priv) VALUES ("%", "root11", "", "Y", "Y", "Y")`)
 	tk.MustExec(`INSERT INTO mysql.user (Host, User, authentication_string, Create_user_priv, Index_priv, Execute_priv, Create_view_priv, Show_view_priv, Show_db_priv, Super_priv, Trigger_priv) VALUES ("%", "root111", "", "Y",  "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	tk.MustExec(`INSERT INTO mysql.user (Host, User, user_attributes, token_issuer) VALUES ("%", "root1111", "{\"metadata\": {\"email\": \"user@pingcap.com\"}}", "<token-issuer>")`)
+	tk.MustExec(`INSERT INTO mysql.user (Host, User, password_expired, password_last_changed, password_lifetime) VALUES ("%", "root2", "Y", "2022-10-10 12:00:00", 3)`)
+	tk.MustExec(`INSERT INTO mysql.user (Host, User, password_expired, password_last_changed) VALUES ("%", "root3", "N", "2022-10-10 12:00:00")`)
 
 	p = privileges.MySQLPrivilege{}
 	require.NoError(t, p.LoadUserTable(tk.Session()))
@@ -54,11 +57,18 @@ func TestLoadUserTable(t *testing.T) {
 	require.Equal(t, mysql.InsertPriv, user[1].Privileges)
 	require.Equal(t, mysql.UpdatePriv|mysql.ShowDBPriv|mysql.ReferencesPriv, user[2].Privileges)
 	require.Equal(t, mysql.CreateUserPriv|mysql.IndexPriv|mysql.ExecutePriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ShowDBPriv|mysql.SuperPriv|mysql.TriggerPriv, user[3].Privileges)
+	require.Equal(t, "user@pingcap.com", user[4].Email)
+	require.Equal(t, "<token-issuer>", user[4].AuthTokenIssuer)
+	require.Equal(t, true, user[5].PasswordExpired)
+	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.Local), user[5].PasswordLastChanged)
+	require.Equal(t, int64(3), user[5].PasswordLifeTime)
+	require.Equal(t, false, user[6].PasswordExpired)
+	require.Equal(t, time.Date(2022, 10, 10, 12, 0, 0, 0, time.Local), user[6].PasswordLastChanged)
+	require.Equal(t, int64(-1), user[6].PasswordLifeTime)
 }
 
 func TestLoadGlobalPrivTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -81,8 +91,7 @@ func TestLoadGlobalPrivTable(t *testing.T) {
 }
 
 func TestLoadDBTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -100,8 +109,7 @@ func TestLoadDBTable(t *testing.T) {
 }
 
 func TestLoadTablesPrivTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -122,8 +130,7 @@ func TestLoadTablesPrivTable(t *testing.T) {
 }
 
 func TestLoadColumnsPrivTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -144,8 +151,7 @@ func TestLoadColumnsPrivTable(t *testing.T) {
 }
 
 func TestLoadDefaultRoleTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -163,8 +169,7 @@ func TestLoadDefaultRoleTable(t *testing.T) {
 }
 
 func TestPatternMatch(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	activeRoles := make([]*auth.RoleIdentity, 0)
 
@@ -199,8 +204,7 @@ func TestPatternMatch(t *testing.T) {
 }
 
 func TestHostMatch(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	activeRoles := make([]*auth.RoleIdentity, 0)
 
@@ -251,8 +255,7 @@ func TestHostMatch(t *testing.T) {
 }
 
 func TestCaseInsensitive(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	activeRoles := make([]*auth.RoleIdentity, 0)
 	tk := testkit.NewTestKit(t, store)
@@ -269,8 +272,7 @@ func TestCaseInsensitive(t *testing.T) {
 }
 
 func TestLoadRoleGraph(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
@@ -298,8 +300,7 @@ func TestLoadRoleGraph(t *testing.T) {
 }
 
 func TestRoleGraphBFS(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE ROLE r_1, r_2, r_3, r_4, r_5, r_6;`)
@@ -332,8 +333,7 @@ func TestRoleGraphBFS(t *testing.T) {
 }
 
 func TestFindAllUserEffectiveRoles(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`CREATE USER u1`)
@@ -367,8 +367,7 @@ func TestFindAllUserEffectiveRoles(t *testing.T) {
 }
 
 func TestAbnormalMySQLTable(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -422,10 +421,14 @@ func TestAbnormalMySQLTable(t *testing.T) {
   max_user_connections int(11) unsigned NOT NULL DEFAULT '0',
   plugin char(64) COLLATE utf8_bin DEFAULT 'mysql_native_password',
   authentication_string text COLLATE utf8_bin,
-  password_expired enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+  token_issuer varchar(255),
+  user_attributes json,
+  password_expired		ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+  password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+  password_lifetime		SMALLINT UNSIGNED,
   PRIMARY KEY (Host,User)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Users and global privileges';`)
-	tk.MustExec(`INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N');
+	tk.MustExec(`INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','', '', 'null', 'N', current_timestamp(), null);
 `)
 	var p privileges.MySQLPrivilege
 	require.NoError(t, p.LoadUserTable(tk.Session()))
@@ -508,8 +511,7 @@ func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
 }
 
 func TestDBIsVisible(t *testing.T) {
-	store, clean := createStoreAndPrepareDB(t)
-	defer clean()
+	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database visdb")

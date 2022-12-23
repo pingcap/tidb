@@ -22,11 +22,14 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -67,7 +70,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		return err
 	}
 	setOptionForTopSQL(sessVars.StmtCtx, txn)
-	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
@@ -110,7 +112,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 
@@ -157,6 +158,12 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKey)]; found {
+				if tablecodec.IsTempIndexKey(uk.newKey) {
+					if tablecodec.CheckTempIndexValueIsDelete(val) {
+						continue
+					}
+					val = tablecodec.DecodeTempIndexOriginValue(val)
+				}
 				handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 				if err != nil {
 					return err
@@ -199,7 +206,7 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 		extraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
 	}
 
-	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate)
+	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch)
 	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
@@ -261,6 +268,14 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
+			// Since the temp index stores deleted key with marked 'deleteu' for unique key at the end
+			// of value, So if return a key we check and skip deleted key.
+			if tablecodec.IsTempIndexKey(uk.newKey) {
+				if tablecodec.CheckTempIndexValueIsDelete(val) {
+					continue
+				}
+				val = tablecodec.DecodeTempIndexOriginValue(val)
+			}
 			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
 				return err
@@ -310,11 +325,26 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(e.children) > 0 && e.children[0] != nil {
 		return insertRowsFromSelect(ctx, e)
 	}
-	return insertRows(ctx, e)
+	err := insertRows(ctx, e)
+	if err != nil {
+		terr, ok := errors.Cause(err).(*terror.Error)
+		if ok && len(e.OnDuplicate) == 0 &&
+			e.ctx.GetSessionVars().StmtCtx.ErrAutoincReadFailedAsWarning &&
+			terr.Code() == errno.ErrAutoincReadFailed {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
+	if e.runtimeStats != nil && e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+	defer e.memTracker.ReplaceBytesUsed(0)
 	e.ctx.GetSessionVars().CurrInsertValues = chunk.Row{}
 	e.ctx.GetSessionVars().CurrInsertBatchExtraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[0:0:0]
 	e.setMessage()
@@ -356,13 +386,13 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 
 	// Append the old row before the new row, to be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
 	for _, col := range e.Table.WritableCols() {
-		evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))
 	}
 	if extraLen > 0 {
 		evalBufferTypes = append(evalBufferTypes, e.SelectExec.base().retFieldTypes[e.rowLen:]...)
 	}
 	for _, col := range e.Table.Cols() {
-		evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))
 	}
 	if e.hasExtraHandle {
 		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
@@ -374,7 +404,7 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 
 // doDupRowUpdate updates the duplicate row.
 func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
-	extraCols []types.Datum, cols []*expression.Assignment) error {
+	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
@@ -390,6 +420,8 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for _, col := range cols {
 		if col.LazyErr != nil {
 			return col.LazyErr
@@ -398,16 +430,26 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 		if err1 != nil {
 			return err1
 		}
-		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo(), false, false)
+		c := col.Col.ToInfo()
+		c.Name = col.ColName
+		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, c, false, false)
 		if err1 != nil {
 			return err1
+		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				// Use `idxInBatch` here for simplicity, since the offset of the batch is unknown under the current context.
+				newWarnings[k].Err = completeInsertErr(c, &val, idxInBatch, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
 		}
 		e.evalBuffer4Dup.SetDatum(col.Col.Index, e.row4Update[col.Col.Index])
 		assignFlag[col.Col.Index] = true
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, err := updateRecord(ctx, e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker)
+	_, err := updateRecord(ctx, e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades)
 	if err != nil {
 		return err
 	}
@@ -434,4 +476,19 @@ func (e *InsertExec) setMessage() {
 		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *InsertExec) GetFKChecks() []*FKCheckExec {
+	return e.fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *InsertExec) GetFKCascades() []*FKCascadeExec {
+	return e.fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *InsertExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
 }

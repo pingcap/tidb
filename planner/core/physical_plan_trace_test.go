@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"testing"
 
@@ -32,13 +31,13 @@ import (
 
 func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	p := parser.New()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, primary key (a))")
+	tk.MustExec("create table t(a int primary key, b int, c int,d int,key ib (b),key ic (c))")
+	tk.MustExec("SET session tidb_enable_index_merge = ON;")
 	testcases := []struct {
 		sql          string
 		physicalList []string
@@ -46,7 +45,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		{
 			sql: "select * from t",
 			physicalList: []string{
-				"Projection_3", "TableFullScan_4", "TableReader_5",
+				"TableFullScan_4", "TableReader_5", "Projection_3",
 			},
 		},
 		{
@@ -55,16 +54,47 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 				"Point_Get_5", "Projection_4",
 			},
 		},
+		{
+			sql: "select max(b) from t",
+			physicalList: []string{
+				"IndexFullScan_19",
+				"Limit_20",
+				"IndexReader_21",
+				"Limit_14",
+				"StreamAgg_10",
+				"Projection_8",
+			},
+		},
+		{
+			sql: "select * from t where c = 3",
+			physicalList: []string{
+				"IndexRangeScan_8",
+				"TableRowIDScan_9",
+				"IndexLookUp_10",
+				"Projection_4",
+			},
+		},
+		{
+			sql: "SELECT * FROM t WHERE b = 1 OR c = 1;",
+			physicalList: []string{
+				"TableRowIDScan_10",
+				"IndexRangeScan_8",
+				"IndexRangeScan_9",
+				"IndexMerge_11",
+				"Projection_4",
+			},
+		},
 	}
 
 	for _, testcase := range testcases {
 		sql := testcase.sql
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
-		err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 		require.NoError(t, err)
 		sctx := core.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		sctx.GetSessionVars().CostModelVersion = 2
 		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), stmt)
@@ -91,18 +121,16 @@ func checkList(d []string, s []string) bool {
 }
 
 func getList(otrace *tracing.PhysicalOptimizeTracer) (pl []string) {
-	for _, v := range otrace.Candidates {
+	for _, v := range otrace.Final {
 		pl = append(pl, tracing.CodecPlanName(v.TP, v.ID))
 	}
-	sort.Strings(pl)
 	return pl
 }
 
 // assert the case in https://github.com/pingcap/tidb/issues/34863
 func TestPhysicalOptimizerTrace(t *testing.T) {
 	p := parser.New()
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
@@ -117,7 +145,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
@@ -168,4 +196,34 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 		}
 	}
 	require.Len(t, otrace.Final, len(final))
+}
+
+func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
+	p := parser.New()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(it int);")
+	sql := "select * from t"
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	require.NoError(t, err)
+	sctx := core.MockContext()
+	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
+	plan, err := builder.Build(context.TODO(), stmt)
+	require.NoError(t, err)
+	_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(core.LogicalPlan))
+	require.NoError(t, err)
+	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
+	for _, candidate := range otrace.Candidates {
+		m := make(map[int]struct{})
+		for _, childID := range candidate.ChildrenID {
+			m[childID] = struct{}{}
+		}
+		require.Len(t, m, len(candidate.ChildrenID))
+	}
 }

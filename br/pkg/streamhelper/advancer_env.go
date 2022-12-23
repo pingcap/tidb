@@ -9,6 +9,7 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/engine"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
@@ -18,7 +19,7 @@ import (
 // Env is the interface required by the advancer.
 type Env interface {
 	// The region scanner provides the region information.
-	RegionScanner
+	TiKVClusterMeta
 	// LogBackupService connects to the TiKV, so we can collect the region checkpoints.
 	LogBackupService
 	// StreamMeta connects to the metadata service (normally PD).
@@ -48,10 +49,27 @@ func (c PDRegionScanner) RegionScan(ctx context.Context, key []byte, endKey []by
 	return rls, nil
 }
 
+func (c PDRegionScanner) Stores(ctx context.Context) ([]Store, error) {
+	res, err := c.Client.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return nil, err
+	}
+	r := make([]Store, 0, len(res))
+	for _, re := range res {
+		if !engine.IsTiFlash(re) {
+			r = append(r, Store{
+				BootAt: uint64(re.StartTimestamp),
+				ID:     re.GetId(),
+			})
+		}
+	}
+	return r, nil
+}
+
 // clusterEnv is the environment for running in the real cluster.
 type clusterEnv struct {
 	clis *utils.StoreManager
-	*TaskEventClient
+	*AdvancerExt
 	PDRegionScanner
 }
 
@@ -71,7 +89,7 @@ func (t clusterEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (log
 func CliEnv(cli *utils.StoreManager, etcdCli *clientv3.Client) Env {
 	return clusterEnv{
 		clis:            cli,
-		TaskEventClient: &TaskEventClient{MetaDataClient: *NewMetaDataClient(etcdCli)},
+		AdvancerExt:     &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner: PDRegionScanner{cli.PDClient()},
 	}
 }
@@ -87,7 +105,7 @@ func TiDBEnv(pdCli pd.Client, etcdCli *clientv3.Client, conf *config.Config) (En
 			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 		}, tconf),
-		TaskEventClient: &TaskEventClient{MetaDataClient: *NewMetaDataClient(etcdCli)},
+		AdvancerExt:     &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner: PDRegionScanner{Client: pdCli},
 	}, nil
 }
@@ -104,4 +122,6 @@ type StreamMeta interface {
 	Begin(ctx context.Context, ch chan<- TaskEvent) error
 	// UploadV3GlobalCheckpointForTask uploads the global checkpoint to the meta store.
 	UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error
+	// ClearV3GlobalCheckpointForTask clears the global checkpoint to the meta store.
+	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error
 }

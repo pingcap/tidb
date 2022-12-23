@@ -43,6 +43,9 @@ type ReplaceExec struct {
 // Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
 	e.setMessage()
+	if e.runtimeStats != nil && e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
 	}
@@ -86,6 +89,10 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 	}
 
 	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
+	if err != nil {
+		return false, err
+	}
+	err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
 	if err != nil {
 		return false, err
 	}
@@ -163,10 +170,10 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 
 // removeIndexRow removes the row which has a duplicated key.
 // the return values:
-//     1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
-//     2. bool: true when found the duplicated key. This only means that duplicated key was found,
-//              and the row was removed.
-//     3. error: the error.
+//  1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
+//  2. bool: true when found the duplicated key. This only means that duplicated key was found,
+//     and the row was removed.
+//  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
 		val, err := txn.Get(ctx, uk.newKey)
@@ -175,6 +182,12 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 				continue
 			}
 			return false, false, err
+		}
+		if tablecodec.IsTempIndexKey(uk.newKey) {
+			if tablecodec.CheckTempIndexValueIsDelete(val) {
+				continue
+			}
+			val = tablecodec.DecodeTempIndexOriginValue(val)
 		}
 		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 		if err != nil {
@@ -267,4 +280,19 @@ func (e *ReplaceExec) setMessage() {
 		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKChecks() []*FKCheckExec {
+	return e.fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKCascades() []*FKCascadeExec {
+	return e.fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
 }

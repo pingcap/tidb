@@ -16,10 +16,14 @@ package executor
 
 import (
 	"context"
+	"strings"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -28,6 +32,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/replayer"
+	"go.uber.org/zap"
 )
 
 var (
@@ -50,15 +58,28 @@ type Compiler struct {
 }
 
 // Compile compiles an ast.StmtNode to a physical plan.
-func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
+func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecStmt, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if str, ok := r.(string); !ok || !strings.Contains(str, memory.PanicMemoryExceed) {
+			panic(r)
+		}
+		err = errors.Errorf("%v", r)
+		logutil.Logger(ctx).Error("compile SQL panic", zap.String("SQL", stmtNode.Text()), zap.Stack("stack"), zap.Any("recover", r))
+	}()
+
+	c.Ctx.GetSessionVars().StmtCtx.IsReadOnly = plannercore.IsReadOnly(stmtNode, c.Ctx.GetSessionVars())
 
 	ret := &plannercore.PreprocessorReturn{}
-	err := plannercore.Preprocess(c.Ctx,
+	err = plannercore.Preprocess(ctx, c.Ctx,
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
 		plannercore.InitTxnContextProvider,
@@ -77,6 +98,22 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	})
 
 	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
+	sessVars := c.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+	// handle the execute statement
+	var (
+		pointPlanShortPathOK bool
+		preparedObj          *plannercore.PlanCacheStmt
+	)
+
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars); err != nil {
+			return nil, err
+		}
+		if pointPlanShortPathOK, err = plannercore.IsPointPlanShortPathOK(c.Ctx, is, preparedObj); err != nil {
+			return nil, err
+		}
+	}
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
 	if err != nil {
 		return nil, err
@@ -86,13 +123,17 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		staleread.AssertStmtStaleness(c.Ctx, val.(bool))
 	})
 
-	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
+	if preparedObj != nil {
+		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL)
+	} else {
+		CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
+	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		lowerPriority = needLowerPriority(finalPlan)
 	}
-	c.Ctx.GetSessionVars().StmtCtx.SetPlan(finalPlan)
-	return &ExecStmt{
+	stmtCtx.SetPlan(finalPlan)
+	stmt := &ExecStmt{
 		GoCtx:         ctx,
 		InfoSchema:    is,
 		Plan:          finalPlan,
@@ -102,7 +143,103 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		Ctx:           c.Ctx,
 		OutputNames:   names,
 		Ti:            &TelemetryInfo{},
-	}, nil
+	}
+	if pointPlanShortPathOK {
+		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
+			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
+				stmtCtx.SetPlan(stmt.Plan)
+				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+				stmt.Plan = pointPlan
+				stmt.PsStmt = preparedObj
+			} else {
+				// invalid the previous cached point plan
+				preparedObj.PreparedAst.CachedPlan = nil
+			}
+		}
+	}
+	if c.Ctx.GetSessionVars().IsPlanReplayerCaptureEnabled() && !c.Ctx.GetSessionVars().InRestrictedSQL {
+		if _, ok := stmtNode.(*ast.SelectStmt); ok {
+			startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
+			if err != nil {
+				return nil, err
+			}
+			if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
+				checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
+			} else {
+				checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
+			}
+		}
+	}
+
+	return stmt, nil
+}
+
+func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
+	dom := domain.GetDomain(sctx)
+	if dom == nil {
+		return
+	}
+	handle := dom.GetPlanReplayerHandle()
+	if handle == nil {
+		return
+	}
+	tasks := handle.GetTasks()
+	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
+	key := replayer.PlanReplayerTaskKey{
+		SQLDigest:  sqlDigest.String(),
+		PlanDigest: planDigest.String(),
+	}
+	for _, task := range tasks {
+		if task.SQLDigest == sqlDigest.String() {
+			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
+				sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, false)
+				return
+			}
+		}
+	}
+}
+
+func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
+	dom := domain.GetDomain(sctx)
+	if dom == nil {
+		return
+	}
+	handle := dom.GetPlanReplayerHandle()
+	if handle == nil {
+		return
+	}
+	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
+	key := replayer.PlanReplayerTaskKey{
+		SQLDigest:  sqlDigest.String(),
+		PlanDigest: planDigest.String(),
+	}
+	existed := sctx.GetSessionVars().CheckPlanReplayerFinishedTaskKey(key)
+	if existed {
+		return
+	}
+	sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, true)
+	sctx.GetSessionVars().AddPlanReplayerFinishedTaskKey(key)
+}
+
+func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode,
+	startTS uint64, isContinuesCapture bool) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	dumpTask := &domain.PlanReplayerDumpTask{
+		PlanReplayerTaskKey: key,
+		StartTS:             startTS,
+		EncodePlan:          GetEncodedPlan,
+		TblStats:            stmtCtx.TableStats,
+		SessionBindings:     handle.GetAllBindRecord(),
+		SessionVars:         sctx.GetSessionVars(),
+		ExecStmts:           []ast.StmtNode{stmtNode},
+		Analyze:             false,
+		IsCapture:           true,
+		IsContinuesCapture:  isContinuesCapture,
+	}
+	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }
 
 // needLowerPriority checks whether it's needed to lower the execution priority
@@ -153,7 +290,7 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 		return
 	}
 
-	typeLabel := GetStmtLabel(stmtNode)
+	typeLabel := ast.GetStmtLabel(stmtNode)
 	switch typeLabel {
 	case "Use":
 		stmtNodeCounterUse.Inc()
@@ -327,95 +464,4 @@ func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have du
 	}
 
 	return dbLabels
-}
-
-// GetStmtLabel generates a label for a statement.
-func GetStmtLabel(stmtNode ast.StmtNode) string {
-	switch x := stmtNode.(type) {
-	case *ast.AlterTableStmt:
-		return "AlterTable"
-	case *ast.AnalyzeTableStmt:
-		return "AnalyzeTable"
-	case *ast.BeginStmt:
-		return "Begin"
-	case *ast.ChangeStmt:
-		return "Change"
-	case *ast.CommitStmt:
-		return "Commit"
-	case *ast.CompactTableStmt:
-		return "CompactTable"
-	case *ast.CreateDatabaseStmt:
-		return "CreateDatabase"
-	case *ast.CreateIndexStmt:
-		return "CreateIndex"
-	case *ast.CreateTableStmt:
-		return "CreateTable"
-	case *ast.CreateViewStmt:
-		return "CreateView"
-	case *ast.CreateUserStmt:
-		return "CreateUser"
-	case *ast.DeleteStmt:
-		return "Delete"
-	case *ast.DropDatabaseStmt:
-		return "DropDatabase"
-	case *ast.DropIndexStmt:
-		return "DropIndex"
-	case *ast.DropTableStmt:
-		if x.IsView {
-			return "DropView"
-		}
-		return "DropTable"
-	case *ast.ExplainStmt:
-		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
-			return "DescTable"
-		}
-		if x.Analyze {
-			return "ExplainAnalyzeSQL"
-		}
-		return "ExplainSQL"
-	case *ast.InsertStmt:
-		if x.IsReplace {
-			return "Replace"
-		}
-		return "Insert"
-	case *ast.LoadDataStmt:
-		return "LoadData"
-	case *ast.RollbackStmt:
-		return "Rollback"
-	case *ast.SelectStmt:
-		return "Select"
-	case *ast.SetStmt, *ast.SetPwdStmt:
-		return "Set"
-	case *ast.ShowStmt:
-		return "Show"
-	case *ast.TruncateTableStmt:
-		return "TruncateTable"
-	case *ast.UpdateStmt:
-		return "Update"
-	case *ast.GrantStmt:
-		return "Grant"
-	case *ast.RevokeStmt:
-		return "Revoke"
-	case *ast.DeallocateStmt:
-		return "Deallocate"
-	case *ast.ExecuteStmt:
-		return "Execute"
-	case *ast.PrepareStmt:
-		return "Prepare"
-	case *ast.UseStmt:
-		return "Use"
-	case *ast.CreateBindingStmt:
-		return "CreateBinding"
-	case *ast.IndexAdviseStmt:
-		return "IndexAdvise"
-	case *ast.DropBindingStmt:
-		return "DropBinding"
-	case *ast.TraceStmt:
-		return "Trace"
-	case *ast.ShutdownStmt:
-		return "Shutdown"
-	case *ast.SavepointStmt:
-		return "Savepoint"
-	}
-	return "other"
 }

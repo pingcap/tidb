@@ -30,12 +30,12 @@ var _ Storage = &StorageRC{}
 //
 // Common usage as follows:
 //
-//  storage.Lock()
-//  if !storage.Done() {
-//      fill all data into storage
-//  }
-//  storage.UnLock()
-//  read data from storage
+//	storage.Lock()
+//	if !storage.Done() {
+//	    fill all data into storage
+//	}
+//	storage.UnLock()
+//	read data from storage
 type Storage interface {
 	// If is first called, will open underlying storage. Otherwise will add ref count by one.
 	OpenAndRef() error
@@ -93,16 +93,14 @@ type Storage interface {
 
 // StorageRC implements Storage interface using RowContainer.
 type StorageRC struct {
-	mu      sync.Mutex
-	refCnt  int
+	err     error
+	rc      *chunk.RowContainer
 	tp      []*types.FieldType
+	refCnt  int
 	chkSize int
-
-	done bool
-	iter int
-	err  error
-
-	rc *chunk.RowContainer
+	iter    int
+	mu      sync.Mutex
+	done    bool
 }
 
 // NewStorageRowContainer create a new StorageRC.

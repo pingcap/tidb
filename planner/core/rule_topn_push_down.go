@@ -28,7 +28,7 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
-func (s *pushDownTopNOptimizer) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (s *pushDownTopNOptimizer) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return p.pushDownTopN(nil, opt), nil
 }
 

@@ -15,6 +15,7 @@
 package schematracker
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -53,6 +54,14 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	require.Nil(t, got2)
 
+	schemaNames := is.AllSchemaNames()
+	require.Equal(t, []string{dbName.O}, schemaNames)
+	_, err = is.AllTableNamesOfSchema(model.NewCIStr("wrong-db"))
+	require.Error(t, err)
+	tableNames, err := is.AllTableNamesOfSchema(dbName)
+	require.NoError(t, err)
+	require.Equal(t, []string{tableName.O}, tableNames)
+
 	// compare-insensitive
 
 	is = NewInfoStore(2)
@@ -72,6 +81,14 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got2)
 	require.Equal(t, tableName, got2.Name)
+
+	schemaNames = is.AllSchemaNames()
+	require.Equal(t, []string{dbName.L}, schemaNames)
+	_, err = is.AllTableNamesOfSchema(model.NewCIStr("wrong-db"))
+	require.Error(t, err)
+	tableNames, err = is.AllTableNamesOfSchema(dbName)
+	require.NoError(t, err)
+	require.Equal(t, []string{tableName.L}, tableNames)
 }
 
 func TestInfoStoreDeleteTables(t *testing.T) {
@@ -91,6 +108,13 @@ func TestInfoStoreDeleteTables(t *testing.T) {
 	err = is.PutTable(dbName1, tableInfo2)
 	require.NoError(t, err)
 
+	schemaNames := is.AllSchemaNames()
+	require.Equal(t, []string{dbName1.O}, schemaNames)
+	tableNames, err := is.AllTableNamesOfSchema(dbName1)
+	require.NoError(t, err)
+	sort.Strings(tableNames)
+	require.Equal(t, []string{tableName1.O, tableName2.O}, tableNames)
+
 	// db2 not created
 	ok := is.DeleteSchema(dbName2)
 	require.False(t, ok)
@@ -103,14 +127,28 @@ func TestInfoStoreDeleteTables(t *testing.T) {
 	err = is.PutTable(dbName2, tableInfo1)
 	require.NoError(t, err)
 
+	schemaNames = is.AllSchemaNames()
+	sort.Strings(schemaNames)
+	require.Equal(t, []string{dbName1.O, dbName2.O}, schemaNames)
+	tableNames, err = is.AllTableNamesOfSchema(dbName2)
+	require.NoError(t, err)
+	require.Equal(t, []string{tableName1.O}, tableNames)
+
 	err = is.DeleteTable(dbName2, tableName2)
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	err = is.DeleteTable(dbName2, tableName1)
 	require.NoError(t, err)
+
+	tableNames, err = is.AllTableNamesOfSchema(dbName2)
+	require.NoError(t, err)
+	require.Equal(t, []string{}, tableNames)
 
 	// delete db will remove its tables
 	ok = is.DeleteSchema(dbName1)
 	require.True(t, ok)
 	_, err = is.TableByName(dbName1, tableName1)
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
+
+	schemaNames = is.AllSchemaNames()
+	require.Equal(t, []string{dbName2.O}, schemaNames)
 }

@@ -39,18 +39,18 @@ const (
 
 // DecodedKey is a struct contains detailed information about a key, its json form should be used to fill KEY_INFO field in `DEADLOCKS` and `DATA_LOCK_WAITS`
 type DecodedKey struct {
-	DbID              int64      `json:"db_id,omitempty"`
 	DbName            string     `json:"db_name,omitempty"`
-	TableID           int64      `json:"table_id"`
 	TableName         string     `json:"table_name,omitempty"`
-	PartitionID       int64      `json:"partition_id,omitempty"`
 	PartitionName     string     `json:"partition_name,omitempty"`
 	HandleType        HandleType `json:"handle_type,omitempty"`
-	IsPartitionHandle bool       `json:"partition_handle,omitempty"`
 	HandleValue       string     `json:"handle_value,omitempty"`
-	IndexID           int64      `json:"index_id,omitempty"`
 	IndexName         string     `json:"index_name,omitempty"`
 	IndexValues       []string   `json:"index_values,omitempty"`
+	DbID              int64      `json:"db_id,omitempty"`
+	TableID           int64      `json:"table_id"`
+	PartitionID       int64      `json:"partition_id,omitempty"`
+	IndexID           int64      `json:"index_id,omitempty"`
+	IsPartitionHandle bool       `json:"partition_handle,omitempty"`
 }
 
 func handleType(handle kv.Handle) HandleType {

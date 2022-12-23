@@ -25,19 +25,20 @@ import (
 
 // CheckScrambledPassword check scrambled password received from client.
 // The new authentication is performed in following manner:
-//   SERVER:  public_seed=create_random_string()
-//            send(public_seed)
-//   CLIENT:  recv(public_seed)
-//            hash_stage1=sha1("password")
-//            hash_stage2=sha1(hash_stage1)
-//            reply=xor(hash_stage1, sha1(public_seed,hash_stage2)
-//            // this three steps are done in scramble()
-//            send(reply)
-//   SERVER:  recv(reply)
-//            hash_stage1=xor(reply, sha1(public_seed,hash_stage2))
-//            candidate_hash2=sha1(hash_stage1)
-//            check(candidate_hash2==hash_stage2)
-//            // this three steps are done in check_scramble()
+//
+//	SERVER:  public_seed=create_random_string()
+//	         send(public_seed)
+//	CLIENT:  recv(public_seed)
+//	         hash_stage1=sha1("password")
+//	         hash_stage2=sha1(hash_stage1)
+//	         reply=xor(hash_stage1, sha1(public_seed,hash_stage2)
+//	         // this three steps are done in scramble()
+//	         send(reply)
+//	SERVER:  recv(reply)
+//	         hash_stage1=xor(reply, sha1(public_seed,hash_stage2))
+//	         candidate_hash2=sha1(hash_stage1)
+//	         check(candidate_hash2==hash_stage2)
+//	         // this three steps are done in check_scramble()
 func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
 	//nolint: gosec
 	crypt := sha1.New()

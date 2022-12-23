@@ -44,6 +44,7 @@ go_library(
 
 go_test(
     name = "gcworker_test",
+    timeout = "short",
     srcs = [
         "gc_worker_test.go",
         "main_test.go",

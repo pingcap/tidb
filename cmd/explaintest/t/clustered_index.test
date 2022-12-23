@@ -1,3 +1,5 @@
+set tidb_cost_model_version=1;
+set @@tidb_enable_outer_join_reorder=true;
 drop database if exists with_cluster_index;
 create database with_cluster_index;
 drop database if exists wout_cluster_index;
@@ -53,3 +55,4 @@ explain select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;
 
 explain select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;
 explain select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
+set @@tidb_enable_outer_join_reorder=false;

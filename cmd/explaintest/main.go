@@ -250,10 +250,12 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 		gotBuf := t.buf.Bytes()[offset:]
 		buf := make([]byte, t.buf.Len()-offset)
 		if _, err = t.resultFD.ReadAt(buf, int64(offset)); err != nil {
+			//nolint: all_revive,revive
 			return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", query.Query, query.Line, gotBuf, err))
 		}
 
 		if !bytes.Equal(gotBuf, buf) {
+			//nolint: all_revive,revive
 			return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need(%v):\n%s\nbut got(%v):\n%s\n", query.Query, query.Line, len(buf), buf, len(gotBuf), gotBuf))
 		}
 	}
@@ -363,7 +365,6 @@ func (t *tester) execute(query query) error {
 		if err != nil && len(t.expectedErrs) > 0 {
 			for _, expectErr := range t.expectedErrs {
 				if strings.Contains(err.Error(), expectErr) {
-					// output expected err
 					t.buf.WriteString(fmt.Sprintf("%s\n", err))
 					err = nil
 					break
@@ -387,6 +388,7 @@ func (t *tester) execute(query query) error {
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", qText, query.Line, gotBuf, err))
 			}
 			if !bytes.Equal(gotBuf, buf) {
+				//nolint: all_revive,revive
 				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", qText, query.Line, buf, gotBuf))
 			}
 			t.outputLen = t.buf.Len()
@@ -602,9 +604,11 @@ func (t *tester) checkLastResult() error {
 	}
 	buf := make([]byte, int(size)-t.outputLen+len(t.lastResult))
 	if _, err = t.resultFD.ReadAt(buf, int64(t.outputLen-len(t.lastResult))); !(err == nil || err == io.EOF) {
+		//nolint: all_revive,revive
 		return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", t.lastText, t.lastQuery.Line, t.lastResult, err))
 	}
 	if !bytes.Equal(t.lastResult, buf) {
+		//nolint: all_revive,revive
 		return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", t.lastText, t.lastQuery.Line, buf, t.lastResult))
 	}
 	return nil
@@ -720,6 +724,7 @@ func main() {
 		"set @@tidb_window_concurrency=4",
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
+		"set @@tidb_enable_clustered_index='int_only';",
 		"set @@global.tidb_enable_clustered_index=0;",
 		"set @@global.tidb_mem_quota_query=34359738368",
 		"set @@tidb_mem_quota_query=34359738368",
@@ -756,9 +761,12 @@ func main() {
 			continue
 		}
 		tr := newTester(t)
+		start := time.Now()
 		if err = tr.Run(); err != nil {
 			log.Fatal("run test", zap.String("test", t), zap.Error(err))
 		}
+		// Use error so that we can know the spend time in CI.
+		log.Error("run test ", zap.String("name", tr.name), zap.String("time", time.Since(start).String()))
 		log.Info("run test ok", zap.String("test", t))
 	}
 

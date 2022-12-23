@@ -288,8 +288,24 @@ func (*ReverseHashIterator) Close() {}
 
 // NewHashReverseIter creates a reverse hash iterator.
 func NewHashReverseIter(t *TxStructure, key []byte) (*ReverseHashIterator, error) {
+	return newHashReverseIter(t, key, nil)
+}
+
+// NewHashReverseIterBeginWithField creates a reverse hash iterator, begin with field.
+func NewHashReverseIterBeginWithField(t *TxStructure, key []byte, field []byte) (*ReverseHashIterator, error) {
+	return newHashReverseIter(t, key, field)
+}
+
+func newHashReverseIter(t *TxStructure, key []byte, field []byte) (*ReverseHashIterator, error) {
+	var iterStart kv.Key
 	dataPrefix := t.hashDataKeyPrefix(key)
-	it, err := t.reader.IterReverse(dataPrefix.PrefixNext())
+	if len(field) == 0 {
+		iterStart = dataPrefix.PrefixNext()
+	} else {
+		iterStart = t.encodeHashDataKey(key, field).PrefixNext()
+	}
+
+	it, err := t.reader.IterReverse(iterStart)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

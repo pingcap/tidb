@@ -31,8 +31,7 @@ func TestIndexLookupMergeJoinHang(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -47,8 +46,7 @@ func TestIndexLookupMergeJoinHang(t *testing.T) {
 }
 
 func TestIssue28052(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -69,8 +67,7 @@ func TestIssue18068(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIssue18068"))
 	}()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
@@ -90,8 +87,7 @@ func TestIssue18068(t *testing.T) {
 }
 
 func TestIssue18631(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -108,8 +104,7 @@ func TestIssue18631(t *testing.T) {
 }
 
 func TestIssue19408(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -138,8 +133,7 @@ func TestIssue19408(t *testing.T) {
 }
 
 func TestIssue20137(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -155,8 +149,7 @@ func TestIssue20137(t *testing.T) {
 
 func TestIndexJoinOnSinglePartitionTable(t *testing.T) {
 	// For issue 19145
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
@@ -186,8 +179,7 @@ func TestIndexJoinOnSinglePartitionTable(t *testing.T) {
 }
 
 func TestIssue20400(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
@@ -201,8 +193,7 @@ func TestIssue20400(t *testing.T) {
 }
 
 func TestIssue20549(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -216,8 +207,7 @@ func TestIssue20549(t *testing.T) {
 }
 
 func TestIssue24473AndIssue25669(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists x, t2, t3")

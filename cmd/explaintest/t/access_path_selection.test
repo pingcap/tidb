@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 CREATE TABLE `access_path_selection` (
 `a` int,
 `b` int,

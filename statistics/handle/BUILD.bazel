@@ -9,6 +9,7 @@ go_library(
         "gc.go",
         "handle.go",
         "handle_hist.go",
+        "historical_stats_handler.go",
         "lru_cache.go",
         "statscache.go",
         "update.go",
@@ -57,7 +58,7 @@ go_library(
 
 go_test(
     name = "handle_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "ddl_test.go",
         "dump_test.go",

@@ -39,8 +39,7 @@ func TestRepairTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"))
 	}()
 
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, repairTableLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, repairTableLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -169,8 +168,7 @@ func TestRepairTableWithPartition(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"))
 	}()
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, repairTableLease)
-	defer clean()
+	store := testkit.CreateMockStoreWithSchemaLease(t, repairTableLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists origin")

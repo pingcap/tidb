@@ -34,8 +34,7 @@ import (
 const testLease = 5 * time.Second
 
 func TestCheckOwner(t *testing.T) {
-	_, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	time.Sleep(testLease)
 	require.Equal(t, dom.DDL().OwnerManager().IsOwner(), true)
@@ -43,8 +42,7 @@ func TestCheckOwner(t *testing.T) {
 }
 
 func TestInvalidDDLJob(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	job := &model.Job{
 		SchemaID:   0,
@@ -60,8 +58,7 @@ func TestInvalidDDLJob(t *testing.T) {
 }
 
 func TestAddBatchJobError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	ctx := testNewContext(store)
 
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr", `return(true)`))
@@ -75,8 +72,7 @@ func TestAddBatchJobError(t *testing.T) {
 }
 
 func TestParallelDDL(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	defer clean()
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -267,17 +263,18 @@ func TestParallelDDL(t *testing.T) {
 	// Table 3 order.
 	require.Less(t, seqIDs[6], seqIDs[7])
 	require.Less(t, seqIDs[7], seqIDs[9])
-	require.Less(t, seqIDs[9], seqIDs[10])
 }
 
 func TestJobNeedGC(t *testing.T) {
 	job := &model.Job{Type: model.ActionAddIndex, State: model.JobStateCancelled}
 	require.False(t, ddl.JobNeedGCForTest(job))
 
+	job = &model.Job{Type: model.ActionAddColumn, State: model.JobStateDone}
+	require.False(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionAddIndex, State: model.JobStateDone}
-	require.False(t, ddl.JobNeedGCForTest(job))
+	require.True(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionAddPrimaryKey, State: model.JobStateDone}
-	require.False(t, ddl.JobNeedGCForTest(job))
+	require.True(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone}
 	require.True(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionAddPrimaryKey, State: model.JobStateRollbackDone}
@@ -285,11 +282,17 @@ func TestJobNeedGC(t *testing.T) {
 
 	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{
 		SubJobs: []*model.SubJob{
-			{Type: model.ActionAddIndex, State: model.JobStateDone},
 			{Type: model.ActionAddColumn, State: model.JobStateDone},
 			{Type: model.ActionRebaseAutoID, State: model.JobStateDone},
 		}}}
 	require.False(t, ddl.JobNeedGCForTest(job))
+	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{
+		SubJobs: []*model.SubJob{
+			{Type: model.ActionAddIndex, State: model.JobStateDone},
+			{Type: model.ActionAddColumn, State: model.JobStateDone},
+			{Type: model.ActionRebaseAutoID, State: model.JobStateDone},
+		}}}
+	require.True(t, ddl.JobNeedGCForTest(job))
 	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{
 		SubJobs: []*model.SubJob{
 			{Type: model.ActionAddIndex, State: model.JobStateDone},

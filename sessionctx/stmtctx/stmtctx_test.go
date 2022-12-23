@@ -36,12 +36,14 @@ func TestCopTasksDetails(t *testing.T) {
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
-			CalleeAddress: fmt.Sprintf("%v", i+1),
-			BackoffSleep:  make(map[string]time.Duration),
-			BackoffTimes:  make(map[string]int),
-			TimeDetail: util.TimeDetail{
-				ProcessTime: time.Second * time.Duration(i+1),
-				WaitTime:    time.Millisecond * time.Duration(i+1),
+			DetailsNeedP90: execdetails.DetailsNeedP90{
+				CalleeAddress: fmt.Sprintf("%v", i+1),
+				BackoffSleep:  make(map[string]time.Duration),
+				BackoffTimes:  make(map[string]int),
+				TimeDetail: util.TimeDetail{
+					ProcessTime: time.Second * time.Duration(i+1),
+					WaitTime:    time.Millisecond * time.Duration(i+1),
+				},
 			},
 		}
 		for _, backoff := range backoffs {
@@ -98,8 +100,7 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 }
 
 func TestWeakConsistencyRead(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -167,8 +168,7 @@ func TestMarshalSQLWarn(t *testing.T) {
 		},
 	}
 
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// First query can trigger loading global variables, which produces warnings.
 	tk.MustQuery("select 1")
