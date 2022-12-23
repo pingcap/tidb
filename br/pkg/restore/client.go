@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -2720,4 +2721,39 @@ func CheckNewCollationEnable(
 	collate.SetNewCollationEnabledForTest(enabled)
 	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
 	return nil
+}
+
+func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, mgr *conn.Mgr) error {
+	info := mgr.GetDomain().InfoSchema()
+	allSchema := info.AllSchemas()
+	recorder := tiflashrec.New()
+
+	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
+	for _, s := range allSchema {
+		for _, t := range s.Tables {
+			if t.TiFlashReplica != nil && t.TiFlashReplica.Count > tiFlashStoreCount {
+				if recorder != nil && t.TiFlashReplica != nil {
+					recorder.AddTable(t.ID, *t.TiFlashReplica)
+				}
+			}
+		}
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sqls := recorder.GenerateAlterTableDDLs(info)
+	log.Info("Generating SQLs for resetting TiFlash Replica",
+		zap.Strings("sqls", sqls))
+	return g.UseOneShotSession(mgr.GetStorage(), false, func(se glue.Session) error {
+		for _, sql := range sqls {
+			if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(errExec),
+					zap.String("sql", sql),
+				)
+			}
+		}
+		return nil
+	})
+
 }

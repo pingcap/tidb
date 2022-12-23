@@ -154,6 +154,10 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	//TODO: restore volume type into origin type
 	//ModifyVolume(*ec2.ModifyVolumeInput) (*ec2.ModifyVolumeOutput, error) by backupmeta
 
+	// since we cannot reset tiflash automaticlly. so we should start it manually
+	if err = client.ResetTiFlashReplicas(ctx, g, mgr); err != nil {
+		return errors.Trace(err)
+	}
 	progress.Close()
 	summary.CollectDuration("restore duration", time.Since(startAll))
 	summary.SetSuccessStatus(true)
