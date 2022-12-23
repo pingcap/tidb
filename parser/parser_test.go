@@ -3244,6 +3244,7 @@ func TestDDL(t *testing.T) {
 		{"create table t (a bigint, b bigint as (a+1) not null);", true, "CREATE TABLE `t` (`a` BIGINT,`b` BIGINT GENERATED ALWAYS AS(`a`+1) VIRTUAL NOT NULL)"},
 		{"create table t (a bigint, b bigint as (a+1) not null);", true, "CREATE TABLE `t` (`a` BIGINT,`b` BIGINT GENERATED ALWAYS AS(`a`+1) VIRTUAL NOT NULL)"},
 		{"create table t (a bigint, b bigint as (a+1) not null comment 'ttt');", true, "CREATE TABLE `t` (`a` BIGINT,`b` BIGINT GENERATED ALWAYS AS(`a`+1) VIRTUAL NOT NULL COMMENT 'ttt')"},
+		{"create table t(a int, index idx((cast(a as binary(1)))));", true, "CREATE TABLE `t` (`a` INT,INDEX `idx`((CAST(`a` AS BINARY(1)))))"},
 		{"alter table t add column (f timestamp as (a+1) default '2019-01-01 11:11:11');", false, ""},
 		{"alter table t modify column f int as (a+1) default 55;", false, ""},
 
