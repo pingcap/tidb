@@ -8102,3 +8102,99 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 		KEY idx_autoinc_id (id)
 	)`)
 }
+
+func TestMppVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint, b bigint)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	{
+		rows := [][]interface{}{
+			{"TableReader_41", "root", "data:ExchangeSender_40"},
+			{"└─ExchangeSender_40", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
+			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
+			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]"},
+			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
+			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		}
+		res := tk.MustQuery("explain select count(*) as cnt from t group by a, b;")
+
+		res.CheckAt([]int{0, 2, 4}, rows)
+	}
+
+	{
+		tk.MustExec("set @@mpp_version = 1")
+		tk.MustExec("set @@mpp_exchange_compress = UNSPECIFIED")
+
+		rows := [][]interface{}{
+			{"TableReader_41", "root", "MppVersion: 1, data:ExchangeSender_40"},
+			{"└─ExchangeSender_40", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
+			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
+			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compress: NONE"},
+			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
+			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		}
+		res := tk.MustQuery("explain select count(*) as cnt from t group by a, b;")
+
+		res.CheckAt([]int{0, 2, 4}, rows)
+	}
+
+	{
+		tk.MustExec("set @@mpp_version = 0")
+		tk.MustExec("set @@mpp_exchange_compress = LZ4")
+
+		rows := [][]interface{}{
+			{"TableReader_41", "root", "data:ExchangeSender_40"},
+			{"└─ExchangeSender_40", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
+			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
+			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]"},
+			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
+			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		}
+		res := tk.MustQuery("explain select count(*) as cnt from t group by a, b;")
+
+		res.CheckAt([]int{0, 2, 4}, rows)
+	}
+
+	{
+		tk.MustExec("set @@mpp_version = 1")
+		tk.MustExec("set @@mpp_exchange_compress = Zstd")
+
+		rows := [][]interface{}{
+			{"TableReader_41", "root", "MppVersion: 1, data:ExchangeSender_40"},
+			{"└─ExchangeSender_40", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
+			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
+			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compress: ZSTD"},
+			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
+			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		}
+		res := tk.MustQuery("explain select count(*) as cnt from t group by a, b;")
+
+		res.CheckAt([]int{0, 2, 4}, rows)
+	}
+}

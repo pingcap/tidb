@@ -45,7 +45,7 @@ const (
 )
 
 // TiDBMppVersion means the max MppVersion can be used in mpp plan
-var TiDBMppVersion = atomicutil.NewInt64(MaxMppVersion)
+var TiDBMppVersion = atomicutil.NewInt64(MppVersionV0)
 
 var mppVersionFeatures = map[int64]string{
 	MppVersionV0: "none",
