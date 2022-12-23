@@ -1286,7 +1286,11 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 		} else {
-			sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
+			// Invalid date values or zero date values may be inserted into table under some relaxed sql mode. Those values
+			// may exist in statistics. Hence, when reading statistics, we should skip invalid date check and zero date check.
+			// See #39336.
+			//sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
+			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// When there's new collation data, the length of bounds of histogram(the collate key) might be
 			// longer than the FieldType.Flen of this column.

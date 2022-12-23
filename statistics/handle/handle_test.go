@@ -3607,6 +3607,8 @@ create table t1 (
     partition p3 values less than (maxvalue)
 )`)
 	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec(`
 insert into t1 values
 ('2022-11-23 14:25:08.000', 1001),
@@ -3626,7 +3628,7 @@ insert into t1 values
 ('1000-00-09 00:00:00.000', 2001),
 ('1000-00-06 00:00:00.000', 2001),
 ('1000-00-09 00:00:00.000', 2001)`)
-	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t1 with 0 topn")
 	rows := tk.MustQuery("show analyze status where job_info like 'merge global stats%'").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "finished", rows[0][7])
