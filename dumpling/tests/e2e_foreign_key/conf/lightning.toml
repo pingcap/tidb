@@ -12,15 +12,6 @@ on-duplicate = "error"
 [mydumper]
 data-source-dir = "/tmp/dumpling_test_result/sql_res.e2e_foreign_key"
 
-[mydumper.csv]
-separator = 'separator-place-holder'
-delimiter = "delimiter-place-holder"
-header = true
-not-null = false
-null = '\N'
-backslash-escape = backslash-escape-place-holder
-trim-last-separator = false
-
 [tidb]
 host = "127.0.0.1"
 port = 4000
