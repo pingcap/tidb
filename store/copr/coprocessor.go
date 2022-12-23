@@ -311,6 +311,10 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		return buildTiDBMemCopTasks(ranges, req)
 	}
 	rangesLen := ranges.Len()
+	// something went wrong, disable hints to avoid out of range index.
+	if hints != nil && len(hints) != rangesLen {
+		hints = nil
+	}
 
 	rangesPerTaskLimit := rangesPerTask
 	failpoint.Inject("setRangesPerTask", func(val failpoint.Value) {

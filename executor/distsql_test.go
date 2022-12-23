@@ -639,12 +639,18 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(id int primary key, c1 int, c2 int, key i(c1))")
+	tk.MustExec(`create table t1(id int primary key, c1 int, c2 int, key i(c1)) partition by range(id) (
+    	partition p0 values less than(10000),
+    	partition p1 values less than (50000),
+    	partition p2 values less than (100000))`)
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t values(?, ?, ?)", i*10000, i*10000, i%2)
+		tk.MustExec("insert into t1 values(?, ?, ?)", i*10000, i*10000, i%2)
 	}
 	tk.MustQuery("split table t between (0) and (100000) regions 20").Check(testkit.Rows("20 1"))
+	tk.MustQuery("split table t1 between (0) and (100000) regions 20").Check(testkit.Rows("60 1"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/setRangesPerTask", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/setRangesPerTask"))
@@ -661,25 +667,27 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 		"(c1 >= 80000 and c1 < 85000)",
 		"(c1 >= 90000 and c1 < 95000)",
 	}
-	baseSQL := fmt.Sprintf("select * from t force index(i) where id < 100000 and (%s)", strings.Join(ranges, " or "))
 	evenRows := testkit.Rows("0 0 0", "20000 20000 0", "40000 40000 0", "60000 60000 0", "80000 80000 0")
 	oddRows := testkit.Rows("10000 10000 1", "30000 30000 1", "50000 50000 1", "70000 70000 1", "90000 90000 1")
 	reverseOddRows := testkit.Rows("90000 90000 1", "70000 70000 1", "50000 50000 1", "30000 30000 1", "10000 10000 1")
-	for _, paging := range []string{"on", "off"} {
-		tk.MustExec("set session tidb_enable_paging=?", paging)
-		for size := 0; size < 10; size++ {
-			tk.MustExec("set session tidb_store_batch_size=?", size)
-			tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
-			tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)
-			tk.MustQuery(baseSQL + " and c2 = 0 order by c1 asc").Check(evenRows)
-			tk.MustQuery(baseSQL + " and c2 = 1 order by c1 desc").Check(reverseOddRows)
-			// every batched task will get region error and fallback.
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/batchCopRegionError", "return"))
-			tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
-			tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)
-			tk.MustQuery(baseSQL + " and c2 = 0 order by c1 asc").Check(evenRows)
-			tk.MustQuery(baseSQL + " and c2 = 1 order by c1 desc").Check(reverseOddRows)
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/batchCopRegionError"))
+	for _, table := range []string{"t", "t1"} {
+		baseSQL := fmt.Sprintf("select * from %s force index(i) where id < 100000 and (%s)", table, strings.Join(ranges, " or "))
+		for _, paging := range []string{"on", "off"} {
+			tk.MustExec("set session tidb_enable_paging=?", paging)
+			for size := 0; size < 10; size++ {
+				tk.MustExec("set session tidb_store_batch_size=?", size)
+				tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)
+				tk.MustQuery(baseSQL + " and c2 = 0 order by c1 asc").Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1 order by c1 desc").Check(reverseOddRows)
+				// every batched task will get region error and fallback.
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/batchCopRegionError", "return"))
+				tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)
+				tk.MustQuery(baseSQL + " and c2 = 0 order by c1 asc").Check(evenRows)
+				tk.MustQuery(baseSQL + " and c2 = 1 order by c1 desc").Check(reverseOddRows)
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/batchCopRegionError"))
+			}
 		}
 	}
 }
