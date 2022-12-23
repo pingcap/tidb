@@ -527,7 +527,7 @@ func bootstrap(s Session) {
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
 			doDMLWorks(s)
-			doBootstrapSQLFile(s)
+			runBootstrapSQLFile = true
 			logutil.BgLogger().Info("bootstrap successful",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -745,6 +745,9 @@ var currentBootstrapVersion int64 = version109
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
+
+// whether to run the sql file in bootstrap.
+var runBootstrapSQLFile = false
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -2315,6 +2318,7 @@ func doDDLWorks(s Session) {
 // It is useful for setting the initial value of GLOBAL variables.
 func doBootstrapSQLFile(s Session) {
 	sqlFile := config.GetGlobalConfig().InitializeSQLFile
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if sqlFile == "" {
 		return
 	}
@@ -2323,12 +2327,12 @@ func doBootstrapSQLFile(s Session) {
 	if err != nil {
 		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
 	}
-	stmts, err := s.Parse(context.Background(), string(b))
+	stmts, err := s.Parse(ctx, string(b))
 	if err != nil {
 		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
 	}
 	for _, stmt := range stmts {
-		rs, err := s.ExecuteStmt(context.Background(), stmt)
+		rs, err := s.ExecuteStmt(ctx, stmt)
 		if err != nil {
 			logutil.BgLogger().Warn("InitializeSQLFile error", zap.Error(err))
 		}
