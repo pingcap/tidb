@@ -644,7 +644,7 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t values(?, ?, ?)", i*10000, i*10000, i%2)
 	}
-	tk.MustQuery("split table t between (0) and (100000) regions 2").Check(testkit.Rows("2 1"))
+	tk.MustQuery("split table t between (0) and (100000) regions 20").Check(testkit.Rows("20 1"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/setRangesPerTask", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/setRangesPerTask"))
