@@ -1666,8 +1666,44 @@ func TestAddForeignKeyInBigTable(t *testing.T) {
 	require.Less(t, time.Since(start), time.Minute)
 }
 
+func TestForeignKeyWithCacheTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	// Test foreign key refer cache table.
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
+	tk.MustExec("alter table t1 cache;")
+	tk.MustExec("create table t2 (b int);")
+	tk.MustExec("alter  table t2 add constraint fk foreign key (b) references t1(id) on delete cascade on update cascade")
+	tk.MustExec("insert into t2 values (1),(2),(3),(4)")
+	tk.MustGetDBError("insert into t2 values (5)", plannercore.ErrNoReferencedRow2)
+	tk.MustExec("update t1 set id = id+10 where id=1")
+	tk.MustExec("delete from t1 where id<10")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("11"))
+	tk.MustExec("alter table t1 nocache;")
+	tk.MustExec("drop table t1,t2;")
+
+	// Test add foreign key on cache table.
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (b int);")
+	tk.MustExec("alter  table t2 add constraint fk foreign key (b) references t1(id) on delete cascade on update cascade")
+	tk.MustExec("alter table t2 cache;")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
+	tk.MustExec("insert into t2 values (1),(2),(3),(4)")
+	tk.MustGetDBError("insert into t2 values (5)", plannercore.ErrNoReferencedRow2)
+	tk.MustExec("update t1 set id = id+10 where id=1")
+	tk.MustExec("delete from t1 where id<10")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("11"))
+	tk.MustExec("alter table t2 nocache;")
+	tk.MustExec("drop table t1,t2;")
+}
+
 func TestForeignKeyAndConcurrentDDL(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@foreign_key_checks=1;")
 	tk.MustExec("use test")
