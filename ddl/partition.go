@@ -2832,6 +2832,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 			zap.Int64("jobID", reorgInfo.Job.ID),
 			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
 			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.Int64("partitionTableId", physTbl.GetPhysicalID()),
 			zap.String("startHandle", hex.EncodeToString(reorgInfo.StartKey)),
 			zap.String("endHandle", hex.EncodeToString(reorgInfo.EndKey)))
 		if err != nil {

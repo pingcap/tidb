@@ -1633,6 +1633,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 		//nolint:forcetypeassert
 		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), reorgInfo)
 	}
+	// TODO: if no errors, remove entry in tidb_ddl_reorg ?
 	return errors.Trace(err)
 }
 
@@ -1662,6 +1663,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	}
 	if pid == 0 {
 		// Next partition does not exist, all the job done.
+		// TODO: Remove the ReorgMeta job?
 		return true, nil
 	}
 

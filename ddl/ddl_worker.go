@@ -194,10 +194,13 @@ func (w *worker) start(d *ddlCtx) {
 		ok := true
 		select {
 		case <-ticker.C:
-			logutil.Logger(w.logCtx).Debug("[ddl] wait to check DDL status again", zap.Duration("interval", checkTime))
+			// TODO: move back to Debug, instead of Info
+			logutil.BgLogger().Info("[ddl] wait to check DDL status again", zap.Duration("interval", checkTime))
 		case <-w.ddlJobCh:
 		case _, ok = <-notifyDDLJobByEtcdCh:
 		case <-w.ctx.Done():
+			// TODO: Remove CI debug
+			logutil.BgLogger().Info("[ddl] worker start done?!")
 			return
 		}
 
@@ -216,6 +219,8 @@ func (w *worker) start(d *ddlCtx) {
 		if err != nil {
 			logutil.Logger(w.logCtx).Warn("[ddl] handle DDL job failed", zap.Error(err))
 		}
+		// TODO: remove CI debug log
+		logutil.BgLogger().Info("[ddl] handle DDL job loop done")
 	}
 }
 
@@ -918,6 +923,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
 	waitDependencyJobCnt := 0
 	for {
+		// TODO: remove CI debug
+		logutil.BgLogger().Info("[ddl] DDL job queue new loop.")
 		if isChanClosed(w.ctx.Done()) {
 			return nil
 		}
@@ -930,10 +937,14 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		waitTime := 2 * d.lease
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err := kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			// TODO: remove CI debug
+			logutil.BgLogger().Info("[ddl] DDL job queue locking runningJobs")
 			d.runningJobs.Lock()
 			// We are not owner, return and retry checking later.
 			if !d.isOwner() || variable.EnableConcurrentDDL.Load() || d.waiting.Load() {
 				d.runningJobs.Unlock()
+				// TODO: remove CI debug
+				logutil.BgLogger().Info("[ddl] DDL job queue not owner")
 				return nil
 			}
 
@@ -944,13 +955,15 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
 				d.runningJobs.Unlock()
+				// TODO: remove CI debug
+				logutil.BgLogger().Info("[ddl] DDL job queue no job", zap.Error(err))
 				return errors.Trace(err)
 			}
 			d.runningJobs.ids[job.ID] = struct{}{}
 			d.runningJobs.Unlock()
 
 			// TODO: Remove this debug line (only used for CI)
-			logutil.Logger(w.logCtx).Info("handleDDLJobQueue", zap.String("job", job.String()))
+			logutil.BgLogger().Info("handleDDLJobQueue first job", zap.String("job", job.String()))
 			defer d.deleteRunningDDLJobMap(job.ID)
 
 			// only general ddls allowed to be executed when TiKV is disk full.
@@ -970,6 +983,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 			if once {
 				err = waitSchemaSynced(d, job, waitTime)
+				// TODO: Remove this debug line (only used for CI)
+				logutil.BgLogger().Info("once done waitSchemaSynced", zap.Error(err))
 				if err == nil {
 					once = false
 				}
@@ -980,6 +995,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				if !job.IsRollbackDone() {
 					job.State = model.JobStateSynced
 				}
+				// TODO: Remove this debug line (only used for CI)
+				logutil.BgLogger().Info("job is done", zap.Error(err))
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -992,13 +1009,19 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
+			// TODO: Remove this debug line (only used for CI)
+			logutil.BgLogger().Info("running DDL job")
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)
 			if job.IsCancelled() {
+				// TODO: Remove this debug line (only used for CI)
+				logutil.BgLogger().Info("DDL job cancelled")
 				txn.Reset()
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
 			if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
+				// TODO: Remove this debug line (only used for CI)
+				logutil.BgLogger().Info("DDL job failed and not rolling back", zap.Error(runJobErr))
 				// If the running job meets an error
 				// and the job state is rolling back, it means that we have already handled this error.
 				// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
@@ -1010,8 +1033,14 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// Result in the retry duration is up to 2 * lease.
 				schemaVer = 0
 			}
+			// TODO: Remove this debug line (only used for CI)
+			logutil.BgLogger().Info("calling updateDDLJob", zap.String("job", job.String()))
 			err = w.updateDDLJob(t, job, runJobErr != nil)
+			// TODO: Remove this debug line (only used for CI)
+			logutil.BgLogger().Info("calling updateDDLJob", zap.Error(err), zap.String("job", job.String()))
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
+				// TODO: Remove this debug line (only used for CI)
+				logutil.BgLogger().Info("error returned by handleUpdateJobError", zap.Error(err), zap.String("job", job.String()))
 				return errors.Trace(err)
 			}
 			writeBinlog(d.binlogCli, txn, job)
@@ -1024,6 +1053,12 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
 				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
+		}
+		// TODO: Remove this debug line (only used for CI)
+		if job != nil {
+			logutil.BgLogger().Info("OK?", zap.Error(err), zap.String("job", job.String()))
+		} else {
+			logutil.BgLogger().Info("OK?", zap.Error(err))
 		}
 		if job != nil {
 			d.unlockSchemaVersion(job.ID)
@@ -1102,6 +1137,8 @@ func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
 				zap.Int64("dependentJobID", job.DependencyID),
 				zap.Duration("waitTime", waitDependencyJobInterval))
 		}
+		// TODO: Remove this debug line (only used for CI)
+		logutil.BgLogger().Info("waitDependencyJobFinished")
 		time.Sleep(waitDependencyJobInterval)
 		*cnt++
 	} else {
@@ -1185,12 +1222,14 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 	if job.IsFinished() {
-		logutil.Logger(w.logCtx).Debug("[ddl] finish DDL job", zap.String("job", job.String()))
+		// TODO: change back to Debug
+		logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
 		return
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
-		logutil.Logger(w.logCtx).Debug("[ddl] cancel DDL job", zap.String("job", job.String()))
+		// TODO: change back to Debug
+		logutil.Logger(w.logCtx).Info("[ddl] cancel DDL job", zap.String("job", job.String()))
 		return convertJob2RollbackJob(w, d, t, job)
 	}
 
@@ -1370,7 +1409,10 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 		return
 	}
 
+	// TODO: Remove this debug line (only used for CI)
+	logutil.BgLogger().Info("waitSchemaChanged calling OwnerUpdateGlobalVersion")
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
+	logutil.BgLogger().Info("waitSchemaChanged done OwnerUpdateGlobalVersion")
 	if err != nil {
 		logutil.Logger(d.ctx).Info("[ddl] update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
@@ -1382,6 +1424,7 @@ func waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, l
 
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	err = d.schemaSyncer.OwnerCheckAllVersions(context.Background(), job.ID, latestSchemaVersion)
+	logutil.BgLogger().Info("waitSchemaChanged done OwnerCheckAllVersions")
 	if err != nil {
 		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		return

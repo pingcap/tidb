@@ -527,6 +527,7 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		return errors.Trace(err)
 	}
 
+	// TODO: Maybe do reorgInfo.UpdateReorgMeta here too?
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	dc.getReorgCtx(reorgInfo.Job).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
@@ -929,6 +930,8 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		}
 		startKey = remains[0].StartKey
 	}
+	// TODO: delete CI debug log
+	logutil.BgLogger().Info("[ddl] backfill workers to reorg record done")
 	return nil
 }
 
