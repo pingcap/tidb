@@ -93,3 +93,10 @@ func GetDefaultFieldLengthAndDecimalForCast(tp byte) (flen int, decimal int) {
 	}
 	return -1, -1
 }
+
+// IsAuthPluginClearText is used to indicated that the plugin need clear-text password.
+func IsAuthPluginClearText(authPlugin string) bool {
+	return authPlugin == AuthNativePassword ||
+		authPlugin == AuthTiDBSM3Password ||
+		authPlugin == AuthCachingSha2Password
+}

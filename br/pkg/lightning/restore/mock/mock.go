@@ -77,14 +77,19 @@ func NewMockImportSource(dbSrcDataMap map[string]*MockDBSourceData) (*MockImport
 			tblMeta := mydump.NewMDTableMeta("binary")
 			tblMeta.DB = dbName
 			tblMeta.Name = tblName
+			compression := mydump.CompressionNone
+			if strings.HasSuffix(tblData.SchemaFile.FileName, ".gz") {
+				compression = mydump.CompressionGZ
+			}
 			tblMeta.SchemaFile = mydump.FileInfo{
 				TableName: filter.Table{
 					Schema: dbName,
 					Name:   tblName,
 				},
 				FileMeta: mydump.SourceFileMeta{
-					Path: tblData.SchemaFile.FileName,
-					Type: mydump.SourceTypeTableSchema,
+					Path:        tblData.SchemaFile.FileName,
+					Type:        mydump.SourceTypeTableSchema,
+					Compression: compression,
 				},
 			}
 			tblMeta.DataFiles = []mydump.FileInfo{}
@@ -106,14 +111,20 @@ func NewMockImportSource(dbSrcDataMap map[string]*MockDBSourceData) (*MockImport
 					FileMeta: mydump.SourceFileMeta{
 						Path:     tblDataFile.FileName,
 						FileSize: int64(fileSize),
+						RealSize: int64(fileSize),
 					},
 				}
+				fileName := tblDataFile.FileName
+				if strings.HasSuffix(fileName, ".gz") {
+					fileName = strings.TrimSuffix(tblDataFile.FileName, ".gz")
+					fileInfo.FileMeta.Compression = mydump.CompressionGZ
+				}
 				switch {
-				case strings.HasSuffix(tblDataFile.FileName, ".csv"):
+				case strings.HasSuffix(fileName, ".csv"):
 					fileInfo.FileMeta.Type = mydump.SourceTypeCSV
-				case strings.HasSuffix(tblDataFile.FileName, ".sql"):
+				case strings.HasSuffix(fileName, ".sql"):
 					fileInfo.FileMeta.Type = mydump.SourceTypeSQL
-				case strings.HasSuffix(tblDataFile.FileName, ".parquet"):
+				case strings.HasSuffix(fileName, ".parquet"):
 					fileInfo.FileMeta.Type = mydump.SourceTypeParquet
 				default:
 					return nil, errors.Errorf("unsupported file type: %s", tblDataFile.FileName)

@@ -24,8 +24,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // Process global Observation indicators for memory limit.
@@ -77,22 +79,37 @@ func (smqh *Handle) Run() {
 }
 
 type sessionToBeKilled struct {
-	isKilling    bool
-	sqlStartTime time.Time
-	sessionID    uint64
+	isKilling      bool
+	sqlStartTime   time.Time
+	sessionID      uint64
+	sessionTracker *memory.Tracker
+
+	killStartTime time.Time
+	lastLogTime   time.Time
 }
 
 func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	if s.isKilling {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
 			if info.Time == s.sqlStartTime {
+				if time.Since(s.lastLogTime) > 5*time.Second {
+					logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds",
+						time.Since(s.killStartTime)/time.Second),
+						zap.Uint64("connID", info.ID),
+						zap.String("sql digest", info.Digest),
+						zap.String("sql text", fmt.Sprintf("%.100v", info.Info)),
+						zap.Int64("sql memory usage", info.MemTracker.BytesConsumed()))
+					s.lastLogTime = time.Now()
+				}
 				return
 			}
 		}
 		s.isKilling = false
 		IsKilling.Store(false)
+		memory.MemUsageTop1Tracker.CompareAndSwap(s.sessionTracker, nil)
 		//nolint: all_revive,revive
 		runtime.GC()
+		logutil.BgLogger().Warn("global memory controller killed the top1 memory consumer successfully")
 	}
 
 	if bt == 0 {
@@ -106,9 +123,18 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 		t := memory.MemUsageTop1Tracker.Load()
 		if t != nil {
 			if info, ok := sm.GetProcessInfo(t.SessionID); ok {
+				logutil.BgLogger().Warn("global memory controller tries to kill the top1 memory consumer",
+					zap.Uint64("connID", info.ID),
+					zap.String("sql digest", info.Digest),
+					zap.String("sql text", fmt.Sprintf("%.100v", info.Info)),
+					zap.Uint64("tidb_server_memory_limit", bt),
+					zap.Uint64("heap inuse", instanceStats.HeapInuse),
+					zap.Int64("sql memory usage", info.MemTracker.BytesConsumed()),
+				)
 				s.sessionID = t.SessionID
 				s.sqlStartTime = info.Time
 				s.isKilling = true
+				s.sessionTracker = t
 				t.NeedKill.Store(true)
 
 				killTime := time.Now()
@@ -116,6 +142,8 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				SessionKillLast.Store(killTime)
 				IsKilling.Store(true)
 				GlobalMemoryOpsHistoryManager.recordOne(info, killTime, bt, instanceStats.HeapInuse)
+				s.lastLogTime = time.Now()
+				s.killStartTime = time.Now()
 			}
 		}
 	}

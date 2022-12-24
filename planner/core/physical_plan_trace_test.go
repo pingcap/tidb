@@ -94,6 +94,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		require.NoError(t, err)
 		sctx := core.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		sctx.GetSessionVars().CostModelVersion = 2
 		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), stmt)

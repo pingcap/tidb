@@ -1035,6 +1035,7 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
 	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = ON")
 	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF")
 

@@ -62,9 +62,9 @@ func (eqh *Handle) Run() {
 				}
 
 				costTime := time.Since(info.Time)
-				if !info.ExceedExpensiveTimeThresh && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
-					logExpensiveQuery(costTime, info)
-					info.ExceedExpensiveTimeThresh = true
+				if time.Since(info.ExpensiveLogTime) > 60*time.Second && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
+					logExpensiveQuery(costTime, info, "expensive_query")
+					info.ExpensiveLogTime = time.Now()
 				}
 				if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
 					logutil.BgLogger().Warn("execution timeout, kill it", zap.Duration("costTime", costTime),
@@ -106,10 +106,14 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 	if !ok {
 		return
 	}
-	logExpensiveQuery(time.Since(info.Time), info)
+	logExpensiveQuery(time.Since(info.Time), info, "memory exceeds quota")
 }
 
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
-func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo) {
-	logutil.BgLogger().Warn("expensive_query", util.GenLogFields(costTime, info, true)...)
+func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo, msg string) {
+	fields := util.GenLogFields(costTime, info, true)
+	if fields == nil {
+		return
+	}
+	logutil.BgLogger().Warn(msg, fields...)
 }

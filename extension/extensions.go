@@ -29,7 +29,7 @@ func (es *Extensions) Manifests() []*Manifest {
 	return manifests
 }
 
-// Bootstrap bootstrap all extensions
+// Bootstrap bootstraps all extensions
 func (es *Extensions) Bootstrap(ctx BootstrapContext) error {
 	if es == nil {
 		return nil
@@ -43,6 +43,21 @@ func (es *Extensions) Bootstrap(ctx BootstrapContext) error {
 		}
 	}
 	return nil
+}
+
+// GetAccessCheckFuncs returns spec functions of the custom access check
+func (es *Extensions) GetAccessCheckFuncs() (funcs []AccessCheckFunc) {
+	if es == nil {
+		return nil
+	}
+
+	for _, m := range es.manifests {
+		if m.accessCheckFunc != nil {
+			funcs = append(funcs, m.accessCheckFunc)
+		}
+	}
+
+	return funcs
 }
 
 // NewSessionExtensions creates a new ConnExtensions object

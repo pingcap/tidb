@@ -334,7 +334,7 @@ func TestPrepareWithAggregation(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-			PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
+			PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session()),
 		})
 		require.NoError(t, err)
 		tk.SetSession(se)
@@ -420,14 +420,14 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(1), hit)
+			require.Equal(t, float64(0), hit) // insert-values-stmt cannot use the plan cache
 		}
 		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(0), hit)
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -443,21 +443,21 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(0), hit)
 		}
 		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(3), hit)
+			require.Equal(t, float64(1), hit)
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(4), hit)
+			require.Equal(t, float64(2), hit)
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)
@@ -599,7 +599,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=true`)
 
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session()),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)

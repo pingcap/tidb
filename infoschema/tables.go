@@ -1323,6 +1323,9 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.PlanDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: stmtsummary.PlanStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
 	{name: stmtsummary.BinaryPlan, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled binary plan"},
+	{name: stmtsummary.Charset, tp: mysql.TypeVarchar, size: 64, comment: "Sampled charset"},
+	{name: stmtsummary.Collation, tp: mysql.TypeVarchar, size: 64, comment: "Sampled collation"},
+	{name: stmtsummary.PlanHint, tp: mysql.TypeVarchar, size: 64, comment: "Sampled plan hint"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1369,6 +1372,7 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "AVG_STABLE_ROWS", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_STABLE_SIZE", tp: mysql.TypeDouble, size: 64},
 	{name: "TOTAL_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 64},
+	{name: "MAX_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 64},
 	{name: "AVG_PACK_COUNT_IN_DELTA", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_PACK_ROWS_IN_DELTA", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_PACK_SIZE_IN_DELTA", tp: mysql.TypeDouble, size: 64},
@@ -1380,23 +1384,14 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
-	{name: "STORAGE_STABLE_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_STABLE_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_STABLE_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
-	{name: "STORAGE_DELTA_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_DELTA_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_DELTA_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
-	{name: "STORAGE_META_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_META_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STORAGE_META_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
 	{name: "BACKGROUND_TASKS_LENGTH", tp: mysql.TypeLonglong, size: 64},
 	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
@@ -1737,8 +1732,8 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 
 	// The user hasn't set the config 'ServerVersion'.
 	if isDefaultVersion {
-		nodeVersion = TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
-		if nodeVersion[0] == 'v' {
+		nodeVersion = TiDBVersion[strings.Index(TiDBVersion, "TiDB-")+len("TiDB-"):]
+		if len(nodeVersion) > 0 && nodeVersion[0] == 'v' {
 			nodeVersion = nodeVersion[1:]
 		}
 		nodeVersions := strings.Split(nodeVersion, "-")
@@ -2131,7 +2126,7 @@ func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx sessionctx.Con
 
 // Allocators implements table.Table Allocators interface.
 func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
-	return nil
+	return autoid.Allocators{}
 }
 
 // Meta implements table.Table Meta interface.
@@ -2214,7 +2209,7 @@ func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx sessionctx.Contex
 
 // Allocators implements table.Table Allocators interface.
 func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
-	return nil
+	return autoid.Allocators{}
 }
 
 // Meta implements table.Table Meta interface.

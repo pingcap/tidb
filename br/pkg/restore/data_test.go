@@ -97,7 +97,7 @@ func createDataSuite(t *testing.T) *testData {
 
 	fakeProgress := mockGlue.StartProgress(ctx, "Restore Data", int64(numOnlineStore*3), false)
 
-	var recovery = restore.NewRecovery(createStores(), mockMgr, fakeProgress)
+	var recovery = restore.NewRecovery(createStores(), mockMgr, fakeProgress, 64)
 	tikvClient.Close()
 	return &testData{
 		ctx:          ctx,

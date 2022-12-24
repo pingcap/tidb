@@ -15,6 +15,7 @@
 package domain
 
 import (
+	"context"
 	"strconv"
 	"time"
 
@@ -33,6 +34,9 @@ func (do *Domain) initDomainSysVars() {
 	variable.SetStatsCacheCapacity.Store(do.setStatsCacheCapacity)
 	pdClientDynamicOptionFunc := do.setPDClientDynamicOption
 	variable.SetPDClientDynamicOption.Store(&pdClientDynamicOptionFunc)
+
+	variable.SetExternalTimestamp = do.setExternalTimestamp
+	variable.GetExternalTimestamp = do.getExternalTimestamp
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -74,4 +78,12 @@ func (do *Domain) updatePDClient(option pd.DynamicOption, val interface{}) error
 		return nil
 	}
 	return pdClient.UpdateOption(option, val)
+}
+
+func (do *Domain) setExternalTimestamp(ctx context.Context, ts uint64) error {
+	return do.store.GetOracle().SetExternalTimestamp(ctx, ts)
+}
+
+func (do *Domain) getExternalTimestamp(ctx context.Context) (uint64, error) {
+	return do.store.GetOracle().GetExternalTimestamp(ctx)
 }

@@ -44,6 +44,24 @@ func TestShowStatsMeta(t *testing.T) {
 	require.Equal(t, "t", result.Rows()[0][1])
 }
 
+func TestShowStatsLocked(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("lock stats t, t1")
+	result := tk.MustQuery("show stats_locked")
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "t1", result.Rows()[1][1])
+	result = tk.MustQuery("show stats_locked where table_name = 't'")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "t", result.Rows()[0][1])
+}
+
 func TestShowStatsHistograms(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

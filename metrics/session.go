@@ -18,6 +18,15 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // Session metrics.
 var (
+	AutoIDReqDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "meta",
+			Name:      "autoid_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
+			Buckets:   prometheus.ExponentialBuckets(0.00004, 2, 28), // 40us ~ 1.5h
+		})
+
 	SessionExecuteParseDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -128,13 +137,14 @@ var (
 			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
 
-	NonTransactionalDeleteCount = prometheus.NewCounter(
+	NonTransactionalDMLCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
-			Name:      "non_transactional_delete_count",
+			Name:      "non_transactional_dml_count",
 			Help:      "Counter of non-transactional delete",
-		})
+		}, []string{LblType},
+	)
 	TxnStatusEnteringCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -156,7 +166,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "lazy_pessimistic_unique_check_set_count",
-			Help:      "Counter of setting tidb_constraint_check_in_place to false",
+			Help:      "Counter of setting tidb_constraint_check_in_place to false, note that it doesn't count the default value set by tidb config",
 		},
 	)
 )

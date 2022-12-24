@@ -223,10 +223,24 @@ func (tc *TiDBContext) WarningCount() uint16 {
 	return tc.GetSessionVars().StmtCtx.WarningCount()
 }
 
+func (tc *TiDBContext) checkSandBoxMode(stmt ast.StmtNode) error {
+	if !tc.Session.GetSessionVars().InRestrictedSQL && tc.InSandBoxMode() {
+		switch stmt.(type) {
+		case *ast.SetPwdStmt, *ast.AlterUserStmt:
+		default:
+			return errMustChangePassword.GenWithStackByArgs()
+		}
+	}
+	return nil
+}
+
 // ExecuteStmt implements QueryCtx interface.
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	var rs sqlexec.RecordSet
 	var err error
+	if err = tc.checkSandBoxMode(stmt); err != nil {
+		return nil, err
+	}
 	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
 		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {
@@ -464,6 +478,46 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 		}
 	}
 	return trs.columns
+}
+
+// rsWithHooks wraps a ResultSet with some hooks (currently only onClosed).
+type rsWithHooks struct {
+	ResultSet
+	onClosed func()
+}
+
+// Close implements ResultSet#Close
+func (rs *rsWithHooks) Close() error {
+	closed := rs.IsClosed()
+	err := rs.ResultSet.Close()
+	if !closed && rs.onClosed != nil {
+		rs.onClosed()
+	}
+	return err
+}
+
+// OnFetchReturned implements fetchNotifier#OnFetchReturned
+func (rs *rsWithHooks) OnFetchReturned() {
+	if impl, ok := rs.ResultSet.(fetchNotifier); ok {
+		impl.OnFetchReturned()
+	}
+}
+
+// Unwrap returns the underlying result set
+func (rs *rsWithHooks) Unwrap() ResultSet {
+	return rs.ResultSet
+}
+
+// unwrapResultSet likes errors.Cause but for ResultSet
+func unwrapResultSet(rs ResultSet) ResultSet {
+	var unRS ResultSet
+	if u, ok := rs.(interface{ Unwrap() ResultSet }); ok {
+		unRS = u.Unwrap()
+	}
+	if unRS == nil {
+		return rs
+	}
+	return unwrapResultSet(unRS)
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
