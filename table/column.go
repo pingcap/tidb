@@ -691,7 +691,9 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
+			sctx.GetSessionVars().StmtCtx.InFillVirtualColumnValue = true
 			castDatum, err := CastValue(sctx, datum, colInfos[idx], false, true)
+			sctx.GetSessionVars().StmtCtx.InFillVirtualColumnValue = false
 			if err != nil {
 				return err
 			}

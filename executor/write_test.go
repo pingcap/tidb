@@ -4299,3 +4299,19 @@ func TestIssueInsertPrefixIndexForNonUTF8Collation(t *testing.T) {
 	tk.MustExec("insert into t3 select 'abc '")
 	tk.MustGetErrCode("insert into t3 select 'abc d'", 1062)
 }
+
+func TestIssue40066(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(column1 int, column2 int unsigned generated always as(column1-100));`)
+	tk.MustExec("set @orig_sql_mode = @@sql_mode; set @@sql_mode = 'TRADITIONAL';")
+	tk.MustGetErrMsg("insert into t(column1) values (99);", "[types:1264]Out of range value for column 'column2' at row 1")
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t(column1) values (99);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1264 Out of range value for column 'column2' at row 1"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("99 0"))
+	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
+	tk.MustExec("drop table if exists t;")
+}
