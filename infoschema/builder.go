@@ -290,12 +290,17 @@ func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff
 
 // TODO: How to test this?
 func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	// Is this needed? Since there should be no difference more than partition changes?
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// TODO: Remove CI debug log
 	logutil.BgLogger().Info("applyReorganizePartition",
 		zap.String("diff.Type", diff.Type.String()),
 		zap.Int64("diff.Ver", diff.Version))
 	// Minimum allocation, one partition is reorganized into 1 or more new ones
-	tblIDs := make([]int64, 0, 1+len(diff.AffectedOpts))
+	//tblIDs := make([]int64, 0, 1+len(diff.AffectedOpts))
 	for _, opt := range diff.AffectedOpts {
 		// TODO: Remove CI debug log
 		logutil.BgLogger().Info("AffectedOpts",
@@ -303,11 +308,11 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 			zap.Int64("TableID", opt.TableID))
 		if opt.OldTableID != 0 {
 			b.deleteBundle(b.is, opt.OldTableID)
-			tblIDs = append(tblIDs, opt.OldTableID)
+			//tblIDs = append(tblIDs, opt.OldTableID)
 		}
 		if opt.TableID != 0 {
 			b.markTableBundleShouldUpdate(opt.TableID)
-			tblIDs = append(tblIDs, opt.TableID)
+			//tblIDs = append(tblIDs, opt.TableID)
 		}
 	}
 	return tblIDs, nil
@@ -703,6 +708,8 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	switch tp {
 	case model.ActionDropTablePartition:
 	case model.ActionTruncateTablePartition:
+	// ReorganizePartition handle the bundles in applyReorganizePartition
+	case model.ActionReorganizePartition:
 	default:
 		pi := tblInfo.GetPartitionInfo()
 		if pi != nil {
