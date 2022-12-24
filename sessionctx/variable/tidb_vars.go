@@ -1107,7 +1107,7 @@ const (
 	DefAdaptiveClosestReadThreshold                = 4096
 	DefTiDBEnableAnalyzeSnapshot                   = false
 	DefTiDBGenerateBinaryPlan                      = true
-	DefEnableTiDBGCAwareMemoryTrack                = true
+	DefEnableTiDBGCAwareMemoryTrack                = false
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
 	DefTiDBEnableMDL                               = true
