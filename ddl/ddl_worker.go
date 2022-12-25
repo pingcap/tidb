@@ -614,9 +614,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	// TODO: remove CI log
-	txn, _ := w.sess.txn()
-	logutil.BgLogger().Info("finishDDLJob GC?", zap.Uint64("txn TSO", txn.StartTS()))
 	if jobNeedGC(job) {
 		err = w.deleteRange(w.ctx, job)
 		if err != nil {
@@ -646,8 +643,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	} else {
 		_, err = t.DeQueueDDLJob()
 	}
-	// TODO: remove CI log
-	logutil.BgLogger().Info("finishDDLJob deleted job", zap.Uint64("txn TSO", txn.StartTS()), zap.String("job", job.String()), zap.Error(err))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -663,8 +658,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.writeDDLSeqNum(job)
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs, w.concurrentDDL)
-	// TODO: remove CI log
-	logutil.BgLogger().Info("finishDDLJob add history job", zap.Uint64("txn TSO", txn.StartTS()), zap.String("job", job.String()), zap.Error(err))
 	return errors.Trace(err)
 }
 
@@ -787,9 +780,6 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 		return err
 	}
 
-	// TODO: remove CI log
-	txn, _ := w.sess.txn()
-	logutil.BgLogger().Info("HandleJobDone", zap.Uint64("txn TSO", txn.StartTS()))
 	err = w.sess.commit()
 	if err != nil {
 		return err

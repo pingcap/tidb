@@ -389,8 +389,7 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
 	_, err := w.sess.execute(context.Background(), sql, "delete_job")
 	// TODO: remove CI log
-	txn, _ := w.sess.txn()
-	logutil.BgLogger().Info("deleteDDLJob", zap.String("job", job.String()), zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
+	logutil.BgLogger().Info("deleteDDLJob", zap.String("job", job.String()), zap.Error(err))
 	return errors.Trace(err)
 }
 
@@ -402,8 +401,7 @@ func updateDDLJob2Table(sctx *session, job *model.Job, updateRawArgs bool) error
 	sql := fmt.Sprintf(updateDDLJobSQL, wrapKey2String(b), job.ID)
 	_, err = sctx.execute(context.Background(), sql, "update_job")
 	// TODO: remove CI log
-	txn, _ := sctx.txn()
-	logutil.BgLogger().Info("updateDDLJob2Table", zap.String("job", job.String()), zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
+	logutil.BgLogger().Info("updateDDLJob2Table", zap.String("job", job.String()), zap.Error(err))
 	return errors.Trace(err)
 }
 
@@ -441,9 +439,7 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 			zap.Stringer("endHandle", endKey))
 	}
 	// TODO: remove CI log
-	txn, _ := sess.txn()
 	logutil.BgLogger().Info("getDDLReorgHandle",
-		zap.Uint64("TSO", txn.StartTS()),
 		zap.Int64("partition ID", physicalTableID),
 		zap.Int64("element.ID", element.ID),
 		zap.String("element.TypeKey", string(element.TypeKey)),
@@ -458,8 +454,7 @@ func updateDDLReorgStartHandle(sess *session, job *model.Job, element *meta.Elem
 		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), job.ID)
 	_, err := sess.execute(context.Background(), sql, "update_start_handle")
 	// TODO: remove CI log
-	txn, _ := sess.txn()
-	logutil.BgLogger().Info("updateDDLReorgStartHandle", zap.String("job", job.String()), zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
+	logutil.BgLogger().Info("updateDDLReorgStartHandle", zap.String("job", job.String()), zap.Error(err))
 	return err
 }
 
@@ -469,8 +464,7 @@ func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv
 		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, jobID)
 	_, err := sess.execute(context.Background(), sql, "update_handle")
 	// TODO: remove CI log
-	txn, _ := sess.txn()
-	logutil.BgLogger().Info("updateDDLReorgHandle", zap.Int64("jobID", jobID), zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
+	logutil.BgLogger().Info("updateDDLReorgHandle", zap.Int64("jobID", jobID), zap.Error(err))
 	return err
 }
 
@@ -480,8 +474,7 @@ func initDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.K
 		jobID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
 	_, err := sess.execute(context.Background(), sql, "update_handle")
 	// TODO: remove CI log
-	txn, _ := sess.txn()
-	logutil.BgLogger().Info("initDDLReorgHandle", zap.Int64("jobID", jobID), zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
+	logutil.BgLogger().Info("initDDLReorgHandle", zap.Int64("jobID", jobID), zap.Error(err))
 	return err
 }
 
@@ -493,8 +486,7 @@ func removeDDLReorgHandle(sess *session, job *model.Job, elements []*meta.Elemen
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	_, err := sess.execute(context.Background(), sql, "remove_handle")
 	// TODO: remove CI log
-	txn, _ := sess.txn()
-	logutil.BgLogger().Info("initDDLReorgHandle", zap.String("job", job.String()), zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
+	logutil.BgLogger().Info("initDDLReorgHandle", zap.String("job", job.String()), zap.Error(err))
 	return err
 }
 
@@ -503,8 +495,7 @@ func removeReorgElement(sess *session, job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	_, err := sess.execute(context.Background(), sql, "remove_handle")
 	// TODO: remove CI log
-	txn, _ := sess.txn()
-	logutil.BgLogger().Info("initDDLReorgHandle", zap.String("job", job.String()), zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
+	logutil.BgLogger().Info("initDDLReorgHandle", zap.String("job", job.String()), zap.Error(err))
 	return err
 }
 
@@ -704,8 +695,7 @@ func GetBackfillJobCount(sess *session, tblName, condition string, label string)
 func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]*BackfillJob, error) {
 	rows, err := sess.execute(context.Background(), fmt.Sprintf("select * from mysql.%s where %s", tblName, condition), label)
 	// TODO: remove CI log
-	txn, _ := sess.txn()
-	logutil.BgLogger().Info("GetBackfillJobs", zap.String("table", tblName), zap.String("where", condition), zap.Uint64("txn TSO", txn.StartTS()), zap.Int("rows", len(rows)), zap.Error(err))
+	logutil.BgLogger().Info("GetBackfillJobs", zap.String("table", tblName), zap.String("where", condition), zap.Int("rows", len(rows)), zap.Error(err))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -750,8 +740,7 @@ func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) e
 	}
 	_, err := sess.execute(context.Background(), sql, "remove_backfill_job")
 	// TODO: remove CI log
-	txn, _ := sess.txn()
-	logutil.BgLogger().Info("RemoveBackfillJob", zap.String("sql", sql), zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
+	logutil.BgLogger().Info("RemoveBackfillJob", zap.String("sql", sql), zap.Error(err))
 	return err
 }
 
@@ -764,8 +753,7 @@ func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob
 		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State, mate, backfillJob.JobID, backfillJob.EleID, backfillJob.EleKey, backfillJob.ID)
 	_, err = sess.execute(context.Background(), sql, label)
 	// TODO: remove CI log
-	txn, _ := sess.txn()
-	logutil.BgLogger().Info("updateBackfillJob", zap.String("sql", sql), zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
+	logutil.BgLogger().Info("updateBackfillJob", zap.String("sql", sql), zap.Error(err))
 	return err
 }
 
@@ -893,10 +881,9 @@ func runInTxn(se *session, f func(*session) error) (err error) {
 	if err != nil {
 		return err
 	}
-	//TODO: Remove these two debug lines
-	txn, _ := se.txn()
-	logutil.BgLogger().Info("runInTxn", zap.Uint64("txn.StartTS TSO", txn.StartTS()))
 	err = f(se)
+	//TODO: Remove these two debug lines
+	logutil.BgLogger().Info("runInTxn", zap.Error(err))
 	if err != nil {
 		se.rollback()
 		return

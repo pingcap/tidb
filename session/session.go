@@ -721,6 +721,8 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.CommitTSUpperBoundCheck, c.commitTSCheck)
 	}
 
+	// TODO: remove CI debug
+	logutil.BgLogger().Info("doCommit", zap.Uint64("StartTS", s.txn.StartTS()), zap.Int("size", s.txn.Size()))
 	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
 	if err != nil {
 		err = s.handleAssertionFailure(ctx, err)

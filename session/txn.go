@@ -611,6 +611,7 @@ func (s *session) StmtCommit() {
 		mutation := getBinlogMutation(s, tableID)
 		mergeToMutation(mutation, delta)
 	}
+	logutil.BgLogger().Info("StmtCommit", zap.Uint64("StartTS", st.StartTS()), zap.Int("mutations", len(st.mutations)))
 }
 
 // StmtRollback implements the sessionctx.Context interface.

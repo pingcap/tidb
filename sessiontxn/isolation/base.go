@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -246,6 +248,8 @@ func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
 // ActivateTxn activates the transaction and set the relevant context variables.
 func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
+		// TODO: remove CI debug
+		logutil.BgLogger().Info("ActivateTxn, txn already exists", zap.Uint64("StartTS", p.txn.StartTS()))
 		return p.txn, nil
 	}
 
@@ -267,6 +271,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
+	// TODO: remove CI debug
+	logutil.BgLogger().Info("ActivateTxn, new txn", zap.Uint64("StartTS", sessVars.TxnCtx.StartTS))
 	if sessVars.MemDBFootprint != nil {
 		sessVars.MemDBFootprint.Detach()
 	}

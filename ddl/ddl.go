@@ -1404,9 +1404,6 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	//TODO: Remove these two debug lines
-	txn, _ := sess.txn()
-	logutil.BgLogger().Info("GetDDLInfoWithNewTxn", zap.Uint64("txn.StartTS TSO", txn.StartTS()))
 	info, err := GetDDLInfo(s)
 	sess.rollback()
 	return info, err
