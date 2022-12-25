@@ -44,6 +44,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestMemTracker4UpdateExec(t *testing.T) {
+	t.Skip("TODO: remove CI testing")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -63,6 +64,7 @@ func TestMemTracker4UpdateExec(t *testing.T) {
 }
 
 func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
+	t.Skip("TODO: remove CI testing")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -133,6 +135,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 }
 
 func TestMemTracker4DeleteExec(t *testing.T) {
+	t.Skip("TODO: remove CI testing")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
