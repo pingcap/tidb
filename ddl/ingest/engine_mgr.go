@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -58,7 +59,9 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 		cfg := generateLocalEngineConfig(job.ID, job.SchemaName, job.TableName)
 		openedEn, err := bc.backend.OpenEngine(bc.ctx, cfg, job.TableName, int32(indexID))
 		if err != nil {
-			return nil, errors.New(LitErrCreateEngineFail)
+			logutil.BgLogger().Warn(LitErrCreateEngineFail, zap.Int64("job ID", job.ID),
+				zap.Int64("index ID", indexID), zap.Error(err))
+			return nil, errors.Trace(err)
 		}
 		id := openedEn.GetEngineUUID()
 		en = NewEngineInfo(bc.ctx, job.ID, indexID, cfg, openedEn, id, 1, m.MemRoot, m.DiskRoot)
@@ -71,7 +74,7 @@ func (m *engineManager) Register(bc *BackendContext, job *model.Job, indexID int
 			logutil.BgLogger().Warn(LitErrExceedConcurrency, zap.Int64("job ID", job.ID),
 				zap.Int64("index ID", indexID),
 				zap.Int("concurrency", bc.cfg.TikvImporter.RangeConcurrency))
-			return nil, errors.New(LitErrExceedConcurrency)
+			return nil, dbterror.ErrIngestFailed.FastGenByArgs("concurrency quota exceeded")
 		}
 		en.writerCount++
 		info = LitInfoAddWriter
@@ -97,6 +100,20 @@ func (m *engineManager) Unregister(jobID, indexID int64) {
 	m.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
 	m.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
 	m.MemRoot.Release(StructSizeEngineInfo)
+}
+
+// ResetWorkers reset the writer count of the engineInfo because
+// the goroutines of backfill workers have been terminated.
+func (m *engineManager) ResetWorkers(bc *BackendContext, jobID, indexID int64) {
+	ei, exist := m.Load(indexID)
+	if !exist {
+		return
+	}
+	m.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
+	m.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
+	engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
+	m.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
+	ei.writerCount = 0
 }
 
 // UnregisterAll delete all engineInfo from the engineManager.

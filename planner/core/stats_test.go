@@ -123,6 +123,7 @@ func TestNDVGroupCols(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int not null, b int not null, key(a,b))")
 	tk.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")

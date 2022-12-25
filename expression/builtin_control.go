@@ -146,6 +146,11 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			}
 			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.GetDecimal() + 1 // account for -1 len fields
 			resultFieldType.SetFlenUnderLimit(flen)
+		} else if evalType == types.ETString {
+			lhsLen, rhsLen := lhs.GetFlen(), rhs.GetFlen()
+			if lhsLen != types.UnspecifiedLength && rhsLen != types.UnspecifiedLength {
+				resultFieldType.SetFlen(mathutil.Max(lhsLen, rhsLen))
+			}
 		} else {
 			resultFieldType.SetFlen(maxlen(lhs.GetFlen(), rhs.GetFlen()))
 		}

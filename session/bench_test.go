@@ -492,6 +492,26 @@ func BenchmarkSort(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkSort2(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	prepareSortBenchData(se, "int", "%v", 1000000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t order by col")
+		if err != nil {
+			b.Fatal(err)
+		}
+		readResult(ctx, rs[0], 1000000)
+	}
+	b.StopTimer()
+}
+
 func BenchmarkJoin(b *testing.B) {
 	ctx := context.Background()
 	se, do, st := prepareBenchSession()
@@ -1835,6 +1855,22 @@ func BenchmarkCompileStmt(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkAutoIncrement(b *testing.B) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table auto_inc (id int unsigned key nonclustered auto_increment) shard_row_id_bits=4 auto_id_cache 1;")
+	mustExecute(se, "set @@tidb_enable_mutation_checker = false")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mustExecute(se, "insert into auto_inc values ()")
+	}
+	b.StopTimer()
+}
+
 // TestBenchDaily collects the daily benchmark test result and generates a json output file.
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
@@ -1867,5 +1903,6 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkHashPartitionPruningMultiSelect,
 		BenchmarkInsertIntoSelect,
 		BenchmarkCompileStmt,
+		BenchmarkAutoIncrement,
 	)
 }

@@ -49,7 +49,8 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	// 3: (stats_extended)
 	// 4: (stats_fm_sketch)
 	// 5: (stats_history, stats_meta_history)
-	require.Len(t, kvRanges, 6)
+	// 6: (stats_table_locked)
+	require.Len(t, kvRanges, 7)
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE employees (" +
@@ -73,6 +74,7 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	tk.MustExec("truncate table mysql.stats_fm_sketch")
 	tk.MustExec("truncate table mysql.stats_history")
 	tk.MustExec("truncate table mysql.stats_meta_history")
+	tk.MustExec("truncate table mysql.stats_table_locked")
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
 	require.Len(t, kvRanges, 2)
@@ -96,7 +98,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	oldValue := map[string]interface{}{
-		"hot-region-schedule-limit": 1,
+		"merge-schedule-limit": 1,
 	}
 	require.NoError(t, infosync.SetPDScheduleConfig(context.Background(), oldValue))
 
@@ -110,7 +112,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 		if job.SchemaState == model.StateWriteReorganization {
 			closeValue, err := infosync.GetPDScheduleConfig(context.Background())
 			assert.NoError(t, err)
-			assert.Equal(t, closeValue["hot-region-schedule-limit"], 0)
+			assert.Equal(t, closeValue["merge-schedule-limit"], 0)
 			// cancel flashback job
 			job.State = model.JobStateCancelled
 			job.Error = dbterror.ErrCancelledDDLJob
@@ -126,7 +128,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
-	require.EqualValues(t, finishValue["hot-region-schedule-limit"], 1)
+	require.EqualValues(t, finishValue["merge-schedule-limit"], 1)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
@@ -202,23 +204,35 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 			rs, err = tk.Exec("show variables like 'tidb_enable_auto_analyze'")
 			assert.NoError(t, err)
 			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
+			assert.NoError(t, err)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 		}
 	}
 	dom.DDL().SetHook(hook)
-	// first try with `tidb_gc_enable` = on
+	// first try with `tidb_gc_enable` = on and `tidb_super_read_only` = off
 	tk.MustExec("set global tidb_gc_enable = on")
+	tk.MustExec("set global tidb_super_read_only = off")
 
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
-	rs, err := tk.Exec("show variables like 'tidb_gc_enable'")
+
+	rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 
-	// second try with `tidb_gc_enable` = off
+	// second try with `tidb_gc_enable` = off and `tidb_super_read_only` = on
 	tk.MustExec("set global tidb_gc_enable = off")
+	tk.MustExec("set global tidb_super_read_only = on")
 
 	ts, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+	rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)

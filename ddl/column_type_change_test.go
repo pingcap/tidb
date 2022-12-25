@@ -1812,8 +1812,7 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 	tk.MustExec("use test")
 
 	prepare := func() {
-		tk.MustExec("drop table if exists users")
-		tk.MustExec("drop table if exists orders")
+		tk.MustExec("drop table if exists users, orders")
 		tk.MustExec("CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);")
 		tk.MustExec("CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES users(id));")
 	}
@@ -1946,7 +1945,7 @@ func TestChangeIntToBitWillPanicInBackfillIndexes(t *testing.T) {
 		"  KEY `idx3` (`a`,`b`),\n" +
 		"  KEY `idx4` (`a`,`b`,`c`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("\x11 2 2.00", "\x13 1 1.00"))
 }
 
 // Close issue #24584

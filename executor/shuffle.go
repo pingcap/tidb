@@ -262,7 +262,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 		workerIndices []int
 	)
 	results := make([]*chunk.Chunk, len(e.workers))
-	chk := newFirstChunk(e.dataSources[dataSourceIndex])
+	chk := tryNewCacheChunk(e.dataSources[dataSourceIndex])
 
 	defer func() {
 		if r := recover(); r != nil {

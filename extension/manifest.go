@@ -17,10 +17,19 @@ package extension
 import (
 	"context"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+// SessionPool is the pool for session
+type SessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
 
 // Option represents an option to initialize an extension
 type Option func(m *Manifest)
@@ -46,6 +55,16 @@ func WithCustomFunctions(funcs []*FunctionDef) Option {
 	}
 }
 
+// AccessCheckFunc is a function that returns a dynamic privilege list for db/tbl/column access
+type AccessCheckFunc func(db, tbl, column string, priv mysql.PrivilegeType, sem bool) []string
+
+// WithCustomAccessCheck specifies the custom db/tbl/column dynamic privilege check
+func WithCustomAccessCheck(fn AccessCheckFunc) Option {
+	return func(m *Manifest) {
+		m.accessCheckFunc = fn
+	}
+}
+
 // WithSessionHandlerFactory specifies a factory function to handle session
 func WithSessionHandlerFactory(factory func() *SessionHandler) Option {
 	return func(m *Manifest) {
@@ -66,6 +85,10 @@ type BootstrapContext interface {
 	context.Context
 	// ExecuteSQL is used to execute a sql
 	ExecuteSQL(ctx context.Context, sql string) ([]chunk.Row, error)
+	// EtcdClient returns the etcd client
+	EtcdClient() *clientv3.Client
+	// SessionPool returns the session pool of domain
+	SessionPool() SessionPool
 }
 
 // WithBootstrap specifies the bootstrap func of an extension
@@ -94,6 +117,7 @@ type Manifest struct {
 	dynPrivs              []string
 	bootstrap             func(BootstrapContext) error
 	funcs                 []*FunctionDef
+	accessCheckFunc       AccessCheckFunc
 	sessionHandlerFactory func() *SessionHandler
 	close                 func()
 }

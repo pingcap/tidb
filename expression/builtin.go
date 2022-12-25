@@ -873,7 +873,9 @@ var funcs = map[string]functionClass{
 	ast.JSONMerge:         &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
 	ast.JSONObject:        &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 0, -1}},
 	ast.JSONArray:         &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 0, -1}},
+	ast.JSONMemberOf:      &jsonMemberOfFunctionClass{baseFunctionClass{ast.JSONMemberOf, 2, 2}},
 	ast.JSONContains:      &jsonContainsFunctionClass{baseFunctionClass{ast.JSONContains, 2, 3}},
+	ast.JSONOverlaps:      &jsonOverlapsFunctionClass{baseFunctionClass{ast.JSONOverlaps, 2, 2}},
 	ast.JSONContainsPath:  &jsonContainsPathFunctionClass{baseFunctionClass{ast.JSONContainsPath, 3, -1}},
 	ast.JSONValid:         &jsonValidFunctionClass{baseFunctionClass{ast.JSONValid, 1, 1}},
 	ast.JSONArrayAppend:   &jsonArrayAppendFunctionClass{baseFunctionClass{ast.JSONArrayAppend, 3, -1}},
@@ -988,8 +990,13 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyBaseBuiltinFunc + b.bufAllocator.MemoryUsage() +
-		b.tp.MemoryUsage() + int64(len(b.charset)+len(b.collation))
+	sum = emptyBaseBuiltinFunc + int64(len(b.charset)+len(b.collation))
+	if b.bufAllocator != nil {
+		sum += b.bufAllocator.MemoryUsage()
+	}
+	if b.tp != nil {
+		sum += b.tp.MemoryUsage()
+	}
 	if b.childrenVectorizedOnce != nil {
 		sum += onceSize
 	}

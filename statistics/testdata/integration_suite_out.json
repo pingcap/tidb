@@ -7,19 +7,19 @@
         "└─IndexRangeScan_5 5.00 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) range:[1,1], keep order:false"
       ],
       [
-        "TableReader_7 3.00 root  data:Selection_6",
-        "└─Selection_6 3.00 cop[tikv]  eq(test.exp_backoff.b, 1)",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:exp_backoff keep order:false"
+        "IndexReader_10 3.00 root  index:Selection_9",
+        "└─Selection_9 3.00 cop[tikv]  eq(test.exp_backoff.b, 1)",
+        "  └─IndexFullScan_8 5.00 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) keep order:false"
       ],
       [
-        "TableReader_7 2.00 root  data:Selection_6",
-        "└─Selection_6 2.00 cop[tikv]  eq(test.exp_backoff.c, 1)",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:exp_backoff keep order:false"
+        "IndexReader_10 2.00 root  index:Selection_9",
+        "└─Selection_9 2.00 cop[tikv]  eq(test.exp_backoff.c, 1)",
+        "  └─IndexFullScan_8 5.00 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) keep order:false"
       ],
       [
-        "TableReader_7 3.00 root  data:Selection_6",
-        "└─Selection_6 3.00 cop[tikv]  ge(test.exp_backoff.d, 3), le(test.exp_backoff.d, 5)",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:exp_backoff keep order:false"
+        "IndexReader_10 3.00 root  index:Selection_9",
+        "└─Selection_9 3.00 cop[tikv]  ge(test.exp_backoff.d, 3), le(test.exp_backoff.d, 5)",
+        "  └─IndexFullScan_8 5.00 cop[tikv] table:exp_backoff, index:idx(a, b, c, d) keep order:false"
       ],
       [
         "IndexReader_6 1.36 root  index:IndexRangeScan_5",
@@ -411,7 +411,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where f regexp '.*111.*'",
         "Result": [
-          "Selection 30.70 root  regexp(test.t.f, \".*111.*\")",
+          "Selection 32.00 root  regexp(test.t.f, \".*111.*\")",
           "└─TableReader 40.00 root  data:TableFullScan",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
@@ -419,7 +419,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where f not regexp '.*111.*'",
         "Result": [
-          "Selection 6.30 root  not(istrue_with_null(regexp(test.t.f, \".*111.*\")))",
+          "Selection 32.00 root  not(regexp(test.t.f, \".*111.*\"))",
           "└─TableReader 40.00 root  data:TableFullScan",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
@@ -435,7 +435,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where a like '%111%' and f rlike '.*111.*'",
         "Result": [
-          "Selection 23.56 root  regexp(test.t.f, \".*111.*\")",
+          "Selection 24.56 root  regexp(test.t.f, \".*111.*\")",
           "└─TableReader 30.70 root  data:Selection",
           "  └─Selection 30.70 cop[tikv]  like(test.t.a, \"%111%\", 92)",
           "    └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
@@ -641,7 +641,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where f regexp '.*111.*'",
         "Result": [
-          "Selection 30.70 root  regexp(test.t.f, \".*111.*\")",
+          "Selection 32.00 root  regexp(test.t.f, \".*111.*\")",
           "└─TableReader 40.00 root  data:TableFullScan",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
@@ -649,7 +649,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where f not regexp '.*111.*'",
         "Result": [
-          "Selection 6.30 root  not(istrue_with_null(regexp(test.t.f, \".*111.*\")))",
+          "Selection 32.00 root  not(regexp(test.t.f, \".*111.*\"))",
           "└─TableReader 40.00 root  data:TableFullScan",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
@@ -665,7 +665,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where a like '%111%' and f rlike '.*111.*'",
         "Result": [
-          "Selection 23.56 root  regexp(test.t.f, \".*111.*\")",
+          "Selection 24.56 root  regexp(test.t.f, \".*111.*\")",
           "└─TableReader 30.70 root  data:Selection",
           "  └─Selection 30.70 cop[tikv]  like(test.t.a, \"%111%\", 92)",
           "    └─TableFullScan 40.00 cop[tikv] table:t keep order:false"

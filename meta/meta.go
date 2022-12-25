@@ -78,6 +78,7 @@ var (
 	mPolicyMagicByte  = CurrentMagicByteVer
 	mDDLTableVersion  = []byte("DDLTableVersion")
 	mConcurrentDDL    = []byte("concurrentDDL")
+	mMetaDataLock     = []byte("metadataLock")
 )
 
 const (
@@ -642,6 +643,29 @@ func (m *Meta) IsConcurrentDDL() (bool, error) {
 	return len(val) == 0 || bytes.Equal(val, []byte("1")), nil
 }
 
+// SetMetadataLock sets the metadata lock.
+func (m *Meta) SetMetadataLock(b bool) error {
+	var data []byte
+	if b {
+		data = []byte("1")
+	} else {
+		data = []byte("0")
+	}
+	return errors.Trace(m.txn.Set(mMetaDataLock, data))
+}
+
+// GetMetadataLock gets the metadata lock.
+func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
+	val, err := m.txn.Get(mMetaDataLock)
+	if err != nil {
+		return false, false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return false, true, nil
+	}
+	return bytes.Equal(val, []byte("1")), false, nil
+}
+
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
 func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
@@ -928,6 +952,27 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	tableInfo := &model.TableInfo{}
 	err = json.Unmarshal(value, tableInfo)
 	return tableInfo, errors.Trace(err)
+}
+
+// CheckTableExists checks if the table is existed with dbID and tableID.
+func (m *Meta) CheckTableExists(dbID int64, tableID int64) (bool, error) {
+	// Check if db exists.
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return false, errors.Trace(err)
+	}
+
+	// Check if table exists.
+	tableKey := m.tableKey(tableID)
+	v, err := m.txn.HGet(dbKey, tableKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if v != nil {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 // DDL job structure

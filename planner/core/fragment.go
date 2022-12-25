@@ -378,7 +378,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
 		ttl = 30 * time.Second
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -406,7 +406,7 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 			return nil, nil, errors.Trace(err)
 		}
 		partitionIDAndRanges[i].ID = pid
-		partitionIDAndRanges[i].KeyRanges = kvRanges
+		partitionIDAndRanges[i].KeyRanges = kvRanges.FirstPartitionRange()
 		allPartitionsIDs[i] = pid
 	}
 	return &kv.MPPBuildTasksRequest{PartitionIDAndRanges: partitionIDAndRanges}, allPartitionsIDs, nil
@@ -417,5 +417,5 @@ func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(ts *Physica
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}, nil
+	return &kv.MPPBuildTasksRequest{KeyRanges: kvRanges.FirstPartitionRange()}, nil
 }
