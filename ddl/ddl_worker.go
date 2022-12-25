@@ -614,6 +614,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
+	// TODO: remove CI log
+	txn, _ := w.sess.txn()
+	logutil.BgLogger().Info("finishDDLJob GC?", zap.Uint64("txn TSO", txn.StartTS()))
 	if jobNeedGC(job) {
 		err = w.deleteRange(w.ctx, job)
 		if err != nil {
@@ -643,6 +646,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	} else {
 		_, err = t.DeQueueDDLJob()
 	}
+	// TODO: remove CI log
+	logutil.BgLogger().Info("finishDDLJob deleted job", zap.Uint64("txn TSO", txn.StartTS()), zap.String("job", job.String()), zap.Error(err))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -658,6 +663,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.writeDDLSeqNum(job)
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs, w.concurrentDDL)
+	// TODO: remove CI log
+	logutil.BgLogger().Info("finishDDLJob add history job", zap.Uint64("txn TSO", txn.StartTS()), zap.String("job", job.String()), zap.Error(err))
 	return errors.Trace(err)
 }
 
@@ -780,6 +787,9 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 		return err
 	}
 
+	// TODO: remove CI log
+	txn, _ := w.sess.txn()
+	logutil.BgLogger().Info("HandleJobDone", zap.Uint64("txn TSO", txn.StartTS()))
 	err = w.sess.commit()
 	if err != nil {
 		return err
@@ -802,6 +812,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+
 	if !variable.EnableConcurrentDDL.Load() || d.waiting.Load() {
 		w.sess.rollback()
 		return 0, nil
@@ -1037,7 +1048,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			logutil.BgLogger().Info("calling updateDDLJob", zap.String("job", job.String()))
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			// TODO: Remove this debug line (only used for CI)
-			logutil.BgLogger().Info("calling updateDDLJob", zap.Error(err), zap.String("job", job.String()))
+			logutil.BgLogger().Info("called updateDDLJob err?", zap.Error(err), zap.String("job", job.String()))
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
 				// TODO: Remove this debug line (only used for CI)
 				logutil.BgLogger().Info("error returned by handleUpdateJobError", zap.Error(err), zap.String("job", job.String()))
@@ -1056,9 +1067,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 		// TODO: Remove this debug line (only used for CI)
 		if job != nil {
-			logutil.BgLogger().Info("OK?", zap.Error(err), zap.String("job", job.String()))
+			logutil.BgLogger().Info("Ran job, err?", zap.Error(err), zap.String("job", job.String()))
 		} else {
-			logutil.BgLogger().Info("OK?", zap.Error(err))
+			logutil.BgLogger().Info("No job, err?", zap.Error(err))
 		}
 		if job != nil {
 			d.unlockSchemaVersion(job.ID)

@@ -1907,5 +1907,8 @@ func addHistoryDDLJob2Table(sess *session, job *model.Job, updateRawArgs bool) e
 			strconv.Quote(strconv.FormatInt(job.TableID, 10)),
 			strconv.Quote(model.TSConvert2Time(job.StartTS).String())),
 		"insert_history")
+	// TODO: remove CI log
+	txn, _ := sess.txn()
+	logutil.BgLogger().Info("addHistoryDDLJob2Table", zap.Uint64("txn TSO", txn.StartTS()), zap.Error(err))
 	return errors.Trace(err)
 }
