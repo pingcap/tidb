@@ -78,6 +78,7 @@ go_library(
         "//util/mathutil",
         "//util/memory",
         "//util/parser",
+        "//util/replayer",
         "//util/rowcodec",
         "//util/sem",
         "//util/sli",
