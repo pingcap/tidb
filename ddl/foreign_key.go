@@ -266,6 +266,9 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	if referTblInfo.TTLInfo != nil {
 		return dbterror.ErrUnsupportedTTLReferencedByFK
 	}
+	if referTblInfo.GetPartitionInfo() != nil || tblInfo.GetPartitionInfo() != nil {
+		return infoschema.ErrForeignKeyOnPartitioned
+	}
 
 	// check refer columns in parent table.
 	for i := range fkInfo.RefCols {
@@ -674,7 +677,12 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.put(sctx)
+	originValue := sctx.GetSessionVars().OptimizerEnableNAAJ
+	sctx.GetSessionVars().OptimizerEnableNAAJ = true
+	defer func() {
+		sctx.GetSessionVars().OptimizerEnableNAAJ = originValue
+		w.sessPool.put(sctx)
+	}()
 
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
@@ -709,7 +717,7 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	}
 	buf.WriteString(" from %n.%n ) limit 1")
 	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, buf.String(), paramsList...)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
