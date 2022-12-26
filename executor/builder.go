@@ -1417,14 +1417,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		probeWorkers:          make([]*probeWorker, v.Concurrency),
 		buildWorker:           &buildWorker{},
 		hashJoinCtx: &hashJoinCtx{
-			sessCtx:         b.ctx,
 			isOuterJoin:     v.JoinType.IsOuterJoin(),
 			useOuterToBuild: v.UseOuterToBuild,
 			joinType:        v.JoinType,
 			concurrency:     v.Concurrency,
 		},
 	}
-	e.hashJoinCtx.allocPool = e.AllocPool
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := retTypes(leftExec), retTypes(rightExec)
 	if v.InnerChildIdx == 1 {
@@ -1496,12 +1494,13 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.probeWorkers[i] = &probeWorker{
 			hashJoinCtx:      e.hashJoinCtx,
 			workerID:         i,
+			sessCtx:          e.ctx,
 			joiner:           newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin),
 			probeKeyColIdx:   probeKeyColIdx,
 			probeNAKeyColIdx: probeNAKeColIdx,
 		}
 	}
-	e.buildWorker.buildKeyColIdx, e.buildWorker.buildNAKeyColIdx, e.buildWorker.buildSideExec, e.buildWorker.hashJoinCtx = buildKeyColIdx, buildNAKeyColIdx, buildSideExec, e.hashJoinCtx
+	e.buildWorker.buildKeyColIdx, e.buildWorker.buildNAKeyColIdx, e.buildWorker.buildSideExec = buildKeyColIdx, buildNAKeyColIdx, buildSideExec
 	e.hashJoinCtx.isNullAware = isNAJoin
 	executorCountHashJoinExec.Inc()
 
