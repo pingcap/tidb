@@ -42,6 +42,10 @@ const (
 
 	// MppVersionUnspecified means the illegal version
 	MppVersionUnspecified int64 = -1
+
+	// EnableMppVersionMinReleaseVersion means the minimal cluster version to use mpp-version
+	// If TiFlash support MppVersionV* in version A.B.C, set default required cluster version to >= A.(B+1).0
+	EnableMppVersionMinReleaseVersion = "6.6.0"
 )
 
 // TiDBMppVersion means the max MppVersion can be used in mpp plan
@@ -55,22 +59,6 @@ var mppVersionFeatures = map[int64]string{
 // GetMppVersionFeatures return the features for mpp-version
 func GetMppVersionFeatures(mppVersion int64) string {
 	val, ok := mppVersionFeatures[mppVersion]
-	if ok {
-		return val
-	}
-	return ""
-}
-
-var mppVersionDefaultClusterVersion = map[int64]string{
-	MppVersionV1: "6.7.0",
-}
-
-// Default cluster version to use MppVersionV*
-// If TiFlash support MppVersionV* in version A.B.C, set default required cluster version to >= A.(B+1).0
-
-// GetMppVersionDefaultClusterVersion return the minimal cluster version to use mpp-version
-func GetMppVersionDefaultClusterVersion(mppVersion int64) string {
-	val, ok := mppVersionDefaultClusterVersion[mppVersion]
 	if ok {
 		return val
 	}

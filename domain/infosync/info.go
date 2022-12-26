@@ -499,16 +499,12 @@ func CheckAndInitTiDBMppVersion(store kv.Storage, stores []*metapb.Store) error 
 	}
 
 	// if env is mock || any tiflash store is down, make sure min cluster version is GE required version
-	minMppVersion := kv.MppVersionV0
+	minMppVersion := kv.MaxMppVersion
 	if minStoreReleaseVersion != nil {
 		logutil.BgLogger().Info("detect min cluster store release version", zap.String("value", minStoreReleaseVersion.String()))
-		for mppVersion := kv.MppVersionV0 + 1; mppVersion <= kv.MaxMppVersion; mppVersion += 1 {
-			requiredVersion := kv.GetMppVersionDefaultClusterVersion(mppVersion)
-			logutil.BgLogger().Info(fmt.Sprintf("mpp-version `%d` will be used if min cluster version is GE `%s`", mppVersion, requiredVersion))
-			if v := minStoreReleaseVersion.Compare(*semver.New(requiredVersion)); v < 0 {
-				break
-			}
-			minMppVersion = mppVersion
+		logutil.BgLogger().Info(fmt.Sprintf("mpp-version will be used if min cluster version is GE `%s`", kv.EnableMppVersionMinReleaseVersion))
+		if v := minStoreReleaseVersion.Compare(*semver.New(kv.EnableMppVersionMinReleaseVersion)); v < 0 {
+			minMppVersion = kv.MppVersionV0
 		}
 	} else {
 		logutil.BgLogger().Info("no valid store in cluster")
