@@ -1171,9 +1171,6 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
 
-	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed. It maps store address(string) to fail time(time.Time).
-	MPPStoreLastFailTime *sync.Map
-
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
 
@@ -1482,8 +1479,13 @@ func (s *SessionVars) IsMPPEnforced() bool {
 // TODO: Confirm whether this function will be inlined and
 // omit the overhead of string construction when calling with false condition.
 func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
-	if s.IsMPPEnforced() && s.StmtCtx.InExplainStmt {
+	if !s.IsMPPEnforced() {
+		return
+	}
+	if s.StmtCtx.InExplainStmt {
 		s.StmtCtx.AppendWarning(errors.New(warning))
+	} else {
+		s.StmtCtx.AppendExtraWarning(errors.New(warning))
 	}
 }
 
@@ -1708,7 +1710,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
 		TMPTableSize:                  DefTiDBTmpTableMaxSize,
-		MPPStoreLastFailTime:          new(sync.Map),
 		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
 		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
@@ -2331,12 +2332,6 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	sessionStates.LastFoundRows = s.LastFoundRows
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
-	sessionStates.MPPStoreLastFailTime = make(map[string]time.Time, 0)
-	s.MPPStoreLastFailTime.Range(
-		func(key, value interface{}) bool {
-			sessionStates.MPPStoreLastFailTime[key.(string)] = value.(time.Time)
-			return true
-		})
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 
@@ -2372,9 +2367,6 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	s.LastFoundRows = sessionStates.LastFoundRows
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
-	for k, v := range sessionStates.MPPStoreLastFailTime {
-		s.MPPStoreLastFailTime.Store(k, v)
-	}
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
 
