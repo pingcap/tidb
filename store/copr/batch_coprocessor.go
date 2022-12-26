@@ -323,35 +323,13 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 		}
 	} else {
 		stores := cache.RegionCache.GetTiFlashStores()
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-		wg.Add(len(stores))
-		for i := range stores {
-			go func(idx int) {
-				defer wg.Done()
-				s := stores[idx]
-
-				// check if store is failed already.
-				ok := GlobalMPPFailedStoreProber.IsRecovery(ctx, s.GetAddr(), ttl)
-				if !ok {
-					return
-				}
-
-				tikvClient := kvStore.GetTiKVClient()
-				ok = detectMPPStore(ctx, tikvClient, s.GetAddr(), DetectTimeoutLimit)
-				if !ok {
-					GlobalMPPFailedStoreProber.Add(ctx, s.GetAddr(), tikvClient)
-					return
-				}
-
-				mu.Lock()
-				defer mu.Unlock()
-				storeTaskMap[s.StoreID()] = &batchCopTask{
-					storeAddr: s.GetAddr(),
-					cmdType:   originalTasks[0].cmdType,
-					ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
-				}
-			}(i)
+		aliveStores := filterAliveStores(ctx, stores, ttl, kvStore)
+		for _, s := range aliveStores {
+			storeTaskMap[s.StoreID()] = &batchCopTask{
+				storeAddr: s.GetAddr(),
+				cmdType:   originalTasks[0].cmdType,
+				ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
+			}
 		}
 	}
 
@@ -509,7 +487,7 @@ func buildBatchCopTasksForNonPartitionedTable(bo *backoff.Backoffer,
 	balanceWithContinuity bool,
 	balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		return buildBatchCopTasksConsistentHash(bo, store, []*KeyRanges{ranges}, storeType, isMpp, ttl)
+		return buildBatchCopTasksConsistentHash(bo, store, []*KeyRanges{ranges}, storeType, ttl)
 	}
 	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 }
@@ -524,7 +502,7 @@ func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer,
 	balanceContinuousRegionCount int64,
 	partitionIDs []int64) (batchTasks []*batchCopTask, err error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		batchTasks, err = buildBatchCopTasksConsistentHash(bo, store, rangesForEachPhysicalTable, storeType, isMPP, ttl)
+		batchTasks, err = buildBatchCopTasksConsistentHash(bo, store, rangesForEachPhysicalTable, storeType, ttl)
 	} else {
 		batchTasks, err = buildBatchCopTasksCore(bo, store, rangesForEachPhysicalTable, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 	}
@@ -536,51 +514,26 @@ func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer,
 	return batchTasks, nil
 }
 
-func filterAliveStores(ctx context.Context, stores []*tikv.Store, mppStoreLastFailTime *sync.Map, ttl time.Duration, kvStore *kvStore) []*tikv.Store {
+func filterAliveStores(ctx context.Context, stores []*tikv.Store, ttl time.Duration, kvStore *kvStore) []*tikv.Store {
+	var aliveStores []*tikv.Store
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	wg.Add(len(stores))
-	cur := time.Now()
-	aliveStores := make([]*tikv.Store, 0, len(stores))
 	for i := range stores {
 		go func(idx int) {
 			defer wg.Done()
 			s := stores[idx]
 
-			var lastAny any
-			var ok bool
-			mu.Lock()
-			if lastAny, ok = mppStoreLastFailTime.Load(s.GetAddr()); ok && cur.Sub(lastAny.(time.Time)) < 100*time.Millisecond {
-				// The interval time is so short that may happen in a same query, so we needn't to check again.
-				mu.Unlock()
-				return
-			} else if !ok {
-				lastAny = time.Time{}
-			}
-			mu.Unlock()
-
-			resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), &tikvrpc.Request{
-				Type:    tikvrpc.CmdMPPAlive,
-				StoreTp: tikvrpc.TiFlash,
-				Req:     &mpp.IsAliveRequest{},
-				Context: kvrpcpb.Context{},
-			}, 2*time.Second)
-
-			if err != nil || !resp.Resp.(*mpp.IsAliveResponse).Available {
-				errMsg := "store not ready to serve"
-				if err != nil {
-					errMsg = err.Error()
-				}
-				logutil.BgLogger().Warn("Store is not ready", zap.String("store address", s.GetAddr()), zap.String("err message", errMsg))
-				mu.Lock()
-				mppStoreLastFailTime.Store(s.GetAddr(), time.Now())
-				mu.Unlock()
+			// check if store is failed already.
+			ok := GlobalMPPFailedStoreProber.IsRecovery(ctx, s.GetAddr(), ttl)
+			if !ok {
 				return
 			}
 
-			if cur.Sub(lastAny.(time.Time)) < ttl {
-				logutil.BgLogger().Warn("Cannot detect store's availability because the current time has not reached MPPStoreLastFailTime + MPPStoreFailTTL",
-					zap.String("store address", s.GetAddr()), zap.Time("last fail time", lastAny.(time.Time)))
+			tikvClient := kvStore.GetTiKVClient()
+			ok = detectMPPStore(ctx, tikvClient, s.GetAddr(), DetectTimeoutLimit)
+			if !ok {
+				GlobalMPPFailedStoreProber.Add(ctx, s.GetAddr(), tikvClient)
 				return
 			}
 
@@ -589,7 +542,6 @@ func filterAliveStores(ctx context.Context, stores []*tikv.Store, mppStoreLastFa
 			aliveStores = append(aliveStores, s)
 		}(i)
 	}
-	wg.Wait()
 
 	logutil.BgLogger().Info("detecting available mpp stores", zap.Any("total", len(stores)), zap.Any("alive", len(aliveStores)))
 	return aliveStores
@@ -602,7 +554,6 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer,
 	kvStore *kvStore,
 	rangesForEachPhysicalTable []*KeyRanges,
 	storeType kv.StoreType,
-	mppStoreLastFailTime *sync.Map,
 	ttl time.Duration) (res []*batchCopTask, err error) {
 	const cmdType = tikvrpc.CmdBatchCop
 	var retryNum int
@@ -636,7 +587,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer,
 		if err != nil {
 			return nil, err
 		}
-		stores = filterAliveStores(bo.GetCtx(), stores, mppStoreLastFailTime, ttl, kvStore)
+		stores = filterAliveStores(bo.GetCtx(), stores, ttl, kvStore)
 		if len(stores) == 0 {
 			return nil, errors.New("tiflash_compute node is unavailable")
 		}
