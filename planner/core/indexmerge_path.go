@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -63,7 +64,19 @@ func (ds *DataSource) generateIndexMergePath() error {
 			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
 			stmtCtx.SetWarnings(warnings)
 			stmtCtx.SetExtraWarnings(extraWarnings)
-			if len(remaining) != 0 {
+
+			remainingExpr := 0
+			for _, expr := range remaining {
+				// Handle these 3 functions specially since they can be used to access MVIndex.
+				if sf, ok := expr.(*expression.ScalarFunction); ok {
+					if sf.FuncName.L == ast.JSONMemberOf || sf.FuncName.L == ast.JSONOverlaps ||
+						sf.FuncName.L == ast.JSONContains {
+						continue
+					}
+				}
+				remainingExpr++
+			}
+			if remainingExpr > 0 {
 				needConsiderIndexMerge = false
 			}
 		}
@@ -435,8 +448,12 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	if indexMergeAndPath != nil {
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
 	}
+	// 3. Generate possible IndexMerge paths for MVIndex.
+	if mvIndexMergePath := ds.generateIndexMergeJSONMVIndexPath(regularPathCount, indexMergeConds); mvIndexMergePath != nil {
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvIndexMergePath...)
+	}
 
-	// 3. If needed, append a warning if no IndexMerge is generated.
+	// 4. If needed, append a warning if no IndexMerge is generated.
 
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
@@ -466,4 +483,145 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 		}
 	}
 	return nil
+}
+
+// generateIndexMergeJSONMVIndexPath generates paths for (json_member_of / json_overlaps / json_contains) on multi-valued index.
+/*
+	1. select * from t where 1 member of (a)
+		IndexMerge(AND)
+			IndexRangeScan(a, [1,1])
+			TableRowIdScan(t)
+	2. select * from t where json_contains(a, '[1, 2, 3]')
+		IndexMerge(AND)
+			IndexRangeScan(a, [1,1])
+			IndexRangeScan(a, [2,2])
+			IndexRangeScan(a, [3,3])
+			TableRowIdScan(t)
+	3. select * from t where json_overlap(a, '[1, 2, 3]')
+		IndexMerge(OR)
+			IndexRangeScan(a, [1,1])
+			IndexRangeScan(a, [2,2])
+			IndexRangeScan(a, [3,3])
+			TableRowIdScan(t)
+*/
+func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath) {
+	for idx := 0; idx < normalPathCnt; idx++ {
+		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
+			continue // not a MVIndex path
+		}
+		if !ds.isSpecifiedInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
+			continue // for safety, only consider using MVIndex when there is a `use_index_merge` hint now.
+			// TODO: remove this limitation
+		}
+
+		// Step 1. Extract the underlying JSON column from MVIndex Info.
+		mvIndex := ds.possibleAccessPaths[idx].Index
+		mvVirColOffset := mvIndex.Columns[0].Offset // MVIndex has and only has 1 vir-col: index idx((cast(a->'$.zip' as signed array)))
+		mvVirCol := ds.table.Meta().Cols()[mvVirColOffset]
+
+		var virCol *expression.Column
+		for _, ce := range ds.TblCols {
+			if ce.ID == mvVirCol.ID {
+				virCol = ce.Clone().(*expression.Column)
+				virCol.GetType().SetArray(false) // JSON-ARRAY(INT) --> INT
+				break
+			}
+		}
+		// unwrap the outside cast: cast(json_extract(test.t.a, $.zip), JSON) --> (json_extract(test.t.a, $.zip))
+		underlyingJSONCol, ok := unwrapCast(virCol.VirtualExpr)
+		if !ok {
+			continue
+		}
+
+		// Step 2. Iterate all filters and generate corresponding paths.
+		for i, filter := range filters {
+			// Step 2.1. Extract col and vals from json_member / json_overlaps / json_contains functions.
+			sf, ok := filter.(*expression.ScalarFunction)
+			if !ok {
+				continue
+			}
+
+			var col expression.Expression
+			var vals []expression.Expression
+			switch sf.FuncName.L {
+			case ast.JSONMemberOf: // (1 member of a->'$.zip')
+				col = sf.GetArgs()[1]
+				vals = append(vals, sf.GetArgs()[0])
+			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				// TODO: support json_overlaps
+				continue
+			case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
+				// TODO: support json_contains
+				continue
+			default:
+				continue
+			}
+			var castOK bool
+			for i := range vals { // cast(1 as json) --> 1
+				if vals[i], castOK = unwrapCast(vals[i]); !castOK {
+					break // unexpected value
+				}
+			}
+			if !castOK {
+				continue
+			}
+
+			// Step 2.2. Check some limitations.
+			if col == nil || len(vals) == 0 {
+				continue
+			}
+			if !col.Equal(ds.ctx, underlyingJSONCol) {
+				continue // not on the same JSON col
+			}
+
+			// only support INT now
+			// TODO: support more types
+			if col.GetType().EvalType() == types.ETInt {
+				continue
+			}
+			allInt := true
+			for _, v := range vals {
+				if v.GetType().EvalType() != types.ETInt {
+					allInt = false
+				}
+			}
+			if !allInt {
+				continue
+			}
+
+			// Step 2.3. Generate a IndexMerge Path of this filter on the current MVIndex.
+			var partialPaths []*util.AccessPath
+			for _, v := range vals {
+				partialPath := &util.AccessPath{Index: mvIndex}
+				partialPath.Ranges = ranger.FullRange()
+				// TODO: get the actual column length of this virtual column
+				partialPath.IdxCols, partialPath.IdxColLens = []*expression.Column{virCol}, []int{types.UnspecifiedLength}
+				partialPath.FullIdxCols, partialPath.FullIdxColLens = []*expression.Column{virCol}, []int{types.UnspecifiedLength}
+
+				eq, err := expression.NewFunction(ds.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
+				if err != nil {
+					panic(err)
+				}
+				err = ds.detachCondAndBuildRangeForPath(partialPath, []expression.Expression{eq})
+				if err != nil {
+					panic(err)
+				}
+				partialPaths = append(partialPaths, partialPath)
+			}
+			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, i)
+			mvIndexPaths = append(mvIndexPaths, indexMergePath)
+		}
+	}
+	return
+}
+
+func unwrapCast(expr expression.Expression) (expression.Expression, bool) {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return nil, false
+	}
+	if sf.FuncName.L != ast.Cast {
+		return nil, false
+	}
+	return sf.GetArgs()[0], true
 }

@@ -1184,7 +1184,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
-		if v.Tp.IsArray() && !er.b.allowBuildCastArray {
+		allowBuildCastArray4Test := er.ctx.Value("____allow_build_cast_array_for_test") != nil
+		if v.Tp.IsArray() && !er.b.allowBuildCastArray && !allowBuildCastArray4Test {
 			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 			return retNode, false
 		}
