@@ -48,7 +48,7 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	running       atomic.Int32
 	state         atomic.Int32
 	waiting       atomic.Int32
-	heartbeatDone atomic.Int32
+	heartbeatDone atomic.Bool
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.
@@ -85,7 +85,7 @@ func (p *Pool[T, U, C, CT, TF]) purgePeriodically() {
 	heartbeat := time.NewTicker(p.options.ExpiryDuration)
 	defer func() {
 		heartbeat.Stop()
-		p.heartbeatDone.Store(1)
+		p.heartbeatDone.Store(true)
 	}()
 	for {
 		select {
@@ -206,7 +206,7 @@ func (p *Pool[T, U, C, CT, TF]) ReleaseAndWait() {
 	close(p.stopCh)
 	p.release()
 	for {
-		if p.Running() == 0 && p.heartbeatDone.Load() == 1 {
+		if p.Running() == 0 && p.heartbeatDone.Load() == true {
 			return
 		}
 	}
