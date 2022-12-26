@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -420,7 +421,7 @@ func (c *castAsArrayFunctionClass) verifyArgs(args []Expression) error {
 	}
 
 	if args[0].GetType().EvalType() != types.ETJson {
-		return types.ErrInvalidJSONData.GenWithStackByArgs("1", "cast_as_array")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "cast_as_array")
 	}
 
 	return nil
@@ -467,9 +468,80 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJS
 		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing Non-JSON Array type to array")
 	}
 
-	// TODO: impl the cast(... as ... array) function
+	arrayVals := make([]any, 0, len(b.args))
+	ft := b.tp.ArrayType()
+	f := convertJSON2Tp(ft.EvalType())
+	if f == nil {
+		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAS-ing JSON to the target type")
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	originalOverflowAsWarning := sc.OverflowAsWarning
+	originIgnoreTruncate := sc.IgnoreTruncate
+	originTruncateAsWarning := sc.TruncateAsWarning
+	sc.OverflowAsWarning = false
+	sc.IgnoreTruncate = false
+	sc.TruncateAsWarning = false
+	defer func() {
+		sc.OverflowAsWarning = originalOverflowAsWarning
+		sc.IgnoreTruncate = originIgnoreTruncate
+		sc.TruncateAsWarning = originTruncateAsWarning
+	}()
+	for i := 0; i < val.GetElemCount(); i++ {
+		item, err := f(sc, val.ArrayGetElem(i), ft)
+		if err != nil {
+			return types.BinaryJSON{}, false, err
+		}
+		arrayVals = append(arrayVals, item)
+	}
+	return types.CreateBinaryJSON(arrayVals), false, nil
+}
 
-	return types.BinaryJSON{}, false, nil
+func convertJSON2Tp(eval types.EvalType) func(*stmtctx.StatementContext, types.BinaryJSON, *types.FieldType) (any, error) {
+	switch eval {
+	case types.ETString:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeString {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return types.ProduceStrWithSpecifiedTp(string(item.GetString()), tp, sc, false)
+		}
+	case types.ETInt:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return types.ConvertJSONToInt(sc, item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
+		}
+	case types.ETReal, types.ETDecimal:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 && item.TypeCode != types.JSONTypeCodeFloat64 {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return types.ConvertJSONToFloat(sc, item)
+		}
+	case types.ETDatetime:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			res := item.GetTime()
+			res.SetType(tp.GetType())
+			if tp.GetType() == mysql.TypeDate {
+				// Truncate hh:mm:ss part if the type is Date.
+				res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+			}
+			return res, nil
+		}
+	case types.ETDuration:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeDuration {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return item.GetDuration(), nil
+		}
+	default:
+		return nil
+	}
 }
 
 type castAsJSONFunctionClass struct {

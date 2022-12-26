@@ -1696,6 +1696,21 @@ error = '''
 Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.
 '''
 
+["expression:3752"]
+error = '''
+Value is out of range for expression index '%s' at row %d
+'''
+
+["expression:3903"]
+error = '''
+Invalid JSON value for CAST for expression index '%s'
+'''
+
+["expression:3907"]
+error = '''
+Data too long for expression index '%s'
+'''
+
 ["expression:8128"]
 error = '''
 Invalid TABLESAMPLE: %s

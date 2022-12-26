@@ -3610,7 +3610,10 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
+		originalVal := b.allowBuildCastArray
+		b.allowBuildCastArray = true
 		expr, _, err := b.rewrite(ctx, column.GeneratedExpr, mockPlan, nil, true)
+		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err
 		}
