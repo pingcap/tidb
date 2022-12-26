@@ -1095,9 +1095,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, txn.Commit(tk.ctx))
 
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1]\"", err.Error())
+		tk.MustGetErrMsg(ctx, "admin check table admin_test", "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1]\"")
 		hook.checkLogCount(t, 1)
 		hook.logs[0].checkMsg(t, "admin check found data inconsistency")
 		hook.logs[0].checkField(t,
@@ -1119,9 +1117,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, txn.Commit(tk.ctx))
 
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindString 10]\"", err.Error())
+		tk.MustGetErrMsg(ctx, "admin check table admin_test", "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindString 10]\"")
 		hook.checkLogCount(t, 1)
 		hook.logs[0].checkMsg(t, "admin check found data inconsistency")
 		hook.logs[0].checkField(t,
@@ -1143,9 +1139,8 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, txn.Commit(tk.ctx))
 
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"handle: 1, values: [KindString 100 KindInt64 1]\" != record-values:\"\"", err.Error())
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			"[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"handle: 1, values: [KindString 100 KindInt64 1]\" != record-values:\"\"")
 		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
@@ -1188,9 +1183,8 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, txn.Commit(tk.ctx))
 
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"handle: 1, values: [KindInt64 10 KindInt64 1]\" != record-values:\"\"", err.Error())
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			"[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"handle: 1, values: [KindInt64 10 KindInt64 1]\" != record-values:\"\"")
 		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
@@ -1233,9 +1227,8 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[executor:8134]data inconsistency in table: admin_test, index: uk1, col: c2, handle: \"1\", index-values:\"KindInt64 20\" != record-values:\"KindInt64 10\", compare err:<nil>", err.Error())
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			"[executor:8134]data inconsistency in table: admin_test, index: uk1, col: c2, handle: \"1\", index-values:\"KindInt64 20\" != record-values:\"KindInt64 10\", compare err:<nil>")
 		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
@@ -1261,9 +1254,8 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txn.Commit(tk.ctx))
 		ctx, hook := withLogHook(tk.ctx, t, "inconsistency")
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, "[executor:8134]data inconsistency in table: admin_test, index: k2, col: c3, handle: \"1\", index-values:\"KindString 200\" != record-values:\"KindString 100\", compare err:<nil>", err.Error())
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			"[executor:8134]data inconsistency in table: admin_test, index: k2, col: c3, handle: \"1\", index-values:\"KindString 200\" != record-values:\"KindString 100\", compare err:<nil>")
 		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
@@ -1301,12 +1293,10 @@ func TestCheckFailReport(t *testing.T) {
 
 		// TODO(tiancaiamao): admin check doesn't support the chunk protocol.
 		// Remove this after https://github.com/pingcap/tidb/issues/35156
-		_, err = tk.Exec(ctx, "set @@tidb_enable_chunk_rpc = off")
-		require.NoError(t, err)
+		tk.MustExec(ctx, "set @@tidb_enable_chunk_rpc = off")
 
-		_, err = tk.Exec(ctx, "admin check table admin_test")
-		require.Error(t, err)
-		require.Equal(t, `[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 282574488403969, index-values:"handle: 282574488403969, values: [KindInt64 282578800083201 KindInt64 282574488403969]" != record-values:""`, err.Error())
+		tk.MustGetErrMsg(ctx, "admin check table admin_test",
+			`[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 282574488403969, index-values:"handle: 282574488403969, values: [KindInt64 282578800083201 KindInt64 282574488403969]" != record-values:""`)
 		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
