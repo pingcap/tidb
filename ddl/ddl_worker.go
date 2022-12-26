@@ -784,13 +784,26 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	return nil
 }
 
-// Clean up tidb_ddl_reorg if there are "left overs"
+// Clean up tidb_ddl_reorg if there are abandoned entries.
+// Needs to be run after the DDL job is completed and committed
+// since there may be a write-conflict otherwise.
+// Like when the HandleDDLJobTable function starts a transaction,
+// the back filler commits changes to tidb_ddl_reorg (like insert/update/delete)
+// and then the HandleDDLJobTable deletes the entry in tidb_ddl_reorg,
+// which will fail on commit, due to write conflict as the transaction
+// was started before the back filler.
 func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
+	if !job.IsFinished() {
+		return
+	}
 	if err := w.sess.begin(); err == nil {
 		elem, _, _, _, err := getDDLReorgHandle(w.sess, job)
 		if err == nil {
 			elems := []*meta.Element{elem}
-			removeDDLReorgHandle(w.sess, job, elems)
+			err = removeDDLReorgHandle(w.sess, job, elems)
+			if err != nil {
+				logutil.Logger(w.logCtx).Warn("[ddl] removeDDLReorgHandle failed", zap.Int64("job.ID", job.ID))
+			}
 			err = w.sess.commit()
 			if err != nil {
 				logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Int64("job.ID", job.ID))
@@ -900,6 +913,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 	w.registerSync(job)
+	w.cleanupDDLReorgHandle(job)
 
 	if runJobErr != nil {
 		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
