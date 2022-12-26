@@ -97,7 +97,7 @@ type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
 	taskID uint64
 }
 
-// NewTaskController create a controller to deal with pooltask's statue.
+// NewTaskController create a controller to deal with pooltask's status.
 func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup) TaskController[T, U, C, CT, TF] {
 	return TaskController[T, U, C, CT, TF]{
 		pool:   p,
