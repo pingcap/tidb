@@ -160,6 +160,7 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 	}
 	sql = "delete from mysql.stats_history where NOW() - create_time >= %? "
 	_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+	logutil.BgLogger().Info("clear outdated historical stats")
 	return err
 }
 
