@@ -7,6 +7,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 const (
@@ -48,6 +49,14 @@ func New(tables []*metautil.Table) *PreallocIDs {
 		if t.Info.ID > max && t.Info.ID < insaneTableIDThreshold {
 			max = t.Info.ID
 		}
+
+		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
+			for _, part := range t.Info.Partition.Definitions {
+				if part.ID > max && part.ID < insaneTableIDThreshold {
+					max = part.ID
+				}
+			}
+		}
 	}
 	return &PreallocIDs{
 		end: max + 1,
@@ -85,4 +94,18 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 // Prealloced checks whether a table ID has been successfully allocated.
 func (p *PreallocIDs) Prealloced(tid int64) bool {
 	return p.allocedFrom <= tid && tid < p.end
+}
+
+func (p *PreallocIDs) PreallocedFor(ti *model.TableInfo) bool {
+	if !p.Prealloced(ti.ID) {
+		return false
+	}
+	if ti.Partition != nil && ti.Partition.Definitions != nil {
+		for _, part := range ti.Partition.Definitions {
+			if !p.Prealloced(part.ID) {
+				return false
+			}
+		}
+	}
+	return true
 }

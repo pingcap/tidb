@@ -284,7 +284,7 @@ func (db *DB) tableIDAllocFilter() ddl.AllocTableIDIf {
 		if db.preallocedIDs == nil {
 			return true
 		}
-		prealloced := db.preallocedIDs.Prealloced(ti.ID)
+		prealloced := db.preallocedIDs.PreallocedFor(ti)
 		if prealloced {
 			log.Info("reusing table ID", zap.Stringer("table", ti.Name))
 		}
