@@ -48,6 +48,14 @@ func New(tables []*metautil.Table) *PreallocIDs {
 		if t.Info.ID > max && t.Info.ID < insaneTableIDThreshold {
 			max = t.Info.ID
 		}
+
+		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
+			for _, part := range t.Info.Partition.Definitions {
+				if part.ID > max && part.ID < insaneTableIDThreshold {
+					max = part.ID
+				}
+			}
+		}
 	}
 	return &PreallocIDs{
 		end: max + 1,
