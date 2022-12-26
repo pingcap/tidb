@@ -206,7 +206,7 @@ func (p *Pool[T, U, C, CT, TF]) ReleaseAndWait() {
 	close(p.stopCh)
 	p.release()
 	for {
-		if p.Running() == 0 && p.heartbeatDone.Load() == true {
+		if p.Running() == 0 && p.heartbeatDone.Load() {
 			return
 		}
 	}
