@@ -132,8 +132,8 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		isStaleness:      staleread.IsStmtStaleness(ctx),
 		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
-		queryTS:          uint64(time.Now().UnixNano()),
-		localQueryID:     plannercore.AllocMPPQueryID(),
+		queryTS:          getMPPQueryTS(ctx),
+		localQueryID:     getMPPQueryID(ctx),
 	}
 }
 

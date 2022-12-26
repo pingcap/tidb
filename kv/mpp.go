@@ -28,6 +28,12 @@ type MPPTaskMeta interface {
 	GetAddress() string
 }
 
+type MPPQueryID struct {
+	QueryTs      uint64 // timestamp of query execution, used for TiFlash minTSO schedule
+	LocalQueryID uint64 // unique mpp query id in local tidb memory.
+	ServerID     uint64
+}
+
 // MPPTask means the minimum execution unit of a mpp computation job.
 type MPPTask struct {
 	Meta         MPPTaskMeta // on which store this task will execute
@@ -93,7 +99,7 @@ type MPPClient interface {
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, rootDestinationTask *MPPTask) Response
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID MPPQueryID) Response
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

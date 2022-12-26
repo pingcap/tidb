@@ -16,10 +16,12 @@ package executor
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -36,6 +38,18 @@ func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader
 	}
 	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
 	return ok
+}
+
+func getMPPQueryID(ctx sessionctx.Context) uint64 {
+	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
+	mppQueryInfo.QueryID.CompareAndSwap(0, plannercore.AllocMPPQueryID())
+	return mppQueryInfo.QueryID.Load()
+}
+
+func getMPPQueryTS(ctx sessionctx.Context) uint64 {
+	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
+	mppQueryInfo.QueryTS.CompareAndSwap(0, uint64(time.Now().UnixNano()))
+	return mppQueryInfo.QueryTS.Load()
 }
 
 // MPPGather dispatch MPP tasks and read data from root tasks.
@@ -119,7 +133,6 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rootDestinationTask := frags[0].ExchangeSender.TargetTasks[0]
 	for _, frag := range frags {
 		err = e.appendMPPDispatchReq(frag)
 		if err != nil {
@@ -131,7 +144,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
 		}
 	})
-	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, e.startTS, rootDestinationTask)
+	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, e.startTS, kv.MPPQueryID{QueryTs: e.queryTS, LocalQueryID: e.localQueryID, ServerID: domain.GetDomain(e.ctx).ServerID()})
 	if err != nil {
 		return errors.Trace(err)
 	}

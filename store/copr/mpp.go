@@ -143,8 +143,8 @@ type mppIterator struct {
 	tasks    []*kv.MPPDispatchRequest
 	finishCh chan struct{}
 
-	startTs             uint64
-	rootDestinationTask *kv.MPPTask
+	startTs    uint64
+	mppQueryID kv.MPPQueryID
 
 	respChan chan *mppResponse
 
@@ -336,7 +336,7 @@ func (m *mppIterator) cancelMppTasks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	killReq := &mpp.CancelTaskRequest{
-		Meta: &mpp.TaskMeta{StartTs: m.startTs, QueryTs: m.rootDestinationTask.QueryTs, LocalQueryId: m.rootDestinationTask.LocalQueryID, ServerId: m.rootDestinationTask.ServerID},
+		Meta: &mpp.TaskMeta{StartTs: m.startTs, QueryTs: m.mppQueryID.QueryTs, LocalQueryId: m.mppQueryID.LocalQueryID, ServerId: m.mppQueryID.ServerID},
 	}
 
 	disaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
@@ -377,9 +377,9 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
 			StartTs:      req.StartTs,
-			QueryTs:      m.rootDestinationTask.QueryTs,
-			LocalQueryId: m.rootDestinationTask.LocalQueryID,
-			ServerId:     m.rootDestinationTask.ServerID,
+			QueryTs:      m.mppQueryID.QueryTs,
+			LocalQueryId: m.mppQueryID.LocalQueryID,
+			ServerId:     m.mppQueryID.ServerID,
 			TaskId:       -1,
 		},
 	}
@@ -533,7 +533,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64, rootDestinationTask *kv.MPPTask) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID kv.MPPQueryID) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
@@ -544,7 +544,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		cancelFunc:                 cancelFunc,
 		respChan:                   make(chan *mppResponse),
 		startTs:                    startTs,
-		rootDestinationTask:        rootDestinationTask,
+		mppQueryID:                 mppQueryID,
 		vars:                       vars,
 		needTriggerFallback:        needTriggerFallback,
 		enableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),

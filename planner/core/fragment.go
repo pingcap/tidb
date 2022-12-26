@@ -103,16 +103,16 @@ func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, queryTs uint64
 	return g.generateMPPTasks(sender)
 }
 
-var mppTaskID int64 = 1
-
-// AllocMPPTaskID allocates task id for mpp tasks.
-func AllocMPPTaskID() int64 {
-	return atomic.AddInt64(&mppTaskID, 1)
+func AllocMPPTaskID(ctx sessionctx.Context) int64 {
+	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
+	return mppQueryInfo.AllocatedMPPTaskID.Add(1)
 }
 
-// AllocMPPQueryID allocates local query id for mpp queries, just reuse mppTaskID.
+var mppQueryID uint64 = 1
+
+// AllocMPPQueryID allocates local query id for mpp queries.
 func AllocMPPQueryID() uint64 {
-	return uint64(atomic.AddInt64(&mppTaskID, 1))
+	return atomic.AddUint64(&mppQueryID, 1)
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
@@ -154,7 +154,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 		if !ok {
 			mppTask := &kv.MPPTask{
 				Meta:         &mppAddr{addr: addr},
-				ID:           AllocMPPTaskID(),
+				ID:           AllocMPPTaskID(e.ctx),
 				QueryTs:      e.queryTS,
 				LocalQueryID: e.localQueryID,
 				ServerID:     domain.GetDomain(e.ctx).ServerID(),
@@ -410,7 +410,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
 		task := &kv.MPPTask{Meta: meta,
-			ID:                AllocMPPTaskID(),
+			ID:                AllocMPPTaskID(e.ctx),
 			StartTs:           e.startTS,
 			QueryTs:           e.queryTS,
 			LocalQueryID:      e.localQueryID,
