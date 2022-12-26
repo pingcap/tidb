@@ -440,7 +440,7 @@ func doRequest(ctx context.Context, apiName string, addrs []string, route, metho
 	return nil, err
 }
 
-func removeVAndHash(v string) string {
+func RemoveVAndHash(v string) string {
 	if v == "" {
 		return v
 	}
@@ -451,80 +451,10 @@ func removeVAndHash(v string) string {
 }
 
 // CheckTiKVVersion is used to check the tikv version.
-func CheckTiKVVersion(stores []*metapb.Store, minVersion semver.Version) error {
-	for _, s := range stores {
-		// empty version means the store is a mock store. Don't require tiflash version either.
-		if s.Version == "" || engine.IsTiFlash(s) {
-			continue
-		}
-		ver, err := semver.NewVersion(removeVAndHash(s.Version))
-		if err != nil {
-			return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
-		}
-		v := ver.Compare(minVersion)
-		if v < 0 {
-			return errors.New("TiKV version must greater than or equal to " + minVersion.String())
-		}
-	}
-	return nil
-}
-
-func calcMinStoreReleaseVersion(store kv.Storage) {
-	store.GetMPPClient()
-}
-
-// CheckAndInitTiDBMppVersion checks the cluster store version and update TiDBMppVersion
-func CheckAndInitTiDBMppVersion(store kv.Storage, stores []*metapb.Store) error {
-	var minStoreReleaseVersion *semver.Version
-
-	// all stores must NOT be Tombstone
-	// check TiFlash store info
-	for _, s := range stores {
-		// empty version means the store is a mock store.
-		if s.Version == "" {
-			continue
-		}
-		// use TiKV or TiFlash version to detect the minimal one.
-		ver, err := semver.NewVersion(removeVAndHash(s.Version))
-		if err != nil {
-			return errors.Trace(errors.Annotate(err, "invalid store version"))
-		}
-		if minStoreReleaseVersion == nil {
-			minStoreReleaseVersion = ver
-		} else {
-			if x := ver.Compare(*minStoreReleaseVersion); x < 0 {
-				minStoreReleaseVersion = ver
-			}
-		}
-	}
-
-	// if env is mock || any tiflash store is down, make sure min cluster version is GE required version
-	minMppVersion := kv.MppVersionV0
-	if minStoreReleaseVersion != nil {
-		logutil.BgLogger().Info("detect min cluster store release version", zap.String("value", minStoreReleaseVersion.String()))
-		for mppVersion := kv.MppVersionV0 + 1; mppVersion <= kv.MaxMppVersion; mppVersion += 1 {
-			requiredVersion := kv.GetMppVersionDefaultClusterVersion(mppVersion)
-			logutil.BgLogger().Info(fmt.Sprintf("mpp-version `%d` will be used if min cluster version is GE `%s`", mppVersion, requiredVersion))
-			if v := minStoreReleaseVersion.Compare(*semver.New(requiredVersion)); v < 0 {
-				break
-			}
-			minMppVersion = mppVersion
-		}
-	} else {
-		logutil.BgLogger().Info("no valid store in cluster")
-	}
-
-	kv.TiDBMppVersion.Store(minMppVersion)
-	logutil.BgLogger().Info("update TiDB mpp-version", zap.Int64("value", minMppVersion))
-	return nil
-}
-
-// GetClusterStores returns all stores' meta by PD
-func GetClusterStores(store kv.Storage) ([]*metapb.Store, error) {
-	var stores []*metapb.Store
-
+func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
 	if store, ok := store.(kv.StorageWithPD); ok {
 		pdClient := store.GetPDClient()
+		var stores []*metapb.Store
 		var err error
 		// Wait at most 3 second to make sure pd has updated the store information.
 		for i := 0; i < 60; i++ {
@@ -536,12 +466,60 @@ func GetClusterStores(store kv.Storage) ([]*metapb.Store, error) {
 		}
 
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		return stores, nil
+
+		for _, s := range stores {
+			// empty version means the store is a mock store. Don't require tiflash version either.
+			if s.Version == "" || engine.IsTiFlash(s) {
+				continue
+			}
+			ver, err := semver.NewVersion(RemoveVAndHash(s.Version))
+			if err != nil {
+				return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
+			}
+			v := ver.Compare(minVersion)
+			if v < 0 {
+				return errors.New("TiKV version must greater than or equal to " + minVersion.String())
+			}
+		}
 	}
 
-	return stores, nil
+	return nil
+}
+
+// CheckAndInitTiDBMppVersion checks the cluster store version and update TiDBMppVersion
+func CheckAndInitTiDBMppVersion(store kv.Storage) error {
+	minMppVersion := kv.MppVersionV0
+	defer func() {
+		kv.TiDBMppVersion.Store(minMppVersion)
+		logutil.BgLogger().Info("update TiDB mpp-version", zap.Int64("value", minMppVersion))
+	}()
+
+	mppClient := store.GetMPPClient()
+	if mppClient == nil {
+		logutil.BgLogger().Info("no valid store in cluster")
+		return nil
+	}
+
+	mppClient.GetClusterMinMppVersion(context.Background())
+
+	// if env is mock || any tiflash store is down, make sure min cluster version is GE required version
+	if minStoreReleaseVersion != nil {
+		logutil.BgLogger().Info("detect min cluster store release version", zap.String("value", minStoreReleaseVersion.String()))
+		for mppVersion := kv.MppVersionV0 + 1; mppVersion <= kv.MaxMppVersion; mppVersion += 1 {
+			requiredVersion := kv.GetMppVersionDefaultClusterVersion(mppVersion)
+			logutil.BgLogger().Info(fmt.Sprintf("mpp-version `%d` will be used if min cluster version is GE `%s`", mppVersion, requiredVersion))
+			if v := minStoreReleaseVersion.Compare(*semver.New(requiredVersion)); v < 0 {
+				break
+			}
+			minMppVersion = mppVersion
+		}
+	}
+
+	kv.TiDBMppVersion.Store(minMppVersion)
+	logutil.BgLogger().Info("update TiDB mpp-version", zap.Int64("value", minMppVersion))
+	return nil
 }
 
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {

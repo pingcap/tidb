@@ -42,6 +42,8 @@ const (
 
 	// MppVersionUnspecified means the illegal version
 	MppVersionUnspecified int64 = -1
+
+	
 )
 
 // TiDBMppVersion means the max MppVersion can be used in mpp plan
@@ -151,6 +153,8 @@ type MPPClient interface {
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppVersion int64) Response
+
+	GetClusterMinMppVersion(ctx context.Context) []*MppNodeMeta
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

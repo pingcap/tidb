@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Masterminds/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -32,14 +33,17 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -55,8 +59,40 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
+type mppNodeMeta struct {
+	Address    string
+	Version    string
+	MppVersion int64
+}
+
 // GetClusterMinMppVersion get the min/max mpp-version from TiFlash stores in cluster
-func (c *MPPClient) GetClusterMinMppVersion(ctx context.Context, tiflashStores []*metapb.Store) (int64, int64, int) {
+func (c *MPPClient) GetClusterMinMppVersion(ctx context.Context) (int64, error) {
+	var nodes []*mppNodeMeta
+
+	// if use PD to get all stores info
+	{
+		pdClient := c.store.store.GetPDClient()
+		stores, err := pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
+		if err != nil {
+			return 0, err
+		}
+		for _, store := range stores {
+			nodes = append(nodes, &mppNodeMeta{
+				Address: store.Address,
+				Version: store.Version,
+			})
+			// empty version means the store is a mock store. Don't require tiflash version either.
+			if store.Version == "" || engine.IsTiFlash(store) {
+				continue
+			}
+			ver, err := semver.NewVersion(infosync.RemoveVAndHash(store.Version))
+			if err != nil {
+				return 0, fmt.Errorf("invalid release version %s", store.Version)
+			}
+			
+		}
+	}
+
 	// decide the mpp version of tiflash stores
 	var wg sync.WaitGroup
 	var mu sync.Mutex
