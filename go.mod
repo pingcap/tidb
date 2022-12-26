@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	cloud.google.com/go/storage v1.21.0
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v0.20.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v0.12.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v0.2.0
 	github.com/BurntSushi/toml v1.2.1
@@ -109,13 +110,13 @@ require (
 	go.uber.org/multierr v1.8.0
 	go.uber.org/zap v1.23.0
 	golang.org/x/exp v0.0.0-20221023144134-a1e5550cf13e
-	golang.org/x/net v0.2.0
-	golang.org/x/oauth2 v0.2.0
+	golang.org/x/net v0.4.0
+	golang.org/x/oauth2 v0.3.0
 	golang.org/x/sync v0.1.0
 	golang.org/x/sys v0.3.0
-	golang.org/x/term v0.2.0
-	golang.org/x/text v0.4.0
-	golang.org/x/time v0.2.0
+	golang.org/x/term v0.3.0
+	golang.org/x/text v0.5.0
+	golang.org/x/time v0.3.0
 	golang.org/x/tools v0.2.0
 	google.golang.org/api v0.74.0
 	google.golang.org/grpc v1.45.0
@@ -129,7 +130,6 @@ require (
 	cloud.google.com/go v0.100.2 // indirect
 	cloud.google.com/go/compute v1.5.0 // indirect
 	cloud.google.com/go/iam v0.1.1 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v0.20.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v0.8.1 // indirect
 	github.com/DataDog/zstd v1.4.5 // indirect
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2 // indirect

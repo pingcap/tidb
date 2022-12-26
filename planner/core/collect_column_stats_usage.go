@@ -299,7 +299,7 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]mode
 	if histNeeded {
 		mode |= collectHistNeededColumns
 	}
-	collector := newColumnStatsUsageCollector(mode, lp.SCtx().GetSessionVars().EnablePlanReplayerCapture)
+	collector := newColumnStatsUsageCollector(mode, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(lp)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
