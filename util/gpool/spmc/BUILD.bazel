@@ -4,7 +4,7 @@ go_library(
     name = "spmc",
     srcs = [
         "option.go",
-        "spmspool.go",
+        "spmcpool.go",
         "worker.go",
         "worker_loop_queue.go",
     ],
@@ -24,8 +24,8 @@ go_test(
     name = "spmc_test",
     srcs = [
         "main_test.go",
-        "spmspool_benchmark_test.go",
-        "spmspool_test.go",
+        "spmcpool_benchmark_test.go",
+        "spmcpool_test.go",
     ],
     embed = [":spmc"],
     race = "on",
