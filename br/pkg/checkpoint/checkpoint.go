@@ -240,7 +240,7 @@ func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalS
 
 		appendCh: make(chan *CheckpointMessage),
 		metaCh:   make(chan map[string]*RangeGroups),
-		errCh:    make(chan error),
+		errCh:    make(chan error, 1),
 	}
 
 	runner.startCheckpointLoop(ctx, tick)
@@ -258,7 +258,7 @@ func StartCheckpointRunner(ctx context.Context, storage storage.ExternalStorage,
 
 		appendCh: make(chan *CheckpointMessage),
 		metaCh:   make(chan map[string]*RangeGroups),
-		errCh:    make(chan error),
+		errCh:    make(chan error, 1),
 	}
 
 	runner.startCheckpointLoop(ctx, tickDuration)
@@ -344,6 +344,11 @@ func (r *CheckpointRunner) startCheckpointRunner(ctx context.Context, wg *sync.W
 	return errCh
 }
 
+func (r *CheckpointRunner) sendError(err error) {
+	log.Error("stop checkpoint runner due to error", zap.Error(err))
+	r.errCh <- err
+}
+
 func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration time.Duration) {
 	r.wg.Add(1)
 	checkpointLoop := func(ctx context.Context) {
@@ -359,14 +364,14 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 				return
 			case <-ticker.C:
 				if err := r.flushMeta(ctx, errCh); err != nil {
-					r.errCh <- err
+					r.sendError(err)
 					return
 				}
 			case msg, ok := <-r.appendCh:
 				if !ok {
 					log.Info("stop checkpoint runner")
 					if err := r.flushMeta(ctx, errCh); err != nil {
-						r.errCh <- err
+						r.sendError(err)
 					}
 					// close the channel to flush worker
 					// and wait it to consumes all the metas
@@ -385,7 +390,7 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 				groups.Groups = append(groups.Groups, msg.Group)
 			case err := <-errCh:
 				// pass flush worker's error back
-				r.errCh <- err
+				r.sendError(err)
 				return
 			}
 		}
