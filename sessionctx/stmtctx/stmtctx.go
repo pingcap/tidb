@@ -59,45 +59,6 @@ type SQLWarn struct {
 	Err   error
 }
 
-<<<<<<< HEAD
-=======
-type jsonSQLWarn struct {
-	Level  string        `json:"level"`
-	SQLErr *terror.Error `json:"err,omitempty"`
-	Msg    string        `json:"msg,omitempty"`
-}
-
-// MarshalJSON implements the Marshaler.MarshalJSON interface.
-func (warn *SQLWarn) MarshalJSON() ([]byte, error) {
-	w := &jsonSQLWarn{
-		Level: warn.Level,
-	}
-	e := errors.Cause(warn.Err)
-	switch x := e.(type) {
-	case *terror.Error:
-		// Omit outter errors because only the most inner error matters.
-		w.SQLErr = x
-	default:
-		w.Msg = e.Error()
-	}
-	return json.Marshal(w)
-}
-
-// UnmarshalJSON implements the Unmarshaler.UnmarshalJSON interface.
-func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
-	var w jsonSQLWarn
-	if err := json.Unmarshal(data, &w); err != nil {
-		return err
-	}
-	warn.Level = w.Level
-	if w.SQLErr != nil {
-		warn.Err = w.SQLErr
-	} else {
-		warn.Err = errors.New(w.Msg)
-	}
-	return nil
-}
-
 // ReferenceCount indicates the reference count of StmtCtx.
 type ReferenceCount int32
 
@@ -134,7 +95,6 @@ func (rf *ReferenceCount) UnFreeze() {
 	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
 }
 
->>>>>>> f8a6bde954 (*: add a reference count for StmtCtx (#39368))
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {

@@ -990,11 +990,8 @@ type SessionVars struct {
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
 
-	// cached is used to optimze the object allocation.
-	cached struct {
-		curr int8
-		data [2]stmtctx.StatementContext
-	}
+	// cachedStmtCtx is used to optimze the object allocation.
+	cachedStmtCtx [2]stmtctx.StatementContext
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *utilMath.MysqlRng
@@ -1011,11 +1008,6 @@ type SessionVars struct {
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
 func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
-<<<<<<< HEAD
-	s.cached.curr = (s.cached.curr + 1) % 2
-	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
-	return &s.cached.data[s.cached.curr]
-=======
 	sc := &s.cachedStmtCtx[0]
 	if sc == s.StmtCtx {
 		sc = &s.cachedStmtCtx[1]
@@ -1027,7 +1019,6 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 		sc = &stmtctx.StatementContext{}
 	}
 	return sc
->>>>>>> f8a6bde954 (*: add a reference count for StmtCtx (#39368))
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
