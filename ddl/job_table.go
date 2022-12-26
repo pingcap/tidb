@@ -612,7 +612,7 @@ func GetAndMarkBackfillJobsForOneEle(sess *session, batch int, jobID int64, uuid
 			return err
 		}
 		if len(bJobs) == 0 {
-			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job, lease is timeout")
+			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job")
 		}
 
 		validLen = 0
@@ -685,7 +685,7 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 	}
 	bJobs := make([]*BackfillJob, 0, len(rows))
 	for _, row := range rows {
-		bJob := BackfillJob{
+		bfJob := BackfillJob{
 			ID:            row.GetInt64(0),
 			JobID:         row.GetInt64(1),
 			EleID:         row.GetInt64(2),
@@ -702,12 +702,12 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 			FinishTS:      row.GetUint64(13),
 			RowCount:      row.GetInt64(14),
 		}
-		bJob.Meta = &model.BackfillMeta{}
-		err = bJob.Meta.Decode(row.GetBytes(15))
+		bfJob.Meta = &model.BackfillMeta{}
+		err = bfJob.Meta.Decode(row.GetBytes(15))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		bJobs = append(bJobs, &bJob)
+		bJobs = append(bJobs, &bfJob)
 	}
 	return bJobs, nil
 }

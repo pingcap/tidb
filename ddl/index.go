@@ -1260,7 +1260,7 @@ func (w *baseIndexWorker) String() string {
 	return w.tp.String()
 }
 
-func (w *baseIndexWorker) UpdateTask(bJob *BackfillJob) error {
+func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 	sess, ok := w.backfillCtx.sessCtx.(*session)
 	if !ok {
 		return errors.Errorf("sess ctx:%#v convert session failed", w.backfillCtx.sessCtx)
@@ -1268,32 +1268,32 @@ func (w *baseIndexWorker) UpdateTask(bJob *BackfillJob) error {
 
 	return runInTxn(sess, func(se *session) error {
 		jobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and id = %d and ele_key = '%s'",
-			bJob.JobID, bJob.EleID, bJob.ID, bJob.EleKey), "update_backfill_task")
+			bfJob.JobID, bfJob.EleID, bfJob.ID, bfJob.EleKey), "update_backfill_task")
 		if err != nil {
 			return err
 		}
 
 		if len(jobs) == 0 {
-			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill bJob, lease is timeout")
+			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job")
 		}
-		if jobs[0].InstanceID != bJob.InstanceID {
-			return dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get a backfill bJob %v, want instance ID %s", jobs[0], bJob.InstanceID))
+		if jobs[0].InstanceID != bfJob.InstanceID {
+			return dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get a backfill job %v, want instance ID %s", jobs[0], bfJob.InstanceID))
 		}
-		return updateBackfillJob(sess, BackfillTable, bJob, "update_backfill_task")
+		return updateBackfillJob(sess, BackfillTable, bfJob, "update_backfill_task")
 	})
 }
 
-func (w *baseIndexWorker) FinishTask(bJob *BackfillJob) error {
+func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
 	sess, ok := w.backfillCtx.sessCtx.(*session)
 	if !ok {
 		return errors.Errorf("sess ctx:%#v convert session failed", w.backfillCtx.sessCtx)
 	}
 	return runInTxn(sess, func(se *session) error {
-		err := RemoveBackfillJob(sess, false, bJob)
+		err := RemoveBackfillJob(sess, false, bfJob)
 		if err != nil {
 			return err
 		}
-		return AddBackfillHistoryJob(sess, []*BackfillJob{bJob})
+		return AddBackfillHistoryJob(sess, []*BackfillJob{bfJob})
 	})
 }
 

@@ -214,8 +214,8 @@ type backfiller interface {
 	BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
 	AddMetricInfo(float64)
 	GetTask() (*BackfillJob, error)
-	UpdateTask(bJob *BackfillJob) error
-	FinishTask(bJob *BackfillJob) error
+	UpdateTask(bfJob *BackfillJob) error
+	FinishTask(bfJob *BackfillJob) error
 	GetCtx() *backfillCtx
 	String() string
 }
@@ -308,20 +308,20 @@ func newBackfillWorker(ctx context.Context, id int, bf backfiller) *backfillWork
 	}
 }
 
-func (w *backfillWorker) updateLease(execID string, bJob *BackfillJob, nextKey kv.Key) error {
+func (w *backfillWorker) updateLease(execID string, bfJob *BackfillJob, nextKey kv.Key) error {
 	leaseTime, err := GetOracleTime(w.GetCtx().store)
 	if err != nil {
 		return err
 	}
-	bJob.CurrKey = nextKey
-	bJob.InstanceID = execID
-	bJob.InstanceLease = GetLeaseGoTime(leaseTime, InstanceLease)
-	return w.backfiller.UpdateTask(bJob)
+	bfJob.CurrKey = nextKey
+	bfJob.InstanceID = execID
+	bfJob.InstanceLease = GetLeaseGoTime(leaseTime, InstanceLease)
+	return w.backfiller.UpdateTask(bfJob)
 }
 
-func (w *backfillWorker) finishJob(bJob *BackfillJob) error {
-	bJob.State = model.JobStateDone
-	return w.backfiller.FinishTask(bJob)
+func (w *backfillWorker) finishJob(bfJob *BackfillJob) error {
+	bfJob.State = model.JobStateDone
+	return w.backfiller.FinishTask(bfJob)
 }
 
 func (w *backfillWorker) String() string {
@@ -480,7 +480,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		w.resultCh <- result
 		if result.err != nil {
 			logutil.BgLogger().Info("[ddl] backfill worker exit on error",
-				zap.Stringer("workerr", w), zap.Int("workerID", w.id), zap.Error(result.err))
+				zap.Stringer("worker", w), zap.Int("workerID", w.id), zap.Error(result.err))
 			return
 		}
 	}
@@ -1200,12 +1200,12 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 					return errors.Trace(err)
 				}
 
-				bJob, err := getBackfillJobWithRetry(sess, BackfillTable, jobID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, false)
+				bfJob, err := getBackfillJobWithRetry(sess, BackfillTable, jobID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, false)
 				if err != nil {
 					logutil.BgLogger().Info("[ddl] getBackfillJobWithRetry failed", zap.Int64("job ID", jobID), zap.Error(err))
 					return errors.Trace(err)
 				}
-				if bJob == nil {
+				if bfJob == nil {
 					backfillJobFinished = true
 					logutil.BgLogger().Info("[ddl] finish backfill jobs", zap.Int64("job ID", jobID))
 				}
@@ -1315,7 +1315,7 @@ func getBackfillJobWithRetry(sess *session, tableName string, jobID, currEleID i
 
 // GetMaxBackfillJob gets the max backfill job in BackfillTable and BackfillHistoryTable.
 func GetMaxBackfillJob(sess *session, jobID, currEleID int64, currEleKey []byte) (*BackfillJob, error) {
-	bJob, err := getBackfillJobWithRetry(sess, BackfillTable, jobID, currEleID, currEleKey, true)
+	bfJob, err := getBackfillJobWithRetry(sess, BackfillTable, jobID, currEleID, currEleKey, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1324,20 +1324,20 @@ func GetMaxBackfillJob(sess *session, jobID, currEleID int64, currEleKey []byte)
 		return nil, errors.Trace(err)
 	}
 
-	if bJob == nil {
+	if bfJob == nil {
 		return hJob, nil
 	}
 	if hJob == nil {
-		return bJob, nil
+		return bfJob, nil
 	}
-	if bJob.ID > hJob.ID {
-		return bJob, nil
+	if bfJob.ID > hJob.ID {
+		return bfJob, nil
 	}
 	return hJob, nil
 }
 
 // MoveBackfillJobsToHistoryTable moves backfill table jobs to the backfill history table.
-func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bJob *BackfillJob) error {
+func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bfJob *BackfillJob) error {
 	sess, ok := sessCtx.(*session)
 	if !ok {
 		return errors.Errorf("sess ctx:%#v convert session failed", sessCtx)
@@ -1346,7 +1346,7 @@ func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bJob *BackfillJo
 	return runInTxn(sess, func(se *session) error {
 		// TODO: Consider batch by batch update backfill jobs and insert backfill history jobs.
 		bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
-			bJob.JobID, bJob.EleID, bJob.EleKey), "update_backfill_job")
+			bfJob.JobID, bfJob.EleID, bfJob.EleKey), "update_backfill_job")
 		if err != nil {
 			return errors.Trace(err)
 		}
