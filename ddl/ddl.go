@@ -776,9 +776,6 @@ func (d *ddl) close() {
 		d.generalDDLWorkerPool.close()
 	}
 
-	for _, worker := range d.workers {
-		worker.Close()
-	}
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
 	if d.delRangeMgr != nil {

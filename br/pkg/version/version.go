@@ -165,7 +165,7 @@ func CheckVersionForDDL(s *metapb.Store, tikvVersion *semver.Version) error {
 	// use tikvVersion instead of tidbVersion since br doesn't have mysql client to connect tidb.
 	requireVersion := semver.New("6.2.0-alpha")
 	if tikvVersion.Compare(*requireVersion) < 0 {
-		return errors.New("detected the old version of tidb cluster")
+		return errors.Errorf("detected the old version of tidb cluster, require: >= 6.2.0, but got %s", tikvVersion.String())
 	}
 	return nil
 }

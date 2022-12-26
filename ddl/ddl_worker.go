@@ -408,7 +408,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
-func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
+func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
@@ -641,13 +641,6 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 	return true, nil
 }
 
-func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
-	if tp == addIdxWorker {
-		return meta.NewMeta(txn)
-	}
-	return meta.NewMeta(txn)
-}
-
 func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
 		return
@@ -791,7 +784,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	err = w.updateDDLJob(t, job, runJobErr != nil)
+	err = w.updateDDLJob(job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.rollback()
 		d.unlockSchemaVersion(job.ID)
