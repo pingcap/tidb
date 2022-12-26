@@ -542,6 +542,7 @@ func filterAliveStores(ctx context.Context, stores []*tikv.Store, ttl time.Durat
 			aliveStores = append(aliveStores, s)
 		}(i)
 	}
+	wg.Wait()
 
 	logutil.BgLogger().Info("detecting available mpp stores", zap.Any("total", len(stores)), zap.Any("alive", len(aliveStores)))
 	return aliveStores
