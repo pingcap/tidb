@@ -266,7 +266,6 @@ type ddl struct {
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	workers           map[workerType]*worker
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
