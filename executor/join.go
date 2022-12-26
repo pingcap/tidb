@@ -80,10 +80,8 @@ type probeSideTupleFetcher struct {
 type probeWorker struct {
 	hashJoinCtx *hashJoinCtx
 	sessCtx     sessionctx.Context
-	workerID    uint
 
-	probeKeyColIdx   []int
-	probeNAKeyColIdx []int
+	workerID uint
 	// We pre-alloc and reuse the Rows and RowPtrs for each probe goroutine, to avoid allocation frequently
 	buildSideRows    []chunk.Row
 	buildSideRowPtrs []chunk.RowPtr
@@ -101,20 +99,20 @@ type probeWorker struct {
 	probeResultCh        chan *chunk.Chunk
 }
 
-type buildWorker struct {
-	buildSideExec    Executor
-	buildKeyColIdx   []int
-	buildNAKeyColIdx []int
-}
-
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
 	baseExecutor
 	*hashJoinCtx
 
 	probeSideTupleFetcher *probeSideTupleFetcher
-	probeWorkers          []*probeWorker
-	buildWorker           *buildWorker
+	probeWorkers          []probeWorker
+
+	buildSideExec     Executor
+	buildSideEstCount float64
+	probeKeys         []*expression.Column
+	probeNAKeys       []*expression.Column
+	buildKeys         []*expression.Column
+	buildNAKeys       []*expression.Column
 
 	worker util.WaitGroupWrapper
 	waiter util.WaitGroupWrapper
@@ -209,6 +207,12 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 
+	if e.probeTypes == nil {
+		e.probeTypes = retTypes(e.probeSideTupleFetcher.probeSideExec)
+	}
+	if e.buildTypes == nil {
+		e.buildTypes = retTypes(e.buildSideExec)
+	}
 	if e.runtimeStats != nil {
 		e.stats = &hashJoinRuntimeStats{
 			concurrent: int(e.concurrency),
@@ -309,8 +313,8 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 		if e.finished.Load() {
 			return
 		}
-		chk := e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.buildWorker.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize, e.ctx.GetSessionVars().MaxChunkSize, e.AllocPool)
-		err = Next(ctx, e.buildWorker.buildSideExec, chk)
+		chk := e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize, e.ctx.GetSessionVars().MaxChunkSize, e.AllocPool)
+		err = Next(ctx, e.buildSideExec, chk)
 		if err != nil {
 			errCh <- errors.Trace(err)
 			return
@@ -371,11 +375,19 @@ func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 		e.probeSideTupleFetcher.fetchProbeSideChunks(ctx, e.maxChunkSize)
 	}, e.probeSideTupleFetcher.handleProbeSideFetcherPanic)
 
+	probeKeyColIdx := make([]int, len(e.probeKeys))
+	probeNAKeColIdx := make([]int, len(e.probeNAKeys))
+	for i := range e.probeKeys {
+		probeKeyColIdx[i] = e.probeKeys[i].Index
+	}
+	for i := range e.probeNAKeys {
+		probeNAKeColIdx[i] = e.probeNAKeys[i].Index
+	}
 	for i := uint(0); i < e.concurrency; i++ {
 		workerID := i
 		e.worker.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
-			e.probeWorkers[workerID].runJoinWorker()
+			e.probeWorkers[workerID].runJoinWorker(probeKeyColIdx, probeNAKeColIdx)
 		}, e.probeWorkers[workerID].handleProbeWorkerPanic)
 	}
 	e.waiter.RunWithRecover(e.waitJoinWorkersAndCloseResultChan, nil)
@@ -451,7 +463,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	close(e.joinResultCh)
 }
 
-func (w *probeWorker) runJoinWorker() {
+func (w *probeWorker) runJoinWorker(probeKeyColIdx, probeNAKeyColIdx []int) {
 	probeTime := int64(0)
 	if w.hashJoinCtx.stats != nil {
 		start := time.Now()
@@ -478,8 +490,8 @@ func (w *probeWorker) runJoinWorker() {
 	}
 	hCtx := &hashContext{
 		allTypes:    w.hashJoinCtx.probeTypes,
-		keyColIdx:   w.probeKeyColIdx,
-		naKeyColIdx: w.probeNAKeyColIdx,
+		keyColIdx:   probeKeyColIdx,
+		naKeyColIdx: probeNAKeyColIdx,
 	}
 	for ok := true; ok; {
 		if w.hashJoinCtx.finished.Load() {
@@ -1093,12 +1105,20 @@ func (w *probeWorker) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx
 func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.prepared {
 		e.buildFinished = make(chan error, 1)
+		buildKeyColIdx := make([]int, len(e.buildKeys))
+		for i := range e.buildKeys {
+			buildKeyColIdx[i] = e.buildKeys[i].Index
+		}
+		buildNAKeyColIdx := make([]int, len(e.buildNAKeys))
+		for i := range e.buildNAKeys {
+			buildNAKeyColIdx[i] = e.buildNAKeys[i].Index
+		}
 		hCtx := &hashContext{
 			allTypes:    e.buildTypes,
-			keyColIdx:   e.buildWorker.buildKeyColIdx,
-			naKeyColIdx: e.buildWorker.buildNAKeyColIdx,
+			keyColIdx:   buildKeyColIdx,
+			naKeyColIdx: buildNAKeyColIdx,
 		}
-		e.rowContainer = newHashRowContainer(e.ctx, hCtx, retTypes(e.buildWorker.buildSideExec))
+		e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx, retTypes(e.buildSideExec))
 		// we shallow copies rowContainer for each probe worker to avoid lock contention
 		for i := uint(0); i < e.concurrency; i++ {
 			if i == 0 {
