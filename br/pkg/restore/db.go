@@ -285,6 +285,14 @@ func (db *DB) tableIDAllocFilter() ddl.AllocTableIDIf {
 			return true
 		}
 		prealloced := db.preallocedIDs.Prealloced(ti.ID)
+		if ti.Partition != nil && ti.Partition.Definitions != nil {
+			for _, part := range ti.Partition.Definitions {
+				if !db.preallocedIDs.Prealloced(part.ID) {
+					prealloced = false
+					break
+				}
+			}
+		}
 		if prealloced {
 			log.Info("reusing table ID", zap.Stringer("table", ti.Name))
 		}
