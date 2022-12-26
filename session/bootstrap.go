@@ -733,15 +733,15 @@ const (
 	version107 = 107
 	// version108 adds the table tidb_ttl_table_status
 	version108 = 108
-	// version109 add column source to mysql.stats_meta_history
+	// version109 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version109 = 109
-	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
+	// version110 add column source to mysql.stats_meta_history
 	version110 = 110
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version109
+var currentBootstrapVersion int64 = version110
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -2197,20 +2197,20 @@ func upgradeToVer108(s Session, ver int64) {
 	doReentrantDDL(s, CreateTTLTableStatus)
 }
 
+// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
 func upgradeToVer109(s Session, ver int64) {
 	if ver >= version109 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
-// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
 func upgradeToVer110(s Session, ver int64) {
 	if ver >= version110 {
 		return
 	}
-	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
 }
 
 func writeOOMAction(s Session) {
