@@ -2433,5 +2433,6 @@ func TestFixDDLTxnWillConflictWithReorgTxn(t *testing.T) {
 	tk.MustExec("insert into t values(128),(129)")
 	tk.MustExec("alter table t modify column a tinyint")
 
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant 128 overflows tinyint", "Warning 1690 constant 128 overflows tinyint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1690 2 warnings with this error code, first warning: constant 128 overflows tinyint"))
 }

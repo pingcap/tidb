@@ -780,7 +780,25 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 		return err
 	}
 	asyncNotify(d.ddlJobDoneCh)
+	w.cleanupDDLReorgHandle(job)
 	return nil
+}
+
+// Clean up tidb_ddl_reorg if there are "left overs"
+func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
+	if err := w.sess.begin(); err == nil {
+		elem, _, _, _, err := getDDLReorgHandle(w.sess, job)
+		if err == nil {
+			elems := []*meta.Element{elem}
+			removeDDLReorgHandle(w.sess, job, elems)
+			err = w.sess.commit()
+			if err != nil {
+				logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Int64("job.ID", job.ID))
+			}
+		} else {
+			w.sess.rollback()
+		}
+	}
 }
 
 func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
