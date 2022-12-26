@@ -2376,11 +2376,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			se:        se,
 		}, err
 	}
-	if !se.GetSessionVars().InRestrictedSQL {
-		sql, sqlDigest := se.GetSessionVars().StmtCtx.SQLDigest()
-		_, planDigest := se.GetSessionVars().StmtCtx.GetPlanDigest()
-		fmt.Println(fmt.Sprintf("sql=%v,sqldigest=%v,plandigest=%v", sql, sqlDigest.String(), planDigest.String()))
-	}
 	if !se.GetSessionVars().InRestrictedSQL && se.GetSessionVars().IsPlanReplayerCaptureEnabled() {
 		stmtNode := s.GetStmtNode()
 		startTS := se.GetSessionVars().StmtCtx.StmtSnapshotTS
