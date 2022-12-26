@@ -261,7 +261,10 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	case model.ActionAddForeignKey:
 		fkInfo := job.Args[0].(*model.FKInfo)
-		info.ForeignKeys = append(info.ForeignKeys, fkInfo.Name)
+		info.AddForeignKeys = append(info.AddForeignKeys, model.AddForeignKeyInfo{
+			Name: fkInfo.Name,
+			Cols: fkInfo.Cols,
+		})
 	default:
 		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())
 	}
@@ -323,6 +326,32 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	return checkIndexes(info.AlterIndexes, true)
 }
 
+func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {
+	var remainIndexes, droppingIndexes []*model.IndexInfo
+	tbInfo := t.Meta()
+	for _, idx := range tbInfo.Indices {
+		dropping := false
+		for _, name := range info.DropIndexes {
+			if name.L == idx.Name.L {
+				dropping = true
+				break
+			}
+		}
+		if dropping {
+			droppingIndexes = append(droppingIndexes, idx)
+		} else {
+			remainIndexes = append(remainIndexes, idx)
+		}
+	}
+
+	for _, fk := range info.AddForeignKeys {
+		if droppingIdx := model.FindIndexByColumns(tbInfo, droppingIndexes, fk.Cols...); droppingIdx != nil && model.FindIndexByColumns(tbInfo, remainIndexes, fk.Cols...) == nil {
+			return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(droppingIdx.Name)
+		}
+	}
+	return nil
+}
+
 func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 	err := checkOperateSameColAndIdx(info)
 	if err != nil {
@@ -330,6 +359,11 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 	}
 
 	err = checkVisibleColumnCnt(t, len(info.AddColumns), len(info.DropColumns))
+	if err != nil {
+		return err
+	}
+
+	err = checkOperateDropIndexUseByForeignKey(info, t)
 	if err != nil {
 		return err
 	}
