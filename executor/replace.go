@@ -92,6 +92,10 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 	if err != nil {
 		return false, err
 	}
+	err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
+	if err != nil {
+		return false, err
+	}
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return false, nil
 }
@@ -178,6 +182,12 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 				continue
 			}
 			return false, false, err
+		}
+		if tablecodec.IsTempIndexKey(uk.newKey) {
+			if tablecodec.CheckTempIndexValueIsDelete(val) {
+				continue
+			}
+			val = tablecodec.DecodeTempIndexOriginValue(val)
 		}
 		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 		if err != nil {
@@ -270,4 +280,19 @@ func (e *ReplaceExec) setMessage() {
 		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKChecks() []*FKCheckExec {
+	return e.fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKCascades() []*FKCascadeExec {
+	return e.fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
 }

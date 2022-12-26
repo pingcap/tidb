@@ -175,8 +175,6 @@ type Session interface {
 	RollbackTxn(context.Context)
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
-	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
-	CacheGeneralStmt(sql string) (interface{}, error)
 	// ExecutePreparedStmt executes a prepared statement.
 	// Deprecated: please use ExecuteStmt, this function is left for testing only.
 	// TODO: remove ExecutePreparedStmt.
@@ -254,8 +252,8 @@ type session struct {
 
 	store kv.Storage
 
-	preparedPlanCache sessionctx.PlanCache
-	generalPlanCache  sessionctx.PlanCache
+	preparedPlanCache    sessionctx.PlanCache
+	nonPreparedPlanCache sessionctx.PlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -458,17 +456,17 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
-	if isGeneralPlanCache { // use the general plan cache
-		if !s.GetSessionVars().EnableGeneralPlanCache {
+func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
+	if isNonPrepared { // use the non-prepared plan cache
+		if !s.GetSessionVars().EnableNonPreparedPlanCache {
 			return nil
 		}
-		if s.generalPlanCache == nil { // lazy construction
-			s.generalPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
+		if s.nonPreparedPlanCache == nil { // lazy construction
+			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
 				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
 				plannercore.PickPlanFromBucket, s)
 		}
-		return s.generalPlanCache
+		return s.nonPreparedPlanCache
 	}
 
 	// use the prepared plan cache
@@ -1601,6 +1599,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
+		ProtectedTSList:       &s.sessionVars.ProtectedTSList,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1989,6 +1988,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
+		s.sessionVars.MemTracker.Detach()
 	}, nil
 }
 
@@ -2050,6 +2050,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
 		se.sessionVars.InspectionTableCache = nil
+		se.sessionVars.MemTracker.Detach()
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
@@ -2090,7 +2091,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		metrics.SessionRestrictedSQLCounter.Inc()
 		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 		ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
-		rs, err := se.ExecuteStmt(ctx, stmt)
+		rs, err := se.ExecuteInternalStmt(ctx, stmt)
 		if err != nil {
 			se.sessionVars.StmtCtx.AppendError(err)
 		}
@@ -2110,6 +2111,18 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
+}
+
+// ExecuteInternalStmt execute internal stmt
+func (s *session) ExecuteInternalStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	origin := s.sessionVars.InRestrictedSQL
+	s.sessionVars.InRestrictedSQL = true
+	defer func() {
+		s.sessionVars.InRestrictedSQL = origin
+		// Restore the goroutine label by using the original ctx after execution is finished.
+		pprof.SetGoroutineLabels(ctx)
+	}()
+	return s.ExecuteStmt(ctx, stmtNode)
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
@@ -2242,7 +2255,7 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
-	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead {
+	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead || vars.InRestrictedSQL {
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"
@@ -2441,22 +2454,6 @@ func (s *session) rollbackOnError(ctx context.Context) {
 	if !s.sessionVars.InTxn() {
 		s.RollbackTxn(ctx)
 	}
-}
-
-// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
-// The sql have to be parameterized, e.g. select * from t where a>?.
-func (s *session) CacheGeneralStmt(sql string) (interface{}, error) {
-	if stmt := s.sessionVars.GetGeneralPlanCacheStmt(sql); stmt != nil {
-		// skip this step if there is already a PlanCacheStmt for this ql
-		return stmt, nil
-	}
-
-	prepareExec := executor.NewPrepareExec(s, sql)
-	prepareExec.IsGeneralStmt = true
-	if err := prepareExec.Next(context.Background(), nil); err != nil {
-		return nil, err
-	}
-	return prepareExec.Stmt, nil
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
@@ -3073,22 +3070,21 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	return false, nil
 }
 
+type tableBasicInfo struct {
+	SQL string
+	id  int64
+}
+
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
-	DDLJobTables = []struct {
-		SQL string
-		id  int64
-	}{
+	DDLJobTables = []tableBasicInfo{
 		{ddl.JobTableSQL, ddl.JobTableID},
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
-	BackfillTables = []struct {
-		SQL string
-		id  int64
-	}{
+	BackfillTables = []tableBasicInfo{
 		{ddl.BackfillTableSQL, ddl.BackfillTableID},
 		{ddl.BackfillHistoryTableSQL, ddl.BackfillHistoryTableID},
 	}
@@ -3109,7 +3105,7 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_ddl_backfill and tidb_ddl_backfill_history.
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg, tidb_ddl_history, tidb_ddl_backfill and tidb_ddl_backfill_history.
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -3121,39 +3117,54 @@ func InitDDLJobTables(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
-		tables := append(DDLJobTables, BackfillTables...)
 		if exists {
-			tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
-			if err != nil || tblExist {
-				return errors.Trace(err)
-			}
-			tables = BackfillTables
+			return initBackfillJobTables(store, t, dbID)
 		}
-		tableIDs := make([]int64, 0, len(tables))
-		for _, tbl := range tables {
-			tableIDs = append(tableIDs, tbl.id)
+
+		if err = createAndSplitTables(store, t, dbID, DDLJobTables); err != nil {
+			return err
 		}
-		splitAndScatterTable(store, tableIDs)
-		p := parser.New()
-		for _, tbl := range tables {
-			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
-			if err != nil {
-				return errors.Trace(err)
-			}
-			tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			tblInfo.State = model.StatePublic
-			tblInfo.ID = tbl.id
-			tblInfo.UpdateTS = t.StartTS
-			err = t.CreateTableOrView(dbID, tblInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		if err = initBackfillJobTables(store, t, dbID); err != nil {
+			return err
 		}
 		return t.SetDDLTables()
 	})
+}
+
+// initBackfillJobTables is to create tidb_ddl_backfill and tidb_ddl_backfill_history.
+func initBackfillJobTables(store kv.Storage, t *meta.Meta, dbID int64) error {
+	tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
+	if err != nil || tblExist {
+		return errors.Trace(err)
+	}
+	return createAndSplitTables(store, t, dbID, BackfillTables)
+}
+
+func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []tableBasicInfo) error {
+	tableIDs := make([]int64, 0, len(tables))
+	for _, tbl := range tables {
+		tableIDs = append(tableIDs, tbl.id)
+	}
+	splitAndScatterTable(store, tableIDs)
+	p := parser.New()
+	for _, tbl := range tables {
+		stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo.State = model.StatePublic
+		tblInfo.ID = tbl.id
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableOrView(dbID, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
@@ -4144,22 +4155,25 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 		} else {
 			s.sessionVars.RequestSourceType = stmtLabel
 		}
-	} else {
-		if source := ctx.Value(kv.RequestSourceKey); source != nil {
-			s.sessionVars.RequestSourceType = source.(kv.RequestSource).RequestSourceType
-		} else {
-			// panic in test mode in case there are requests without source in the future.
-			// log warnings in production mode.
-			if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-				panic("unexpected no source type context, if you see this error, " +
-					"the `RequestSourceTypeKey` is missing in your context")
-			} else {
-				logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
-					"the `RequestSourceTypeKey` is missing in the context",
-					zap.Bool("internal", s.isInternal()),
-					zap.String("sql", stmtNode.Text()))
-			}
+		return
+	}
+	if source := ctx.Value(kv.RequestSourceKey); source != nil {
+		requestSource := source.(kv.RequestSource)
+		if requestSource.RequestSourceType != "" {
+			s.sessionVars.RequestSourceType = requestSource.RequestSourceType
+			return
 		}
+	}
+	// panic in test mode in case there are requests without source in the future.
+	// log warnings in production mode.
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		panic("unexpected no source type context, if you see this error, " +
+			"the `RequestSourceTypeKey` is missing in your context")
+	} else {
+		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
+			"the `RequestSourceTypeKey` is missing in the context",
+			zap.Bool("internal", s.isInternal()),
+			zap.String("sql", stmtNode.Text()))
 	}
 }
 
