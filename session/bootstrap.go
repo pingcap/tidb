@@ -732,13 +732,10 @@ const (
 	version107 = 107
 	// version108 adds the table tidb_ttl_table_status
 	version108 = 108
-<<<<<<< HEAD
-=======
 	// version109 add column source to mysql.stats_meta_history
 	version109 = 109
 	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version110 = 110
->>>>>>> fc714e2108 (session: fix tidb_enable_gc_aware_memory_track after upgrade (#40173))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -856,11 +853,8 @@ var (
 		upgradeToVer106,
 		upgradeToVer107,
 		upgradeToVer108,
-<<<<<<< HEAD
-=======
 		upgradeToVer109,
 		upgradeToVer110,
->>>>>>> fc714e2108 (session: fix tidb_enable_gc_aware_memory_track after upgrade (#40173))
 	}
 )
 
