@@ -1421,8 +1421,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	if candidate.path.Index.MVIndex {
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
-		// Currently only support to use IndexMerge to access MVIndex instead of IndexReader.
-		// TODO: make IndexReader support to access MVIndex.
+		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
+		// TODO: make IndexReader support accessing MVIndex directly.
 		return invalidTask, nil
 	}
 	if !candidate.path.IsSingleScan {

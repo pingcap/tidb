@@ -449,7 +449,11 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
 	}
 	// 3. Generate possible IndexMerge paths for MVIndex.
-	if mvIndexMergePath := ds.generateIndexMergeJSONMVIndexPath(regularPathCount, indexMergeConds); mvIndexMergePath != nil {
+	mvIndexMergePath, err := ds.generateIndexMergeJSONMVIndexPath(regularPathCount, indexMergeConds)
+	if err != nil {
+		return err
+	}
+	if mvIndexMergePath != nil {
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvIndexMergePath...)
 	}
 
@@ -504,7 +508,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 			IndexRangeScan(a, [3,3])
 			TableRowIdScan(t)
 */
-func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath) {
+func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
 	for idx := 0; idx < normalPathCnt; idx++ {
 		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
 			continue // not a MVIndex path
@@ -527,56 +531,48 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 				break
 			}
 		}
-		// unwrap the outside cast: cast(json_extract(test.t.a, $.zip), JSON) --> (json_extract(test.t.a, $.zip))
-		underlyingJSONCol, ok := unwrapCast(virCol.VirtualExpr)
+		// unwrap the outside cast: cast(json_extract(test.t.a, $.zip), JSON) --> json_extract(test.t.a, $.zip)
+		targetJSONPath, ok := unwrapCast(virCol.VirtualExpr)
 		if !ok {
 			continue
 		}
 
-		// Step 2. Iterate all filters and generate corresponding paths.
+		// Step 2. Iterate all filters and generate corresponding IndexMerge paths.
 		for i, filter := range filters {
-			// Step 2.1. Extract col and vals from json_member / json_overlaps / json_contains functions.
+			// Step 2.1. Extract jsonPath and vals from json_member / json_overlaps / json_contains functions.
 			sf, ok := filter.(*expression.ScalarFunction)
 			if !ok {
 				continue
 			}
 
-			var col expression.Expression
+			var jsonPath expression.Expression
 			var vals []expression.Expression
 			switch sf.FuncName.L {
 			case ast.JSONMemberOf: // (1 member of a->'$.zip')
-				col = sf.GetArgs()[1]
-				vals = append(vals, sf.GetArgs()[0])
-			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-				// TODO: support json_overlaps
-				continue
-			case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
-				// TODO: support json_contains
-				continue
-			default:
-				continue
-			}
-			var castOK bool
-			for i := range vals { // cast(1 as json) --> 1
-				if vals[i], castOK = unwrapCast(vals[i]); !castOK {
-					break // unexpected value
+				jsonPath = sf.GetArgs()[1]
+				v, ok := unwrapCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
+				if !ok {
+					continue
 				}
-			}
-			if !castOK {
+				vals = append(vals, v)
+			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				continue // TODO: support json_overlaps
+			case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
+				continue // TODO: support json_contains
+			default:
 				continue
 			}
 
 			// Step 2.2. Check some limitations.
-			if col == nil || len(vals) == 0 {
+			if jsonPath == nil || len(vals) == 0 {
 				continue
 			}
-			if !col.Equal(ds.ctx, underlyingJSONCol) {
+			if !jsonPath.Equal(ds.ctx, targetJSONPath) {
 				continue // not on the same JSON col
 			}
-
 			// only support INT now
 			// TODO: support more types
-			if col.GetType().EvalType() == types.ETInt {
+			if jsonPath.GetType().EvalType() == types.ETInt {
 				continue
 			}
 			allInt := true
@@ -598,14 +594,15 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 				partialPath.IdxCols, partialPath.IdxColLens = []*expression.Column{virCol}, []int{types.UnspecifiedLength}
 				partialPath.FullIdxCols, partialPath.FullIdxColLens = []*expression.Column{virCol}, []int{types.UnspecifiedLength}
 
+				// calculate the path range with the condition `a->'$.zip' = 1`.
 				eq, err := expression.NewFunction(ds.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
 				if err != nil {
-					panic(err)
+					return nil, err
 				}
-				err = ds.detachCondAndBuildRangeForPath(partialPath, []expression.Expression{eq})
-				if err != nil {
-					panic(err)
+				if err = ds.detachCondAndBuildRangeForPath(partialPath, []expression.Expression{eq}); err != nil {
+					return nil, err
 				}
+
 				partialPaths = append(partialPaths, partialPath)
 			}
 			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, i)
@@ -616,11 +613,14 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 }
 
 func unwrapCast(expr expression.Expression) (expression.Expression, bool) {
+	if expr == nil {
+		return nil, false
+	}
 	sf, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return nil, false
 	}
-	if sf.FuncName.L != ast.Cast {
+	if sf == nil || sf.FuncName.L != ast.Cast {
 		return nil, false
 	}
 	return sf.GetArgs()[0], true
