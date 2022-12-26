@@ -3527,16 +3527,16 @@ def go_deps():
         name = "com_github_tiancaiamao_gp",
         build_file_proto_mode = "disable",
         importpath = "github.com/tiancaiamao/gp",
-        sum = "h1:iffZXeHZTd35tTOS3nJ2OyMUmn40eNkLHCeQXMs6KYI=",
-        version = "v0.0.0-20221214071713-abacb15f16f1",
+        sum = "h1:4RNtqw1/tW67qP9fFgfQpTVd7DrfkaAWu4vsC18QmBo=",
+        version = "v0.0.0-20221221095600-1a473d1f9b4b",
     )
 
     go_repository(
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:cbixEWKIx4bCvXE/kmriIv7q/eiZmGxAamcPiTbYd7I=",
-        version = "v2.0.4-0.20221219091653-fe3536dd5909",
+        sum = "h1:m6glgBGCIds9QURbk8Mn+8mjLKDcv6nWrNwYh92fydQ=",
+        version = "v2.0.4-0.20221226080148-018c59dbd837",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

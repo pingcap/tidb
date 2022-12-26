@@ -28,6 +28,7 @@ type MPPTaskMeta interface {
 	GetAddress() string
 }
 
+// MPPQueryID means the global unique id of a mpp query.
 type MPPQueryID struct {
 	QueryTs      uint64 // timestamp of query execution, used for TiFlash minTSO schedule
 	LocalQueryID uint64 // unique mpp query id in local tidb memory.
@@ -36,13 +37,11 @@ type MPPQueryID struct {
 
 // MPPTask means the minimum execution unit of a mpp computation job.
 type MPPTask struct {
-	Meta         MPPTaskMeta // on which store this task will execute
-	ID           int64       // mppTaskID
-	StartTs      uint64
-	QueryTs      uint64 // timestamp of query execution, used for TiFlash minTSO schedule
-	LocalQueryID uint64 // unique mpp query id in local tidb memory.
-	ServerID     uint64
-	TableID      int64 // physical table id
+	Meta       MPPTaskMeta // on which store this task will execute
+	ID         int64       // mppTaskID
+	StartTs    uint64
+	MppQueryID MPPQueryID
+	TableID    int64 // physical table id
 
 	PartitionTableIDs []int64
 }
@@ -51,9 +50,9 @@ type MPPTask struct {
 func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	meta := &mpp.TaskMeta{
 		StartTs:      t.StartTs,
-		QueryTs:      t.QueryTs,
-		LocalQueryId: t.LocalQueryID,
-		ServerId:     t.ServerID,
+		QueryTs:      t.MppQueryID.QueryTs,
+		LocalQueryId: t.MppQueryID.LocalQueryID,
+		ServerId:     t.MppQueryID.ServerID,
 		TaskId:       t.ID,
 	}
 	if t.ID != -1 {
@@ -83,13 +82,11 @@ type MPPDispatchRequest struct {
 	IsRoot  bool        // root task returns data to tidb directly.
 	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar    int64
-	StartTs      uint64
-	QueryTs      uint64 // timestamp of query execution, used for TiFlash minTSO schedule
-	LocalQueryID uint64
-	ServerID     uint64
-	ID           int64 // identify a single task
-	State        MppTaskStates
+	SchemaVar  int64
+	StartTs    uint64
+	MppQueryID MPPQueryID
+	ID         int64 // identify a single task
+	State      MppTaskStates
 }
 
 // MPPClient accepts and processes mpp requests.

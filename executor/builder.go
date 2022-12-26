@@ -111,8 +111,7 @@ type executorBuilder struct {
 	// can return a correct value even if the session context has already been destroyed
 	forDataReaderBuilder bool
 	dataReaderTS         uint64
-	queryTS              uint64
-	localQueryID         uint64
+	mppQueryID           kv.MPPQueryID
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -132,8 +131,7 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		isStaleness:      staleread.IsStmtStaleness(ctx),
 		txnScope:         txnManager.GetTxnScope(),
 		readReplicaScope: txnManager.GetReadReplicaScope(),
-		queryTS:          getMPPQueryTS(ctx),
-		localQueryID:     getMPPQueryID(ctx),
+		mppQueryID:       kv.MPPQueryID{QueryTs: getMPPQueryTS(ctx), LocalQueryID: getMPPQueryID(ctx), ServerID: domain.GetDomain(ctx).ServerID()},
 	}
 }
 
@@ -3406,8 +3404,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		queryTS:      b.queryTS,
-		localQueryID: b.localQueryID,
+		mppQueryID:   b.mppQueryID,
 	}
 	return gather
 }
