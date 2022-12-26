@@ -174,7 +174,7 @@ type planReplayerHandle struct {
 }
 
 // SendTask send dumpTask in background task handler
-func (h *planReplayerHandle) SendTask(task *PlanReplayerDumpTask) {
+func (h *planReplayerHandle) SendTask(task *PlanReplayerDumpTask) bool {
 	select {
 	case h.planReplayerTaskDumpHandle.taskCH <- task:
 		// we directly remove the task key if we put task in channel successfully, if the task was failed to dump,
@@ -182,11 +182,13 @@ func (h *planReplayerHandle) SendTask(task *PlanReplayerDumpTask) {
 		if !task.IsContinuesCapture {
 			h.planReplayerTaskCollectorHandle.removeTask(task.PlanReplayerTaskKey)
 		}
+		return true
 	default:
 		// TODO: add metrics here
 		// directly discard the task if the task channel is full in order not to block the query process
-		logutil.BgLogger().Info("discard one plan replayer dump task",
-			zap.String("sql digest", task.SQLDigest), zap.String("plan digest", task.PlanDigest))
+		logutil.BgLogger().Warn("discard one plan replayer dump task",
+			zap.String("sql-digest", task.SQLDigest), zap.String("plan-digest", task.PlanDigest))
+		return false
 	}
 }
 
@@ -209,9 +211,13 @@ func (h *planReplayerTaskCollectorHandle) CollectPlanReplayerTask() error {
 	for _, key := range allKeys {
 		unhandled, err := checkUnHandledReplayerTask(h.ctx, h.sctx, key)
 		if err != nil {
+			logutil.BgLogger().Warn("[plan-replayer-task] collect plan replayer task failed", zap.Error(err))
 			return err
 		}
 		if unhandled {
+			logutil.BgLogger().Debug("[plan-replayer-task] collect plan replayer task success",
+				zap.String("sql-digest", key.SQLDigest),
+				zap.String("plan-digest", key.PlanDigest))
 			tasks = append(tasks, key)
 		}
 	}
@@ -351,16 +357,36 @@ type planReplayerTaskDumpWorker struct {
 
 func (w *planReplayerTaskDumpWorker) run() {
 	for task := range w.taskCH {
-		if w.status.checkTaskKeyFinishedBefore(task) {
-			continue
-		}
-		successOccupy := w.status.occupyRunningTaskKey(task)
-		if !successOccupy {
-			continue
-		}
-		w.HandleTask(task)
-		w.status.releaseRunningTaskKey(task)
+		w.handleTask(task)
 	}
+}
+
+func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
+	sqlDigest := task.SQLDigest
+	planDigest := task.PlanDigest
+	check := true
+	occupy := true
+	handleTask := true
+	defer func() {
+		logutil.BgLogger().Debug("[plan-replayer-capture] handle task",
+			zap.String("sql-digest", sqlDigest),
+			zap.String("plan-digest", planDigest),
+			zap.Bool("check", check),
+			zap.Bool("occupy", occupy),
+			zap.Bool("handle", handleTask))
+	}()
+	if task.IsContinuesCapture {
+		if w.status.checkTaskKeyFinishedBefore(task) {
+			check = false
+			return
+		}
+	}
+	occupy = w.status.occupyRunningTaskKey(task)
+	if !occupy {
+		return
+	}
+	handleTask = w.HandleTask(task)
+	w.status.releaseRunningTaskKey(task)
 }
 
 // HandleTask handled task
@@ -373,7 +399,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 	taskKey := task.PlanReplayerTaskKey
 	unhandled, err := checkUnHandledReplayerTask(w.ctx, w.sctx, taskKey)
 	if err != nil {
-		logutil.BgLogger().Warn("check plan replayer capture task failed",
+		logutil.BgLogger().Warn("[plan-replayer-capture] check task failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
 			zap.String("planDigest", taskKey.PlanDigest),
 			zap.Error(err))
@@ -386,7 +412,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 
 	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsContinuesCapture)
 	if err != nil {
-		logutil.BgLogger().Warn("generate plan replayer capture task file failed",
+		logutil.BgLogger().Warn("[plan-replayer-capture] generate task file failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
 			zap.String("planDigest", taskKey.PlanDigest),
 			zap.Error(err))
@@ -409,7 +435,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 			}
 			r, err := handle.GenJSONTableFromStats(schema.Name.String(), tbl.Meta(), stat.(*statistics.Table))
 			if err != nil {
-				logutil.BgLogger().Warn("generate plan replayer capture task json stats failed",
+				logutil.BgLogger().Warn("[plan-replayer-capture] generate task json stats failed",
 					zap.String("sqlDigest", taskKey.SQLDigest),
 					zap.String("planDigest", taskKey.PlanDigest),
 					zap.Error(err))
@@ -421,7 +447,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 	}
 	err = DumpPlanReplayerInfo(w.ctx, w.sctx, task)
 	if err != nil {
-		logutil.BgLogger().Warn("dump plan replayer capture task result failed",
+		logutil.BgLogger().Warn("[plan-replayer-capture] dump task result failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
 			zap.String("planDigest", taskKey.PlanDigest),
 			zap.Error(err))
