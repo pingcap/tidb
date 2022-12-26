@@ -14,8 +14,6 @@
 
 package chunk
 
-import "golang.org/x/sys/cpu"
-
 var (
 	_ Iterator = (*Iterator4Chunk)(nil)
 	_ Iterator = (*iterator4RowPtr)(nil)
@@ -60,10 +58,8 @@ func NewIterator4Slice(rows []Row) Iterator {
 
 // Iterator4Slice is used to iterate rows inside a slice.
 type Iterator4Slice struct {
-	_      cpu.CacheLinePad
 	rows   []Row
 	cursor int
-	_      cpu.CacheLinePad
 }
 
 // Begin implements the Iterator interface.
