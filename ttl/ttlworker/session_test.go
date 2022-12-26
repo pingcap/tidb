@@ -154,6 +154,10 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 	}
 }
 
+func (s *mockSession) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+	return s.sessionInfoSchema
+}
+
 func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
 	require.False(s.t, s.closed)
 	return s.sessionInfoSchema
@@ -175,7 +179,7 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interf
 	}
 
 	if s.executeSQL != nil {
-		return s.executeSQL(ctx, sql, args)
+		return s.executeSQL(ctx, sql, args...)
 	}
 	return s.rows, s.execErr
 }

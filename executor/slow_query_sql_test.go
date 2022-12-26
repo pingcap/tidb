@@ -46,8 +46,6 @@ func TestSlowQueryWithoutSlowLog(t *testing.T) {
 }
 
 func TestSlowQuerySensitiveQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
@@ -57,11 +55,15 @@ func TestSlowQuerySensitiveQuery(t *testing.T) {
 	newCfg.Log.SlowQueryFile = f.Name()
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
-		tk.MustExec("set tidb_slow_log_threshold=300;")
 		config.StoreGlobalConfig(originCfg)
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+	}()
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("set tidb_slow_log_threshold=0;")
@@ -80,8 +82,6 @@ func TestSlowQuerySensitiveQuery(t *testing.T) {
 }
 
 func TestSlowQueryPrepared(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 
@@ -91,12 +91,16 @@ func TestSlowQueryPrepared(t *testing.T) {
 	newCfg.Log.SlowQueryFile = f.Name()
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
-		tk.MustExec("set tidb_slow_log_threshold=300;")
-		tk.MustExec("set tidb_redact_log=0;")
 		config.StoreGlobalConfig(originCfg)
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+		tk.MustExec("set tidb_redact_log=0;")
+	}()
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("set tidb_slow_log_threshold=0;")
@@ -116,8 +120,6 @@ func TestSlowQueryPrepared(t *testing.T) {
 }
 
 func TestLogSlowLogIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
@@ -127,6 +129,8 @@ func TestLogSlowLogIndex(t *testing.T) {
 		conf.Log.SlowQueryFile = f.Name()
 	})
 	require.NoError(t, logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("use test")
@@ -140,9 +144,6 @@ func TestLogSlowLogIndex(t *testing.T) {
 }
 
 func TestSlowQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	_, err = f.WriteString(`
@@ -197,6 +198,8 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-16 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("1"))
@@ -208,10 +211,6 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 }
 
 func TestIssue37066(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
-
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
@@ -224,6 +223,9 @@ func TestIssue37066(t *testing.T) {
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("set tidb_slow_log_threshold=0;")
 	defer func() {
