@@ -4155,22 +4155,25 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 		} else {
 			s.sessionVars.RequestSourceType = stmtLabel
 		}
-	} else {
-		if source := ctx.Value(kv.RequestSourceKey); source != nil {
-			s.sessionVars.RequestSourceType = source.(kv.RequestSource).RequestSourceType
-		} else {
-			// panic in test mode in case there are requests without source in the future.
-			// log warnings in production mode.
-			if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-				panic("unexpected no source type context, if you see this error, " +
-					"the `RequestSourceTypeKey` is missing in your context")
-			} else {
-				logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
-					"the `RequestSourceTypeKey` is missing in the context",
-					zap.Bool("internal", s.isInternal()),
-					zap.String("sql", stmtNode.Text()))
-			}
+		return
+	}
+	if source := ctx.Value(kv.RequestSourceKey); source != nil {
+		requestSource := source.(kv.RequestSource)
+		if requestSource.RequestSourceType != "" {
+			s.sessionVars.RequestSourceType = requestSource.RequestSourceType
+			return
 		}
+	}
+	// panic in test mode in case there are requests without source in the future.
+	// log warnings in production mode.
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		panic("unexpected no source type context, if you see this error, " +
+			"the `RequestSourceTypeKey` is missing in your context")
+	} else {
+		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
+			"the `RequestSourceTypeKey` is missing in the context",
+			zap.Bool("internal", s.isInternal()),
+			zap.String("sql", stmtNode.Text()))
 	}
 }
 
