@@ -202,9 +202,37 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }
 
+// SplitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
+// The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
+// TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
+func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	var err error
+	d := domain.GetDomain(gs.se).DDL()
+	if err = d.BatchCreateTableWithInfo(gs.se, schema, info, append(cs, ddl.OnExistIgnore)...); kv.ErrEntryTooLarge.Equal(err) {
+		if len(info) == 1 {
+			return err
+		}
+		mid := len(info) / 2
+		err = gs.SplitBatchCreateTable(schema, info[:mid])
+		if err != nil {
+			return err
+		}
+		err = gs.SplitBatchCreateTable(schema, info[mid:])
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	return err
+}
+
 // CreateTables implements glue.BatchCreateTableSession.
+<<<<<<< HEAD
 func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
+=======
+func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+>>>>>>> 388364d5f5b (br: recursive split batch create table when restore failure on batch create table (#39829))
 	var dbName model.CIStr
 
 	for db, tablesInDB := range tables {
@@ -230,8 +258,12 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 			cloneTables = append(cloneTables, table)
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
+<<<<<<< HEAD
 		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, ddl.OnExistIgnore)
 		if err != nil {
+=======
+		if err := gs.SplitBatchCreateTable(dbName, cloneTables); err != nil {
+>>>>>>> 388364d5f5b (br: recursive split batch create table when restore failure on batch create table (#39829))
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
 			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
 			//we fall back to old way that creating table one by one
