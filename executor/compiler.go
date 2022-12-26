@@ -158,29 +158,17 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	if c.Ctx.GetSessionVars().IsPlanReplayerCaptureEnabled() && !c.Ctx.GetSessionVars().InRestrictedSQL {
-		if isPlanReplayerStmtValid(stmtNode) {
-			startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
-			if err != nil {
-				return nil, err
-			}
-			if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
-				checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
-			} else {
-				checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
-			}
+		startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
+		if err != nil {
+			return nil, err
+		}
+		if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
+			checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
+		} else {
+			checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
 		}
 	}
 	return stmt, nil
-}
-
-// we only allowed select/insert/update/delete stmt to be captured
-func isPlanReplayerStmtValid(stmtNode ast.StmtNode) bool {
-	switch stmtNode.(type) {
-	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.InsertStmt:
-		return true
-	}
-	logutil.BgLogger().Debug("[plan-replayer-capture] discard")
-	return false
 }
 
 func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
