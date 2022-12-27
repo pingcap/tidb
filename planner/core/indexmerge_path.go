@@ -520,14 +520,19 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 
 		// Step 1. Extract the underlying JSON column from MVIndex Info.
 		mvIndex := ds.possibleAccessPaths[idx].Index
-		mvVirColOffset := mvIndex.Columns[0].Offset // MVIndex has and only has 1 vir-col: index idx((cast(a->'$.zip' as signed array)))
+		if len(mvIndex.Columns) > 0 {
+			// only support single-column MVIndex now: idx((cast(a->'$.zip' as signed array)))
+			// TODO: support composite MVIndex idx((x, cast(a->'$.zip' as int array), z))
+			continue
+		}
+		mvVirColOffset := mvIndex.Columns[0].Offset
 		mvVirCol := ds.table.Meta().Cols()[mvVirColOffset]
 
 		var virCol *expression.Column
 		for _, ce := range ds.TblCols {
 			if ce.ID == mvVirCol.ID {
 				virCol = ce.Clone().(*expression.Column)
-				virCol.GetType().SetArray(false) // JSON-ARRAY(INT) --> INT
+				virCol.RetType = ce.GetType().ArrayType() // JSON-ARRAY(INT) --> INT
 				break
 			}
 		}
