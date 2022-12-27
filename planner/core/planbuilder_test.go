@@ -121,7 +121,7 @@ func TestRewriterPool(t *testing.T) {
 	dirtyRewriter := builder.getExpressionRewriter(context.TODO(), nil)
 	dirtyRewriter.asScalar = true
 	dirtyRewriter.aggrMap = make(map[*ast.AggregateFuncExpr]int)
-	dirtyRewriter.preprocess = func(ast.Node) ast.Node { return nil }
+	dirtyRewriter.preprocess = func(ast.Node) (ast.Node, error) { return nil, nil }
 	dirtyRewriter.insertPlan = &Insert{}
 	dirtyRewriter.disableFoldCounter = 1
 	dirtyRewriter.ctxStack = make([]expression.Expression, 2)
