@@ -592,7 +592,7 @@ commit;`
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1526 Table has no partition for value 3"))
 }
 
-func TestIssue39847(t *testing.T) {
+func TestIssue38950(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(t, kv.NewInjectedStore(store, &cfg))
