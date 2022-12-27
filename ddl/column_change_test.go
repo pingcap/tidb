@@ -444,7 +444,7 @@ func TestIssue40150(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("CREATE TABLE t40150 (a int) PARTITION BY HASH (a) PARTITIONS 2")
-	tk.MustContainErrMsg(`alter table t40150 rename column a to c`, "[ddl:8200]Unsupported RENAME COLUMN 'a' has a partitioning function dependency and cannot be renamed")
+	tk.MustContainErrMsg(`alter table t40150 rename column a to c`, "[ddl:3885]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
 func TestIssue40135(t *testing.T) {
@@ -468,5 +468,5 @@ func TestIssue40135(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t40135 modify column a MEDIUMINT NULL DEFAULT '6243108' FIRST")
 
-	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
+	require.ErrorContains(t, checkErr, "[ddl:3885]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
