@@ -1300,7 +1300,7 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	require.Equal(t, int64(ver63), ver)
 
 	// We are now in 6.3, tidb_enable_gc_aware_memory_track is ON.
-	res := mustExecToRecodeSet(t, seV63, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableGCAwareMemoryTrack))
+	res := mustExec(t, seV63, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableGCAwareMemoryTrack))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1319,7 +1319,7 @@ func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 6.5.
-	res = mustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableGCAwareMemoryTrack))
+	res = mustExec(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableGCAwareMemoryTrack))
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
