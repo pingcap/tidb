@@ -439,9 +439,9 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
 	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
 	if !exists {
 		ctx = NewJobContext()
-		ctx.setDDLLabelForDiagnosis(job)
 		dc.jobCtx.jobCtxMap[job.ID] = ctx
 	}
+	ctx.setDDLLabelForDiagnosis(job)
 }
 
 func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(job *model.Job) tikvrpc.ResourceGroupTagger {
@@ -979,7 +979,6 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, job)
 	}
-
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
@@ -1094,8 +1093,13 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 					logutil.BgLogger().Info("[ddl] DDL warnings doesn't match the warnings count", zap.Int64("jobID", jobID))
 				} else {
 					for key, warning := range historyJob.ReorgMeta.Warnings {
-						for j := int64(0); j < historyJob.ReorgMeta.WarningsCount[key]; j++ {
+						keyCount := historyJob.ReorgMeta.WarningsCount[key]
+						if keyCount == 1 {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+						} else {
+							newMsg := fmt.Sprintf("%d warnings with this error code, first warning: "+warning.GetMsg(), keyCount)
+							newWarning := dbterror.ClassTypes.Synthesize(terror.ErrCode(warning.Code()), newMsg)
+							ctx.GetSessionVars().StmtCtx.AppendWarning(newWarning)
 						}
 					}
 				}
@@ -1193,6 +1197,10 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 		})
 	}
 
+	if variable.EnableMDL.Load() && !toConcurrentDDL {
+		return errors.New("can not disable concurrent ddl when metadata lock is enabled")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 	d.waiting.Store(true)
@@ -1209,8 +1217,10 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 	}
 	if err == nil {
 		variable.EnableConcurrentDDL.Store(toConcurrentDDL)
+		logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL))
+	} else {
+		logutil.BgLogger().Warn("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
 	}
-	logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
 	return err
 }
 
@@ -1259,7 +1269,22 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 
 	variable.EnableMDL.Store(enable)
-	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		oldEnable, _, err := m.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		if oldEnable != enable {
+			err = m.SetMetadataLock(enable)
+		}
+		return err
+	})
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] switch metadata lock feature", zap.Bool("enable", enable), zap.Error(err))
+		return err
+	}
+	logutil.BgLogger().Info("[ddl] switch metadata lock feature", zap.Bool("enable", enable))
 	return nil
 }
 
@@ -1304,6 +1329,12 @@ type RecoverSchemaInfo struct {
 // It should be called before any DDL that could break data consistency.
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
+	if variable.EnableMDL.Load() {
+		// If metadata lock is enabled. The transaction of DDL must begin after prewrite of the async commit transaction,
+		// then the commit ts of DDL must be greater than the async commit transaction. In this case, the corresponding schema of the async commit transaction
+		// is correct. But if metadata lock is disabled, we can't ensure that the corresponding schema of the async commit transaction isn't change.
+		return
+	}
 	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	duration := cfg.SafeWindow + cfg.AllowedClockDrift
 	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",
@@ -1755,7 +1786,11 @@ func (s *session) execute(ctx context.Context, query string, label string) ([]ch
 	defer func() {
 		metrics.DDLJobTableDuration.WithLabelValues(label + "-" + metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
-	rs, err := s.Context.(sqlexec.SQLExecutor).ExecuteInternal(kv.WithInternalSourceType(ctx, kv.InternalTxnDDL), query)
+
+	if ctx.Value(kv.RequestSourceKey) == nil {
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	}
+	rs, err := s.Context.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

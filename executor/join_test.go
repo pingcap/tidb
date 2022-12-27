@@ -1412,6 +1412,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
@@ -2306,16 +2307,14 @@ func TestIssue18070(t *testing.T) {
 	tk.MustExec("insert into t1 values(1),(2)")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
 	tk.MustExec("set @@tidb_mem_quota_query=1000")
-	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 
 	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 }
 
 func TestIssue18564(t *testing.T) {

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -73,10 +74,11 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 					globalStatsID.tableID, info.isIndex, info.histIDs,
 					tableAllPartitionStats)
 				if err != nil {
+					logutil.BgLogger().Error("merge global stats failed",
+						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 					if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 						// When we find some partition-level stats are missing, we need to report warning.
 						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						return nil
 					}
 					return err
 				}
@@ -93,16 +95,18 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						info.statsVersion,
 						1,
 						true,
+						handle.StatsMetaHistorySourceAnalyze,
 					)
 					if err != nil {
-						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo),
+							zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", tableID))
 					}
 					// Dump stats to historical storage.
-					if err := recordHistoricalStats(e.ctx, globalStatsID.tableID); err != nil {
-						logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+					if err1 := recordHistoricalStats(e.ctx, globalStatsID.tableID); err1 != nil {
+						logutil.BgLogger().Error("record historical stats failed", zap.String("info", job.JobInfo), zap.Int64("histID", hg.ID), zap.Error(err1))
 					}
 				}
-				return nil
+				return err
 			}()
 			FinishAnalyzeMergeJob(e.ctx, job, mergeStatsErr)
 		}

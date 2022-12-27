@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -216,11 +217,13 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		return nil, err
+	}
 	do := domain.GetDomain(se)
 	is := do.InfoSchema()
-	pm := &privileges.UserPrivileges{
-		Handle: do.PrivilegeHandle(),
-	}
+	pm := privileges.NewUserPrivileges(do.PrivilegeHandle(), extensions)
 	privilege.BindPrivilegeManager(se, pm)
 	vars := se.GetSessionVars()
 	vars.TxnCtx.InfoSchema = is

@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -65,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 const (
@@ -685,6 +688,13 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
+		if config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ds.ctx) {
+			// TiFlash is in disaggregated mode, need to make sure tiflash_compute node is available.
+			errMsg := "No available tiflash_compute node"
+			warning := ErrInternal.GenWithStack(errMsg)
+			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			return
+		}
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				ds.preferStoreType |= preferTiFlash
@@ -700,6 +710,15 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
+}
+
+func isTiFlashComputeNodeAvailable(ctx sessionctx.Context) bool {
+	bo := backoff.NewBackofferWithVars(context.Background(), 5000, nil)
+	stores, err := ctx.GetStore().(tikv.Storage).GetRegionCache().GetTiFlashComputeStores(bo.TiKVBackoffer())
+	if err != nil || len(stores) == 0 {
+		return false
+	}
+	return true
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {
@@ -4437,8 +4456,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
 				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
 				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
-				delete(b.hintProcessor.QbNameMap4View, qbName)
-				delete(b.hintProcessor.QbHints4View, qbName)
+				b.hintProcessor.QbNameUsed4View[qbName] = struct{}{}
 			}
 		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentQBNameMap4View, currentViewHints)
@@ -4495,11 +4513,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
-	// Skip storage engine check for CreateView.
-	if b.capFlag&canExpandAST == 0 {
-		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
-		if err != nil {
-			return nil, err
+	// remain tikv access path to generate point get acceess path if existed
+	// see detail in issue: https://github.com/pingcap/tidb/issues/39543
+	if !(b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit) {
+		// Skip storage engine check for CreateView.
+		if b.capFlag&canExpandAST == 0 {
+			possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -5019,7 +5041,6 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	for qbName, viewQbNameHint := range qbNameMap4View {
 		// Check whether the view hint belong the current view or its nested views.
 		selectOffset := -1
-		qbNameMap4View[qbName] = viewQbNameHint
 		if len(viewQbNameHint) == 0 {
 			selectOffset = 1
 		} else if len(viewQbNameHint) == 1 && viewQbNameHint[0].TableName.L == "" {
@@ -5042,6 +5063,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	hintProcessor.QbNameMap4View = qbNameMap4View
 	hintProcessor.QbHints4View = viewHints
+	hintProcessor.QbNameUsed4View = make(map[string]struct{})
 	hintProcessor.QbHints = currentQbHints
 	hintProcessor.QbNameMap = currentQbNameMap
 
@@ -5050,6 +5072,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.hintProcessor = hintProcessor
 	b.ctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, hintProcessor.MaxSelectStmtOffset()+1)
 	defer func() {
+		b.hintProcessor.HandleUnusedViewHints()
 		b.hintProcessor = originHintProcessor
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName = originPlannerSelectBlockAsName
 	}()

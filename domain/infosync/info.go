@@ -282,6 +282,11 @@ func SetMockTiFlash(tiflash *MockTiFlash) {
 
 // GetServerInfo gets self server static information.
 func GetServerInfo() (*ServerInfo, error) {
+	failpoint.Inject("mockGetServerInfo", func(v failpoint.Value) {
+		var res ServerInfo
+		err := json.Unmarshal([]byte(v.(string)), &res)
+		failpoint.Return(&res, err)
+	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
@@ -316,20 +321,10 @@ func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*Server
 
 // GetAllServerInfo gets all servers static information from etcd.
 func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
-	failpoint.Inject("mockGetAllServerInfo", func() {
-		res := map[string]*ServerInfo{
-			"fa598405-a08e-4e74-83ff-75c30b1daedc": {
-				Labels: map[string]string{
-					"zone": "zone1",
-				},
-			},
-			"ad84dbbd-5a50-4742-a73c-4f674d41d4bd": {
-				Labels: map[string]string{
-					"zone": "zone2",
-				},
-			},
-		}
-		failpoint.Return(res, nil)
+	failpoint.Inject("mockGetAllServerInfo", func(val failpoint.Value) {
+		res := make(map[string]*ServerInfo)
+		err := json.Unmarshal([]byte(val.(string)), &res)
+		failpoint.Return(res, err)
 	})
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -694,8 +689,6 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if sm == nil {
 		return
 	}
-	pl := sm.ShowProcessList()
-	innerSessionStartTSList := sm.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -709,18 +702,8 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	minStartTS := oracle.GoTimeToTS(now)
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
-	for _, info := range pl {
-		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
-			minStartTS = info.CurTxnStartTS
-		}
-	}
-
-	for _, innerTS := range innerSessionStartTSList {
-		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("Internal Session Transaction StartTS", innerTS))
-		kv.PrintLongTimeInternalTxn(now, innerTS, false)
-		if innerTS > startTSLowerLimit && innerTS < minStartTS {
-			minStartTS = innerTS
-		}
+	if ts := sm.GetMinStartTS(startTSLowerLimit); ts > startTSLowerLimit && ts < minStartTS {
+		minStartTS = ts
 	}
 
 	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)

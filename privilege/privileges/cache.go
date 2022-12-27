@@ -66,7 +66,7 @@ const (
 	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	Account_locked,Plugin,Token_issuer,User_attributes FROM mysql.user`
+	Account_locked,Plugin,Token_issuer,User_attributes,password_expired,password_last_changed,password_lifetime FROM mysql.user`
 	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
 )
 
@@ -92,16 +92,31 @@ type baseRecord struct {
 	hostIPNet *net.IPNet
 }
 
+// MetadataInfo is the User_attributes->>"$.metadata".
+type MetadataInfo struct {
+	Email string
+}
+
+// UserAttributesInfo is the 'User_attributes' in privilege cache.
+type UserAttributesInfo struct {
+	MetadataInfo
+	PasswordLocking
+}
+
 // UserRecord is used to represent a user record in privilege cache.
 type UserRecord struct {
 	baseRecord
+	UserAttributesInfo
 
 	AuthenticationString string
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
 	AuthTokenIssuer      string
-	Email                string
+	PasswordExpired      bool
+	PasswordLastChanged  time.Time
+	PasswordLifeTime     int64
+	ResourceGroup        string
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -656,15 +671,6 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			} else {
 				value.AuthPlugin = mysql.AuthNativePassword
 			}
-		case f.Column.GetType() == mysql.TypeEnum:
-			if row.GetEnum(i).String() != "Y" {
-				continue
-			}
-			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
-			if !ok {
-				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
-			}
-			value.Privileges |= priv
 		case f.ColumnAsName.L == "token_issuer":
 			value.AuthTokenIssuer = row.GetString(i)
 		case f.ColumnAsName.L == "user_attributes":
@@ -683,6 +689,52 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 				}
 				value.Email = email
 			}
+			pathExpr, err = types.ParseJSONPathExpr("$.resource_group")
+			if err != nil {
+				return err
+			}
+			if resourceGroup, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+				resourceGroup, err := resourceGroup.Unquote()
+				if err != nil {
+					return err
+				}
+				value.ResourceGroup = resourceGroup
+			}
+			passwordLocking := PasswordLocking{}
+			if err := passwordLocking.ParseJSON(bj); err != nil {
+				return err
+			}
+			value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
+			value.PasswordLockTimeDays = passwordLocking.PasswordLockTimeDays
+			value.FailedLoginCount = passwordLocking.FailedLoginCount
+			value.AutoLockedLastChanged = passwordLocking.AutoLockedLastChanged
+			value.AutoAccountLocked = passwordLocking.AutoAccountLocked
+		case f.ColumnAsName.L == "password_expired":
+			if row.GetEnum(i).String() == "Y" {
+				value.PasswordExpired = true
+			}
+		case f.ColumnAsName.L == "password_last_changed":
+			t := row.GetTime(i)
+			gotime, err := t.GoTime(time.Local)
+			if err != nil {
+				return err
+			}
+			value.PasswordLastChanged = gotime
+		case f.ColumnAsName.L == "password_lifetime":
+			if row.IsNull(i) {
+				value.PasswordLifeTime = -1
+				continue
+			}
+			value.PasswordLifeTime = row.GetInt64(i)
+		case f.Column.GetType() == mysql.TypeEnum:
+			if row.GetEnum(i).String() != "Y" {
+				continue
+			}
+			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
+			if !ok {
+				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
+			}
+			value.Privileges |= priv
 		default:
 			value.assignUserOrHost(row, i, f)
 		}

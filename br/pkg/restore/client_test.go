@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
@@ -194,9 +195,19 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	userTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("user"))
 	require.NoError(t, err)
 
-	// column count mismatch
+	// user table in cluster have more columns(success)
 	mockedUserTI := userTI.Clone()
-	mockedUserTI.Columns = mockedUserTI.Columns[:len(mockedUserTI.Columns)-1]
+	userTI.Columns = append(userTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}})
+	require.NoError(t, err)
+	userTI.Columns = userTI.Columns[:len(userTI.Columns)-1]
+
+	// user table in cluster have less columns(failed)
+	mockedUserTI = userTI.Clone()
+	mockedUserTI.Columns = append(mockedUserTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
 	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
@@ -211,15 +222,6 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 		Info: mockedUserTI,
 	}})
 	require.NoError(t, err)
-
-	// missing column
-	mockedUserTI = userTI.Clone()
-	mockedUserTI.Columns[0].Name = model.NewCIStr("new-name")
-	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
-		DB:   tmpSysDB,
-		Info: mockedUserTI,
-	}})
-	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 
 	// incompatible column type
 	mockedUserTI = userTI.Clone()
@@ -237,6 +239,19 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 		Info: mockedUserTI,
 	}})
 	require.NoError(t, err)
+
+	// use the mysql.db table to test for column count mismatch.
+	dbTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("db"))
+	require.NoError(t, err)
+
+	// other system tables in cluster have more columns(failed)
+	mockedDBTI := dbTI.Clone()
+	dbTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}})
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 }
 
 func TestInitFullClusterRestore(t *testing.T) {
@@ -332,18 +347,17 @@ type fakePDClient struct {
 	pd.Client
 	stores []*metapb.Store
 
-	notLeader bool
+	notLeader  bool
+	retryTimes *int
 }
-
-var retryTimes int
 
 func (fpdc fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return append([]*metapb.Store{}, fpdc.stores...), nil
 }
 
 func (fpdc fakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
-	retryTimes++
-	if retryTimes >= 3 { // the mock PD leader switched successfully
+	(*fpdc.retryTimes)++
+	if *fpdc.retryTimes >= 3 { // the mock PD leader switched successfully
 		fpdc.notLeader = false
 	}
 
@@ -355,24 +369,24 @@ func (fpdc fakePDClient) GetTS(ctx context.Context) (int64, int64, error) {
 
 func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader is healthy:", func(t *testing.T) {
-		retryTimes = -1000
-		pDClient := fakePDClient{notLeader: false}
+		retryTimes := -1000
+		pDClient := fakePDClient{notLeader: false, retryTimes: &retryTimes}
 		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.NoError(t, err)
 	})
 
 	t.Run("PD leader failure:", func(t *testing.T) {
-		retryTimes = -1000
-		pDClient := fakePDClient{notLeader: true}
+		retryTimes := -1000
+		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
 		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.Error(t, err)
 	})
 
 	t.Run("PD leader switch successfully", func(t *testing.T) {
-		retryTimes = 0
-		pDClient := fakePDClient{notLeader: true}
+		retryTimes := 0
+		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
 		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.NoError(t, err)
@@ -1095,4 +1109,459 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[2].Path, "f3")
 	require.Equal(t, files[3].Path, "f4")
 	require.Equal(t, files[4].Path, "f5")
+}
+
+func TestApplyKVFilesWithSingelMethod(t *testing.T) {
+	var (
+		totalKVCount int64  = 0
+		totalSize    uint64 = 0
+		logs                = make([]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+		},
+		{
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+		}, {
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		totalKVCount += kvCount
+		totalSize += size
+		for _, f := range files {
+			logs = append(logs, f.GetPath())
+		}
+	}
+
+	restore.ApplyKVFilesWithSingelMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		applyFunc,
+	)
+
+	require.Equal(t, totalKVCount, int64(15))
+	require.Equal(t, totalSize, uint64(300))
+	require.Equal(t, logs, []string{"log1", "log2", "log3"})
+}
+
+func TestApplyKVFilesWithBatchMethod1(t *testing.T) {
+	var (
+		runCount            = 0
+		batchCount   int    = 3
+		batchSize    uint64 = 1000
+		totalKVCount int64  = 0
+		logs                = make([][]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log5",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+			RegionId:        1,
+		}, {
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log4",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          800,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		},
+		{
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          200,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		runCount += 1
+		totalKVCount += kvCount
+		log := make([]string, 0, len(files))
+		for _, f := range files {
+			log = append(log, f.GetPath())
+		}
+		logs = append(logs, log)
+	}
+
+	restore.ApplyKVFilesWithBatchMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		batchCount,
+		batchSize,
+		applyFunc,
+	)
+
+	require.Equal(t, runCount, 3)
+	require.Equal(t, totalKVCount, int64(25))
+	require.Equal(t,
+		logs,
+		[][]string{
+			{"log1", "log2"},
+			{"log3", "log4"},
+			{"log5"},
+		},
+	)
+}
+
+func TestApplyKVFilesWithBatchMethod2(t *testing.T) {
+	var (
+		runCount            = 0
+		batchCount   int    = 2
+		batchSize    uint64 = 1500
+		totalKVCount int64  = 0
+		logs                = make([][]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+			RegionId:        1,
+		}, {
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log4",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log5",
+			NumberOfEntries: 5,
+			Length:          800,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		},
+		{
+			Path:            "log6",
+			NumberOfEntries: 5,
+			Length:          200,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		runCount += 1
+		totalKVCount += kvCount
+		log := make([]string, 0, len(files))
+		for _, f := range files {
+			log = append(log, f.GetPath())
+		}
+		logs = append(logs, log)
+	}
+
+	restore.ApplyKVFilesWithBatchMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		batchCount,
+		batchSize,
+		applyFunc,
+	)
+
+	require.Equal(t, runCount, 4)
+	require.Equal(t, totalKVCount, int64(30))
+	require.Equal(t,
+		logs,
+		[][]string{
+			{"log2", "log3"},
+			{"log5", "log6"},
+			{"log4"},
+			{"log1"},
+		},
+	)
+}
+
+func TestApplyKVFilesWithBatchMethod3(t *testing.T) {
+	var (
+		runCount            = 0
+		batchCount   int    = 2
+		batchSize    uint64 = 1500
+		totalKVCount int64  = 0
+		logs                = make([][]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          2000,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+			RegionId:        1,
+		}, {
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          2000,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        1,
+		}, {
+			Path:            "log5",
+			NumberOfEntries: 5,
+			Length:          800,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        3,
+		},
+		{
+			Path:            "log6",
+			NumberOfEntries: 5,
+			Length:          200,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			RegionId:        3,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		runCount += 1
+		totalKVCount += kvCount
+		log := make([]string, 0, len(files))
+		for _, f := range files {
+			log = append(log, f.GetPath())
+		}
+		logs = append(logs, log)
+	}
+
+	restore.ApplyKVFilesWithBatchMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		batchCount,
+		batchSize,
+		applyFunc,
+	)
+
+	require.Equal(t, totalKVCount, int64(25))
+	require.Equal(t,
+		logs,
+		[][]string{
+			{"log2"},
+			{"log5", "log6"},
+			{"log3"},
+			{"log1"},
+		},
+	)
+}
+
+func TestApplyKVFilesWithBatchMethod4(t *testing.T) {
+	var (
+		runCount            = 0
+		batchCount   int    = 2
+		batchSize    uint64 = 1500
+		totalKVCount int64  = 0
+		logs                = make([][]string, 0)
+	)
+	ds := []*backuppb.DataFileInfo{
+		{
+			Path:            "log1",
+			NumberOfEntries: 5,
+			Length:          2000,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Delete,
+			TableId:         1,
+		}, {
+			Path:            "log2",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         1,
+		}, {
+			Path:            "log3",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         2,
+		}, {
+			Path:            "log4",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.WriteCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         1,
+		}, {
+			Path:            "log5",
+			NumberOfEntries: 5,
+			Length:          100,
+			Cf:              stream.DefaultCF,
+			Type:            backuppb.FileType_Put,
+			TableId:         2,
+		},
+	}
+	applyFunc := func(
+		files []*backuppb.DataFileInfo,
+		kvCount int64,
+		size uint64,
+	) {
+		runCount += 1
+		totalKVCount += kvCount
+		log := make([]string, 0, len(files))
+		for _, f := range files {
+			log = append(log, f.GetPath())
+		}
+		logs = append(logs, log)
+	}
+
+	restore.ApplyKVFilesWithBatchMethod(
+		context.TODO(),
+		iter.FromSlice(ds),
+		batchCount,
+		batchSize,
+		applyFunc,
+	)
+
+	require.Equal(t, runCount, 4)
+	require.Equal(t, totalKVCount, int64(25))
+	require.Equal(t,
+		logs,
+		[][]string{
+			{"log2", "log4"},
+			{"log5"},
+			{"log3"},
+			{"log1"},
+		},
+	)
+}
+
+func TestCheckNewCollationEnable(t *testing.T) {
+	caseList := []struct {
+		backupMeta                  *backuppb.BackupMeta
+		newCollationEnableInCluster string
+		CheckRequirements           bool
+		isErr                       bool
+	}{
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "True"},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           true,
+			isErr:                       false,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "True"},
+			newCollationEnableInCluster: "False",
+			CheckRequirements:           true,
+			isErr:                       true,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "False"},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           true,
+			isErr:                       true,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "False"},
+			newCollationEnableInCluster: "false",
+			CheckRequirements:           true,
+			isErr:                       false,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "False"},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           false,
+			isErr:                       true,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "True"},
+			newCollationEnableInCluster: "False",
+			CheckRequirements:           false,
+			isErr:                       true,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: ""},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           false,
+			isErr:                       false,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: ""},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           true,
+			isErr:                       true,
+		},
+	}
+
+	for i, ca := range caseList {
+		g := &gluetidb.MockGlue{
+			GlobalVars: map[string]string{"new_collation_enabled": ca.newCollationEnableInCluster},
+		}
+		err := restore.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
+
+		t.Logf("[%d] Got Error: %v\n", i, err)
+		if ca.isErr {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+	}
 }
