@@ -2609,6 +2609,48 @@ func TestForeignKeyOnReplaceInto(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int, index (a));")
+	tk.MustExec("create table t2 (id int key, a int, index (a), constraint fk_1 foreign key (a) references t1(a));")
+	tk.MustExec("replace into t1 values (1, 1);")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustExec("replace into t2 (id) values (2);")
+	tk.MustGetDBError("replace into t2 values (1, 2);", plannercore.ErrNoReferencedRow2)
+	// Test fk check on replace into parent table.
+	tk.MustGetDBError("replace into t1 values (1, 2);", plannercore.ErrRowIsReferenced2)
+	// Test fk cascade delete on replace into parent table.
+	tk.MustExec("alter table t2 drop foreign key fk_1")
+	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete cascade")
+	tk.MustExec("replace into t1 values (1, 2);")
+	tk.MustQuery("select id, a from t1").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 <nil>"))
+	// Test fk cascade delete on replace into parent table.
+	tk.MustExec("alter table t2 drop foreign key fk_1")
+	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete set null")
+	tk.MustExec("delete from t2")
+	tk.MustExec("delete from t1")
+	tk.MustExec("replace into t1 values (1, 1);")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustExec("replace into t1 values (1, 2);")
+	tk.MustQuery("select id, a from t1").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select id, a from t2").Check(testkit.Rows("1 <nil>"))
+
+	// Test cascade delete in self table by replace into statement.
+	tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (id int key, name varchar(10), leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("replace into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("replace into t1 values (100, 'l2_a1', 10), (101, 'l2_a2', 10), (102, 'l2_a3', 10)")
+	tk.MustExec("replace into t1 values (110, 'l2_b1', 11), (111, 'l2_b2', 11), (112, 'l2_b3', 11)")
+	tk.MustExec("replace into t1 values (120, 'l2_c1', 12), (121, 'l2_c2', 12), (122, 'l2_c3', 12)")
+	tk.MustExec("replace into t1 values (1000,'l3_a1', 100)")
+	tk.MustExec("replace into t1 values (1, 'new-boss', null)")
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows("1"))
+}
+
+func TestForeignKeyLargeTxnErr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
 	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890');")
 	for i := 0; i < 8; i++ {
@@ -2690,46 +2732,4 @@ func TestForeignKeyAndMemoryTracker(t *testing.T) {
 	// After disable foreign_key_checks, following DML will execute successful.
 	tk.MustExec("update t1 set id=id+100000 where id=1")
 	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
-}
-
-func TestForeignKeyLargeTxnErr(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@foreign_key_checks=1")
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int key, a int, index (a));")
-	tk.MustExec("create table t2 (id int key, a int, index (a), constraint fk_1 foreign key (a) references t1(a));")
-	tk.MustExec("replace into t1 values (1, 1);")
-	tk.MustExec("replace into t2 values (1, 1);")
-	tk.MustExec("replace into t2 (id) values (2);")
-	tk.MustGetDBError("replace into t2 values (1, 2);", plannercore.ErrNoReferencedRow2)
-	// Test fk check on replace into parent table.
-	tk.MustGetDBError("replace into t1 values (1, 2);", plannercore.ErrRowIsReferenced2)
-	// Test fk cascade delete on replace into parent table.
-	tk.MustExec("alter table t2 drop foreign key fk_1")
-	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete cascade")
-	tk.MustExec("replace into t1 values (1, 2);")
-	tk.MustQuery("select id, a from t1").Check(testkit.Rows("1 2"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("2 <nil>"))
-	// Test fk cascade delete on replace into parent table.
-	tk.MustExec("alter table t2 drop foreign key fk_1")
-	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete set null")
-	tk.MustExec("delete from t2")
-	tk.MustExec("delete from t1")
-	tk.MustExec("replace into t1 values (1, 1);")
-	tk.MustExec("replace into t2 values (1, 1);")
-	tk.MustExec("replace into t1 values (1, 2);")
-	tk.MustQuery("select id, a from t1").Check(testkit.Rows("1 2"))
-	tk.MustQuery("select id, a from t2").Check(testkit.Rows("1 <nil>"))
-
-	// Test cascade delete in self table by replace into statement.
-	tk.MustExec("drop table t1,t2")
-	tk.MustExec("create table t1 (id int key, name varchar(10), leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
-	tk.MustExec("replace into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
-	tk.MustExec("replace into t1 values (100, 'l2_a1', 10), (101, 'l2_a2', 10), (102, 'l2_a3', 10)")
-	tk.MustExec("replace into t1 values (110, 'l2_b1', 11), (111, 'l2_b2', 11), (112, 'l2_b3', 11)")
-	tk.MustExec("replace into t1 values (120, 'l2_c1', 12), (121, 'l2_c2', 12), (122, 'l2_c3', 12)")
-	tk.MustExec("replace into t1 values (1000,'l3_a1', 100)")
-	tk.MustExec("replace into t1 values (1, 'new-boss', null)")
-	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows("1"))
 }
