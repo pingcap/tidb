@@ -558,6 +558,9 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	return res
 }
 
+// MockForTest is exported for testing.
+// The actual implementation is in github.com/pingcap/tidb/autoid_service because of the
+// package circle depending issue.
 var MockForTest func(kv.Storage) autoid.AutoIDAllocClient
 
 func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
