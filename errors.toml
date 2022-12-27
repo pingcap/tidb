@@ -1176,6 +1176,11 @@ error = '''
 Column '%s' has an expression index dependency and cannot be dropped or renamed
 '''
 
+["ddl:3885"]
+error = '''
+Column '%s' has a partitioning function dependency and cannot be dropped or renamed
+'''
+
 ["ddl:4135"]
 error = '''
 Sequence '%-.64s.%-.64s' has run out
