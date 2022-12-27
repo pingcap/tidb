@@ -16,6 +16,8 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
 	"math"
 	"strings"
 
@@ -552,6 +554,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 
 			var jsonPath expression.Expression
 			var vals []expression.Expression
+			var indexMergeIsIntersection bool
 			switch sf.FuncName.L {
 			case ast.JSONMemberOf: // (1 member of a->'$.zip')
 				jsonPath = sf.GetArgs()[1]
@@ -560,10 +563,16 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 					continue
 				}
 				vals = append(vals, v)
-			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-				continue // TODO: support json_overlaps
 			case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
-				continue // TODO: support json_contains
+				indexMergeIsIntersection = true
+				fallthrough
+			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				jsonPath = sf.GetArgs()[0]
+				var ok bool
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1])
+				if !ok {
+					continue
+				}
 			default:
 				continue
 			}
@@ -611,10 +620,49 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 				partialPaths = append(partialPaths, partialPath)
 			}
 			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, filterIdx)
+			indexMergePath.IndexMergeIsIntersection = indexMergeIsIntersection
 			mvIndexPaths = append(mvIndexPaths, indexMergePath)
 		}
 	}
 	return
+}
+
+// jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}
+func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expression) ([]expression.Expression, bool) {
+	// only support cast(const as JSON)
+	jsonCast, ok := jsonArrayExpr.(*expression.ScalarFunction)
+	if !ok {
+		return nil, false
+	}
+	if jsonCast.FuncName.L != ast.Cast && jsonCast.GetType().EvalType() != types.ETJson {
+		return nil, false
+	}
+	if _, isConst := jsonCast.GetArgs()[0].(*expression.Constant); !isConst {
+		return nil, false
+	}
+
+	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx, chunk.Row{})
+	if isNull || err != nil {
+		return nil, false
+	}
+	if jsonArray.TypeCode != types.JSONTypeCodeArray {
+		return nil, false
+	}
+	var exprs []expression.Expression
+	for i := 0; i < jsonArray.GetElemCount(); i++ {
+		v := jsonArray.ArrayGetElem(i)
+		if v.TypeCode != types.JSONTypeCodeInt64 {
+			// only support INT now
+			// TODO: support more types
+			return nil, false
+		}
+		val := v.GetInt64()
+		exprs = append(exprs, &expression.Constant{
+			Value:   types.NewDatum(val),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		})
+	}
+	return exprs, true
 }
 
 func unwrapCast(expr expression.Expression) (expression.Expression, bool) {
