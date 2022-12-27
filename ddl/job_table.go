@@ -101,7 +101,12 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 		return nil, errors.Trace(err)
 	}
 	// TODO: remove CI log
-	logutil.BgLogger().Info("getJob", zap.Int("rows", len(rows)), zap.String("sql", sql))
+	txn, _ := sess.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("getJob", zap.Uint64("StartTSO", StartTSO), zap.Int("rows", len(rows)), zap.String("sql", sql))
 	for _, row := range rows {
 		jobBinary := row.GetBytes(0)
 		runJob := model.Job{}
@@ -313,7 +318,12 @@ func (d *ddl) markJobProcessing(sess *session, job *model.Job) error {
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := sess.execute(context.Background(), fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID), "mark_job_processing")
 	// TODO: remove CI log
-	logutil.BgLogger().Info("markJobProcessing", zap.String("job", job.String()), zap.Error(err))
+	txn, _ := sess.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("markJobProcessing", zap.Uint64("StartTSO", StartTSO), zap.String("job", job.String()), zap.Error(err))
 	return errors.Trace(err)
 }
 
@@ -389,7 +399,12 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
 	_, err := w.sess.execute(context.Background(), sql, "delete_job")
 	// TODO: remove CI log
-	logutil.BgLogger().Info("deleteDDLJob", zap.String("job", job.String()), zap.Error(err))
+	txn, _ := w.sess.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("deleteDDLJob", zap.Uint64("StartTSO", StartTSO), zap.String("job", job.String()), zap.Error(err))
 	return errors.Trace(err)
 }
 
@@ -401,7 +416,12 @@ func updateDDLJob2Table(sctx *session, job *model.Job, updateRawArgs bool) error
 	sql := fmt.Sprintf(updateDDLJobSQL, wrapKey2String(b), job.ID)
 	_, err = sctx.execute(context.Background(), sql, "update_job")
 	// TODO: remove CI log
-	logutil.BgLogger().Info("updateDDLJob2Table", zap.String("job", job.String()), zap.Error(err))
+	txn, _ := sctx.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("updateDDLJob2Table", zap.String("job", job.String()), zap.Error(err), zap.Uint64("StartTSO", StartTSO))
 	return errors.Trace(err)
 }
 
@@ -439,7 +459,13 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 			zap.Stringer("endHandle", endKey))
 	}
 	// TODO: remove CI log
+	txn, _ := sess.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
 	logutil.BgLogger().Info("getDDLReorgHandle",
+		zap.Uint64("StartTSO", StartTSO),
 		zap.Int64("partition ID", physicalTableID),
 		zap.Int64("element.ID", element.ID),
 		zap.String("element.TypeKey", string(element.TypeKey)),
@@ -454,7 +480,12 @@ func updateDDLReorgStartHandle(sess *session, job *model.Job, element *meta.Elem
 		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), job.ID)
 	_, err := sess.execute(context.Background(), sql, "update_start_handle")
 	// TODO: remove CI log
-	logutil.BgLogger().Info("updateDDLReorgStartHandle", zap.String("job", job.String()), zap.Error(err))
+	txn, _ := sess.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("updateDDLReorgStartHandle", zap.String("job", job.String()), zap.Error(err), zap.Uint64("StartTSO", StartTSO))
 	return err
 }
 
@@ -464,7 +495,12 @@ func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv
 		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, jobID)
 	_, err := sess.execute(context.Background(), sql, "update_handle")
 	// TODO: remove CI log
-	logutil.BgLogger().Info("updateDDLReorgHandle", zap.Int64("jobID", jobID), zap.Error(err))
+	txn, _ := sess.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("updateDDLReorgHandle", zap.Uint64("StartTSO", StartTSO), zap.Int64("jobID", jobID), zap.Error(err))
 	return err
 }
 
@@ -474,7 +510,12 @@ func initDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.K
 		jobID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
 	_, err := sess.execute(context.Background(), sql, "update_handle")
 	// TODO: remove CI log
-	logutil.BgLogger().Info("initDDLReorgHandle", zap.Int64("jobID", jobID), zap.Error(err))
+	txn, _ := sess.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("initDDLReorgHandle", zap.Uint64("StartTSO", StartTSO), zap.Int64("jobID", jobID), zap.Error(err))
 	return err
 }
 
@@ -486,7 +527,12 @@ func removeDDLReorgHandle(sess *session, job *model.Job, elements []*meta.Elemen
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	_, err := sess.execute(context.Background(), sql, "remove_handle")
 	// TODO: remove CI log
-	logutil.BgLogger().Info("initDDLReorgHandle", zap.String("job", job.String()), zap.Error(err))
+	txn, _ := sess.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("removeDDLReorgHandle", zap.Uint64("StartTSO", StartTSO), zap.String("job", job.String()), zap.Error(err))
 	return err
 }
 
@@ -495,7 +541,12 @@ func removeReorgElement(sess *session, job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	_, err := sess.execute(context.Background(), sql, "remove_handle")
 	// TODO: remove CI log
-	logutil.BgLogger().Info("initDDLReorgHandle", zap.String("job", job.String()), zap.Error(err))
+	txn, _ := sess.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("removeReorgElement", zap.Uint64("StartTSO", StartTSO), zap.String("job", job.String()), zap.Error(err))
 	return err
 }
 
@@ -519,6 +570,13 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// TODO: remove CI debug
+		txn, _ := sess.txn()
+		StartTSO := uint64(0)
+		if txn != nil && txn.Valid() {
+			StartTSO = txn.StartTS()
+		}
+		logutil.BgLogger().Info("getJobsBySQL", zap.Uint64("StartTSO", StartTSO), zap.String("job", job.String()))
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil

@@ -849,6 +849,8 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
 
+	// TODO: remove CI log
+	logutil.BgLogger().Info("after runDDLJob", zap.Uint64("StartTSO", txn.StartTS()), zap.Int64("schemaVer", schemaVer), zap.Error(runJobErr), zap.String("JobState", job.State.String()))
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)
 		w.sess.reset()
