@@ -2428,6 +2428,7 @@ func TestFixDDLTxnWillConflictWithReorgTxn(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int)")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF")
 	tk.MustExec("alter table t add index(a)")
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into t values(128),(129)")
