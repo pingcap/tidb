@@ -11,7 +11,7 @@
 
 | ci pipeline                              | Commands                                                     | Only triggered by command |
 | ---------------------------------------- | ------------------------------------------------------------ | ------------------------- |
-| tidb_ghpr_build                          | /run-build<br />/run-all-tests<br />/merge                   | No                        |
+| tidb_ghpr_build                          | /test build                   | No                        |
 | tidb_ghpr_check                          | /run-check_dev<br />/run-all-tests<br />/merge               | No                        |
 | tidb_ghpr_check_2                        | /run-check_dev_2<br />/run-all-tests<br />/merge             | No                        |
 | tidb_ghpr_coverage                       | /run-coverage                                                | Yes                       |
