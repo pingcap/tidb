@@ -703,15 +703,18 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 		return job.ReorgMeta.ReorgTp
 	}
 	if IsEnableFastReorg() {
-		canUseIngest := canUseIngest(w)
-		if ingest.LitInitialized && canUseIngest {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge
+		var useIngest bool
+		if ingest.LitInitialized {
+			useIngest = canUseIngest(w)
+			if useIngest {
+				job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+				return model.ReorgTypeLitMerge
+			}
 		}
 		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
 			zap.Bool("lightning env initialized", ingest.LitInitialized),
-			zap.Bool("can use ingest", canUseIngest))
+			zap.Bool("can use ingest", useIngest))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		return model.ReorgTypeTxnMerge
 	}
