@@ -10,7 +10,11 @@
       "select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '[1, 2, 3]')",
       "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]')",
       "select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '[1, 2, 3]') and a<10",
-      "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]') and a<10"
+      "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]') and a<10",
+      "select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '1')",
+      "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '1')",
+      "select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '1') and a<10",
+      "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '1') and a<10"
     ]
   },
   {
