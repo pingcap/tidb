@@ -162,10 +162,10 @@ func TestGRPC(t *testing.T) {
 		addr = fmt.Sprintf("127.0.0.1:%d", port)
 		listener, err = net.Listen("tcp", addr)
 		if err == nil {
-			defer listener.Close()
 			break
 		}
 	}
+	defer listener.Close()
 
 	service := newWithCli(addr, etcdCli, store)
 	defer service.Close()
