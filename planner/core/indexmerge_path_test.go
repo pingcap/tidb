@@ -15,7 +15,6 @@
 package core_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/planner/core"
@@ -41,12 +40,11 @@ index j1((cast(j1 as signed array))))`)
 	planSuiteData := core.GetIndexMergeSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
 
-	ctx := context.WithValue(context.Background(), "____allow_build_cast_array_for_test", struct{}{})
 	for i, query := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = query
 		})
-		result := tk.MustQueryWithContext(ctx, "explain format = 'brief' "+query)
+		result := tk.MustQuery("explain format = 'brief' " + query)
 		testdata.OnRecord(func() {
 			output[i].Plan = testdata.ConvertRowsToStrings(result.Rows())
 		})
