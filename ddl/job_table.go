@@ -941,7 +941,12 @@ func runInTxn(se *session, f func(*session) error) (err error) {
 	}
 	err = f(se)
 	//TODO: Remove these two debug lines
-	logutil.BgLogger().Info("runInTxn", zap.Error(err))
+	txn, _ := se.txn()
+	StartTSO := uint64(0)
+	if txn != nil && txn.Valid() {
+		StartTSO = txn.StartTS()
+	}
+	logutil.BgLogger().Info("runInTxn", zap.Uint64("StartTSO", StartTSO), zap.Error(err))
 	if err != nil {
 		se.rollback()
 		return
