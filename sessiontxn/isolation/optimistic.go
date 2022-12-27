@@ -110,7 +110,7 @@ func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 // AdviseOptimizeWithPlan providers optimization according to the plan
 // It will use MaxTS as the startTS in autocommit txn for some plans.
 func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) (err error) {
-	if p.optimizeWithMaxTS || p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+	if p.optimizeWithMaxTS || p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() || p.txn != nil {
 		return nil
 	}
 
@@ -141,7 +141,7 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 				zap.Uint64("conn", sessVars.ConnectionID),
 				zap.String("text", sessVars.StmtCtx.OriginalSQL),
 			)
-			return nil
+			return err
 		}
 
 		p.optimizeWithMaxTS = true
