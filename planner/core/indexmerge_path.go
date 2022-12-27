@@ -646,23 +646,34 @@ func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expre
 		return nil, false
 	}
 	if jsonArray.TypeCode != types.JSONTypeCodeArray {
+		single, ok := jsonValue2Expr(jsonArray) // '1' -> []expr{1}
+		if ok {
+			return []expression.Expression{single}, true
+		}
 		return nil, false
 	}
 	var exprs []expression.Expression
-	for i := 0; i < jsonArray.GetElemCount(); i++ {
-		v := jsonArray.ArrayGetElem(i)
-		if v.TypeCode != types.JSONTypeCodeInt64 {
-			// only support INT now
-			// TODO: support more types
+	for i := 0; i < jsonArray.GetElemCount(); i++ { // '[1, 2, 3]' -> []expr{1, 2, 3}
+		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i))
+		if !ok {
 			return nil, false
 		}
-		val := v.GetInt64()
-		exprs = append(exprs, &expression.Constant{
-			Value:   types.NewDatum(val),
-			RetType: types.NewFieldType(mysql.TypeLonglong),
-		})
+		exprs = append(exprs, expr)
 	}
 	return exprs, true
+}
+
+func jsonValue2Expr(v types.BinaryJSON) (expression.Expression, bool) {
+	if v.TypeCode != types.JSONTypeCodeInt64 {
+		// only support INT now
+		// TODO: support more types
+		return nil, false
+	}
+	val := v.GetInt64()
+	return &expression.Constant{
+		Value:   types.NewDatum(val),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}, true
 }
 
 func unwrapCast(expr expression.Expression) (expression.Expression, bool) {
