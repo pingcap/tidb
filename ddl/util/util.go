@@ -172,11 +172,6 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 	return errors.Trace(err)
 }
 
-// LoadDDLDistributeVars loads ddl distribute reorg variable from mysql.global_variables.
-func LoadDDLDistributeVars(ctx context.Context, sctx sessionctx.Context) error {
-	return LoadGlobalVars(ctx, sctx, []string{variable.TiDBDDLEnableDistributeReorg})
-}
-
 // LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
 func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
 	// close issue #21391

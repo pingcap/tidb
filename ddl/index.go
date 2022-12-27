@@ -1267,18 +1267,23 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 	}
 
 	return runInTxn(sess, func(se *session) error {
-		jobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and id = %d and ele_key = '%s'",
-			bfJob.JobID, bfJob.EleID, bfJob.ID, bfJob.EleKey), "update_backfill_task")
+		jobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
+			bfJob.JobID, bfJob.EleID, bfJob.EleKey, bfJob.ID), "update_backfill_task")
 		if err != nil {
 			return err
 		}
-
 		if len(jobs) == 0 {
 			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job")
 		}
 		if jobs[0].InstanceID != bfJob.InstanceID {
 			return dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get a backfill job %v, want instance ID %s", jobs[0], bfJob.InstanceID))
 		}
+
+		currTime, err := GetOracleTimeWithStartTS(se)
+		if err != nil {
+			return err
+		}
+		bfJob.InstanceLease = GetLeaseGoTime(currTime, InstanceLease)
 		return updateBackfillJob(sess, BackfillTable, bfJob, "update_backfill_task")
 	})
 }
@@ -1675,9 +1680,6 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 		//nolint:forcetypeassert
 		phyTbl := t.(table.PhysicalTable)
 		// TODO: Support typeAddIndexMergeTmpWorker and partitionTable.
-		if err := loadDDLDistributeVars(w.ctx, w.sessPool); err != nil {
-			logutil.BgLogger().Error("[ddl] load DDL distribute variable failed", zap.Error(err))
-		}
 		isDistReorg := variable.DDLEnableDistributeReorg.Load()
 		if isDistReorg && !reorgInfo.mergingTmpIdx {
 			sCtx, err := w.sessPool.get()

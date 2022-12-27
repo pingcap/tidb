@@ -711,16 +711,6 @@ func loadDDLReorgVars(ctx context.Context, sessPool *sessionPool) error {
 	return ddlutil.LoadDDLReorgVars(ctx, sCtx)
 }
 
-func loadDDLDistributeVars(ctx context.Context, sessPool *sessionPool) error {
-	// Get sessionctx from context resource pool.
-	sCtx, err := sessPool.get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer sessPool.put(sCtx)
-	return ddlutil.LoadDDLDistributeVars(ctx, sCtx)
-}
-
 func makeupDecodeColMap(sessCtx sessionctx.Context, dbName model.CIStr, t table.Table) (map[int64]decoder.Column, error) {
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
 	for _, col := range t.WritableCols() {
