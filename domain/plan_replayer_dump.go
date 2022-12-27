@@ -41,8 +41,8 @@ import (
 )
 
 const (
-	// planReplayerSQLMeta indicates sql meta path for plan replayer
-	planReplayerSQLMeta = "sql_meta.toml"
+	// PlanReplayerSQLMetaFile indicates sql meta path for plan replayer
+	PlanReplayerSQLMetaFile = "sql_meta.toml"
 	// PlanReplayerConfigFile indicates config file path for plan replayer
 	PlanReplayerConfigFile = "config.toml"
 	// PlanReplayerMetaFile meta file path for plan replayer
@@ -55,11 +55,21 @@ const (
 	PlanReplayerSessionBindingFile = "session_bindings.sql"
 	// PlanReplayerGlobalBindingFile indicates global binding file path for plan replayer
 	PlanReplayerGlobalBindingFile = "global_bindings.sql"
+	// PlanReplayerSchemaMetaFile indicates the schema meta
+	PlanReplayerSchemaMetaFile = "schema_meta.txt"
 )
 
 const (
 	// PlanReplayerSQLMetaStartTS indicates the startTS in plan replayer sql meta
 	PlanReplayerSQLMetaStartTS = "startTS"
+	// PlanReplayerTaskMetaIsCapture indicates whether this task is capture task
+	PlanReplayerTaskMetaIsCapture = "isCapture"
+	// PlanReplayerTaskMetaIsContinues indicates whether this task is continues task
+	PlanReplayerTaskMetaIsContinues = "isContinues"
+	// PlanReplayerTaskMetaSQLDigest indicates the sql digest of this task
+	PlanReplayerTaskMetaSQLDigest = "sqlDigest"
+	// PlanReplayerTaskMetaPlanDigest indicates the plan digest of this task
+	PlanReplayerTaskMetaPlanDigest = "planDigest"
 )
 
 type tableNamePair struct {
@@ -141,6 +151,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
  |-sql_meta.toml
  |-meta.txt
  |-schema
+ |	 |-schema_meta.txt
  |	 |-db1.table1.schema.txt
  |	 |-db2.table2.schema.txt
  |	 |-....
@@ -173,25 +184,53 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	execStmts := task.ExecStmts
 	zw := zip.NewWriter(zf)
 	var records []PlanReplayerStatusRecord
+	sqls := make([]string, 0)
+	for _, execStmt := range task.ExecStmts {
+		sqls = append(sqls, execStmt.Text())
+	}
+	if task.IsCapture {
+		logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
+			zap.String("sql-digest", task.SQLDigest),
+			zap.String("plan-digest", task.PlanDigest),
+			zap.Strings("sql", sqls),
+			zap.Bool("isContinues", task.IsContinuesCapture))
+	} else {
+		logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
+			zap.Strings("sqls", sqls))
+	}
 	defer func() {
+		errMsg := ""
 		if err != nil {
-			logutil.BgLogger().Error("dump plan replayer failed", zap.Error(err))
+			if task.IsCapture {
+				logutil.BgLogger().Info("[plan-replayer-dump] dump file failed",
+					zap.String("sql-digest", task.SQLDigest),
+					zap.String("plan-digest", task.PlanDigest),
+					zap.Strings("sql", sqls),
+					zap.Bool("isContinues", task.IsContinuesCapture))
+			} else {
+				logutil.BgLogger().Info("[plan-replayer-dump] start to dump plan replayer result",
+					zap.Strings("sqls", sqls))
+			}
+			errMsg = err.Error()
 		}
-		err = zw.Close()
-		if err != nil {
-			logutil.BgLogger().Error("Closing zip writer failed", zap.Error(err), zap.String("filename", fileName))
+		err1 := zw.Close()
+		if err1 != nil {
+			logutil.BgLogger().Error("[plan-replayer-dump] Closing zip writer failed", zap.Error(err), zap.String("filename", fileName))
+			errMsg = errMsg + "," + err1.Error()
 		}
-		err = zf.Close()
-		if err != nil {
-			logutil.BgLogger().Error("Closing zip file failed", zap.Error(err), zap.String("filename", fileName))
+		err2 := zf.Close()
+		if err2 != nil {
+			logutil.BgLogger().Error("[plan-replayer-dump] Closing zip file failed", zap.Error(err), zap.String("filename", fileName))
+			errMsg = errMsg + "," + err2.Error()
+		}
+		if len(errMsg) > 0 {
 			for i, record := range records {
-				record.FailedReason = err.Error()
+				record.FailedReason = errMsg
 				records[i] = record
 			}
 		}
 		insertPlanReplayerStatus(ctx, sctx, records)
 	}()
-
 	// Dump SQLMeta
 	if err = dumpSQLMeta(zw, task); err != nil {
 		return err
@@ -226,9 +265,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
-	// Dump stats
-	if err = dumpStats(zw, pairs, task.JSONTblStats, do); err != nil {
-		return err
+	// For continues capture, we don't dump stats
+	if !task.IsContinuesCapture {
+		// Dump stats
+		if err = dumpStats(zw, pairs, task.JSONTblStats, do); err != nil {
+			return err
+		}
 	}
 
 	// Dump variables
@@ -281,12 +323,16 @@ func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 }
 
 func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
-	cf, err := zw.Create(planReplayerSQLMeta)
+	cf, err := zw.Create(PlanReplayerSQLMetaFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
 	varMap := make(map[string]string)
 	varMap[PlanReplayerSQLMetaStartTS] = strconv.FormatUint(task.StartTS, 10)
+	varMap[PlanReplayerTaskMetaIsCapture] = strconv.FormatBool(task.IsCapture)
+	varMap[PlanReplayerTaskMetaIsContinues] = strconv.FormatBool(task.IsContinuesCapture)
+	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
+	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}
@@ -342,8 +388,26 @@ func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableN
 }
 
 func dumpSchemas(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+	tables := make(map[tableNamePair]struct{})
 	for pair := range pairs {
 		err := getShowCreateTable(pair, zw, ctx)
+		if err != nil {
+			return err
+		}
+		if !pair.IsView {
+			tables[pair] = struct{}{}
+		}
+	}
+	return dumpSchemaMeta(zw, tables)
+}
+
+func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
+	zf, err := zw.Create(fmt.Sprintf("schema/%v", PlanReplayerSchemaMetaFile))
+	if err != nil {
+		return err
+	}
+	for table := range tables {
+		_, err := fmt.Fprintf(zf, "%s;%s", table.DBName, table.TableName)
 		if err != nil {
 			return err
 		}

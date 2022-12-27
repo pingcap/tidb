@@ -16,7 +16,6 @@ package ttlworker
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -31,22 +30,30 @@ import (
 	"go.uber.org/zap"
 )
 
-const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%d, %d)"
-const setTableStatusOwnerTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_id = UUID(), current_job_owner_id = '%s',current_job_start_time = '%s',current_job_status = 'waiting',current_job_status_update_time = '%s',current_job_ttl_expire = '%s',current_job_owner_hb_time = '%s' WHERE (current_job_owner_id IS NULL OR current_job_owner_hb_time < '%s') AND table_id = %d"
-const updateHeartBeatTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_hb_time = '%s' WHERE table_id = %d AND current_job_owner_id = '%s'"
+const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%?, %?)"
+const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
+	SET current_job_id = UUID(),
+		current_job_owner_id = %?,
+		current_job_start_time = %?,
+		current_job_status = 'waiting',
+		current_job_status_update_time = %?,
+		current_job_ttl_expire = %?,
+		current_job_owner_hb_time = %?
+	WHERE table_id = %?`
+const updateHeartBeatTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_hb_time = %? WHERE table_id = %? AND current_job_owner_id = %?"
 
 const timeFormat = "2006-01-02 15:04:05"
 
-func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) string {
-	return fmt.Sprintf(insertNewTableIntoStatusTemplate, tableID, parentTableID)
+func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []interface{}) {
+	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}
 }
 
-func setTableStatusOwnerSQL(tableID int64, now time.Time, currentJobTTLExpire time.Time, maxHBTime time.Time, id string) string {
-	return fmt.Sprintf(setTableStatusOwnerTemplate, id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), maxHBTime.Format(timeFormat), tableID)
+func setTableStatusOwnerSQL(tableID int64, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
+	return setTableStatusOwnerTemplate, []interface{}{id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
 }
 
-func updateHeartBeatSQL(tableID int64, now time.Time, id string) string {
-	return fmt.Sprintf(updateHeartBeatTemplate, now.Format(timeFormat), tableID, id)
+func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []interface{}) {
+	return updateHeartBeatTemplate, []interface{}{now.Format(timeFormat), tableID, id}
 }
 
 // JobManager schedules and manages the ttl jobs on this instance
@@ -90,6 +97,7 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage) (manager *
 	manager.store = store
 	manager.sessPool = sessPool
 	manager.delCh = make(chan *ttlDeleteTask)
+	manager.notifyStateCh = make(chan interface{}, 1)
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "manager")
@@ -271,12 +279,17 @@ func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() w
 func (m *JobManager) updateTaskState() bool {
 	results := m.pollScanWorkerResults()
 	for _, result := range results {
+		logger := logutil.Logger(m.ctx).With(zap.Int64("tableID", result.task.tbl.ID))
+		if result.err != nil {
+			logger = logger.With(zap.Error(result.err))
+		}
+
 		job := findJobWithTableID(m.runningJobs, result.task.tbl.ID)
 		if job == nil {
-			logutil.Logger(m.ctx).Warn("task state changed but job not found", zap.Int64("tableID", result.task.tbl.ID))
+			logger.Warn("task state changed but job not found", zap.Int64("tableID", result.task.tbl.ID))
 			continue
 		}
-		logutil.Logger(m.ctx).Debug("scan task finished", zap.String("jobID", job.id))
+		logger.Info("scan task finished", zap.String("jobID", job.id))
 
 		job.finishedScanTaskCounter += 1
 		job.scanTaskErr = multierr.Append(job.scanTaskErr, result.err)
@@ -303,7 +316,11 @@ func (m *JobManager) checkNotOwnJob() {
 	for _, job := range m.runningJobs {
 		tableStatus := m.tableStatusCache.Tables[job.tbl.ID]
 		if tableStatus == nil || tableStatus.CurrentJobOwnerID != m.id {
-			logutil.Logger(m.ctx).Info("job has been taken over by another node", zap.String("jobID", job.id), zap.String("statistics", job.statistics.String()))
+			logger := logutil.Logger(m.ctx).With(zap.String("jobID", job.id), zap.String("statistics", job.statistics.String()))
+			if tableStatus != nil {
+				logger.With(zap.String("newJobOwnerID", tableStatus.CurrentJobOwnerID))
+			}
+			logger.Info("job has been taken over by another node")
 			m.removeJob(job)
 			job.cancel()
 		}
@@ -357,9 +374,10 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		case len(newJobTables) > 0:
 			table := newJobTables[0]
 			newJobTables = newJobTables[1:]
-			logutil.Logger(m.ctx).Debug("try lock new job", zap.Int64("tableID", table.ID))
+			logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
 			job, err = m.lockNewJob(m.ctx, se, table, now)
 			if job != nil {
+				logutil.Logger(m.ctx).Info("append new running job", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
 				m.appendJob(job)
 			}
 		}
@@ -371,10 +389,10 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		}
 
 		for !job.AllSpawned() {
-			task, err := job.peekScanTask()
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to generate scan task", zap.Error(err))
-				break
+			task := job.peekScanTask()
+			logger := logutil.Logger(m.ctx).With(zap.String("jobID", job.id), zap.String("table", task.tbl.TableInfo.Name.L))
+			if task.tbl.PartitionDef != nil {
+				logger = logger.With(zap.String("partition", task.tbl.PartitionDef.Name.L))
 			}
 
 			for len(idleScanWorkers) > 0 {
@@ -383,7 +401,7 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 
 				err := idleWorker.Schedule(task)
 				if err != nil {
-					logutil.Logger(m.ctx).Info("fail to schedule task", zap.Error(err))
+					logger.Info("fail to schedule task", zap.Error(err))
 					continue
 				}
 
@@ -392,16 +410,11 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 				if err != nil {
 					// not a big problem, current logic doesn't depend on the job status to promote
 					// the routine, so we could just print a log here
-					logutil.Logger(m.ctx).Error("change ttl job status", zap.Error(err), zap.String("id", job.id))
+					logger.Error("change ttl job status", zap.Error(err), zap.String("id", job.id))
 				}
 				cancel()
 
-				logArgs := []zap.Field{zap.String("table", task.tbl.TableInfo.Name.L)}
-				if task.tbl.PartitionDef != nil {
-					logArgs = append(logArgs, zap.String("partition", task.tbl.PartitionDef.Name.L))
-				}
-				logutil.Logger(m.ctx).Debug("schedule ttl task",
-					logArgs...)
+				logger.Info("scheduled ttl task")
 
 				job.nextScanTask()
 				break
@@ -425,14 +438,17 @@ func (m *JobManager) idleScanWorkers() []scanWorker {
 }
 
 func (m *JobManager) localJobs() []*ttlJob {
+	jobs := make([]*ttlJob, 0, len(m.runningJobs))
 	for _, job := range m.runningJobs {
 		status := m.tableStatusCache.Tables[job.tbl.ID]
 		if status == nil || status.CurrentJobOwnerID != m.id {
-			m.removeJob(job)
+			// these jobs will be removed in `checkNotOwnJob`
 			continue
 		}
+
+		jobs = append(jobs, job)
 	}
-	return m.runningJobs
+	return jobs
 }
 
 // readyForNewJobTables returns all tables which should spawn a TTL job according to cache
@@ -491,23 +507,25 @@ func (m *JobManager) couldTrySchedule(table *cache.TableStatus, now time.Time) b
 // localJob and return it.
 // It could be nil, nil, if the table query doesn't return error but the job has been locked by other instances.
 func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time) (*ttlJob, error) {
-	maxHBTime := now.Add(-2 * jobManagerLoopTickerInterval)
 	var expireTime time.Time
 
 	err := se.RunInTxn(ctx, func() error {
-		rows, err := se.ExecuteSQL(ctx, cache.SelectFromTTLTableStatusWithID(table.TableInfo.ID))
+		sql, args := cache.SelectFromTTLTableStatusWithID(table.ID)
+		rows, err := se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 		if len(rows) == 0 {
 			// cannot find the row, insert the status row
-			_, err = se.ExecuteSQL(ctx, insertNewTableIntoStatusSQL(table.ID, table.TableInfo.ID))
+			sql, args := insertNewTableIntoStatusSQL(table.ID, table.TableInfo.ID)
+			_, err = se.ExecuteSQL(ctx, sql, args...)
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "execute sql: %s", sql)
 			}
-			rows, err = se.ExecuteSQL(ctx, cache.SelectFromTTLTableStatusWithID(table.TableInfo.ID))
+			sql, args = cache.SelectFromTTLTableStatusWithID(table.ID)
+			rows, err = se.ExecuteSQL(ctx, sql, args...)
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "execute sql: %s", sql)
 			}
 			if len(rows) == 0 {
 				return errors.New("table status row still doesn't exist after insertion")
@@ -526,9 +544,9 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return err
 		}
 
-		_, err = se.ExecuteSQL(ctx, setTableStatusOwnerSQL(table.ID, now, expireTime, maxHBTime, m.id))
-
-		return err
+		sql, args = setTableStatusOwnerSQL(table.ID, now, expireTime, m.id)
+		_, err = se.ExecuteSQL(ctx, sql, args...)
+		return errors.Wrapf(err, "execute sql: %s", sql)
 	})
 	if err != nil {
 		return nil, err
@@ -591,9 +609,15 @@ func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *ca
 func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session) error {
 	now := se.Now()
 	for _, job := range m.localJobs() {
-		_, err := se.ExecuteSQL(ctx, updateHeartBeatSQL(job.tbl.ID, now, m.id))
+		sql, args := updateHeartBeatSQL(job.tbl.ID, now, m.id)
+		_, err := se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Wrapf(err, "execute sql: %s", sql)
+		}
+		// also updates some internal state for this job
+		err = job.updateState(ctx, se)
+		if err != nil {
+			logutil.Logger(m.ctx).Warn("fail to update state of the job", zap.String("jobID", job.id))
 		}
 	}
 	return nil
