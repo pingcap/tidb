@@ -520,7 +520,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 
 		// Step 1. Extract the underlying JSON column from MVIndex Info.
 		mvIndex := ds.possibleAccessPaths[idx].Index
-		if len(mvIndex.Columns) > 0 {
+		if len(mvIndex.Columns) > 1 {
 			// only support single-column MVIndex now: idx((cast(a->'$.zip' as signed array)))
 			// TODO: support composite MVIndex idx((x, cast(a->'$.zip' as int array), z))
 			continue
