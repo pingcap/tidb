@@ -153,6 +153,7 @@ var tokenMap = map[string]int{
 	"ANY":                      any,
 	"APPROX_COUNT_DISTINCT":    approxCountDistinct,
 	"APPROX_PERCENTILE":        approxPercentile,
+	"ARRAY":                    array,
 	"AS":                       as,
 	"ASC":                      asc,
 	"ASCII":                    ascii,
@@ -475,6 +476,7 @@ var tokenMap = map[string]int{
 	"MEDIUMINT":                mediumIntType,
 	"MEDIUMTEXT":               mediumtextType,
 	"MEMORY":                   memory,
+	"MEMBER":                   member,
 	"MERGE":                    merge,
 	"MICROSECOND":              microsecond,
 	"MIN_ROWS":                 minRows,
@@ -822,6 +824,8 @@ var tokenMap = map[string]int{
 	"YEAR":                     yearType,
 	"ZEROFILL":                 zerofill,
 	"WAIT":                     wait,
+	"FAILED_LOGIN_ATTEMPTS":    failedLoginAttempts,
+	"PASSWORD_LOCK_TIME":       passwordLockTime,
 	"REUSE":                    reuse,
 }
 
@@ -955,6 +959,8 @@ var hintTokenMap = map[string]int{
 	"SWAP_JOIN_INPUTS":        hintSwapJoinInputs,
 	"USE_INDEX_MERGE":         hintUseIndexMerge,
 	"USE_INDEX":               hintUseIndex,
+	"KEEP_ORDER":              hintKeepOrder,
+	"NO_KEEP_ORDER":           hintNoKeepOrder,
 	"USE_PLAN_CACHE":          hintUsePlanCache,
 	"USE_TOJA":                hintUseToja,
 	"TIME_RANGE":              hintTimeRange,
