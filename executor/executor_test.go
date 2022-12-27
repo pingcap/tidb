@@ -5653,9 +5653,8 @@ func TestAdmin(t *testing.T) {
 				if _, ok := rowIDs[rowID]; ok {
 					flag = false
 					break
-				} else {
-					rowIDs[rowID] = struct{}{}
 				}
+				rowIDs[rowID] = struct{}{}
 			}
 			if !flag {
 				break
