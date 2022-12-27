@@ -17,6 +17,7 @@ package autoid
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	autoid1 "github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/model"
@@ -253,6 +255,7 @@ type Service struct {
 func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) *Service {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
+
 	cli, err := clientv3.New(clientv3.Config{
 		LogConfig:        &etcdLogCfg,
 		Endpoints:        etcdAddr,
@@ -270,9 +273,12 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 	if err != nil {
 		panic(err)
 	}
+	return newWithCli(selfAddr, cli, store)
+}
 
+func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
-	err = l.CampaignOwner()
+	err := l.CampaignOwner()
 	if err != nil {
 		panic(err)
 	}
@@ -299,7 +305,7 @@ func (m *mockClient) Rebase(ctx context.Context, in *autoid.RebaseRequest, opts 
 var global = make(map[string]*mockClient)
 
 // MockForTest is used for testing, the UT test and unistore use this.
-func MockForTest(store kv.Storage) *mockClient {
+func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 	uuid := store.UUID()
 	ret, ok := global[uuid]
 	if !ok {
@@ -429,6 +435,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 			var err1 error
 			currentEnd, err1 = idAcc.Get()
 			if err1 != nil {
+				fmt.Println("!!!")
 				return err1
 			}
 			val.end = currentEnd
@@ -514,4 +521,8 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 		return &autoid.RebaseResponse{Errmsg: []byte(err.Error())}, nil
 	}
 	return &autoid.RebaseResponse{}, nil
+}
+
+func init() {
+	autoid1.MockForTest = MockForTest
 }
