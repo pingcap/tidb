@@ -520,19 +520,19 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 
 		// Step 1. Extract the underlying JSON column from MVIndex Info.
 		mvIndex := ds.possibleAccessPaths[idx].Index
-		if len(mvIndex.Columns) > 1 {
+		if len(mvIndex.Columns) != 1 {
 			// only support single-column MVIndex now: idx((cast(a->'$.zip' as signed array)))
 			// TODO: support composite MVIndex idx((x, cast(a->'$.zip' as int array), z))
 			continue
 		}
 		mvVirColOffset := mvIndex.Columns[0].Offset
-		mvVirCol := ds.table.Meta().Cols()[mvVirColOffset]
+		mvVirColMeta := ds.table.Meta().Cols()[mvVirColOffset]
 
 		var virCol *expression.Column
 		for _, ce := range ds.TblCols {
-			if ce.ID == mvVirCol.ID {
+			if ce.ID == mvVirColMeta.ID {
 				virCol = ce.Clone().(*expression.Column)
-				virCol.RetType = ce.GetType().ArrayType() // JSON-ARRAY(INT) --> INT
+				virCol.RetType = ce.GetType().ArrayType() // use the underlying type directly: JSON-ARRAY(INT) --> INT
 				break
 			}
 		}
@@ -543,7 +543,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 		}
 
 		// Step 2. Iterate all filters and generate corresponding IndexMerge paths.
-		for i, filter := range filters {
+		for filterIdx, filter := range filters {
 			// Step 2.1. Extract jsonPath and vals from json_member / json_overlaps / json_contains functions.
 			sf, ok := filter.(*expression.ScalarFunction)
 			if !ok {
@@ -610,7 +610,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 
 				partialPaths = append(partialPaths, partialPath)
 			}
-			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, i)
+			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, filterIdx)
 			mvIndexPaths = append(mvIndexPaths, indexMergePath)
 		}
 	}
