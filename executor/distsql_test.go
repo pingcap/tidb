@@ -633,3 +633,14 @@ func TestCoprocessorPagingReqKeyRangeSorted(t *testing.T) {
 	tk.MustExec(`set @a=0x61219F79C90D3541F70E, @b=5501707547099269248, @c=0xEC43EFD30131DEA2CB8B, @d="呣丼蒢咿卻鹻铴础湜僂頃ǆ縍套衞陀碵碼幓9", @e="鹹楞睕堚尛鉌翡佾搁紟精廬姆燵藝潐楻翇慸嵊";`)
 	tk.MustExec(`execute stmt using @a,@b,@c,@d,@e;`)
 }
+
+func TestIssue40158(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (_id int PRIMARY KEY, c1 char, index (c1));")
+	tk.MustExec("insert into t1 values (1, null);")
+	tk.MustQuery("select * from t1 where c1 is null and _id < 1;").Check(testkit.Rows())
+}
