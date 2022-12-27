@@ -158,19 +158,16 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	if c.Ctx.GetSessionVars().IsPlanReplayerCaptureEnabled() && !c.Ctx.GetSessionVars().InRestrictedSQL {
-		if _, ok := stmtNode.(*ast.SelectStmt); ok {
-			startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
-			if err != nil {
-				return nil, err
-			}
-			if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
-				checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
-			} else {
-				checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
-			}
+		startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
+		if err != nil {
+			return nil, err
+		}
+		if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
+			checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
+		} else {
+			checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
 		}
 	}
-
 	return stmt, nil
 }
 
@@ -183,9 +180,17 @@ func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode
 	if handle == nil {
 		return
 	}
+	captured := false
 	tasks := handle.GetTasks()
 	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
 	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
+	defer func() {
+		logutil.BgLogger().Debug("[plan-replayer-capture] check capture task",
+			zap.String("sql-digest", sqlDigest.String()),
+			zap.String("plan-digest", planDigest.String()),
+			zap.Int("tasks", len(tasks)),
+			zap.Bool("captured", captured))
+	}()
 	key := replayer.PlanReplayerTaskKey{
 		SQLDigest:  sqlDigest.String(),
 		PlanDigest: planDigest.String(),
@@ -193,7 +198,7 @@ func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode
 	for _, task := range tasks {
 		if task.SQLDigest == sqlDigest.String() {
 			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
-				sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, false)
+				captured = sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, false)
 				return
 			}
 		}
@@ -215,16 +220,26 @@ func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.Stm
 		SQLDigest:  sqlDigest.String(),
 		PlanDigest: planDigest.String(),
 	}
+	captured := false
+	defer func() {
+		logutil.BgLogger().Debug("[plan-replayer-capture] check continues capture task",
+			zap.String("sql-digest", sqlDigest.String()),
+			zap.String("plan-digest", planDigest.String()),
+			zap.Bool("captured", captured))
+	}()
+
 	existed := sctx.GetSessionVars().CheckPlanReplayerFinishedTaskKey(key)
 	if existed {
 		return
 	}
-	sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, true)
-	sctx.GetSessionVars().AddPlanReplayerFinishedTaskKey(key)
+	captured = sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, true)
+	if captured {
+		sctx.GetSessionVars().AddPlanReplayerFinishedTaskKey(key)
+	}
 }
 
 func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode,
-	startTS uint64, isContinuesCapture bool) {
+	startTS uint64, isContinuesCapture bool) bool {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	dumpTask := &domain.PlanReplayerDumpTask{
@@ -239,7 +254,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,
 	}
-	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
+	return domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }
 
 // needLowerPriority checks whether it's needed to lower the execution priority
