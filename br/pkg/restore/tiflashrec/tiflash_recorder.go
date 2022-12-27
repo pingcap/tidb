@@ -155,7 +155,7 @@ func alterTableSpecOf(replica model.TiFlashReplicaInfo, reset bool) (string, err
 		spec = &ast.AlterTableSpec{
 			Tp: ast.AlterTableSetTiFlashReplica,
 			TiFlashReplica: &ast.TiFlashReplicaSpec{
-				Count:  0,
+				Count: 0,
 			},
 		}
 	}
