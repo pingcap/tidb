@@ -172,7 +172,7 @@ func (ts *TiDBStatement) Close() error {
 			}
 			bindSQL, _ := core.GetBindSQL4PlanCache(ts.ctx, preparedObj)
 			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
-				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL, preparedObj.PreparedAst)
+				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL, preparedObj.PreparedAst.Stmt)
 			if err != nil {
 				return err
 			}

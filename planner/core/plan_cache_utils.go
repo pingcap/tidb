@@ -271,7 +271,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string, preparedAst *ast.Prepared) (kvcache.Key, error) {
+	lastUpdatedSchemaVersion int64, bindSQL string, stmtNode ast.StmtNode) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -285,7 +285,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
-	limit := getLimitFromAst(preparedAst.Stmt)
+	limit := getLimitFromAst(stmtNode)
 	key := &planCacheKey{
 		database:                 stmtDB,
 		connID:                   sessionVars.ConnectionID,
@@ -487,6 +487,9 @@ func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func getLimitFromAst(node ast.Node) []int64 {
+	if node == nil {
+		return []int64{}
+	}
 	checker := limitExtractor{
 		//sctx:      sctx,
 		//schema:    is,
