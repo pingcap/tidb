@@ -18,6 +18,7 @@ go_library(
         "handle_cols.go",
         "hashcode.go",
         "hints.go",
+        "indexmerge_path.go",
         "initialize.go",
         "logical_plan_builder.go",
         "logical_plans.go",
