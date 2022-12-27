@@ -59,8 +59,6 @@ type MPPGather struct {
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 	mppQueryID   kv.MPPQueryID
-	queryTS      uint64
-	localQueryID uint64
 
 	mppReqs []*kv.MPPDispatchRequest
 
