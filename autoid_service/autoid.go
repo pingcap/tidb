@@ -17,7 +17,6 @@ package autoid
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -435,7 +434,6 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 			var err1 error
 			currentEnd, err1 = idAcc.Get()
 			if err1 != nil {
-				fmt.Println("!!!")
 				return err1
 			}
 			val.end = currentEnd

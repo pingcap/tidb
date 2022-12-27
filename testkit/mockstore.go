@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
