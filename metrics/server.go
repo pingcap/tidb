@@ -120,14 +120,6 @@ var (
 			Help:      "Counter of system time jumps backward.",
 		})
 
-	KeepAliveCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "monitor",
-			Name:      "keep_alive_total",
-			Help:      "Counter of TiDB keep alive.",
-		})
-
 	PlanCacheCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
