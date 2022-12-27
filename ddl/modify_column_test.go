@@ -125,7 +125,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)
 		e, start, end, physicalID, err := ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
-		require.Error(t, err, "Error not ErrDDLReorgElementNotExists, found orphan row in tidb_ddl_reorg: e: '%s', physicalID: %d, start: 0x%x end: 0x%x", e, physicalID, start, end)
+		require.Error(t, err, "Error not ErrDDLReorgElementNotExists, found orphan row in tidb_ddl_reorg for job.ID %d: e: '%s', physicalID: %d, start: 0x%x end: 0x%x", currJob.ID, e, physicalID, start, end)
 		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err), "Error not ErrDDLReorgElementNotExists, found orphan row in tidb_ddl_reorg: e: '%s', physicalID: %d, start: 0x%x end: 0x%x error: %s", e, physicalID, start, end, err.Error())
 		require.Nil(t, e)
 		require.Nil(t, start)
