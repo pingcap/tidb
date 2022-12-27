@@ -124,7 +124,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(SyncLoadHistogram)
 	prometheus.MustRegister(ReadStatsHistogram)
 	prometheus.MustRegister(JobsGauge)
-	prometheus.MustRegister(KeepAliveCounter)
 	prometheus.MustRegister(LoadPrivilegeCounter)
 	prometheus.MustRegister(InfoCacheCounters)
 	prometheus.MustRegister(LoadSchemaCounter)
