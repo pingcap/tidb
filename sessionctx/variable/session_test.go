@@ -130,16 +130,9 @@ func TestSession(t *testing.T) {
 
 func TestAllocMPPID(t *testing.T) {
 	ctx := mock.NewContext()
-
-	seVar := ctx.GetSessionVars()
-	require.NotNil(t, seVar)
-
-	require.Equal(t, int64(1), seVar.AllocMPPTaskID(1))
-	require.Equal(t, int64(2), seVar.AllocMPPTaskID(1))
-	require.Equal(t, int64(3), seVar.AllocMPPTaskID(1))
-	require.Equal(t, int64(1), seVar.AllocMPPTaskID(2))
-	require.Equal(t, int64(2), seVar.AllocMPPTaskID(2))
-	require.Equal(t, int64(3), seVar.AllocMPPTaskID(2))
+	require.Equal(t, int64(1), plannercore.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(2), plannercore.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(3), plannercore.AllocMPPTaskID(ctx))
 }
 
 func TestSlowLogFormat(t *testing.T) {

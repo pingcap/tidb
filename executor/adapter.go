@@ -1407,6 +1407,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars.DurationParse = 0
 	// Clean the stale read flag when statement execution finish
 	sessVars.StmtCtx.IsStaleness = false
+	// Clean the MPP query info
+	sessVars.StmtCtx.MPPQueryInfo.QueryID.Store(0)
+	sessVars.StmtCtx.MPPQueryInfo.QueryTS.Store(0)
+	sessVars.StmtCtx.MPPQueryInfo.AllocatedMPPTaskID.Store(0)
 
 	if sessVars.StmtCtx.ReadFromTableCache {
 		metrics.ReadFromTableCacheCounter.Inc()

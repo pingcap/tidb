@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
@@ -267,14 +268,9 @@ func TestMppExecution(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
-	ts := txn.StartTS()
-	taskID := tk.Session().GetSessionVars().AllocMPPTaskID(ts)
-	require.Equal(t, int64(6), taskID)
-	tk.MustExec("commit")
-	taskID = tk.Session().GetSessionVars().AllocMPPTaskID(ts + 1)
+	taskID := plannercore.AllocMPPTaskID(tk.Session())
 	require.Equal(t, int64(1), taskID)
+	tk.MustExec("commit")
 
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(3)`)
 	// all the data is related to one store, so there are three tasks.
@@ -1043,7 +1039,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	}
 }
 
-func TestForbidTiflashDuringStaleRead(t *testing.T) {
+func TestTiflashSupportStaleRead(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1075,8 +1071,8 @@ func TestForbidTiflashDuringStaleRead(t *testing.T) {
 		fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	res = resBuff.String()
-	require.NotContains(t, res, "tiflash")
-	require.Contains(t, res, "tikv")
+	require.Contains(t, res, "tiflash")
+	require.NotContains(t, res, "tikv")
 }
 
 func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {

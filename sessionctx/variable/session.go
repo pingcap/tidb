@@ -671,13 +671,6 @@ type SessionVars struct {
 		value string
 	}
 
-	// mppTaskIDAllocator is used to allocate mpp task id for a session.
-	mppTaskIDAllocator struct {
-		mu     sync.Mutex
-		lastTS uint64
-		taskID int64
-	}
-
 	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
 	Status uint16
 
@@ -1449,20 +1442,6 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 		sc = &stmtctx.StatementContext{}
 	}
 	return sc
-}
-
-// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
-// startTs is different.
-func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
-	s.mppTaskIDAllocator.mu.Lock()
-	defer s.mppTaskIDAllocator.mu.Unlock()
-	if s.mppTaskIDAllocator.lastTS == startTS {
-		s.mppTaskIDAllocator.taskID++
-		return s.mppTaskIDAllocator.taskID
-	}
-	s.mppTaskIDAllocator.lastTS = startTS
-	s.mppTaskIDAllocator.taskID = 1
-	return 1
 }
 
 // IsMPPAllowed returns whether mpp execution is allowed.
