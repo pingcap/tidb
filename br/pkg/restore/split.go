@@ -490,7 +490,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 ) ([]*split.RegionInfo, error) {
 	var (
 		splitPoints [][]byte = make([][]byte, 0)
-		lastKey     []byte   = nil
+		lastKey     []byte   = region.Region.StartKey
 		length      uint64   = initialLength
 	)
 	for _, v := range valueds {
