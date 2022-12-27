@@ -16,9 +16,7 @@ package copr
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -28,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
@@ -53,60 +50,6 @@ type MPPClient struct {
 // GetAddress returns the network address.
 func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
-}
-
-// GetClusterMinMppVersion get the min/max mpp-version from TiFlash stores in cluster
-func (c *MPPClient) GetClusterMinMppVersion(ctx context.Context, tiflashStores []*metapb.Store) (int64, int64, int) {
-	// decide the mpp version of tiflash stores
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	minMppVersion := int64(math.MaxInt64)
-	maxMppVersion := int64(math.MinInt64)
-	availableCnt := 0
-	timeout := 2 * time.Second
-
-	wg.Add(len(tiflashStores))
-	logutil.BgLogger().Info("start to detect available mpp stores", zap.Int("total store count", len(tiflashStores)))
-	defer func() {
-		var mppInfo string
-		if availableCnt != 0 {
-			mppInfo = fmt.Sprintf("min-mpp-version %d, max-mpp-version %d", minMppVersion, maxMppVersion)
-		}
-		logutil.BgLogger().Info("finish detecting mpp stores", zap.Int("available store count", availableCnt), zap.String("mpp info", mppInfo))
-	}()
-
-	for i := range tiflashStores {
-		go func(idx int) {
-			defer wg.Done()
-
-			s := tiflashStores[idx]
-			resp, err := c.store.GetTiKVClient().SendRequest(ctx, s.GetAddress(), &tikvrpc.Request{
-				Type:    tikvrpc.CmdMPPAlive,
-				StoreTp: tikvrpc.TiFlash,
-				Req:     &mpp.IsAliveRequest{},
-				Context: kvrpcpb.Context{},
-			}, timeout)
-
-			if err != nil {
-				return
-			}
-
-			mppVersion := resp.Resp.(*mpp.IsAliveResponse).MppVersion
-
-			func() {
-				mu.Lock()
-				defer mu.Unlock()
-
-				minMppVersion = mathutil.Min(minMppVersion, mppVersion)
-				maxMppVersion = mathutil.Max(maxMppVersion, mppVersion)
-				availableCnt += 1
-			}()
-		}(i)
-	}
-	wg.Wait()
-
-	return minMppVersion, maxMppVersion, availableCnt
 }
 
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {

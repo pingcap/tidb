@@ -309,4 +309,10 @@ func TestTiFlashStoreInfoMppVersion(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MaxMppVersion)
 	}
+	{
+		stores := make([]*metapb.Store, 0)
+		err := CheckAndInitTiDBMppVersion(nil, stores)
+		require.NoError(t, err)
+		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MaxMppVersion)
+	}
 }
