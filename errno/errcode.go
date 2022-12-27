@@ -915,6 +915,7 @@ const (
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
 	ErrCannotConvertString                                   = 3854
+	ErrDependentByPartitionFunctional                        = 3885
 	ErrInvalidJSONValueForFuncIndex                          = 3903
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907
