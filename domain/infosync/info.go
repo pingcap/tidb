@@ -451,31 +451,58 @@ func removeVAndHash(v string) string {
 }
 
 // CheckTiKVVersion is used to check the tikv version.
-func CheckTiKVVersion(stores []*metapb.Store, minVersion semver.Version) error {
-	for _, s := range stores {
-		// empty version means the store is a mock store. Don't require tiflash version either.
-		if s.Version == "" || engine.IsTiFlash(s) {
-			continue
+func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
+	if store, ok := store.(kv.StorageWithPD); ok {
+		pdClient := store.GetPDClient()
+		var stores []*metapb.Store
+		var err error
+		// Wait at most 3 second to make sure pd has updated the store information.
+		for i := 0; i < 60; i++ {
+			stores, err = pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
+			if err == nil {
+				break
+			}
+			time.Sleep(time.Millisecond * 50)
 		}
-		ver, err := semver.NewVersion(removeVAndHash(s.Version))
+
 		if err != nil {
-			return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
+			return errors.Trace(err)
 		}
-		v := ver.Compare(minVersion)
-		if v < 0 {
-			return errors.New("TiKV version must greater than or equal to " + minVersion.String())
+
+		for _, s := range stores {
+			// empty version means the store is a mock store. Don't require tiflash version either.
+			if s.Version == "" || engine.IsTiFlash(s) {
+				continue
+			}
+			ver, err := semver.NewVersion(removeVAndHash(s.Version))
+			if err != nil {
+				return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
+			}
+			v := ver.Compare(minVersion)
+			if v < 0 {
+				return errors.New("TiKV version must greater than or equal to " + minVersion.String())
+			}
 		}
 	}
+
 	return nil
 }
 
 // CheckAndInitTiDBMppVersion checks the cluster store version and update TiDBMppVersion
-func CheckAndInitTiDBMppVersion(store kv.Storage, stores []*metapb.Store) error {
+func CheckAndInitTiDBMppVersion(storage kv.Storage) error {
+	tiflashNodes, err := getClusterTiFlashNodesMeta(storage)
+	if err != nil {
+		return err
+	}
+	return checkAndInitTiDBMppVersion(tiflashNodes)
+}
+
+func checkAndInitTiDBMppVersion(tiflashNodes []*metapb.Store) error {
 	var minStoreReleaseVersion *semver.Version
 
 	// all stores must NOT be Tombstone
 	// check TiFlash store info
-	for _, s := range stores {
+	for _, s := range tiflashNodes {
 		// empty version means the store is a mock store.
 		if s.Version == "" {
 			continue
@@ -511,29 +538,24 @@ func CheckAndInitTiDBMppVersion(store kv.Storage, stores []*metapb.Store) error 
 	return nil
 }
 
-// GetClusterStores returns all stores' meta by PD
-func GetClusterStores(store kv.Storage) ([]*metapb.Store, error) {
-	var stores []*metapb.Store
+// get all tiflash nodes meta
+func getClusterTiFlashNodesMeta(storage kv.Storage) ([]*metapb.Store, error) {
+	var tiflashNodes []*metapb.Store
 
-	if store, ok := store.(kv.StorageWithPD); ok {
-		pdClient := store.GetPDClient()
-		var err error
-		// Wait at most 3 second to make sure pd has updated the store information.
-		for i := 0; i < 60; i++ {
-			stores, err = pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
-			if err == nil {
-				break
-			}
-			time.Sleep(time.Millisecond * 50)
-		}
-
+	if storage, ok := storage.(kv.StorageWithPD); ok {
+		pdClient := storage.GetPDClient()
+		stores, err := pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return stores, nil
+		for _, c := range stores {
+			if engine.IsTiFlash(c) {
+				tiflashNodes = append(tiflashNodes, c)
+			}
+		}
 	}
 
-	return stores, nil
+	return tiflashNodes, nil
 }
 
 func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {

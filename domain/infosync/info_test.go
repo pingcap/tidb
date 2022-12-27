@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -284,20 +283,7 @@ func TestTiFlashStoreInfoMppVersion(t *testing.T) {
 		stores := make([]*metapb.Store, 0)
 		stores = append(stores, &metapb.Store{Version: "v6.5.0"})
 		stores = append(stores, &metapb.Store{Version: "v6.7.0"})
-		{
-			err := CheckTiKVVersion(stores, *semver.New("7.0.0"))
-			require.Error(t, err)
-		}
-		{
-			err := CheckTiKVVersion(stores, *semver.New("5.0.0"))
-			require.NoError(t, err)
-		}
-	}
-	{
-		stores := make([]*metapb.Store, 0)
-		stores = append(stores, &metapb.Store{Version: "v6.5.0"})
-		stores = append(stores, &metapb.Store{Version: "v6.7.0"})
-		err := CheckAndInitTiDBMppVersion(nil, stores)
+		err := checkAndInitTiDBMppVersion(stores)
 		require.NoError(t, err)
 		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MppVersionV0)
 	}
@@ -305,13 +291,13 @@ func TestTiFlashStoreInfoMppVersion(t *testing.T) {
 		stores := make([]*metapb.Store, 0)
 		stores = append(stores, &metapb.Store{Version: "v6.7.0-alpha"})
 		stores = append(stores, &metapb.Store{Version: "v6.8.0"})
-		err := CheckAndInitTiDBMppVersion(nil, stores)
+		err := checkAndInitTiDBMppVersion(stores)
 		require.NoError(t, err)
 		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MaxMppVersion)
 	}
 	{
 		stores := make([]*metapb.Store, 0)
-		err := CheckAndInitTiDBMppVersion(nil, stores)
+		err := checkAndInitTiDBMppVersion(stores)
 		require.NoError(t, err)
 		require.Equal(t, kv.TiDBMppVersion.Load(), kv.MaxMppVersion)
 	}
