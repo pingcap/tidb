@@ -4706,9 +4706,15 @@ func GetModifiableColumnJob(
 		for _, name := range pt.GetPartitionColumnNames() {
 			if strings.EqualFold(name.L, col.Name.L) {
 				isPartitioningColumn = true
+				break
 			}
 		}
 		if isPartitioningColumn {
+			// TODO: update the partitioning columns with new names if column is renamed
+			// Would be an extension from MySQL which does not support it.
+			if col.Name.L != newCol.Name.L {
+				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("Column '%s' has a partitioning function dependency and cannot be renamed", col.Name.O))
+			}
 			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
 				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
 			}
@@ -4752,7 +4758,6 @@ func GetModifiableColumnJob(
 			newTblInfo.Columns = newCols
 
 			var buf bytes.Buffer
-			// TODO: update the partitioning columns with new names if column is renamed
 			AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
 			// The parser supports ALTER TABLE ... PARTITION BY ... even if the ddl code does not yet :)
 			// Ignoring warnings

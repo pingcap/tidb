@@ -735,6 +735,8 @@ const (
 	version108 = 108
 	// version109 add column source to mysql.stats_meta_history
 	version109 = 109
+	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
+	version110 = 110
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -853,6 +855,7 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+		upgradeToVer110,
 	}
 )
 
@@ -2199,6 +2202,15 @@ func upgradeToVer109(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
+}
+
+// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
 func writeOOMAction(s Session) {
