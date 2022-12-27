@@ -212,6 +212,7 @@ import (
 	over              "OVER"
 	partition         "PARTITION"
 	percentRank       "PERCENT_RANK"
+	pointType         "POINT"
 	precisionType     "PRECISION"
 	primary           "PRIMARY"
 	procedure         "PROCEDURE"
@@ -8287,6 +8288,16 @@ CastType:
 		tp.AddFlag(mysql.BinaryFlag)
 		tp.SetCharset(mysql.DefaultCharset)
 		tp.SetCollate(mysql.DefaultCollationName)
+		tp.SetGeoType(mysql.GeoTypeGeometry)
+		$$ = tp
+	}
+|	"POINT"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.AddFlag(mysql.BinaryFlag)
+		tp.SetCharset(mysql.DefaultCharset)
+		tp.SetCollate(mysql.DefaultCollationName)
+		tp.SetGeoType(mysql.GeoTypePoint)
 		$$ = tp
 	}
 
@@ -12369,6 +12380,16 @@ StringType:
 		tp.SetDecimal(0)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
+		tp.SetGeoType(mysql.GeoTypeGeometry)
+		$$ = tp
+	}
+|	"POINT"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetGeoType(mysql.GeoTypePoint)
 		$$ = tp
 	}
 

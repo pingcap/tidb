@@ -554,6 +554,7 @@ type ColumnOption struct {
 	ConstraintName string
 	PrimaryKeyTp   model.PrimaryKeyType
 	Srid           uint32
+	GeoType        uint
 }
 
 // Restore implements Node interface.

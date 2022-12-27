@@ -56,6 +56,7 @@ type FieldType struct {
 	// elems is the element list for enum and set type.
 	elems            []string
 	elemsIsBinaryLit []bool
+	geoType          uint
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
@@ -394,6 +395,11 @@ func (ft *FieldType) CompactStr() string {
 		suffix = fmt.Sprintf("(%d)", ft.flen)
 	case mysql.TypeNull:
 		suffix = "(0)"
+	case mysql.TypeGeometry:
+		switch ft.geoType {
+		case mysql.GeoTypePoint:
+			ts = "point"
+		}
 	}
 	return ts + suffix
 }
@@ -604,6 +610,7 @@ type jsonFieldType struct {
 	Collate          string
 	Elems            []string
 	ElemsIsBinaryLit []bool
+	GeoType          uint
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
@@ -619,6 +626,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 		ft.collate = r.Collate
 		ft.elems = r.Elems
 		ft.elemsIsBinaryLit = r.ElemsIsBinaryLit
+		ft.geoType = r.GeoType
 	}
 	return err
 }
@@ -634,6 +642,7 @@ func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	r.Collate = ft.collate
 	r.Elems = ft.elems
 	r.ElemsIsBinaryLit = ft.elemsIsBinaryLit
+	r.GeoType = ft.geoType
 	return json.Marshal(r)
 }
 
@@ -651,4 +660,8 @@ func (ft *FieldType) MemoryUsage() (sum int64) {
 		sum += int64(len(s))
 	}
 	return
+}
+
+func (ft *FieldType) SetGeoType(geoType uint) {
+	ft.geoType = geoType
 }

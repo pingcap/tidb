@@ -47,6 +47,18 @@ const (
 	TypeGeometry   byte = 0xff
 )
 
+// Geometry Subtypes
+const (
+	GeoTypeGeometry uint = iota
+	GeoTypePoint
+	GeoTypeLineString
+	GeoTypePolygon
+	GeoTypeMultiPoint
+	GeoTypeMultiLineString
+	GeoTypeMultiPolygon
+	GeoTypeGeometryCollection
+)
+
 // Flag information.
 const (
 	NotNullFlag        uint = 1 << 0  /* Field can't be NULL */
