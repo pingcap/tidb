@@ -52,8 +52,8 @@ func NewZero() *Constant {
 	}
 }
 
-// NewNumber stands for constant of a given number.
-func NewNumber(num int64) *Constant {
+// NewUInt64Const  stands for constant of a given number.
+func NewUInt64Const(num int64) *Constant {
 	retT := types.NewFieldType(mysql.TypeLonglong)
 	retT.AddFlag(mysql.UnsignedFlag) // shrink range to avoid integral promotion
 	retT.SetFlen(mysql.MaxIntWidth)
