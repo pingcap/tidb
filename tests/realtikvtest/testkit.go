@@ -113,7 +113,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		rs := tk.MustQuery("show tables")
 		tables := []string{}
 		for _, row := range rs.Rows() {
-			tables = append(tables, fmt.Sprintf("%v", row[0]))
+			tables = append(tables, fmt.Sprintf("`%v`", row[0]))
 		}
 		if len(tables) > 0 {
 			tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
