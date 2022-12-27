@@ -2247,14 +2247,6 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
-			// foreign key test
-			// Partition table doesn't support to add foreign keys in mysql
-			"create table pt9 (id int not null primary key auto_increment,t_id int not null) partition by hash(id) partitions 1;",
-			"create table nt9 (id int not null primary key auto_increment, t_id int not null,foreign key fk_id (t_id) references pt5(id));",
-			"alter table pt9 exchange partition p0 with table nt9;",
-			dbterror.ErrPartitionExchangeForeignKey,
-		},
-		{
 			// Generated column (virtual)
 			"create table pt10 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) virtual) partition by hash(id) partitions 1;",
 			"create table nt10 (id int not null, lname varchar(30), fname varchar(100));",
@@ -4543,17 +4535,17 @@ func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
 	tk.MustExec(`create table t (a int, b char) partition by range (a) (partition p0 values less than (10))`)
-	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a char, b char) partition by range columns (a) (partition p0 values less than ('z'))`)
-	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]New column does not match partition definitions: [ddl:1567]partition column name cannot be found")
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int, b char) partition by list (a) (partition p0 values in (10))`)
-	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a char, b char) partition by list columns (a) (partition p0 values in ('z'))`)
-	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]New column does not match partition definitions: [ddl:1567]partition column name cannot be found")
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int, b char) partition by hash (a) partitions 3`)
-	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
 }

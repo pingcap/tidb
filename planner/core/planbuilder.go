@@ -1014,10 +1014,20 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (Plan, error) {
-	p := &SQLBindPlan{
-		SQLBindOp:    OpSetBindingStatus,
-		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
-		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+	var p *SQLBindPlan
+	if v.OriginNode != nil {
+		p = &SQLBindPlan{
+			SQLBindOp:    OpSetBindingStatus,
+			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+		}
+	} else if v.SQLDigest != "" {
+		p = &SQLBindPlan{
+			SQLBindOp: OpSetBindingStatusByDigest,
+			SQLDigest: v.SQLDigest,
+		}
+	} else {
+		return nil, errors.New("sql digest is empty")
 	}
 	switch v.BindingStatusType {
 	case ast.BindingStatusTypeEnabled:
@@ -3600,7 +3610,10 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
+		originalVal := b.allowBuildCastArray
+		b.allowBuildCastArray = true
 		expr, _, err := b.rewrite(ctx, column.GeneratedExpr, mockPlan, nil, true)
+		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err
 		}

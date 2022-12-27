@@ -766,6 +766,11 @@ error = '''
 Incorrect usage of %s and %s
 '''
 
+["ddl:1235"]
+error = '''
+This version of TiDB doesn't yet support '%s'
+'''
+
 ["ddl:1246"]
 error = '''
 Converting column '%s' from %s to %s
@@ -1691,6 +1696,21 @@ error = '''
 Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.
 '''
 
+["expression:3752"]
+error = '''
+Value is out of range for expression index '%s' at row %d
+'''
+
+["expression:3903"]
+error = '''
+Invalid JSON value for CAST for expression index '%s'
+'''
+
+["expression:3907"]
+error = '''
+Data too long for expression index '%s'
+'''
+
 ["expression:8128"]
 error = '''
 Invalid TABLESAMPLE: %s
@@ -2404,6 +2424,11 @@ The '%-.64s' syntax is reserved for purposes internal to the MySQL server
 ["schema:1450"]
 error = '''
 Changing schema from '%-.192s' to '%-.192s' is not allowed.
+'''
+
+["schema:1506"]
+error = '''
+Foreign key clause is not yet supported in conjunction with partitioning
 '''
 
 ["schema:1822"]
