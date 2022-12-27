@@ -135,21 +135,21 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-	case *ast.Limit:
-		if node.Count != nil {
-			if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-				checker.cacheable = false
-				checker.reason = "query has 'limit ?' is un-cacheable"
-				return in, true
-			}
-		}
-		if node.Offset != nil {
-			if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-				checker.cacheable = false
-				checker.reason = "query has 'limit ?, 10' is un-cacheable"
-				return in, true
-			}
-		}
+	//case *ast.Limit:
+	//	if node.Count != nil {
+	//		if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+	//			checker.cacheable = false
+	//			checker.reason = "query has 'limit ?' is un-cacheable"
+	//			return in, true
+	//		}
+	//	}
+	//	if node.Offset != nil {
+	//		if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+	//			checker.cacheable = false
+	//			checker.reason = "query has 'limit ?, 10' is un-cacheable"
+	//			return in, true
+	//		}
+	//	}
 	case *ast.FrameBound:
 		if _, ok := node.Expr.(*driver.ParamMarkerExpr); ok {
 			checker.cacheable = false

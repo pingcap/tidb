@@ -190,6 +190,7 @@ type planCacheKey struct {
 	inRestrictedSQL          bool
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
+	limitOffsetAndCount      []int64
 
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
@@ -226,6 +227,9 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
+		for _, l := range key.limitOffsetAndCount {
+			key.hash = codec.EncodeInt(key.hash, l)
+		}
 	}
 	return key.hash
 }
@@ -267,7 +271,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string) (kvcache.Key, error) {
+	lastUpdatedSchemaVersion int64, bindSQL string, preparedAst *ast.Prepared) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -281,6 +285,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
+	limit := getLimitFromAst(preparedAst.Stmt)
 	key := &planCacheKey{
 		database:                 stmtDB,
 		connID:                   sessionVars.ConnectionID,
@@ -295,6 +300,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		inRestrictedSQL:          sessionVars.InRestrictedSQL,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
+		limitOffsetAndCount:      limit,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -441,4 +447,52 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
+}
+
+type limitExtractor struct {
+	//sctx           sessionctx.Context
+	//schema         infoschema.InfoSchema
+	cacheable      bool
+	hasLimit       bool
+	offsetAndCount []int64
+}
+
+// Enter implements Visitor interface.
+func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.Limit:
+		if node.Count != nil {
+			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+				//checker.cacheable = false
+				checker.hasLimit = true
+				checker.offsetAndCount = append(checker.offsetAndCount, count.GetInt64())
+				return in, false
+			}
+		}
+		if node.Offset != nil {
+			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+				//checker.cacheable = false
+				checker.hasLimit = true
+				checker.offsetAndCount = append(checker.offsetAndCount, offset.GetInt64())
+				return in, false
+			}
+		}
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.cacheable
+}
+
+func getLimitFromAst(node ast.Node) []int64 {
+	checker := limitExtractor{
+		//sctx:      sctx,
+		//schema:    is,
+		cacheable:      true,
+		offsetAndCount: make([]int64, 1),
+	}
+	node.Accept(&checker)
+	return checker.offsetAndCount
 }
