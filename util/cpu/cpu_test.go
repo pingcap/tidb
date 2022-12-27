@@ -24,8 +24,7 @@ import (
 )
 
 func TestCPUValue(t *testing.T) {
-	Observer := NewCPUObserver()
-	Observer.Start()
+	observer := NewCPUObserver()
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -42,11 +41,11 @@ func TestCPUValue(t *testing.T) {
 			}
 		}()
 	}
-	Observer.Start()
+	observer.Start()
 	time.Sleep(5 * time.Second)
 	require.GreaterOrEqual(t, GetCPUUsage(), 0.0)
 	require.Less(t, GetCPUUsage(), 1.0)
-	Observer.Stop()
+	observer.Stop()
 	close(exit)
 	wg.Wait()
 }
