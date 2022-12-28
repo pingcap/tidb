@@ -121,7 +121,7 @@ func PaginateScanRegion(
 	return regions, err
 }
 
-// CheckPartRegionConsistency allows only the first half of regions
+// CheckPartRegionConsistency only checks the continuity of regions and the first region consistency.
 func CheckPartRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {

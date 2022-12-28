@@ -528,13 +528,13 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 
 // GetRewriteTableID gets rewrite table id by the rewrite rule and original table id
 func GetRewriteTableID(tableID int64, rewriteRules *RewriteRules) int64 {
-	tableKey := tablecodec.EncodeTablePrefix(tableID)
+	tableKey := tablecodec.GenTableRecordPrefix(tableID)
 	rule := matchOldPrefix(tableKey, rewriteRules)
-	tableKey = bytes.Replace(tableKey, rule.GetOldKeyPrefix(), rule.GetNewKeyPrefix(), 1)
 	if rule == nil {
 		return 0
 	}
-	return tablecodec.DecodeTableID(tableKey)
+
+	return tablecodec.DecodeTableID(rule.GetNewKeyPrefix())
 }
 
 // SplitPoint selects ranges overlapped with each region, and calls `splitF` to split the region

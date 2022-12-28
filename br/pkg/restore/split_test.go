@@ -925,17 +925,33 @@ func (*fakeSplitClient) SetStoresLabel(ctx context.Context, stores []uint64, lab
 func TestGetRewriteTableID(t *testing.T) {
 	var tableID int64 = 76
 	var oldTableID int64 = 80
-	rewriteRules := &restore.RewriteRules{
-		Data: []*import_sstpb.RewriteRule{
-			{
-				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
-				NewKeyPrefix: tablecodec.EncodeTablePrefix(tableID),
+	{
+		rewriteRules := &restore.RewriteRules{
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+					NewKeyPrefix: tablecodec.EncodeTablePrefix(tableID),
+				},
 			},
-		},
+		}
+
+		newTableID := restore.GetRewriteTableID(oldTableID, rewriteRules)
+		require.Equal(t, tableID, newTableID)
 	}
 
-	newTableID := restore.GetRewriteTableID(oldTableID, rewriteRules)
-	require.Equal(t, tableID, newTableID)
+	{
+		rewriteRules := &restore.RewriteRules{
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(tableID),
+				},
+			},
+		}
+
+		newTableID := restore.GetRewriteTableID(oldTableID, rewriteRules)
+		require.Equal(t, tableID, newTableID)
+	}
 }
 
 type mockLogIter struct {
