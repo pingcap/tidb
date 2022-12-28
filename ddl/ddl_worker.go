@@ -1074,7 +1074,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			return nil
 		})
 
-		logutil.BgLogger().Info("RunInNewTxn done", zap.String("job", job.String()), zap.Error(err), zap.Error(runJobErr), zap.Stack("stack"))
+		logutil.BgLogger().Info("RunInNewTxn done", zap.Error(err), zap.Error(runJobErr))
 		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
@@ -1088,11 +1088,11 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 		if err != nil {
 			w.unlockSeqNum(err)
-			logutil.BgLogger().Info("error from RunInNewTxn", zap.String("job", job.String()), zap.Error(err), zap.Error(runJobErr), zap.Stack("stack"))
+			logutil.BgLogger().Info("error from RunInNewTxn", zap.Error(err), zap.Error(runJobErr), zap.Stack("stack"))
 			return errors.Trace(err)
 		} else if job == nil {
 			// No job now, return and retry getting later.
-			logutil.BgLogger().Info("job == nil", zap.Stack("stack"))
+			logutil.BgLogger().Info("job == nil, no error", zap.Stack("stack"))
 			return nil
 		}
 		w.unlockSeqNum(err)
