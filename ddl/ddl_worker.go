@@ -998,6 +998,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
 				d.runningJobs.Unlock()
+				logutil.BgLogger().Info("job == nil or err")
 				return errors.Trace(err)
 			}
 			d.runningJobs.ids[job.ID] = struct{}{}
@@ -1033,6 +1034,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 					job.State = model.JobStateSynced
 				}
 				err = w.finishDDLJob(t, job)
+				logutil.BgLogger().Info("Job is done or rolled back", zap.String("job", job.String()), zap.Error(err), zap.Stack("stack"))
 				return errors.Trace(err)
 			}
 
@@ -1048,6 +1050,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if job.IsCancelled() {
 				txn.Reset()
 				err = w.finishDDLJob(t, job)
+				logutil.BgLogger().Info("Job is cancelled", zap.String("job", job.String()), zap.Error(err), zap.Stack("stack"))
 				return errors.Trace(err)
 			}
 			if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
@@ -1064,12 +1067,14 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
+				logutil.BgLogger().Info("handleUpdateJobError", zap.String("job", job.String()), zap.Error(err), zap.Stack("stack"))
 				return errors.Trace(err)
 			}
 			writeBinlog(d.binlogCli, txn, job)
 			return nil
 		})
 
+		logutil.BgLogger().Info("RunInNewTxn done", zap.String("job", job.String()), zap.Error(err), zap.Error(runJobErr), zap.Stack("stack"))
 		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
@@ -1083,9 +1088,11 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 		if err != nil {
 			w.unlockSeqNum(err)
+			logutil.BgLogger().Info("error from RunInNewTxn", zap.String("job", job.String()), zap.Error(err), zap.Error(runJobErr), zap.Stack("stack"))
 			return errors.Trace(err)
 		} else if job == nil {
 			// No job now, return and retry getting later.
+			logutil.BgLogger().Info("job == nil", zap.Stack("stack"))
 			return nil
 		}
 		w.unlockSeqNum(err)
