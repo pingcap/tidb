@@ -315,7 +315,6 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		{"prepare stmt from 'insert into t select * from t order by a desc limit ?, ?'", []int{1, 2}},
 		{"prepare stmt from 'update t set a = 1 limit ?'", []int{1}},
 		{" prepare stmt from '(select * from t order by a limit ?) union (select * from t order by a desc limit ?)';", []int{1, 2}},
-		{" prepare stmt from 'select * from t where a in (select b from t limit ?) limit ?;';", []int{10, 5}},
 	}
 
 	for _, testCase := range testCases {
@@ -335,4 +334,10 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
+
+	// error case
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	tk.MustExec("set @a = 10001")
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 plan with limit count more than 10000 can't be cached"))
 }
