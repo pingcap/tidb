@@ -5633,7 +5633,6 @@ func TestAdmin(t *testing.T) {
 	// check situations when `admin show ddl job queries limit 3 offset 2` happens at the same time with new DDLs being executed
 	var wg sync.WaitGroup
 	wg.Add(2)
-	flag := true
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 10; i++ {
@@ -5651,18 +5650,13 @@ func TestAdmin(t *testing.T) {
 			for _, row := range rows {
 				rowID := fmt.Sprintf("%v", row[0])
 				if _, ok := rowIDs[rowID]; ok {
-					flag = false
-					break
+					return
 				}
 				rowIDs[rowID] = struct{}{}
-			}
-			if !flag {
-				break
 			}
 		}
 	}()
 	wg.Wait()
-	require.True(t, flag)
 	require.NoError(t, err)
 
 	// check table test
