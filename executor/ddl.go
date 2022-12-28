@@ -531,14 +531,6 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 }
 
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
-	tiFlashInfo, err := getTiFlashStores(e.ctx)
-	if err != nil {
-		return err
-	}
-	if len(tiFlashInfo) != 0 {
-		return errors.Errorf("not support flash back cluster with TiFlash stores")
-	}
-
 	flashbackTS, err := staleread.CalculateAsOfTsExpr(e.ctx, s.FlashbackTS)
 	if err != nil {
 		return err

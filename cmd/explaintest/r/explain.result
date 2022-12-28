@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 drop table if exists t;
 create table t (id int, c1 timestamp);
 show columns from t;

@@ -274,6 +274,59 @@ func (b *builtinJSONArraySig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 	return nil
 }
 
+func (b *builtinJSONMemberOfSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONMemberOfSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	nr := input.NumRows()
+
+	targetCol, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(targetCol)
+
+	if err := b.args[0].VecEvalJSON(b.ctx, input, targetCol); err != nil {
+		return err
+	}
+
+	objCol, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(objCol)
+
+	if err := b.args[1].VecEvalJSON(b.ctx, input, objCol); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(nr, false)
+	resI64s := result.Int64s()
+
+	result.MergeNulls(targetCol, objCol)
+	for i := 0; i < nr; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		obj := objCol.GetJSON(i)
+		target := targetCol.GetJSON(i)
+		if obj.TypeCode != types.JSONTypeCodeArray {
+			resI64s[i] = boolToInt64(types.CompareBinaryJSON(obj, target) == 0)
+		} else {
+			elemCount := obj.GetElemCount()
+			for j := 0; j < elemCount; j++ {
+				if types.CompareBinaryJSON(obj.ArrayGetElem(j), target) == 0 {
+					resI64s[i] = 1
+					break
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func (b *builtinJSONContainsSig) vectorized() bool {
 	return true
 }
@@ -326,8 +379,8 @@ func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			if err != nil {
 				return err
 			}
-			if pathExpr.ContainsAnyAsterisk() {
-				return types.ErrInvalidJSONPathWildcard
+			if pathExpr.CouldMatchMultipleValues() {
+				return types.ErrInvalidJSONPathMultipleSelection
 			}
 
 			obj, exists := objCol.GetJSON(i).Extract([]types.JSONPathExpression{pathExpr})
@@ -353,6 +406,51 @@ func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			} else {
 				resI64s[i] = 0
 			}
+		}
+	}
+
+	return nil
+}
+
+func (b *builtinJSONOverlapsSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONOverlapsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	nr := input.NumRows()
+
+	objCol, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(objCol)
+
+	if err := b.args[0].VecEvalJSON(b.ctx, input, objCol); err != nil {
+		return err
+	}
+
+	targetCol, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(targetCol)
+
+	if err := b.args[1].VecEvalJSON(b.ctx, input, targetCol); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(nr, false)
+	resI64s := result.Int64s()
+
+	result.MergeNulls(objCol, targetCol)
+	for i := 0; i < nr; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if types.OverlapsBinaryJSON(objCol.GetJSON(i), targetCol.GetJSON(i)) {
+			resI64s[i] = 1
+		} else {
+			resI64s[i] = 0
 		}
 	}
 
@@ -634,8 +732,8 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(input *chunk.Chunk, result *chun
 			if err != nil {
 				return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
 			}
-			if pathExpr.ContainsAnyAsterisk() {
-				return types.ErrInvalidJSONPathWildcard.GenWithStackByArgs(pathBufs[j].GetString(i))
+			if pathExpr.CouldMatchMultipleValues() {
+				return types.ErrInvalidJSONPathMultipleSelection
 			}
 			if valueBufs[j].IsNull(i) {
 				value = types.CreateBinaryJSON(nil)
@@ -690,8 +788,8 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 		if err != nil {
 			return err
 		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return types.ErrInvalidJSONPathWildcard
+		if pathExpr.CouldMatchMultipleValues() {
+			return types.ErrInvalidJSONPathMultipleSelection
 		}
 
 		jsonItem := jsonBuf.GetJSON(i)
@@ -759,8 +857,8 @@ func (b *builtinJSONLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 			if err != nil {
 				return err
 			}
-			if pathExpr.ContainsAnyAsterisk() {
-				return types.ErrInvalidJSONPathWildcard
+			if pathExpr.CouldMatchMultipleValues() {
+				return types.ErrInvalidJSONPathMultipleSelection
 			}
 
 			obj, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})

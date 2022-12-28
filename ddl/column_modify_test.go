@@ -289,8 +289,7 @@ func TestDropColumn(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
 	err := tk.ExecToErr("alter table t1 drop column a")
-	// TODO: refine the error message to compatible with MySQL
-	require.EqualError(t, err, "[planner:1054]Unknown column 'a' in 'expression'")
+	require.EqualError(t, err, "[ddl:3885]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
 func TestChangeColumn(t *testing.T) {
@@ -1036,6 +1035,7 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
 	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = ON")
 	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF")
 

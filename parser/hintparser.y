@@ -103,6 +103,8 @@ import (
 	hintSwapJoinInputs        "SWAP_JOIN_INPUTS"
 	hintUseIndexMerge         "USE_INDEX_MERGE"
 	hintUseIndex              "USE_INDEX"
+	hintKeepOrder             "KEEP_ORDER"
+	hintNoKeepOrder           "NO_KEEP_ORDER"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -162,6 +164,7 @@ import (
 	HintIndexList           "table name with index list in optimizer hint"
 	IndexNameList           "index list in optimizer hint"
 	IndexNameListOpt        "optional index list in optimizer hint"
+	ViewNameList            "view name list in optimizer hint"
 	SubqueryStrategies      "subquery strategies"
 	SubqueryStrategiesOpt   "optional subquery strategies"
 	HintTrueOrFalse         "true or false in optimizer hint"
@@ -169,6 +172,7 @@ import (
 
 %type	<table>
 	HintTable "Table in optimizer hint"
+	ViewName  "View name in optimizer hint"
 
 %type	<modelIdents>
 	PartitionList    "partition name list in optimizer hint"
@@ -283,6 +287,14 @@ TableOptimizerHintOpt:
 		$$ = &ast.TableOptimizerHint{
 			HintName: model.NewCIStr($1),
 			QBName:   model.NewCIStr($3),
+		}
+	}
+|	"QB_NAME" '(' Identifier ',' ViewNameList ')'
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			QBName:   model.NewCIStr($3),
+			Tables:   $5.Tables,
 		}
 	}
 |	"MEMORY_QUOTA" '(' QueryBlockOpt hintIntLit UnitOfBytes ')'
@@ -447,6 +459,35 @@ HintTable:
 		}
 	}
 
+ViewNameList:
+	ViewNameList '.' ViewName
+	{
+		h := $1
+		h.Tables = append(h.Tables, $3)
+		$$ = h
+	}
+|	ViewName
+	{
+		$$ = &ast.TableOptimizerHint{
+			Tables: []ast.HintTable{$1},
+		}
+	}
+
+ViewName:
+	Identifier QueryBlockOpt
+	{
+		$$ = ast.HintTable{
+			TableName: model.NewCIStr($1),
+			QBName:    model.NewCIStr($2),
+		}
+	}
+|	QueryBlockOpt
+	{
+		$$ = ast.HintTable{
+			QBName: model.NewCIStr($1),
+		}
+	}
+
 /**
  * HintIndexList:
  *
@@ -568,6 +609,8 @@ SupportedIndexLevelOptimizerHintName:
 |	"IGNORE_INDEX"
 |	"USE_INDEX_MERGE"
 |	"FORCE_INDEX"
+|	"KEEP_ORDER"
+|	"NO_KEEP_ORDER"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -660,6 +703,8 @@ Identifier:
 |	"SWAP_JOIN_INPUTS"
 |	"USE_INDEX_MERGE"
 |	"USE_INDEX"
+|	"KEEP_ORDER"
+|	"NO_KEEP_ORDER"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"

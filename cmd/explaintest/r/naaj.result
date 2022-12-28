@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 use test;
 set @@session.tidb_enable_null_aware_anti_join=1;
 select "***************************************************** PART 1 *****************************************************************" as name;

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"sort"
@@ -21,10 +22,15 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 type flushSimulator struct {
@@ -58,7 +64,7 @@ func (c *flushSimulator) fork() flushSimulator {
 }
 
 type region struct {
-	rng        kv.KeyRange
+	rng        spans.Span
 	leader     uint64
 	epoch      uint64
 	id         uint64
@@ -70,6 +76,12 @@ type region struct {
 type fakeStore struct {
 	id      uint64
 	regions map[uint64]*region
+
+	clientMu              sync.Mutex
+	supportsSub           bool
+	bootstrapAt           uint64
+	fsub                  func(logbackup.SubscribeFlushEventResponse)
+	onGetRegionCheckpoint func(*logbackup.GetLastFlushTSOfRegionRequest) error
 }
 
 type fakeCluster struct {
@@ -80,16 +92,6 @@ type fakeCluster struct {
 	testCtx   *testing.T
 
 	onGetClient func(uint64) error
-}
-
-func overlaps(a, b kv.KeyRange) bool {
-	if len(b.EndKey) == 0 {
-		return len(a.EndKey) == 0 || bytes.Compare(a.EndKey, b.StartKey) > 0
-	}
-	if len(a.EndKey) == 0 {
-		return len(b.EndKey) == 0 || bytes.Compare(b.EndKey, a.StartKey) > 0
-	}
-	return bytes.Compare(a.StartKey, b.EndKey) < 0 && bytes.Compare(b.StartKey, a.EndKey) < 0
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -111,7 +113,84 @@ func (r *region) flush() {
 	r.fsim.flushedEpoch.Store(r.epoch)
 }
 
+type trivialFlushStream struct {
+	c  <-chan logbackup.SubscribeFlushEventResponse
+	cx context.Context
+}
+
+func (t trivialFlushStream) Recv() (*logbackup.SubscribeFlushEventResponse, error) {
+	select {
+	case item, ok := <-t.c:
+		if !ok {
+			return nil, io.EOF
+		}
+		return &item, nil
+	case <-t.cx.Done():
+		select {
+		case item, ok := <-t.c:
+			if !ok {
+				return nil, io.EOF
+			}
+			return &item, nil
+		default:
+		}
+		return nil, status.Error(codes.Canceled, t.cx.Err().Error())
+	}
+}
+
+func (t trivialFlushStream) Header() (metadata.MD, error) {
+	return make(metadata.MD), nil
+}
+
+func (t trivialFlushStream) Trailer() metadata.MD {
+	return make(metadata.MD)
+}
+
+func (t trivialFlushStream) CloseSend() error {
+	return nil
+}
+
+func (t trivialFlushStream) Context() context.Context {
+	return t.cx
+}
+
+func (t trivialFlushStream) SendMsg(m interface{}) error {
+	return nil
+}
+
+func (t trivialFlushStream) RecvMsg(m interface{}) error {
+	return nil
+}
+
+func (f *fakeStore) SubscribeFlushEvent(ctx context.Context, in *logbackup.SubscribeFlushEventRequest, opts ...grpc.CallOption) (logbackup.LogBackup_SubscribeFlushEventClient, error) {
+	f.clientMu.Lock()
+	defer f.clientMu.Unlock()
+	if !f.supportsSub {
+		return nil, status.Error(codes.Unimplemented, "meow?")
+	}
+
+	ch := make(chan logbackup.SubscribeFlushEventResponse, 1024)
+	f.fsub = func(glftrr logbackup.SubscribeFlushEventResponse) {
+		ch <- glftrr
+	}
+	return trivialFlushStream{c: ch, cx: ctx}, nil
+}
+
+func (f *fakeStore) SetSupportFlushSub(b bool) {
+	f.clientMu.Lock()
+	defer f.clientMu.Unlock()
+
+	f.bootstrapAt += 1
+	f.supportsSub = b
+}
+
 func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.GetLastFlushTSOfRegionRequest, opts ...grpc.CallOption) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
+	if f.onGetRegionCheckpoint != nil {
+		err := f.onGetRegionCheckpoint(in)
+		if err != nil {
+			return nil, err
+		}
+	}
 	resp := &logbackup.GetLastFlushTSOfRegionResponse{
 		Checkpoints: []*logbackup.RegionCheckpoint{},
 	}
@@ -174,7 +253,7 @@ func (f *fakeCluster) RegionScan(ctx context.Context, key []byte, endKey []byte,
 
 	result := make([]streamhelper.RegionWithLeader, 0, limit)
 	for _, region := range f.regions {
-		if overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
+		if spans.Overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
 			regionInfo := streamhelper.RegionWithLeader{
 				Region: &metapb.Region{
 					Id:       region.id,
@@ -208,6 +287,15 @@ func (f *fakeCluster) GetLogBackupClient(ctx context.Context, storeID uint64) (l
 		f.testCtx.Fatalf("the store %d doesn't exist", storeID)
 	}
 	return cli, nil
+}
+
+// Stores returns the store metadata from the cluster.
+func (f *fakeCluster) Stores(ctx context.Context) ([]streamhelper.Store, error) {
+	r := make([]streamhelper.Store, 0, len(f.stores))
+	for id, s := range f.stores {
+		r = append(r, streamhelper.Store{ID: id, BootAt: s.bootstrapAt})
+	}
+	return r, nil
 }
 
 func (f *fakeCluster) findRegionById(rid uint64) *region {
@@ -304,6 +392,34 @@ func (f *fakeCluster) splitAndScatter(keys ...string) {
 	}
 }
 
+// Remove a store.
+// Note: this won't add new peer for regions from the store.
+func (f *fakeCluster) removeStore(id uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	s := f.stores[id]
+	for _, r := range s.regions {
+		if r.leader == id {
+			f.updateRegion(r.id, func(r *region) {
+				ps := f.findPeers(r.id)
+				for _, p := range ps {
+					if p != r.leader {
+						log.Info("remove store: transforming leader",
+							zap.Uint64("region", r.id),
+							zap.Uint64("new-leader", p),
+							zap.Uint64("old-leader", r.leader))
+						r.leader = p
+						break
+					}
+				}
+			})
+		}
+	}
+
+	delete(f.stores, id)
+}
+
 // a stub once in the future we want to make different stores hold different region instances.
 func (f *fakeCluster) updateRegion(rid uint64, mut func(*region)) {
 	r := f.findRegionById(rid)
@@ -362,7 +478,7 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 }
 
 func (r *region) String() string {
-	return fmt.Sprintf("%d(%d):[%s,%s);%dL%dF%d",
+	return fmt.Sprintf("%d(%d):[%s, %s);%dL%dF%d",
 		r.id,
 		r.epoch,
 		hex.EncodeToString(r.rng.StartKey),
@@ -382,14 +498,24 @@ func (f *fakeStore) String() string {
 }
 
 func (f *fakeCluster) flushAll() {
-	for _, r := range f.regions {
+	for _, r := range f.stores {
 		r.flush()
 	}
 }
 
 func (f *fakeCluster) flushAllExcept(keys ...string) {
+	for _, s := range f.stores {
+		s.flushExcept(keys...)
+	}
+}
+
+func (f *fakeStore) flushExcept(keys ...string) {
+	resp := make([]*logbackup.FlushEvent, 0, len(f.regions))
 outer:
 	for _, r := range f.regions {
+		if r.leader != f.id {
+			continue
+		}
 		// Note: can we make it faster?
 		for _, key := range keys {
 			if utils.CompareBytesExt(r.rng.StartKey, false, []byte(key), false) <= 0 &&
@@ -397,16 +523,25 @@ outer:
 				continue outer
 			}
 		}
-		r.flush()
+		if r.leader == f.id {
+			r.flush()
+			resp = append(resp, &logbackup.FlushEvent{
+				StartKey:   codec.EncodeBytes(nil, r.rng.StartKey),
+				EndKey:     codec.EncodeBytes(nil, r.rng.EndKey),
+				Checkpoint: r.checkpoint.Load(),
+			})
+		}
+	}
+
+	if f.fsub != nil {
+		f.fsub(logbackup.SubscribeFlushEventResponse{
+			Events: resp,
+		})
 	}
 }
 
 func (f *fakeStore) flush() {
-	for _, r := range f.regions {
-		if r.leader == f.id {
-			r.flush()
-		}
-	}
+	f.flushExcept()
 }
 
 func (f *fakeCluster) String() string {

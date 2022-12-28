@@ -899,6 +899,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrDependentByGeneratedColumn:                            Message("Column '%s' has a generated column dependency.", nil),
 	ErrGeneratedColumnRefAutoInc:                             Message("Generated column '%s' cannot refer to auto-increment column.", nil),
 	ErrInvalidFieldSize:                                      Message("Invalid size for column '%s'.", nil),
+	ErrPasswordExpireAnonymousUser:                           Message("The password for anonymous user cannot be expired.", nil),
 	ErrIncorrectType:                                         Message("Incorrect type for argument %s in function %s.", nil),
 	ErrInvalidJSONData:                                       Message("Invalid JSON data provided to function %s: %s", nil),
 	ErrInvalidJSONText:                                       Message("Invalid JSON text: %-.192s", nil),
@@ -955,6 +956,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrJsonValueOutOfRangeForFuncIndex:                       Message("Out of range JSON value for CAST for functional index '%s'", nil),
 	ErrFunctionalIndexDataIsTooLong:                          Message("Data too long for functional index '%s'", nil),
 	ErrFunctionalIndexNotApplicable:                          Message("Cannot use functional index '%s' due to type or collation conversion", nil),
+	ErrDependentByPartitionFunctional:                        Message("Column '%s' has a partitioning function dependency and cannot be dropped or renamed", nil),
 
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         Message("Only one DEFAULT partition allowed", nil),

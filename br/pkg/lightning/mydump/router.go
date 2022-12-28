@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/slice"
 	"go.uber.org/zap"
@@ -71,6 +72,22 @@ const (
 	CompressionSnappy
 )
 
+// ToStorageCompressType converts Compression to storage.CompressType.
+func ToStorageCompressType(compression Compression) (storage.CompressType, error) {
+	switch compression {
+	case CompressionGZ:
+		return storage.Gzip, nil
+	case CompressionSnappy:
+		return storage.Snappy, nil
+	case CompressionZStd:
+		return storage.Zstd, nil
+	case CompressionNone:
+		return storage.NoCompression, nil
+	default:
+		return storage.NoCompression, errors.Errorf("compression %d doesn't have related storage compressType", compression)
+	}
+}
+
 func parseSourceType(t string) (SourceType, error) {
 	switch strings.ToLower(strings.TrimSpace(t)) {
 	case SchemaSchema:
@@ -117,7 +134,7 @@ func parseCompressionType(t string) (Compression, error) {
 		return CompressionGZ, nil
 	case "lz4":
 		return CompressionLZ4, nil
-	case "zstd":
+	case "zstd", "zst":
 		return CompressionZStd, nil
 	case "xz":
 		return CompressionXZ, nil
@@ -137,6 +154,8 @@ var expandVariablePattern = regexp.MustCompile(`\$(?:\$|[\pL\p{Nd}_]+|\{[\pL\p{N
 var defaultFileRouteRules = []*config.FileRouteRule{
 	// ignore *-schema-trigger.sql, *-schema-post.sql files
 	{Pattern: `(?i).*(-schema-trigger|-schema-post)\.sql(?:\.(\w*?))?$`, Type: "ignore"},
+	// ignore backup files
+	{Pattern: `(?i).*\.(sql|csv|parquet)(\.(\w+))?\.(bak|BAK)$`, Type: "ignore"},
 	// db schema create file pattern, matches files like '{schema}-schema-create.sql[.{compress}]'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)-schema-create\.sql(?:\.(\w*?))?$`, Schema: "$1", Table: "", Type: SchemaSchema, Compression: "$2", Unescape: true},
 	// table schema create file pattern, matches files like '{schema}.{table}-schema.sql[.{compress}]'
@@ -182,6 +201,11 @@ func NewFileRouter(cfg []*config.FileRouteRule, logger log.Logger) (FileRouter, 
 		res = append(res, rule)
 	}
 	return chainRouters(res), nil
+}
+
+// NewDefaultFileRouter creates a new file router with the default file route rules.
+func NewDefaultFileRouter(logger log.Logger) (FileRouter, error) {
+	return NewFileRouter(defaultFileRouteRules, logger)
 }
 
 // RegexRouter is a `FileRouter` implement that apply specific regex pattern to filepath.
@@ -299,6 +323,9 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule, logger log.Logger) (*R
 			compression, err := parseCompressionType(value)
 			if err != nil {
 				return err
+			}
+			if result.Type == SourceTypeParquet && compression != CompressionNone {
+				return errors.Errorf("can't support whole compressed parquet file, should compress parquet files by choosing correct parquet compress writer, path: %s", r.Path)
 			}
 			result.Compression = compression
 			return nil

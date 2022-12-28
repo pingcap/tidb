@@ -10,13 +10,16 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"net"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
@@ -31,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
+	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
@@ -41,6 +46,10 @@ import (
 var openDBFunc = openDB
 
 var errEmptyHandleVals = errors.New("empty handleVals for TiDB table")
+
+// After TiDB v6.2.0 we always enable tidb_enable_paging by default.
+// see https://docs.pingcap.com/zh/tidb/dev/system-variables#tidb_enable_paging-%E4%BB%8E-v540-%E7%89%88%E6%9C%AC%E5%BC%80%E5%A7%8B%E5%BC%95%E5%85%A5
+var enablePagingVersion = semver.New("6.2.0")
 
 // Dumper is the dump progress structure
 type Dumper struct {
@@ -95,12 +104,23 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	}()
 
 	err = adjustConfig(conf,
-		registerTLSConfig,
+		buildTLSConfig,
 		validateSpecifiedSQL,
 		adjustFileFormat)
 	if err != nil {
 		return nil, err
 	}
+	failpoint.Inject("SetIOTotalBytes", func(_ failpoint.Value) {
+		d.conf.IOTotalBytes = gatomic.NewUint64(0)
+		d.conf.Net = uuid.New().String()
+		go func() {
+			for {
+				time.Sleep(10 * time.Millisecond)
+				d.tctx.L().Logger.Info("IOTotalBytes", zap.Uint64("IOTotalBytes", d.conf.IOTotalBytes.Load()))
+			}
+		}()
+	})
+
 	err = runSteps(d,
 		initLogger,
 		createExternalStore,
@@ -235,15 +255,16 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return rebuildMetaConn(conn, updateMeta)
 	}
 
-	chanSize := defaultDumpThreads
+	chanSize := defaultTaskChannelCapacity
 	failpoint.Inject("SmallDumpChanSize", func() {
 		chanSize = 1
 	})
-	taskChan := make(chan Task, chanSize)
-	AddGauge(d.metrics.taskChannelCapacity, defaultDumpThreads)
+	taskIn, taskOut := infiniteChan[Task]()
+	// todo: refine metrics
+	AddGauge(d.metrics.taskChannelCapacity, float64(chanSize))
 	wg, writingCtx := errgroup.WithContext(tctx)
 	writerCtx := tctx.WithContext(writingCtx)
-	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskChan, rebuildConn)
+	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskOut, rebuildConn)
 	if err != nil {
 		return err
 	}
@@ -291,13 +312,18 @@ func (d *Dumper) Dump() (dumpErr error) {
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
 	if conf.SQL == "" {
-		if err = d.dumpDatabases(writerCtx, baseConn, taskChan); err != nil && !errors.ErrorEqual(err, context.Canceled) {
+		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
 			return err
 		}
 	} else {
-		d.dumpSQL(writerCtx, baseConn, taskChan)
+		d.dumpSQL(writerCtx, baseConn, taskIn)
 	}
-	close(taskChan)
+	d.metrics.progressReady.Store(true)
+	close(taskIn)
+	failpoint.Inject("EnableLogProgress", func() {
+		time.Sleep(1 * time.Second)
+		tctx.L().Debug("progress ready, sleep 1s")
+	})
 	_ = baseConn.DBConn.Close()
 	if err := wg.Wait(); err != nil {
 		summary.CollectFailureUnit("dump table data", err)
@@ -330,11 +356,16 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 				// tctx.L().Debug("finished dumping table data",
 				//	zap.String("database", td.Meta.DatabaseName()),
 				//	zap.String("table", td.Meta.TableName()))
+				failpoint.Inject("EnableLogProgress", func() {
+					time.Sleep(1 * time.Second)
+					tctx.L().Debug("EnableLogProgress, sleep 1s")
+				})
 			}
 		})
 		writer.setFinishTaskCallBack(func(task Task) {
 			IncGauge(d.metrics.taskChannelCapacity)
 			if td, ok := task.(*TaskTableData); ok {
+				d.metrics.completedChunks.Add(1)
 				tctx.L().Debug("finish dumping table data task",
 					zap.String("database", td.Meta.DatabaseName()),
 					zap.String("table", td.Meta.TableName()),
@@ -451,7 +482,6 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 			}
 		}
 	}
-
 	return nil
 }
 
@@ -624,6 +654,7 @@ func (d *Dumper) buildConcatTask(tctx *tcontext.Context, conn *BaseConn, meta Ta
 			return
 		}
 		tableDataArr = append(tableDataArr, tableDataInst)
+		d.metrics.totalChunks.Dec()
 	}
 	for {
 		select {
@@ -650,7 +681,7 @@ func (d *Dumper) buildConcatTask(tctx *tcontext.Context, conn *BaseConn, meta Ta
 						return nil, nil
 					}
 				}
-				return NewTaskTableData(meta, newMultiQueriesChunk(queries, colLen), 0, 1), nil
+				return d.newTaskTableData(meta, newMultiQueriesChunk(queries, colLen), 0, 1), nil
 			}
 			return nil, err
 		case task := <-tableChan:
@@ -662,7 +693,7 @@ func (d *Dumper) buildConcatTask(tctx *tcontext.Context, conn *BaseConn, meta Ta
 func (d *Dumper) dumpWholeTableDirectly(tctx *tcontext.Context, meta TableMeta, taskChan chan<- Task, partition, orderByClause string, currentChunk, totalChunks int) error {
 	conf := d.conf
 	tableIR := SelectAllFromTable(conf, meta, partition, orderByClause)
-	task := NewTaskTableData(meta, tableIR, currentChunk, totalChunks)
+	task := d.newTaskTableData(meta, tableIR, currentChunk, totalChunks)
 	ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 	if ctxDone {
 		return tctx.Err()
@@ -775,7 +806,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		if len(nullValueCondition) > 0 {
 			nullValueCondition = ""
 		}
-		task := NewTaskTableData(meta, newTableData(query, selectLen, false), chunkIndex, int(totalChunks))
+		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), chunkIndex, int(totalChunks))
 		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 		if ctxDone {
 			return tctx.Err()
@@ -903,7 +934,8 @@ func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn 
 
 func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
 	meta TableMeta, taskChan chan<- Task,
-	handleColNames []string, handleVals [][]string, partition string, startChunkIdx, totalChunk int) error {
+	handleColNames []string, handleVals [][]string, partition string,
+	startChunkIdx, totalChunk int) error {
 	db, tbl := meta.DatabaseName(), meta.TableName()
 	if len(handleVals) == 0 {
 		if partition == "" {
@@ -919,7 +951,7 @@ func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
 
 	for i, w := range where {
 		query := buildSelectQuery(db, tbl, selectField, partition, buildWhereCondition(conf, w), orderByClause)
-		task := NewTaskTableData(meta, newTableData(query, selectLen, false), i+startChunkIdx, totalChunk)
+		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), i+startChunkIdx, totalChunk)
 		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 		if ctxDone {
 			return tctx.Err()
@@ -1187,9 +1219,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		selectedField:    selectField,
 		selectedLen:      selectLen,
 		hasImplicitRowID: hasImplicitRowID,
-		specCmts: []string{
-			"/*!40101 SET NAMES binary*/;",
-		},
+		specCmts:         getSpecialComments(conf.ServerInfo.ServerType),
 	}
 
 	if conf.NoSchemas {
@@ -1227,7 +1257,7 @@ func (d *Dumper) dumpSQL(tctx *tcontext.Context, metaConn *BaseConn, taskChan ch
 	conf := d.conf
 	meta := &tableMeta{}
 	data := newTableData(conf.SQL, 0, true)
-	task := NewTaskTableData(meta, data, 0, 1)
+	task := d.newTaskTableData(meta, data, 0, 1)
 	c := detectEstimateRows(tctx, metaConn, fmt.Sprintf("EXPLAIN %s", conf.SQL), []string{"rows", "estRows", "count"})
 	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 	atomic.StoreInt64(&d.totalTables, int64(1))
@@ -1251,9 +1281,6 @@ func (d *Dumper) Close() error {
 	d.metrics.unregisterFrom(d.conf.PromRegistry)
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
-	}
-	if d.conf.Security.DriveTLSName != "" {
-		mysql.DeregisterTLSConfig(d.conf.Security.DriveTLSName)
 	}
 	return nil
 }
@@ -1321,6 +1348,22 @@ func startHTTPService(d *Dumper) error {
 
 // openSQLDB is an initialization step of Dumper.
 func openSQLDB(d *Dumper) error {
+	if d.conf.IOTotalBytes != nil {
+		mysql.RegisterDialContext(d.conf.Net, func(ctx context.Context, addr string) (net.Conn, error) {
+			dial := &net.Dialer{}
+			conn, err := dial.DialContext(ctx, "tcp", addr)
+			if err != nil {
+				return nil, err
+			}
+			tcpConn := conn.(*net.TCPConn)
+			// try https://github.com/go-sql-driver/mysql/blob/bcc459a906419e2890a50fc2c99ea6dd927a88f2/connector.go#L56-L64
+			err = tcpConn.SetKeepAlive(true)
+			if err != nil {
+				d.tctx.L().Logger.Warn("fail to keep alive", zap.Error(err))
+			}
+			return util.NewTCPConnWithIOCounter(tcpConn, d.conf.IOTotalBytes), nil
+		})
+	}
 	conf := d.conf
 	c, err := mysql.NewConnector(conf.GetDriverConfig(""))
 	if err != nil {
@@ -1499,6 +1542,19 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 	}
 }
 
+// setDefaultSessionParams is a step to set default params for session params.
+func setDefaultSessionParams(si version.ServerInfo, sessionParams map[string]interface{}) {
+	defaultSessionParams := map[string]interface{}{}
+	if si.ServerType == version.ServerTypeTiDB && si.HasTiKV && si.ServerVersion.Compare(*enablePagingVersion) >= 0 {
+		defaultSessionParams["tidb_enable_paging"] = "ON"
+	}
+	for k, v := range defaultSessionParams {
+		if _, ok := sessionParams[k]; !ok {
+			sessionParams[k] = v
+		}
+	}
+}
+
 // setSessionParam is an initialization step of Dumper.
 func setSessionParam(d *Dumper) error {
 	conf, pool := d.conf, d.dbHandle
@@ -1636,4 +1692,9 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 	}
 
 	return nil
+}
+
+func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
+	d.metrics.totalChunks.Add(1)
+	return NewTaskTableData(meta, data, currentChunk, totalChunks)
 }

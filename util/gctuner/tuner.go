@@ -23,22 +23,37 @@ import (
 	"github.com/pingcap/tidb/util"
 )
 
-const (
-	// MaxGCPercent is the default max cost of memory.
-	MaxGCPercent uint32 = 500
-	// MinGCPercent is the default min cost of memory.
-	MinGCPercent uint32 = 100
+var (
+	maxGCPercent atomic.Uint32
+	minGCPercent atomic.Uint32
+
+	// EnableGOGCTuner is to control whether enable the GOGC tuner.
+	EnableGOGCTuner atomic.Bool
+
+	defaultGCPercent uint32 = 100
 )
 
-var defaultGCPercent uint32 = 100
+const (
+	defaultMaxGCPercent uint32 = 500
+	defaultMinGCPercent uint32 = 100
+)
 
-// EnableGOGCTuner is to control whether enable the GOGC tuner.
-var EnableGOGCTuner atomic.Bool
+// SetMaxGCPercent sets the max cost of memory.
+func SetMaxGCPercent(percent uint32) {
+	maxGCPercent.Store(percent)
+}
+
+// SetMinGCPercent sets the max cost of memory.
+func SetMinGCPercent(percent uint32) {
+	minGCPercent.Store(percent)
+}
 
 func init() {
 	if val, err := strconv.Atoi(os.Getenv("GOGC")); err == nil {
 		defaultGCPercent = uint32(val)
 	}
+	SetMinGCPercent(defaultMinGCPercent)
+	SetMaxGCPercent(defaultMaxGCPercent)
 }
 
 // SetDefaultGOGC is to set the default GOGC value.
@@ -151,13 +166,13 @@ func calcGCPercent(inuse, threshold uint64) uint32 {
 	}
 	// inuse heap larger than threshold, use min percent
 	if threshold <= inuse {
-		return MinGCPercent
+		return minGCPercent.Load()
 	}
 	gcPercent := uint32(math.Floor(float64(threshold-inuse) / float64(inuse) * 100))
-	if gcPercent < MinGCPercent {
-		return MinGCPercent
-	} else if gcPercent > MaxGCPercent {
-		return MaxGCPercent
+	if gcPercent < minGCPercent.Load() {
+		return minGCPercent.Load()
+	} else if gcPercent > maxGCPercent.Load() {
+		return maxGCPercent.Load()
 	}
 	return gcPercent
 }

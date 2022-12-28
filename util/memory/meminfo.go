@@ -15,12 +15,13 @@
 package memory
 
 import (
-	"runtime"
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/cgroup"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
@@ -33,6 +34,11 @@ var MemUsed func() (uint64, error)
 // GetMemTotalIgnoreErr returns the total amount of RAM on this system/container. If error occurs, return 0.
 func GetMemTotalIgnoreErr() uint64 {
 	if memTotal, err := MemTotal(); err == nil {
+		failpoint.Inject("GetMemTotalError", func(val failpoint.Value) {
+			if val, ok := val.(bool); val && ok {
+				memTotal = 0
+			}
+		})
 		return memTotal
 	}
 	return 0
@@ -105,6 +111,11 @@ func MemTotalCGroup() (uint64, error) {
 	if err != nil {
 		return memo, err
 	}
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		return 0, err
+	}
+	memo = mathutil.Min(v.Total, memo)
 	memLimit.set(memo, time.Now())
 	return memo, nil
 }
@@ -119,6 +130,11 @@ func MemUsedCGroup() (uint64, error) {
 	if err != nil {
 		return memo, err
 	}
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		return 0, err
+	}
+	memo = mathutil.Min(v.Used, memo)
 	memUsage.set(memo, time.Now())
 	return memo, nil
 }
@@ -153,8 +169,7 @@ func InstanceMemUsed() (uint64, error) {
 		return used, nil
 	}
 	var memoryUsage uint64
-	instanceStats := &runtime.MemStats{}
-	runtime.ReadMemStats(instanceStats)
+	instanceStats := ReadMemStats()
 	memoryUsage = instanceStats.HeapAlloc
 	serverMemUsage.set(memoryUsage, time.Now())
 	return memoryUsage, nil

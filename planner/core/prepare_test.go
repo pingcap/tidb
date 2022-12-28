@@ -1339,7 +1339,7 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 
 	// DB is not specified
 	se2, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: core.NewLRUPlanCache(100, 0.1, math.MaxUint64, core.PickPlanFromBucket),
+		PreparedPlanCache: core.NewLRUPlanCache(100, 0.1, math.MaxUint64, core.PickPlanFromBucket, tk.Session()),
 	})
 	require.NoError(t, err)
 	tk2 := testkit.NewTestKitWithSession(t, store, se2)
@@ -1373,7 +1373,6 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 }
 
 func TestPlanCacheHitInfo(t *testing.T) {
-	t.Skip("unstable, skip it and fix it before 20210705")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
