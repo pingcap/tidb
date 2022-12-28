@@ -651,7 +651,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.writeDDLSeqNum(job)
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs, w.concurrentDDL)
-	logutil.BgLogger().Info("finisDDLJob done", zap.Error(err), zap.Stack("stack"))
+	logutil.BgLogger().Info("finishDDLJob done", zap.Error(err), zap.Stack("stack"))
 	return errors.Trace(err)
 }
 
@@ -801,8 +801,8 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 // was started before the back filler.
 func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 	logutil.BgLogger().Info("cleanupDDLReorgHandle", zap.String("job", job.String()))
-	if !job.IsFinished() {
-		logutil.BgLogger().Info("cleanupDDLReorgHandle job not in finished state")
+	if !job.IsFinished() && !job.IsSynced() {
+		logutil.BgLogger().Info("cleanupDDLReorgHandle job not in finished or synced state")
 		return
 	}
 	var elemErr error
@@ -1083,7 +1083,11 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
 		if job != nil {
+			logutil.BgLogger().Info("job != nil", zap.String("job", job.String()))
 			d.unlockSchemaVersion(job.ID)
+			if runJobErr != nil {
+				w.cleanupDDLReorgHandle(job)
+			}
 		}
 
 		if err != nil {
