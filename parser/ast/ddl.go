@@ -3574,7 +3574,7 @@ func (n *AlterTableStmt) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore AlterTableStmt.Table")
 	}
-	var specs []*AlterTableSpec
+	specs := make([]*AlterTableSpec, 0, len(n.Specs))
 	for _, spec := range n.Specs {
 		if spec.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
 			continue
