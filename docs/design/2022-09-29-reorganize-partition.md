@@ -159,7 +159,6 @@ Notes:
 Re-use tests from other DDLs like Modify column, but adjust them for Reorganize partition.
 A separate test plan will be created and a test report will be written and signed off when the tests are completed.
 
-
 ### Benchmark Tests
 
 Correctness and functionality is higher priority than performance.
