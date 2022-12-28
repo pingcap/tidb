@@ -537,7 +537,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 			}
 		}
 		// unwrap the outside cast: cast(json_extract(test.t.a, $.zip), JSON) --> json_extract(test.t.a, $.zip)
-		targetJSONPath, ok := unwrapCast(virCol.VirtualExpr)
+		targetJSONPath, ok := unwrapJSONCast(virCol.VirtualExpr)
 		if !ok {
 			continue
 		}
@@ -555,7 +555,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 			switch sf.FuncName.L {
 			case ast.JSONMemberOf: // (1 member of a->'$.zip')
 				jsonPath = sf.GetArgs()[1]
-				v, ok := unwrapCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
+				v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
 				if !ok {
 					continue
 				}
@@ -581,6 +581,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 				continue
 			}
 			allInt := true
+			// TODO: support using IndexLookUp to handle single-value cases.
 			for _, v := range vals {
 				if v.GetType().EvalType() != types.ETInt {
 					allInt = false
@@ -617,7 +618,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 	return
 }
 
-func unwrapCast(expr expression.Expression) (expression.Expression, bool) {
+func unwrapJSONCast(expr expression.Expression) (expression.Expression, bool) {
 	if expr == nil {
 		return nil, false
 	}
@@ -625,7 +626,7 @@ func unwrapCast(expr expression.Expression) (expression.Expression, bool) {
 	if !ok {
 		return nil, false
 	}
-	if sf == nil || sf.FuncName.L != ast.Cast {
+	if sf == nil || sf.FuncName.L != ast.Cast || sf.GetType().EvalType() != types.ETJson {
 		return nil, false
 	}
 	return sf.GetArgs()[0], true
