@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -295,8 +296,12 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 
+	var pointExecutor *PointGetExecutor
+	useMaxTS := startTs == math.MaxUint64
+
 	// try to reuse point get executor
-	if a.PsStmt.Executor != nil {
+	// We should only use the cached the executor when the startTS is MaxUint64
+	if a.PsStmt.Executor != nil && useMaxTS {
 		exec, ok := a.PsStmt.Executor.(*PointGetExecutor)
 		if !ok {
 			logutil.Logger(ctx).Error("invalid executor type, not PointGetExecutor for point get path")
@@ -306,17 +311,21 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
 			exec.Init(pointGetPlan)
 			a.PsStmt.Executor = exec
+			pointExecutor = exec
 		}
 	}
-	if a.PsStmt.Executor == nil {
+
+	if pointExecutor == nil {
 		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
-		newExecutor := b.build(a.Plan)
+		pointExecutor = b.build(a.Plan).(*PointGetExecutor)
 		if b.err != nil {
 			return nil, b.err
 		}
-		a.PsStmt.Executor = newExecutor
+
+		if useMaxTS {
+			a.PsStmt.Executor = pointExecutor
+		}
 	}
-	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
 
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
