@@ -19,7 +19,10 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"testing"
@@ -534,4 +537,22 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+func DebugDumpOnTimeout(wg *sync.WaitGroup, c chan struct{}, d time.Duration) {
+	select {
+	case <-time.After(d):
+		log.Print("Injected timeout, dumping all goroutines:")
+		pprof.Lookup("goroutine").WriteTo(os.Stdout, 2)
+		log.Print("dumping all stack traces led to possible block:")
+		pprof.Lookup("block").WriteTo(os.Stdout, 2)
+		log.Print("dumping all stack traces holding mutexes:")
+		pprof.Lookup("mutex").WriteTo(os.Stdout, 2)
+		log.Print("dumping all stack traces led to creation of new OS threads:")
+		pprof.Lookup("threadcreate").WriteTo(os.Stdout, 2)
+		panic("Injected timeout")
+	case <-c:
+		// Test finished
+	}
+	wg.Done()
 }

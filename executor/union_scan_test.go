@@ -17,9 +17,6 @@ package executor_test
 import (
 	"encoding/hex"
 	"fmt"
-	"log"
-	"os"
-	"runtime/pprof"
 	"sync"
 	"testing"
 	"time"
@@ -419,18 +416,6 @@ func TestForApplyAndUnionScan(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-func dumpAllGoroutinesOnTimeout(wg *sync.WaitGroup, c chan struct{}, d time.Duration) {
-	select {
-	case <-time.After(d):
-		log.Print("Injected timeout, dumping all goroutines:")
-		pprof.Lookup("goroutine").WriteTo(os.Stdout, 1)
-		panic("Injected timeout")
-	case <-c:
-		// Test finished
-	}
-	wg.Done()
-}
-
 func TestIssue28073(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -439,7 +424,7 @@ func TestIssue28073(t *testing.T) {
 		close(dumpChan)
 		wg.Wait()
 	}()
-	go dumpAllGoroutinesOnTimeout(&wg, dumpChan, 20*time.Second)
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
