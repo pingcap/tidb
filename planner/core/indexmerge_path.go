@@ -565,11 +565,24 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 				vals = append(vals, v)
 			case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 				indexMergeIsIntersection = true
-				fallthrough
-			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
 				jsonPath = sf.GetArgs()[0]
 				var ok bool
 				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1])
+				if !ok {
+					continue
+				}
+			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				var jsonPathIdx int
+				if sf.GetArgs()[0].Equal(ds.ctx, targetJSONPath) {
+					jsonPathIdx = 0
+				} else if sf.GetArgs()[1].Equal(ds.ctx, targetJSONPath) {
+					jsonPathIdx = 1
+				} else {
+					continue
+				}
+				jsonPath = sf.GetArgs()[jsonPathIdx]
+				var ok bool
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx])
 				if !ok {
 					continue
 				}
