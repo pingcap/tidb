@@ -429,9 +429,7 @@ type expandExec struct {
 }
 
 func (e *expandExec) open() error {
-	var err error
-	err = e.children[0].open()
-	if err != nil {
+	if err := e.children[0].open(); err != nil {
 		return err
 	}
 	// building the quick finding map
@@ -442,12 +440,12 @@ func (e *expandExec) open() error {
 		// for every grouping set, collect column offsets under this grouping set.
 		for _, groupingExprs := range gs {
 			for _, groupingExpr := range groupingExprs {
-				if col, ok := groupingExpr.(*expression.Column); !ok {
+				col, ok := groupingExpr.(*expression.Column)
+				if !ok {
 					return errors.New("grouping set expr is not column ref")
-				} else {
-					tmp[col.Index] = struct{}{}
-					e.groupingSetScope[col.Index] = struct{}{}
 				}
+				tmp[col.Index] = struct{}{}
+				e.groupingSetScope[col.Index] = struct{}{}
 			}
 		}
 		e.groupingSetOffsetMap = append(e.groupingSetOffsetMap, tmp)

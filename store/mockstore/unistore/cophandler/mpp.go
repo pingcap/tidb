@@ -229,15 +229,15 @@ func (b *mppExecBuilder) buildExpand(pb *tipb.Expand) (mppExec, error) {
 		// for every grouping set, collect column offsets under this grouping set.
 		for _, groupingExprs := range gs {
 			for _, groupingExpr := range groupingExprs {
-				if col, ok := groupingExpr.(*expression.Column); !ok {
+				col, ok := groupingExpr.(*expression.Column)
+				if !ok {
 					return nil, errors.New("grouping set expr is not column ref")
-				} else {
-					inGroupingSetMap[col.Index] = struct{}{}
 				}
+				inGroupingSetMap[col.Index] = struct{}{}
 			}
 		}
 	}
-	var mutatedFieldTypes []*types.FieldType
+	mutatedFieldTypes := make([]*types.FieldType, 0, len(childFieldTypes))
 	// change the field types return from children tobe nullable.
 	for offset, f := range childFieldTypes {
 		cf := f.Clone()
