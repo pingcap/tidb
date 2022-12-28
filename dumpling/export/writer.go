@@ -133,7 +133,7 @@ func (w *Writer) WritePolicyMeta(policy, createSQL string) error {
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(tctx, "placement-policy", createSQL, w.extStorage, fileName+".sql", conf.CompressType)
+	return w.writeMetaToFile(tctx, "placement-policy", createSQL, fileName+".sql")
 }
 
 // WriteDatabaseMeta writes database meta to a file
@@ -143,7 +143,7 @@ func (w *Writer) WriteDatabaseMeta(db, createSQL string) error {
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
+	return w.writeMetaToFile(tctx, db, createSQL, fileName+".sql")
 }
 
 // WriteTableMeta writes table meta to a file
@@ -153,7 +153,7 @@ func (w *Writer) WriteTableMeta(db, table, createSQL string) error {
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
+	return w.writeMetaToFile(tctx, db, createSQL, fileName+".sql")
 }
 
 // WriteViewMeta writes view meta to a file
@@ -167,11 +167,11 @@ func (w *Writer) WriteViewMeta(db, view, createTableSQL, createViewSQL string) e
 	if err != nil {
 		return err
 	}
-	err = writeMetaToFile(tctx, db, createTableSQL, w.extStorage, fileNameTable+".sql", conf.CompressType)
+	err = w.writeMetaToFile(tctx, db, createTableSQL, fileNameTable+".sql")
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(tctx, db, createViewSQL, w.extStorage, fileNameView+".sql", conf.CompressType)
+	return w.writeMetaToFile(tctx, db, createViewSQL, fileNameView+".sql")
 }
 
 // WriteSequenceMeta writes sequence meta to a file
@@ -181,7 +181,7 @@ func (w *Writer) WriteSequenceMeta(db, sequence, createSQL string) error {
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
+	return w.writeMetaToFile(tctx, db, createSQL, fileName+".sql")
 }
 
 // WriteTableData writes table data to a file with retry
@@ -213,9 +213,13 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 			return
 		}
 		if conf.SQL != "" {
-			meta, err = setTableMetaFromRows(ir.RawRows())
+			rows := ir.RawRows()
+			meta, err = setTableMetaFromRows(w.conf.ServerInfo.ServerType, rows)
 			if err != nil {
 				return err
+			}
+			if err = rows.Err(); err != nil {
+				return errors.Trace(err)
 			}
 		}
 		defer func() {
@@ -270,19 +274,17 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	return nil
 }
 
-func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.ExternalStorage, path string, compressType storage.CompressType) error {
-	fileWriter, tearDown, err := buildFileWriter(tctx, s, path, compressType)
+func (w *Writer) writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, path string) error {
+	fileWriter, tearDown, err := buildFileWriter(tctx, w.extStorage, path, w.conf.CompressType)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer tearDown(tctx)
 
 	return WriteMeta(tctx, &metaData{
-		target:  target,
-		metaSQL: metaSQL,
-		specCmts: []string{
-			"/*!40101 SET NAMES binary*/;",
-		},
+		target:   target,
+		metaSQL:  metaSQL,
+		specCmts: getSpecialComments(w.conf.ServerInfo.ServerType),
 	}, fileWriter)
 }
 
