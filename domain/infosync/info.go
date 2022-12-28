@@ -573,7 +573,7 @@ func PutRuleBundlesWithRetry(ctx context.Context, bundles []*placement.Bundle, m
 	return
 }
 
-// GetResourceGroup is used to get one specific resource group from PD.
+// GetResourceGroup is used to get one specific resource group from resource manager.
 func GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -583,7 +583,7 @@ func GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, er
 	return is.resourceGroupManager.GetResourceGroup(ctx, name)
 }
 
-// CreateResourceGroup is used to create one specific resource group to PD.
+// CreateResourceGroup is used to create one specific resource group to resource manager.
 func CreateResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -592,7 +592,7 @@ func CreateResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	return is.resourceGroupManager.CreateResourceGroup(ctx, group)
 }
 
-// ModifyResourceGroup is used to modify one specific resource group to PD.
+// ModifyResourceGroup is used to modify one specific resource group to resource manager.
 func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -601,7 +601,7 @@ func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	return is.resourceGroupManager.ModifyResourceGroup(ctx, group)
 }
 
-// DeleteResourceGroup is used to delete one specific resource group from PD.
+// DeleteResourceGroup is used to delete one specific resource group from resource manager.
 func DeleteResourceGroup(ctx context.Context, name string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {

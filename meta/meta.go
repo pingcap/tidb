@@ -561,7 +561,7 @@ func (m *Meta) UpdateResourceGroup(group *model.ResourceGroupInfo) error {
 
 // DropResourceGroup drops a resource group.
 func (m *Meta) DropResourceGroup(groupID int64) error {
-	// Check if policy exists.
+	// Check if group exists.
 	groupKey := m.resourceGroupKey(groupID)
 	if err := m.txn.HClear(groupKey); err != nil {
 		return errors.Trace(err)

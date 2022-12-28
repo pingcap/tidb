@@ -1885,7 +1885,7 @@ type ResourceGroupInfo struct {
 	State SchemaState `json:"state"`
 }
 
-// Clone clones PolicyInfo.
+// Clone clones the ResourceGroupInfo.
 func (p *ResourceGroupInfo) Clone() *ResourceGroupInfo {
 	cloned := *p
 	cloned.ResourceGroupSettings = p.ResourceGroupSettings.Clone()

@@ -32,9 +32,9 @@ var (
 	ErrPlacementPolicyExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyExists)
 	// ErrPlacementPolicyNotExists return for placement_policy policy not exists.
 	ErrPlacementPolicyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyNotExists)
-	// ErrResourceGroupExists return for region label already exists.
+	// ErrResourceGroupExists return for resource group already exists.
 	ErrResourceGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupExists)
-	// ErrResourceGroupNotExists return for region label not exists.
+	// ErrResourceGroupNotExists return for resource group not exists.
 	ErrResourceGroupNotExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupNotExists)
 	// ErrReservedSyntax for internal syntax.
 	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)

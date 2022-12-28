@@ -85,8 +85,7 @@ func onAlterResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 	newGroup := *oldGroup
 	newGroup.ResourceGroupSettings = alterGroupInfo.ResourceGroupSettings
 
-	// TODO: check the policy validation
-
+	// TODO: check the group validation
 	err = t.UpdateResourceGroup(&newGroup)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -113,7 +112,6 @@ func onAlterResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 	// Finish this job.
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, nil)
 	return ver, nil
-
 }
 
 func checkResourceGroupExist(t *meta.Meta, job *model.Job, groupID int64) (*model.ResourceGroupInfo, error) {
@@ -167,12 +165,15 @@ func onDropResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		infosync.DeleteResourceGroup(context.TODO(), groupInfo.Name.L)
+		err = infosync.DeleteResourceGroup(context.TODO(), groupInfo.Name.L)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Finish this job. By now policy don't consider the binlog sync.
+		// Finish this job. By now resource group don't consider the binlog sync.
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, nil)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("resource_group", groupInfo.State)

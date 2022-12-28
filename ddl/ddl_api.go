@@ -3023,7 +3023,7 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 	return nil
 }
 
-// SetDirectResourceGroupUnit tries to make the PlacementSettings assignments generic for Schema/Table/Partition
+// SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
 func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64) error {
 	switch typ {
 	case ast.ResourceRRURate:
@@ -7637,7 +7637,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)
 	if !ok {
-		err = infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(groupName)
+		err = infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
 		if stmt.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
@@ -7670,7 +7670,6 @@ func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.Resour
 
 // AlterResourceGroup implements the DDL interface.
 func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) (err error) {
-	//	groupInfo := &model.ResourceGroupInfo{ResourceGroupSettings: &model.ResourceGroupSettings{}}
 	groupName := stmt.ResourceGroupName
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check group existence.
