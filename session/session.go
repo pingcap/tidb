@@ -2928,8 +2928,19 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if dom.GetEtcdClient() != nil {
 		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
 		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
+<<<<<<< HEAD
 		dom.TelemetryReportLoop(ses[5])
 		dom.TelemetryRotateSubWindowLoop(ses[5])
+=======
+		if config.GetGlobalConfig().EnableTelemetry {
+			// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
+			// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
+			go func() {
+				dom.TelemetryReportLoop(ses[5])
+				dom.TelemetryRotateSubWindowLoop(ses[5])
+			}()
+		}
+>>>>>>> 869b21dcf80 (session: Do not run telemetry loops when it's disabled in config (#40156))
 	}
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
