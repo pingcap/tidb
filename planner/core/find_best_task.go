@@ -1419,6 +1419,12 @@ func (ds *DataSource) addSelection4PlanCache(task *rootTask, stats *property.Sta
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
+	if candidate.path.Index.MVIndex {
+		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
+		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
+		// TODO: make IndexReader support accessing MVIndex directly.
+		return invalidTask, nil
+	}
 	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
