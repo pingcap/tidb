@@ -1096,7 +1096,7 @@ func (n *CreateTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	options := tableOptionsWithRestoreFlag(ctx.Flags, n.Options)
+	options := tableOptionsWithRestoreTTLFlag(ctx.Flags, n.Options)
 	for i, option := range options {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
@@ -3580,7 +3580,7 @@ func (n *AlterTableStmt) Restore(ctx *format.RestoreCtx) error {
 			continue
 		}
 		if spec.Tp == AlterTableOption {
-			newOptions := tableOptionsWithRestoreFlag(ctx.Flags, spec.Options)
+			newOptions := tableOptionsWithRestoreTTLFlag(ctx.Flags, spec.Options)
 			if len(newOptions) == 0 {
 				continue
 			}
@@ -4522,16 +4522,19 @@ func restorePlacementStmtInSpecialComment(ctx *format.RestoreCtx, n DDLNode) err
 	})
 }
 
-func tableOptionsWithRestoreFlag(flags format.RestoreFlags, options []*TableOption) []*TableOption {
-	ttlEnableOff := flags.HasRestoreWithTTLEnableOff()
+func tableOptionsWithRestoreTTLFlag(flags format.RestoreFlags, options []*TableOption) []*TableOption {
+	if !flags.HasRestoreWithTTLEnableOff() {
+		return options
+	}
+
 	newOptions := make([]*TableOption, 0, len(options))
 	for _, opt := range options {
-		if ttlEnableOff && opt.Tp == TableOptionTTLEnable {
+		if opt.Tp == TableOptionTTLEnable {
 			continue
 		}
 
 		newOptions = append(newOptions, opt)
-		if ttlEnableOff && opt.Tp == TableOptionTTL {
+		if opt.Tp == TableOptionTTL {
 			newOptions = append(newOptions, &TableOption{
 				Tp:        TableOptionTTLEnable,
 				BoolValue: false,

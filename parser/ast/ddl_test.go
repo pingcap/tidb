@@ -871,8 +871,6 @@ func TestTableOptionTTLRestore(t *testing.T) {
 }
 
 func TestTableOptionTTLRestoreWithTTLEnableOffFlag(t *testing.T) {
-	parser.TTLFeatureGate = true
-
 	sourceSQL1 := "create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR"
 	sourceSQL2 := "alter table t ttl_enable = 'ON'"
 	sourceSQL3 := "alter table t remove ttl"
