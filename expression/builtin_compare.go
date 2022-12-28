@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"github.com/pkg/errors"
 	"math"
 	"strings"
 
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (

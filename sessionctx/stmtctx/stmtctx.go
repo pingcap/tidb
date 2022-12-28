@@ -611,8 +611,8 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(reason error) {
-	if sc.SkipPlanCache {
-		return
+	if sc.UseCache && sc.SkipPlanCache {
+		return // avoid unnecessary warnings
 	}
 	sc.SkipPlanCache = true
 	sc.AppendWarning(reason)
