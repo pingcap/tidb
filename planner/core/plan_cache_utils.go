@@ -285,7 +285,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
-	limit := getLimitFromAst(stmtNode)
+	offsetAndCount := getLimitFromAst(stmtNode)
 	key := &planCacheKey{
 		database:                 stmtDB,
 		connID:                   sessionVars.ConnectionID,
@@ -300,7 +300,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		inRestrictedSQL:          sessionVars.InRestrictedSQL,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
-		limitOffsetAndCount:      limit,
+		limitOffsetAndCount:      offsetAndCount,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -450,8 +450,6 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 }
 
 type limitExtractor struct {
-	//sctx           sessionctx.Context
-	//schema         infoschema.InfoSchema
 	cacheable      bool
 	hasLimit       bool
 	offsetAndCount []int64
@@ -491,8 +489,6 @@ func getLimitFromAst(node ast.Node) []int64 {
 		return []int64{}
 	}
 	checker := limitExtractor{
-		//sctx:      sctx,
-		//schema:    is,
 		cacheable:      true,
 		offsetAndCount: []int64{},
 	}
