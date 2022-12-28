@@ -1894,7 +1894,7 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 	}
 	defer func() {
 		// some clean work.
-		if can == false {
+		if !can {
 			for _, fun := range p.AggFuncs {
 				fun.GroupingID = 0
 			}
@@ -2191,7 +2191,7 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 		cpStats := p.stats.Scale(1)
 		cpStats.RowCount = sumNDV
 		// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
-		for k, _ := range cpStats.ColNDVs {
+		for k := range cpStats.ColNDVs {
 			cpStats.ColNDVs[k] = sumNDV
 		}
 		// for old groupNDV, if it's containing one more grouping set cols, just plus the NDV where the col is excluded.
@@ -2312,7 +2312,6 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	// multi distinct agg mode, having grouping sets.
 	// set the default expression to constant 1 for the convenience to choose default group set data.
 	var groupingIDCol expression.Expression
-	groupingIDCol = expression.NewUInt64Const(1)
 	// enforce Expand operator above the children.
 	// physical plan is enumerated without children from itself, use mpp subtree instead p.children.
 	// scale(len(groupingSets)) will change the NDV, while Repeat doesn't change the NDV and groupNDV.
