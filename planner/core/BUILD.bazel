@@ -171,6 +171,7 @@ go_test(
         "flat_plan_test.go",
         "fragment_test.go",
         "indexmerge_intersection_test.go",
+        "indexmerge_path_test.go",
         "indexmerge_test.go",
         "integration_partition_test.go",
         "integration_test.go",
