@@ -221,6 +221,27 @@ func TestIssue38533(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestInvalidRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec("prepare st from 'select * from t where a>? and a<?'")
+	tk.MustExec("set @l=100, @r=10")
+	tk.MustExec("execute st using @l, @r")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]interface{}{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
+
+	tk.MustExec("execute st using @l, @r")
+	tk.MustExec("execute st using @l, @r")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func TestIssue40093(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
