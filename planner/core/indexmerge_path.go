@@ -574,9 +574,9 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
 				var jsonPathIdx int
 				if sf.GetArgs()[0].Equal(ds.ctx, targetJSONPath) {
-					jsonPathIdx = 0
+					jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
 				} else if sf.GetArgs()[1].Equal(ds.ctx, targetJSONPath) {
-					jsonPathIdx = 1
+					jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 				} else {
 					continue
 				}
