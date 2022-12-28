@@ -221,6 +221,36 @@ func TestIssue38533(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func TestIssue40093(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int, key(b, a))")
+	tk.MustExec("prepare st from 'select * from t1 left join t2 on t1.a=t2.a where t2.b in (?)'")
+	tk.MustExec("set @b=1")
+	tk.MustExec("execute st using @b")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]interface{}{
+			{"Projection_9"},
+			{"└─HashJoin_21"},
+			{"  ├─IndexReader_26(Build)"},
+			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
+			{"  └─TableReader_24(Probe)"},
+			{"    └─Selection_23"},
+			{"      └─TableFullScan_22"},
+		})
+
+	tk.MustExec("execute st using @b")
+	tk.MustExec("execute st using @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func TestIgnoreInsertStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
