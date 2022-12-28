@@ -271,7 +271,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string, stmtNode ast.StmtNode) (kvcache.Key, error) {
+	lastUpdatedSchemaVersion int64, bindSQL string, offsetAndCount []int64) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -285,7 +285,6 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
-	offsetAndCount := getLimitFromAst(stmtNode)
 	key := &planCacheKey{
 		database:                 stmtDB,
 		connID:                   sessionVars.ConnectionID,
@@ -450,8 +449,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 }
 
 type limitExtractor struct {
-	cacheable      bool
-	hasLimit       bool
+	cacheable      bool // For safety considerations, check if limit count less than 10000
 	offsetAndCount []int64
 }
 
@@ -461,17 +459,15 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 	case *ast.Limit:
 		if node.Count != nil {
 			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-				//checker.cacheable = false
-				checker.hasLimit = true
 				countNum := count.GetInt64()
 				checker.offsetAndCount = append(checker.offsetAndCount, countNum)
-				// todo: check if > 10000 ---> cacheable
+				if countNum > 10000 {
+					checker.cacheable = false
+				}
 			}
 		}
 		if node.Offset != nil {
 			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-				//checker.cacheable = false
-				checker.hasLimit = true
 				checker.offsetAndCount = append(checker.offsetAndCount, offset.GetInt64())
 			}
 		}
@@ -484,14 +480,14 @@ func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, checker.cacheable
 }
 
-func getLimitFromAst(node ast.Node) []int64 {
+func ExtractLimitFromAst(node ast.Node) ([]int64, bool) {
 	if node == nil {
-		return []int64{}
+		return []int64{}, true
 	}
 	checker := limitExtractor{
 		cacheable:      true,
 		offsetAndCount: []int64{},
 	}
 	node.Accept(&checker)
-	return checker.offsetAndCount
+	return checker.offsetAndCount, checker.cacheable
 }

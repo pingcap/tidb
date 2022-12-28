@@ -171,8 +171,9 @@ func (ts *TiDBStatement) Close() error {
 				return errors.Errorf("invalid PlanCacheStmt type")
 			}
 			bindSQL, _ := core.GetBindSQL4PlanCache(ts.ctx, preparedObj)
+			limitOffsetAndCount, _ := core.ExtractLimitFromAst(preparedObj.PreparedAst.Stmt)
 			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
-				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL, preparedObj.PreparedAst.Stmt)
+				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL, limitOffsetAndCount)
 			if err != nil {
 				return err
 			}

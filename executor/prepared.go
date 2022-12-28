@@ -204,8 +204,9 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if e.ctx.GetSessionVars().EnablePreparedPlanCache {
 		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.ctx, preparedObj)
+		limitOffsetAndCount, _ := plannercore.ExtractLimitFromAst(prepared.Stmt)
 		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
-			0, bindSQL, prepared.Stmt)
+			0, bindSQL, limitOffsetAndCount)
 		if err != nil {
 			return err
 		}
