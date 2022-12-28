@@ -2758,7 +2758,7 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 			return errors.Trace(err)
 		}
 		if tiFlashStoreCount < expectTiFlashStoreCount {
-			log.Info("still waiting for all tiflash starts",
+			log.Info("still waiting for enough tiflash store start",
 				zap.Uint64("expect", expectTiFlashStoreCount),
 				zap.Uint64("actual", tiFlashStoreCount),
 			)
