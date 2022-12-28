@@ -622,8 +622,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			}
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// `a=@x and a=@y` --> `a=@x if @x==@y`
-				sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: some parameters may be overwritten"))
+				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: some parameters may be overwritten"))
 			}
 		}
 	}
