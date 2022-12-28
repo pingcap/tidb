@@ -785,31 +785,41 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 }
 
 // Clean up tidb_ddl_reorg if there are abandoned entries.
-// Needs to be run after the DDL job is completed and committed
-// since there may be a write-conflict otherwise.
+// Since there may be a write-conflict otherwise.
 // Like when the HandleDDLJobTable function starts a transaction,
 // the back filler commits changes to tidb_ddl_reorg (like insert/update/delete)
 // and then the HandleDDLJobTable deletes the entry in tidb_ddl_reorg,
 // which will fail on commit, due to write conflict as the transaction
+// Needs to be run after the DDL job is completed and committed,
+// normally after finishDDLJob + w.sess.commit() and before any signalling happens.
 // was started before the back filler.
 func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 	if !job.IsFinished() {
 		return
 	}
-	if err := w.sess.begin(); err == nil {
-		elem, _, _, _, err := getDDLReorgHandle(w.sess, job)
-		if err == nil {
-			elems := []*meta.Element{elem}
-			err = removeDDLReorgHandle(w.sess, job, elems)
-			if err != nil {
-				logutil.Logger(w.logCtx).Warn("[ddl] removeDDLReorgHandle failed", zap.Int64("job.ID", job.ID))
+	var elemErr error
+	var elem *meta.Element
+	for elemErr == nil {
+		if err := w.sess.begin(); err == nil {
+			elem, _, _, _, elemErr = getDDLReorgHandle(w.sess, job)
+			if elemErr == nil {
+				elems := []*meta.Element{elem}
+				err = removeDDLReorgHandle(w.sess, job, elems)
+				if err != nil {
+					logutil.Logger(w.logCtx).Warn("[ddl] removeDDLReorgHandle failed", zap.Int64("job.ID", job.ID))
+					return
+				}
+				err = w.sess.commit()
+				if err != nil {
+					logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Int64("job.ID", job.ID))
+					return
+				}
+				// TODO: downgrade to DEBUG level
+				logutil.Logger(w.logCtx).Info("Removed one entry from tidb_ddl_reorg", zap.Int64("elem.ID", elem.ID), zap.String("elem.TypeKey", string(elem.TypeKey)))
+			} else {
+				w.sess.rollback()
+				return
 			}
-			err = w.sess.commit()
-			if err != nil {
-				logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Int64("job.ID", job.ID))
-			}
-		} else {
-			w.sess.rollback()
 		}
 	}
 }
