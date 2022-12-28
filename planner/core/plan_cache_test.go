@@ -282,7 +282,7 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 
 	tk.MustExec("prepare stmt from 'select /*+ ignore_plan_cache() */ * from t'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by hint"))
-	
+
 	tk.MustExec("prepare stmt from 'select * from t order by ?'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'order by ?' is un-cacheable"))
 
@@ -295,4 +295,44 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk.MustExec("set @a=1, @b=1")
 	tk.MustExec("execute stmt using @a, @b") // a=1 and a=1 -> a=1
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: some parameters may be overwritten"))
+}
+
+func TestPlanCacheWithLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a))")
+
+	testCases := []struct {
+		sql    string
+		params []int
+	}{
+		{"prepare stmt from 'select * from t limit ?'", []int{1}},
+		{"prepare stmt from 'select * from t limit ?, ?'", []int{1, 2}},
+		{"prepare stmt from 'delete from t order by a limit ?'", []int{1}},
+		{"prepare stmt from 'insert into t select * from t order by a desc limit ?'", []int{1}},
+		{"prepare stmt from 'insert into t select * from t order by a desc limit ?, ?'", []int{1, 2}},
+		{"prepare stmt from 'update t set a = 1 limit ?'", []int{1}},
+		{" prepare stmt from '(select * from t order by a limit ?) union (select * from t order by a desc limit ?)';", []int{1, 2}},
+		{" prepare stmt from 'select * from t where a in (select b from t limit ?) limit ?;';", []int{10, 5}},
+	}
+
+	for _, testCase := range testCases {
+		tk.MustExec(testCase.sql)
+		tk.MustExec("set @a = 1")
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+		tk.MustExec("set @a0 = 10086")
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
 }

@@ -465,8 +465,9 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
 				//checker.cacheable = false
 				checker.hasLimit = true
-				checker.offsetAndCount = append(checker.offsetAndCount, count.GetInt64())
-				return in, false
+				countNum := count.GetInt64()
+				checker.offsetAndCount = append(checker.offsetAndCount, countNum)
+				// todo: check if > 10000 ---> cacheable
 			}
 		}
 		if node.Offset != nil {
@@ -474,7 +475,6 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 				//checker.cacheable = false
 				checker.hasLimit = true
 				checker.offsetAndCount = append(checker.offsetAndCount, offset.GetInt64())
-				return in, false
 			}
 		}
 	}
@@ -494,7 +494,7 @@ func getLimitFromAst(node ast.Node) []int64 {
 		//sctx:      sctx,
 		//schema:    is,
 		cacheable:      true,
-		offsetAndCount: make([]int64, 1),
+		offsetAndCount: []int64{},
 	}
 	node.Accept(&checker)
 	return checker.offsetAndCount
