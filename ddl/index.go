@@ -81,7 +81,12 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		if err := checkIndexColumn(ctx, col, ip.Length); err != nil {
 			return nil, false, err
 		}
-		mvIndex = mvIndex || col.FieldType.IsArray()
+		if col.FieldType.IsArray() {
+			if mvIndex {
+				return nil, false, dbterror.ErrNotSupportedYet.GenWithStack("'more than one multi-valued key part per index'")
+			}
+			mvIndex = true
+		}
 		indexColLen := ip.Length
 		indexColumnLength, err := getIndexColumnLength(col, ip.Length)
 		if err != nil {
@@ -698,15 +703,18 @@ func pickBackfillType(w *worker, job *model.Job) model.ReorgType {
 		return job.ReorgMeta.ReorgTp
 	}
 	if IsEnableFastReorg() {
-		canUseIngest := canUseIngest(w)
-		if ingest.LitInitialized && canUseIngest {
-			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
-			return model.ReorgTypeLitMerge
+		var useIngest bool
+		if ingest.LitInitialized {
+			useIngest = canUseIngest(w)
+			if useIngest {
+				job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+				return model.ReorgTypeLitMerge
+			}
 		}
 		// The lightning environment is unavailable, but we can still use the txn-merge backfill.
 		logutil.BgLogger().Info("[ddl] fallback to txn-merge backfill process",
 			zap.Bool("lightning env initialized", ingest.LitInitialized),
-			zap.Bool("can use ingest", canUseIngest))
+			zap.Bool("can use ingest", useIngest))
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 		return model.ReorgTypeTxnMerge
 	}

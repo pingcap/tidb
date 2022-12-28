@@ -671,13 +671,6 @@ type SessionVars struct {
 		value string
 	}
 
-	// mppTaskIDAllocator is used to allocate mpp task id for a session.
-	mppTaskIDAllocator struct {
-		mu     sync.Mutex
-		lastTS uint64
-		taskID int64
-	}
-
 	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
 	Status uint16
 
@@ -1171,9 +1164,6 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
 
-	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed. It maps store address(string) to fail time(time.Time).
-	MPPStoreLastFailTime *sync.Map
-
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
 
@@ -1454,20 +1444,6 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 	return sc
 }
 
-// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
-// startTs is different.
-func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
-	s.mppTaskIDAllocator.mu.Lock()
-	defer s.mppTaskIDAllocator.mu.Unlock()
-	if s.mppTaskIDAllocator.lastTS == startTS {
-		s.mppTaskIDAllocator.taskID++
-		return s.mppTaskIDAllocator.taskID
-	}
-	s.mppTaskIDAllocator.lastTS = startTS
-	s.mppTaskIDAllocator.taskID = 1
-	return 1
-}
-
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
 	return s.allowMPPExecution
@@ -1713,7 +1689,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
 		TMPTableSize:                  DefTiDBTmpTableMaxSize,
-		MPPStoreLastFailTime:          new(sync.Map),
 		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
 		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
@@ -2336,12 +2311,6 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	sessionStates.LastFoundRows = s.LastFoundRows
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
-	sessionStates.MPPStoreLastFailTime = make(map[string]time.Time, 0)
-	s.MPPStoreLastFailTime.Range(
-		func(key, value interface{}) bool {
-			sessionStates.MPPStoreLastFailTime[key.(string)] = value.(time.Time)
-			return true
-		})
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 
@@ -2377,9 +2346,6 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	s.LastFoundRows = sessionStates.LastFoundRows
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
-	for k, v := range sessionStates.MPPStoreLastFailTime {
-		s.MPPStoreLastFailTime.Store(k, v)
-	}
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
 

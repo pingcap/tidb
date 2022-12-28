@@ -381,8 +381,8 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
-func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
-	for _, index := range tbInfo.Indices {
+func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...CIStr) *IndexInfo {
+	for _, index := range indices {
 		if IsIndexPrefixCovered(tbInfo, index, cols...) {
 			return index
 		}

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -377,6 +378,13 @@ type StatementContext struct {
 		// The SavepointName is use to do rollback when handle foreign key cascade failed.
 		SavepointName string
 		HasFKCascades bool
+	}
+
+	// MPPQueryInfo stores some id and timestamp of current MPP query statement.
+	MPPQueryInfo struct {
+		QueryID            atomic2.Uint64
+		QueryTS            atomic2.Uint64
+		AllocatedMPPTaskID atomic2.Int64
 	}
 
 	// TableStats stores the visited runtime table stats by table id during query
@@ -865,6 +873,21 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	if err == nil {
 		return nil
 	}
+
+	err = errors.Cause(err)
+	if e, ok := err.(*errors.Error); !ok ||
+		(e.Code() != errno.ErrTruncatedWrongValue &&
+			e.Code() != errno.ErrDataTooLong &&
+			e.Code() != errno.ErrTruncatedWrongValueForField &&
+			e.Code() != errno.ErrWarnDataOutOfRange &&
+			e.Code() != errno.ErrDataOutOfRange &&
+			e.Code() != errno.ErrBadNumber &&
+			e.Code() != errno.ErrWrongValueForType &&
+			e.Code() != errno.ErrDatetimeFunctionOverflow &&
+			e.Code() != errno.WarnDataTruncated) {
+		return err
+	}
+
 	if sc.IgnoreTruncate {
 		return nil
 	}

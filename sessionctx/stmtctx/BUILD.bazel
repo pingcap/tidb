@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/sessionctx/stmtctx",
     visibility = ["//visibility:public"],
     deps = [
+        "//errno",
         "//parser",
         "//parser/ast",
         "//parser/model",

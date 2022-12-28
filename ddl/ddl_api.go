@@ -1981,7 +1981,7 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		if handleCol != nil && len(fk.Cols) == 1 && handleCol.Name.L == fk.Cols[0].L {
 			continue
 		}
-		if model.FindIndexByColumns(tbInfo, fk.Cols...) != nil {
+		if model.FindIndexByColumns(tbInfo, tbInfo.Indices, fk.Cols...) != nil {
 			continue
 		}
 		idxName := fk.Name
@@ -3284,6 +3284,14 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
 		}
 	}
+	// set name for anonymous foreign key.
+	maxForeignKeyID := tb.Meta().MaxForeignKeyID
+	for _, spec := range validSpecs {
+		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Tp == ast.ConstraintForeignKey && spec.Constraint.Name == "" {
+			maxForeignKeyID++
+			spec.Constraint.Name = fmt.Sprintf("fk_%d", maxForeignKeyID)
+		}
+	}
 
 	if len(validSpecs) > 1 {
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
@@ -4318,6 +4326,9 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		return false, errors.Trace(err)
 	}
+	if err = checkDropColumnWithPartitionConstraint(t, colName); err != nil {
+		return false, errors.Trace(err)
+	}
 	// Check the column with foreign key.
 	err = checkDropColumnWithForeignKeyConstraint(is, schema.Name.L, tblInfo, colName.L)
 	if err != nil {
@@ -4336,6 +4347,24 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 		return false, dbterror.ErrCantDropColWithAutoInc
 	}
 	return true, nil
+}
+
+// checkDropColumnWithPartitionConstraint is used to check the partition constraint of the drop column.
+func checkDropColumnWithPartitionConstraint(t table.Table, colName model.CIStr) error {
+	if t.Meta().Partition == nil {
+		return nil
+	}
+	pt, ok := t.(table.PartitionedTable)
+	if !ok {
+		// Should never happen!
+		return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(colName.L))
+	}
+	for _, name := range pt.GetPartitionColumnNames() {
+		if strings.EqualFold(name.L, colName.L) {
+			return errors.Trace(dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(colName.L))
+		}
+	}
+	return nil
 }
 
 func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
@@ -4718,9 +4747,15 @@ func GetModifiableColumnJob(
 		for _, name := range pt.GetPartitionColumnNames() {
 			if strings.EqualFold(name.L, col.Name.L) {
 				isPartitioningColumn = true
+				break
 			}
 		}
 		if isPartitioningColumn {
+			// TODO: update the partitioning columns with new names if column is renamed
+			// Would be an extension from MySQL which does not support it.
+			if col.Name.L != newCol.Name.L {
+				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("Column '%s' has a partitioning function dependency and cannot be renamed", col.Name.O))
+			}
 			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
 				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
 			}
@@ -4764,7 +4799,6 @@ func GetModifiableColumnJob(
 			newTblInfo.Columns = newCols
 
 			var buf bytes.Buffer
-			// TODO: update the partitioning columns with new names if column is renamed
 			AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
 			// The parser supports ALTER TABLE ... PARTITION BY ... even if the ddl code does not yet :)
 			// Ignoring warnings
@@ -6590,7 +6624,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	if err != nil {
 		return err
 	}
-	if model.FindIndexByColumns(t.Meta(), fkInfo.Cols...) == nil {
+	if model.FindIndexByColumns(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
 		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
