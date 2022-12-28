@@ -98,7 +98,8 @@ type InsertValues struct {
 	isLoadData bool
 	txnInUse   sync.Mutex
 	// fkChecks contains the foreign key checkers.
-	fkChecks []*FKCheckExec
+	fkChecks   []*FKCheckExec
+	fkCascades []*FKCascadeExec
 }
 
 type defaultVal struct {
@@ -387,7 +388,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		e.evalBuffer.SetDatum(offset, val1)
 	}
 	// Row may lack of generated column, autoIncrement column, empty column here.
-	return e.fillRow(ctx, row, hasValue)
+	return e.fillRow(ctx, row, hasValue, rowIdx)
 }
 
 var emptyRow chunk.Row
@@ -421,7 +422,7 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		offset := e.insertColumns[i].Offset
 		row[offset], hasValue[offset] = val1, true
 	}
-	return e.fillRow(ctx, row, hasValue)
+	return e.fillRow(ctx, row, hasValue, rowIdx)
 }
 
 // setValueForRefColumn set some default values for the row to eval the row value with other columns,
@@ -459,7 +460,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	e := base.insertCommon()
 	selectExec := e.children[0]
 	fields := retTypes(selectExec)
-	chk := newFirstChunk(selectExec)
+	chk := tryNewCacheChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
@@ -561,7 +562,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 		hasValue[offset] = true
 	}
 
-	return e.fillRow(ctx, row, hasValue)
+	return e.fillRow(ctx, row, hasValue, 0)
 }
 
 // getColDefaultValue gets the column default value.
@@ -646,7 +647,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 // `insert|replace values` can guarantee consecutive autoID in a batch.
 // Other statements like `insert select from` don't guarantee consecutive autoID.
 // https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
-func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
+func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) ([]types.Datum, error) {
 	gCols := make([]*table.Column, 0)
 	tCols := e.Table.Cols()
 	if e.hasExtraHandle {
@@ -692,6 +693,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
+		if err != nil && gCol.FieldType.IsArray() {
+			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
+		}
 		if e.ctx.GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
 			return nil, err
 		}
@@ -705,6 +709,29 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		}
 	}
 	return row, nil
+}
+
+func completeError(tbl *model.TableInfo, offset int, rowIdx int, err error) error {
+	name := "expression_index"
+	for _, idx := range tbl.Indices {
+		for _, column := range idx.Columns {
+			if column.Offset == offset {
+				name = idx.Name.O
+				break
+			}
+		}
+	}
+
+	if expression.ErrInvalidJSONForFuncIndex.Equal(err) {
+		return expression.ErrInvalidJSONForFuncIndex.GenWithStackByArgs(name)
+	}
+	if types.ErrOverflow.Equal(err) {
+		return expression.ErrDataOutOfRangeFuncIndex.GenWithStackByArgs(name, rowIdx+1)
+	}
+	if types.ErrDataTooLong.Equal(err) {
+		return expression.ErrFuncIndexDataIsTooLong.GenWithStackByArgs(name)
+	}
+	return err
 }
 
 // isAutoNull can help judge whether a datum is AutoIncrement Null quickly.
@@ -777,7 +804,8 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			err = e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType).Rebase(ctx, recordID, true)
+			alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoIncrementType)
+			err = alloc.Rebase(ctx, recordID, true)
 			if err != nil {
 				return nil, err
 			}
@@ -870,7 +898,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType).Rebase(ctx, recordID, true)
+		err = e.Table.Allocators(e.ctx).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -1006,7 +1034,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if err != nil {
 		return 0, err
 	}
-	currentShard := e.ctx.GetSessionVars().TxnCtx.GetCurrentShard(1)
+	currentShard := e.ctx.GetSessionVars().GetCurrentShard(1)
 	return shardFmt.Compose(currentShard, autoRandomID), nil
 }
 
@@ -1091,7 +1119,6 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 				SnapshotRuntimeStats:  snapshotStats,
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
 			}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
 		return true
 	}
@@ -1145,6 +1172,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 
 	if e.stats != nil {
+		e.stats.FKCheckTime += prefetchStart.Sub(start)
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
@@ -1292,6 +1320,7 @@ type InsertRuntimeStat struct {
 	*autoid.AllocatorRuntimeStats
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
+	FKCheckTime     time.Duration
 }
 
 func (e *InsertRuntimeStat) String() string {
@@ -1314,9 +1343,8 @@ func (e *InsertRuntimeStat) String() string {
 			buf.WriteString(", rpc: {")
 			buf.WriteString(e.SnapshotRuntimeStats.String())
 			buf.WriteString("}")
-			return buf.String()
 		}
-		return ""
+		return buf.String()
 	}
 	if allocatorStatsStr != "" {
 		buf.WriteString("prepare: {total: ")
@@ -1334,6 +1362,9 @@ func (e *InsertRuntimeStat) String() string {
 			execdetails.FormatDuration(e.CheckInsertTime),
 			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
 			execdetails.FormatDuration(e.Prefetch)))
+		if e.FKCheckTime > 0 {
+			buf.WriteString(fmt.Sprintf(", fk_check: %v", execdetails.FormatDuration(e.FKCheckTime)))
+		}
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
 				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
@@ -1351,6 +1382,7 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	newRs := &InsertRuntimeStat{
 		CheckInsertTime: e.CheckInsertTime,
 		Prefetch:        e.Prefetch,
+		FKCheckTime:     e.FKCheckTime,
 	}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
@@ -1396,6 +1428,7 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 		}
 	}
 	e.Prefetch += tmp.Prefetch
+	e.FKCheckTime += tmp.FKCheckTime
 	e.CheckInsertTime += tmp.CheckInsertTime
 }
 

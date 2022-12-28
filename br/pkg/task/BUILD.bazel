@@ -36,6 +36,7 @@ go_library(
         "//br/pkg/stream",
         "//br/pkg/streamhelper",
         "//br/pkg/streamhelper/config",
+        "//br/pkg/streamhelper/daemon",
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//br/pkg/version",
@@ -95,6 +96,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/conn",
+        "//br/pkg/errors",
         "//br/pkg/metautil",
         "//br/pkg/restore",
         "//br/pkg/storage",

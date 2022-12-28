@@ -276,6 +276,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdMPPCancel:
 	case tikvrpc.CmdMvccGetByKey:
 		resp.Resp, err = c.usSvr.MvccGetByKey(ctx, req.MvccGetByKey())
+	case tikvrpc.CmdMPPAlive:
+		resp.Resp, err = c.usSvr.IsAlive(ctx, req.IsMPPAlive())
 	case tikvrpc.CmdMvccGetByStartTs:
 		resp.Resp, err = c.usSvr.MvccGetByStartTs(ctx, req.MvccGetByStartTs())
 	case tikvrpc.CmdSplitRegion:
@@ -293,7 +295,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, err
 	}
 	var regErr *errorpb.Error
-	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask {
+	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask && req.Type != tikvrpc.CmdMPPAlive {
 		regErr, err = resp.GetRegionError()
 	}
 	if err != nil {

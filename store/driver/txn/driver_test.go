@@ -41,8 +41,11 @@ func TestWriteConflictPrettyFormat(t *testing.T) {
 
 	expectedStr := "[kv:9007]Write conflict, " +
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
-		"key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
-		"primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }}, reason=Unknown " +
+		"key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }}, " +
+		"originalKey=74800000000000019b5f698000000000000001015257303100000000fb013736383232313130ff3900000000000000f8010000000000000000f7, " +
+		"primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }}, " +
+		"originalPrimaryKey=74800000000000019b5f698000000000000001015257303100000000fb013736383232313130ff3900000000000000f8010000000000000000f7, " +
+		"reason=Unknown " +
 		kv.TxnRetryableMark
 	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
 
@@ -56,8 +59,11 @@ func TestWriteConflictPrettyFormat(t *testing.T) {
 	}
 	expectedStr = "[kv:9007]Write conflict, " +
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
-		"key={metaKey=true, key=DB:56, field=TID:108} " +
-		"primary={metaKey=true, key=DB:56, field=TID:108}, reason=Optimistic " +
+		"key={metaKey=true, key=DB:56, field=TID:108}, " +
+		"originalKey=6d44423a3536000000fc00000000000000685449443a31303800fe, " +
+		"primary={metaKey=true, key=DB:56, field=TID:108}, " +
+		"originalPrimaryKey=6d44423a3536000000fc00000000000000685449443a31303800fe, " +
+		"reason=Optimistic " +
 		kv.TxnRetryableMark
 	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
 }

@@ -884,6 +884,7 @@ const (
 	ErrErrorLast                                             = 1863
 	ErrMaxExecTimeExceeded                                   = 1907
 	ErrInvalidFieldSize                                      = 3013
+	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrIncorrectType                                         = 3064
 	ErrInvalidJSONData                                       = 3069
 	ErrGeneratedColumnFunctionIsNotAllowed                   = 3102
@@ -943,6 +944,7 @@ const (
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
+	ErrDependentByPartitionFunctional                        = 3885
 	ErrInvalidJsonValueForFuncIndex                          = 3903 //nolint: revive
 	ErrJsonValueOutOfRangeForFuncIndex                       = 3904 //nolint: revive
 	ErrFunctionalIndexDataIsTooLong                          = 3907

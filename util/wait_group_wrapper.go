@@ -43,7 +43,7 @@ func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r interfac
 	go func() {
 		defer func() {
 			r := recover()
-			if r != nil && recoverFn != nil {
+			if recoverFn != nil {
 				recoverFn(r)
 			}
 			w.Done()

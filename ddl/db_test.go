@@ -237,7 +237,7 @@ func TestJsonUnmarshalErrWhenPanicInCancellingPath(t *testing.T) {
 	tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0');")
 	tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2);")
 	tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0';")
-	tk.MustGetErrMsg("alter table test_add_index_after_add_col add unique index cc(c);", "[kv:1062]Duplicate entry '0' for key 'cc'")
+	tk.MustGetErrMsg("alter table test_add_index_after_add_col add unique index cc(c);", "[kv:1062]Duplicate entry '0' for key 'test_add_index_after_add_col.cc'")
 }
 
 func TestIssue22819(t *testing.T) {
@@ -431,11 +431,8 @@ func TestFKOnGeneratedColumns(t *testing.T) {
 	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrWrongFKOptionForGeneratedColumn)
 	tk.MustExec("drop table t1, t2;")
 
-	// special case: TiDB error different from MySQL 8.0
-	// MySQL: ERROR 3104 (HY000): Cannot define foreign key with ON UPDATE SET NULL clause on a generated column.
-	// TiDB:  ERROR 1146 (42S02): Table 'test.t2' doesn't exist
 	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
-	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrWrongFKOptionForGeneratedColumn)
 	tk.MustExec("drop table t1;")
 
 	// allowed FK options on stored generated columns
@@ -579,7 +576,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -612,6 +609,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
@@ -900,11 +898,11 @@ func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
 	tk.MustExec("drop table if exists global_temp_auto_id")
 	tk.MustExec("create global temporary table global_temp_auto_id(id int primary key auto_increment) on commit delete rows")
 	tk.MustExec("begin")
-	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 1 AUTO_INCREMENT"))
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 1 _TIDB_ROWID"))
 	tk.MustExec("insert into global_temp_auto_id value(null)")
 	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("1"))
 	tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("1"))
-	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 2 AUTO_INCREMENT"))
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 2 _TIDB_ROWID"))
 	tk.MustExec("commit")
 	tk.MustExec("drop table global_temp_auto_id")
 
@@ -916,12 +914,12 @@ func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 ON COMMIT DELETE ROWS"))
-		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 100 AUTO_INCREMENT"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 100 _TIDB_ROWID"))
 		tk.MustExec("begin")
 		tk.MustExec("insert into global_temp_auto_id value(null)")
 		tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("100"))
 		tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("100"))
-		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 101 AUTO_INCREMENT"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 101 _TIDB_ROWID"))
 		tk.MustExec("commit")
 	}
 	tk.MustExec("drop table global_temp_auto_id")
@@ -965,9 +963,10 @@ func TestDDLJobErrorCount(t *testing.T) {
 
 	var jobID int64
 	hook := &ddl.TestDDLCallback{}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		jobID = job.ID
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	originHook := dom.DDL().GetHook()
 	dom.DDL().SetHook(hook)
 	defer dom.DDL().SetHook(originHook)
@@ -986,6 +985,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 	// Prepare work.
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
@@ -1144,7 +1144,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 						}
 					}
 				}
-				hook.OnJobUpdatedExported = func(job *model.Job) {
+				onJobUpdatedExportedFunc := func(job *model.Job) {
 					if job.SchemaState == endState {
 						if !committed {
 							if curCase.failCommit {
@@ -1157,6 +1157,7 @@ func TestCommitTxnWithIndexChange(t *testing.T) {
 						committed = true
 					}
 				}
+				hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 				originalCallback := do.GetHook()
 				do.SetHook(hook)
 				tk2.MustExec(curCase.idxDDL)
@@ -1385,6 +1386,7 @@ func TestAmendTxnSavepointWithDDL(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test;")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	prepareFn := func() {
@@ -1582,13 +1584,11 @@ func TestLogAndShowSlowLog(t *testing.T) {
 }
 
 func TestReportingMinStartTimestamp(t *testing.T) {
-	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
 
 	infoSyncer := dom.InfoSyncer()
-	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	infoSyncer.SetSessionManager(sm)
 	beforeTS := oracle.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
 	afterTS := oracle.GoTimeToTS(time.Now())
@@ -1597,13 +1597,21 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	now := time.Now()
 	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
 	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
+	sm := se.GetSessionManager().(*testkit.MockSessionManager)
 	sm.PS = []*util.ProcessInfo{
-		{CurTxnStartTS: 0},
-		{CurTxnStartTS: math.MaxUint64},
-		{CurTxnStartTS: lowerLimit},
-		{CurTxnStartTS: validTS},
+		{CurTxnStartTS: 0, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: math.MaxUint64, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: lowerLimit, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: validTS, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
 	}
-	infoSyncer.SetSessionManager(sm)
+	infoSyncer.ReportMinStartTS(dom.Store())
+	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
+
+	unhold := se.GetSessionVars().ProtectedTSList.HoldTS(validTS - 1)
+	infoSyncer.ReportMinStartTS(dom.Store())
+	require.Equal(t, validTS-1, infoSyncer.GetMinStartTS())
+
+	unhold()
 	infoSyncer.ReportMinStartTS(dom.Store())
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }
@@ -1735,4 +1743,49 @@ func TestTiDBDownBeforeUpdateGlobalVersion(t *testing.T) {
 	tk.MustExec("alter table t add column b int")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDownBeforeUpdateGlobalVersion"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkDownBeforeUpdateGlobalVersion"))
+}
+
+func TestDDLBlockedCreateView(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	first := true
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		if !first {
+			return
+		}
+		first = false
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("create view v as select * from t")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t modify column a char(10)")
+}
+
+func TestHashPartitionAddColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("delete from t")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add column c int")
 }

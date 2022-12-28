@@ -99,10 +99,10 @@ func TestGrantDBScope(t *testing.T) {
 	}
 
 	// Grant in wrong scope.
-	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
+	err := tk.ExecToErr(` grant create user on test.* to 'testDB1'@'localhost';`)
 	require.True(t, terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")))
 
-	_, err = tk.Exec("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
+	err = tk.ExecToErr("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
 	require.True(t, terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")))
 }
 
@@ -168,8 +168,8 @@ func TestGrantTableScope(t *testing.T) {
 		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 	}
 
-	_, err := tk.Exec("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';")
-	require.EqualError(t, err, "[executor:1144]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
+	tk.MustGetErrMsg("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';",
+		"[executor:1144]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
 }
 
 func TestGrantColumnScope(t *testing.T) {
@@ -213,8 +213,8 @@ func TestGrantColumnScope(t *testing.T) {
 		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 	}
 
-	_, err := tk.Exec("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';")
-	require.EqualError(t, err, "[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
+	tk.MustGetErrMsg("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';",
+		"[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
 }
 
 func TestIssue2456(t *testing.T) {
@@ -394,7 +394,7 @@ func TestMaintainRequire(t *testing.T) {
 
 	// test show create user
 	tk.MustExec(`CREATE USER 'u3'@'%' require issuer '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' subject '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' cipher 'AES128-GCM-SHA256'`)
-	tk.MustQuery("show create user 'u3'").Check(testkit.Rows("CREATE USER 'u3'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE CIPHER 'AES128-GCM-SHA256' ISSUER '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' SUBJECT '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+	tk.MustQuery("show create user 'u3'").Check(testkit.Rows("CREATE USER 'u3'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE CIPHER 'AES128-GCM-SHA256' ISSUER '/CN=TiDB admin/OU=TiDB/O=PingCAP/L=San Francisco/ST=California/C=US' SUBJECT '/CN=tester1/OU=TiDB/O=PingCAP.Inc/L=Haidian/ST=Beijing/C=ZH' PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
 	// check issuer/subject/cipher value
 	err := tk.ExecToErr(`CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP'`)
@@ -587,4 +587,17 @@ func TestIssue34610(t *testing.T) {
 	tk.MustGetErrCode("CREATE TABLE t1(f1 INT);", mysql.ErrTableExists)
 	tk.MustExec("GRANT SELECT ON T1 to user_1@localhost;")
 	tk.MustExec("GRANT SELECT ON t1 to user_1@localhost;")
+}
+
+func TestIssue38293(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	tk.MustExec("DROP USER IF EXISTS test")
+	tk.MustExec("CREATE USER test")
+	defer func() {
+		tk.MustExec("DROP USER test")
+	}()
+	tk.MustExec("GRANT SELECT ON `mysql`.`db` TO test")
+	tk.MustQuery("SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test'").Check(testkit.Rows("root@localhost"))
 }

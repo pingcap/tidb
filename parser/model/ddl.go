@@ -97,6 +97,11 @@ const (
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
 	ActionFlashbackCluster              ActionType = 62
+	ActionRecoverSchema                 ActionType = 63
+	ActionReorganizePartition           ActionType = 64
+
+	ActionAlterTTLInfo   ActionType = 65
+	ActionAlterTTLRemove ActionType = 67
 )
 
 var actionMap = map[ActionType]string{
@@ -158,7 +163,10 @@ var actionMap = map[ActionType]string{
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 	ActionMultiSchemaChange:             "alter table multi-schema change",
 	ActionFlashbackCluster:              "flashback cluster",
-
+	ActionRecoverSchema:                 "flashback schema",
+	ActionReorganizePartition:           "alter table reorganize partition",
+	ActionAlterTTLInfo:                  "alter table ttl",
+	ActionAlterTTLRemove:                "alter table no_ttl",
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
@@ -252,6 +260,19 @@ func (tp ReorgType) NeedMergeProcess() bool {
 	return tp == ReorgTypeLitMerge || tp == ReorgTypeTxnMerge
 }
 
+// String implements fmt.Stringer interface.
+func (tp ReorgType) String() string {
+	switch tp {
+	case ReorgTypeTxn:
+		return "txn"
+	case ReorgTypeLitMerge:
+		return "ingest"
+	case ReorgTypeTxnMerge:
+		return "txn-merge"
+	}
+	return ""
+}
+
 // TimeZoneLocation represents a single time zone.
 type TimeZoneLocation struct {
 	Name     string `json:"name"`
@@ -296,8 +317,16 @@ type MultiSchemaInfo struct {
 	DropIndexes   []CIStr `json:"-"`
 	AlterIndexes  []CIStr `json:"-"`
 
+	AddForeignKeys []AddForeignKeyInfo `json:"-"`
+
 	RelativeColumns []CIStr `json:"-"`
 	PositionColumns []CIStr `json:"-"`
+}
+
+// AddForeignKeyInfo contains foreign key information.
+type AddForeignKeyInfo struct {
+	Name CIStr
+	Cols []CIStr
 }
 
 // NewMultiSchemaInfo new a MultiSchemaInfo.
@@ -383,6 +412,40 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
+}
+
+// JobMeta is meta info of Job.
+type JobMeta struct {
+	SchemaID int64 `json:"schema_id"`
+	TableID  int64 `json:"table_id"`
+	// Query string of the ddl job.
+	Query string `json:"query"`
+	// Priority is only used to set the operation priority of adding indices.
+	Priority int `json:"priority"`
+}
+
+// BackfillMeta is meta info of the backfill job.
+type BackfillMeta struct {
+	EndInclude bool   `json:"end_include"`
+	ErrMsg     string `json:"err_msg"`
+
+	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
+	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
+	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location      *TimeZoneLocation                `json:"location"`
+	*JobMeta      `json:"job_meta"`
+}
+
+// Encode encodes BackfillMeta with json format.
+func (bm *BackfillMeta) Encode() ([]byte, error) {
+	b, err := json.Marshal(bm)
+	return b, errors.Trace(err)
+}
+
+// Decode decodes BackfillMeta from the json buffer.
+func (bm *BackfillMeta) Decode(b []byte) error {
+	err := json.Unmarshal(b, bm)
+	return errors.Trace(err)
 }
 
 // Job is for a DDL operation.
@@ -678,7 +741,12 @@ func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) 
 // How to check the job depends on "other"?
 // 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
 // 2. Or the two jobs handle the same table.
+// 3. Or other job is flashback cluster.
 func (job *Job) IsDependentOn(other *Job) (bool, error) {
+	if other.Type == ActionFlashbackCluster {
+		return true, nil
+	}
+
 	isDependent, err := job.hasDependentSchema(other)
 	if err != nil || isDependent {
 		return isDependent, errors.Trace(err)
@@ -806,7 +874,8 @@ func (job *Job) IsRollbackable() bool {
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
 	case ActionFlashbackCluster:
-		if job.SchemaState == StateWriteReorganization {
+		if job.SchemaState == StateWriteReorganization ||
+			job.SchemaState == StateWriteOnly {
 			return false
 		}
 	}

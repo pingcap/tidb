@@ -289,8 +289,7 @@ func TestDropColumn(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
 	err := tk.ExecToErr("alter table t1 drop column a")
-	// TODO: refine the error message to compatible with MySQL
-	require.EqualError(t, err, "[planner:1054]Unknown column 'a' in 'expression'")
+	require.EqualError(t, err, "[ddl:3885]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
 func TestChangeColumn(t *testing.T) {
@@ -878,7 +877,7 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 	ctx.Store = store
 	times := 0
 	var checkErr error
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -903,6 +902,7 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	tk.MustExec("alter table t1 add column gc int as ((a+1))")
@@ -920,7 +920,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	var checkErr error
 	assertChangingColName := "_col$_c2_0"
 	assertChangingIdxName := "_idx$_idx_0"
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
 				newCol                *model.ColumnInfo
@@ -943,6 +943,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	d.SetHook(hook)
 
@@ -975,7 +976,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	assertChangingColName2 := "_col$__col$__col$_c1_0_1"
 	query1 := "alter table t modify column _col$_c1 tinyint"
 	query2 := "alter table t modify column _col$__col$_c1_0 tinyint"
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
 				newCol                *model.ColumnInfo
@@ -999,6 +1000,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
 	d.SetHook(hook)
 
 	tk.MustExec("drop table if exists t")
@@ -1033,6 +1035,7 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
 	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = ON")
 	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF")
 
@@ -1062,7 +1065,7 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 			tk1.MustExec("begin pessimistic;")
 			tk1.MustExec("insert into t1 values(101, 102, 103)")
 		}
-		hook.OnJobUpdatedExported = func(job *model.Job) {
+		onJobUpdatedExportedFunc := func(job *model.Job) {
 			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != commitColState {
 				return
 			}
@@ -1071,6 +1074,7 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 			}
 			times++
 		}
+		hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 		d.SetHook(hook)
 
 		tk.MustExec(sql)

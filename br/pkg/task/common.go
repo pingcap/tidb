@@ -96,14 +96,12 @@ const (
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
 
-	tidbNewCollationEnabled = "new_collation_enabled"
+  flagFullBackupType = "type"
 
 	flagHost     = "host"
 	flagPort     = "port"
 	flagUser     = "user"
-	flagPassword = "password"
-
-	flagFullBackupType = "type"
+	flagPassword = "password"	
 )
 
 // FullBackupType type when doing full backup or restore

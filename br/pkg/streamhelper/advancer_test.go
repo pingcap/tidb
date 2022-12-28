@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
+	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
@@ -51,9 +53,6 @@ func TestTick(t *testing.T) {
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
-	adv.UpdateConfigWith(func(cac *config.Config) {
-		cac.FullScanTick = 0
-	})
 	require.NoError(t, adv.OnTick(ctx))
 	for i := 0; i < 5; i++ {
 		cp := c.advanceCheckpoints()
@@ -76,9 +75,6 @@ func TestWithFailure(t *testing.T) {
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
-	adv.UpdateConfigWith(func(cac *config.Config) {
-		cac.FullScanTick = 0
-	})
 	require.NoError(t, adv.OnTick(ctx))
 
 	cp := c.advanceCheckpoints()
@@ -225,4 +221,37 @@ func TestTaskRangesWithSplit(t *testing.T) {
 	c.flushAllExcept("0000", "0049")
 	shouldFinishInTime(t, 10*time.Second, "second advancing", func() { require.NoError(t, adv.OnTick(ctx)) })
 	require.Greater(t, env.getCheckpoint(), fstCheckpoint)
+}
+
+func TestBlocked(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	c := createFakeCluster(t, 4, true)
+	ctx := context.Background()
+	req := require.New(t)
+	c.splitAndScatter("0012", "0034", "0048")
+	marked := false
+	for _, s := range c.stores {
+		s.clientMu.Lock()
+		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+			// blocking the thread.
+			// this may happen when TiKV goes down or too busy.
+			<-(chan struct{})(nil)
+			return nil
+		}
+		s.clientMu.Unlock()
+		marked = true
+	}
+	req.True(marked, "failed to mark the cluster: ")
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		// ... So the tick timeout would be 100ms
+		c.TickDuration = 10 * time.Millisecond
+	})
+	var err error
+	shouldFinishInTime(t, time.Second, "ticking", func() {
+		err = adv.OnTick(ctx)
+	})
+	req.ErrorIs(errors.Cause(err), context.DeadlineExceeded)
 }

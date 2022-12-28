@@ -316,9 +316,8 @@ func TestPartitionTableIndexLookUpReader(t *testing.T) {
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a").Check(testkit.Rows("1 1", "2 2", "11 11", "12 12"))
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
-	tk.MustQuery("select * from t where a>=1 and a<15 limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
-	tk.MustQuery("select * from t where a between 1 and 15 limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
-	tk.MustQuery("select * from t where a between 1 and 15 limit 3 offset 1").Check(testkit.Rows("2 2", "11 11", "12 12"))
+	tk.MustQuery("select * from t where a between 1 and 15 order by a limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
+	tk.MustQuery("select * from t where a between 1 and 15 order by a limit 3 offset 1").Check(testkit.Rows("2 2", "11 11", "12 12"))
 }
 
 func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
@@ -430,6 +429,9 @@ func TestCoprocessorPagingSize(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into t_paging values %v", strings.Join(values, ", ")))
 	tk.MustQuery("select @@tidb_min_paging_size").Check(testkit.Rows(strconv.FormatUint(paging.MinPagingSize, 10)))
+
+	// Enable the coprocessor paging protocol.
+	tk.MustExec("set @@tidb_enable_paging = on")
 
 	// When the min paging size is small, we need more RPC roundtrip!
 	// Check 'rpc_num' in the execution information
