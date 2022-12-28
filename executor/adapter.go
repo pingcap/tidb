@@ -1407,6 +1407,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars.DurationParse = 0
 	// Clean the stale read flag when statement execution finish
 	sessVars.StmtCtx.IsStaleness = false
+	// Clean the MPP query info
+	sessVars.StmtCtx.MPPQueryInfo.QueryID.Store(0)
+	sessVars.StmtCtx.MPPQueryInfo.QueryTS.Store(0)
+	sessVars.StmtCtx.MPPQueryInfo.AllocatedMPPTaskID.Store(0)
 
 	if sessVars.StmtCtx.ReadFromTableCache {
 		metrics.ReadFromTableCacheCounter.Inc()
@@ -1538,7 +1542,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
-	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
+	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
 	}
 	slowLog := sessVars.SlowLogFormat(slowItems)
