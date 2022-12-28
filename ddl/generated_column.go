@@ -122,17 +122,17 @@ func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (
 
 // findDependedColumnNames returns a set of string, which indicates
 // the names of the columns that are depended by colDef.
-func findDependedColumnNames(schemaName string, tableName string, colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}, err error) {
+func findDependedColumnNames(schemaName model.CIStr, tableName model.CIStr, colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}, err error) {
 	colsMap = make(map[string]struct{})
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
 			generated = true
 			colNames := FindColumnNamesInExpr(option.Expr)
 			for _, depCol := range colNames {
-				if depCol.Schema.O != "" && schemaName != "" && depCol.Schema.O != schemaName {
+				if depCol.Schema.L != "" && schemaName.L != "" && depCol.Schema.L != schemaName.L {
 					return false, nil, dbterror.ErrWrongDBName.GenWithStackByArgs(depCol.Schema.O)
 				}
-				if depCol.Table.O != "" && tableName != "" && depCol.Table.O != tableName {
+				if depCol.Table.L != "" && tableName.L != "" && depCol.Table.L != tableName.L {
 					return false, nil, dbterror.ErrWrongTableName.GenWithStackByArgs(depCol.Table.O)
 				}
 				colsMap[depCol.Name.L] = struct{}{}
@@ -198,7 +198,7 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  3. check if the modified expr contains non-deterministic functions
 //  4. check whether new column refers to any auto-increment columns.
 //  5. check if the new column is indexed or stored
-func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName string, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
+func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName model.CIStr, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
 	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
 	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
@@ -258,7 +258,7 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName string, tbl 
 		}
 
 		// rule 4.
-		_, dependColNames, err := findDependedColumnNames(schemaName, tbl.Meta().Name.O, newColDef)
+		_, dependColNames, err := findDependedColumnNames(schemaName, tbl.Meta().Name, newColDef)
 		if err != nil {
 			return errors.Trace(err)
 		}

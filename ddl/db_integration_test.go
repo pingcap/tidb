@@ -2405,6 +2405,9 @@ func TestSchemaNameAndTableNameInGeneratedExpr(t *testing.T) {
 
 	tk.MustExec("alter table t add column c int")
 	tk.MustGetErrCode("alter table t modify column c int as (test.t1.a + 1) stored", errno.ErrWrongTableName)
+
+	tk.MustExec("alter table t add column d int as (lower(test.T.a))")
+	tk.MustExec("alter table t add column e int as (lower(Test.t.a))")
 }
 
 func TestParserIssue284(t *testing.T) {
