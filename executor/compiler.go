@@ -156,8 +156,26 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
+<<<<<<< HEAD
 	if c.Ctx.GetSessionVars().EnablePlanReplayerCapture && !c.Ctx.GetSessionVars().InRestrictedSQL {
 		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
+=======
+
+	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
+		return nil, err
+	}
+
+	if c.Ctx.GetSessionVars().IsPlanReplayerCaptureEnabled() && !c.Ctx.GetSessionVars().InRestrictedSQL {
+		startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
+		if err != nil {
+			return nil, err
+		}
+		if c.Ctx.GetSessionVars().EnablePlanReplayedContinuesCapture {
+			checkPlanReplayerContinuesCapture(c.Ctx, stmtNode, startTS)
+		} else {
+			checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
+		}
+>>>>>>> b268c65710b (*: fix PointGet will return an stale value when `tidb_enable_plan_replayer_capture` is set (#40197))
 	}
 
 	return stmt, nil
