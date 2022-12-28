@@ -31,7 +31,7 @@ type GroupingSet []GroupingExprs
 type GroupingExprs []Expression
 
 // Merge function will explore the internal grouping expressions and try to find the minimum grouping sets. (prefix merging)
-func (gs GroupingSets) Merge() GroupingSets {
+func (gss GroupingSets) Merge() GroupingSets {
 	// for now, there is precondition that all grouping expressions are columns.
 	// for example: (a,b,c) and (a,b) and (a) will be merged as a one.
 	// Eg:
@@ -54,8 +54,8 @@ func (gs GroupingSets) Merge() GroupingSets {
 	// care about the prefix order, which should be taken as following the group layout expanding rule. (simple way)
 	// [[a],[b,a],[c,b,a],] is also conforming the rule, gradually including one/more column(s) inside for one time.
 
-	newGroupingSets := make(GroupingSets, 0, len(gs))
-	for _, oneGroupingSet := range gs {
+	newGroupingSets := make(GroupingSets, 0, len(gss))
+	for _, oneGroupingSet := range gss {
 		for _, oneGroupingExpr := range oneGroupingSet {
 			if len(newGroupingSets) == 0 {
 				// means there is nothing in new grouping sets, adding current one anyway.
@@ -68,7 +68,7 @@ func (gs GroupingSets) Merge() GroupingSets {
 	return newGroupingSets
 }
 
-func (gs GroupingSets) mergeOne(targetOne GroupingExprs) GroupingSets {
+func (gss GroupingSets) mergeOne(targetOne GroupingExprs) GroupingSets {
 	// for every existing grouping set, check the grouping-exprs inside and whether the current grouping-exprs is
 	// super-set of it or sub-set of it, adding current one to the correct position of grouping-exprs slice.
 	//
@@ -90,7 +90,7 @@ func (gs GroupingSets) mergeOne(targetOne GroupingExprs) GroupingSets {
 	//                             ｜    ｜       ｜
 	//                              +----+-------+       every previous one is the subset of the latter one.
 	//
-	for i, oneNewGroupingSet := range gs {
+	for i, oneNewGroupingSet := range gss {
 		// for every group set，try to find its position to insert if possible，otherwise create a new grouping set.
 		for j := len(oneNewGroupingSet) - 1; j >= 0; j-- {
 			cur := oneNewGroupingSet[j]
@@ -100,8 +100,8 @@ func (gs GroupingSets) mergeOne(targetOne GroupingExprs) GroupingSets {
 					cp := make(GroupingSet, 0, len(oneNewGroupingSet)+1)
 					cp = append(cp, targetOne)
 					cp = append(cp, oneNewGroupingSet...)
-					gs[i] = cp
-					return gs
+					gss[i] = cp
+					return gss
 				}
 				// do the left shift to find the right insert pos.
 				continue
@@ -109,25 +109,24 @@ func (gs GroupingSets) mergeOne(targetOne GroupingExprs) GroupingSets {
 			if j == len(oneNewGroupingSet)-1 {
 				// which means the targetOne can't fit itself in this grouping set, continue next grouping set.
 				break
-			} else {
-				// successfully fit in, current j is the right pos to insert.
-				cp := make(GroupingSet, 0, len(oneNewGroupingSet)+1)
-				cp = append(cp, oneNewGroupingSet[:j+1]...)
-				cp = append(cp, targetOne)
-				cp = append(cp, oneNewGroupingSet[j+1:]...)
-				gs[i] = cp
-				return gs
 			}
+			// successfully fit in, current j is the right pos to insert.
+			cp := make(GroupingSet, 0, len(oneNewGroupingSet)+1)
+			cp = append(cp, oneNewGroupingSet[:j+1]...)
+			cp = append(cp, targetOne)
+			cp = append(cp, oneNewGroupingSet[j+1:]...)
+			gss[i] = cp
+			return gss
 		}
 	}
 	// here means we couldn't find even one GroupingSet to fill the targetOne, creating a new one.
-	gs = append(gs, newGroupingSet(targetOne))
+	gss = append(gss, newGroupingSet(targetOne))
 	// gs is an alias of slice [], we should return it back after being changed.
-	return gs
+	return gss
 }
 
 // TargetOne is used to find a valid group layout for normal agg.
-func (gs GroupingSets) TargetOne(targetOne GroupingExprs) int {
+func (gss GroupingSets) TargetOne(targetOne GroupingExprs) int {
 	// it has three cases.
 	//	1: group sets {<a,b>}, {<c>} when the normal agg(d), agg(d) can only occur in the group of <a,b> or <c> after tuple split. (normal column are appended)
 	//  2: group sets {<a,b>}, {<c>} when the normal agg(c), agg(c) can only be found in group of <c>, since it will be filled with null in group of <a,b>
@@ -146,8 +145,8 @@ func (gs GroupingSets) TargetOne(targetOne GroupingExprs) int {
 	// Expand operator, and null value can also influence your non null-strict normal agg, although you don't want them to.
 	//
 	// here we only consider 1&2 since normal agg with multi col args is banned.
-	allGroupingColIDs := gs.AllSetsColIDs()
-	for idx, groupingSet := range gs {
+	allGroupingColIDs := gss.AllSetsColIDs()
+	for idx, groupingSet := range gss {
 		// diffCols are those columns being filled with null in the group row data of current grouping set.
 		diffCols := allGroupingColIDs.Difference(*groupingSet.allSetColIDs())
 		if diffCols.Intersects(*targetOne.IDSet()) {
