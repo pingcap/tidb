@@ -480,6 +480,7 @@ func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, checker.cacheable
 }
 
+// ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
 func ExtractLimitFromAst(node ast.Node) ([]int64, bool) {
 	if node == nil {
 		return []int64{}, true
