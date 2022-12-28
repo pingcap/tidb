@@ -24,10 +24,13 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// GroupingSets indicates the grouping sets definition.
 type GroupingSets []GroupingSet
 
+// GroupingSet indicates one grouping set definition.
 type GroupingSet []GroupingExprs
 
+// GroupingExprs indicates one grouping-expressions inside a grouping set.
 type GroupingExprs []Expression
 
 // Merge function will explore the internal grouping expressions and try to find the minimum grouping sets. (prefix merging)
@@ -159,6 +162,7 @@ func (gss GroupingSets) TargetOne(targetOne GroupingExprs) int {
 	return -1
 }
 
+// IsEmpty indicates whether current grouping set is empty.
 func (gs GroupingSet) IsEmpty() bool {
 	if len(gs) == 0 {
 		return true
@@ -181,6 +185,7 @@ func (gs GroupingSet) allSetColIDs() *fd.FastIntSet {
 	return &res
 }
 
+// ExtractCols is used to extract basic columns from one grouping set.
 func (gs GroupingSet) ExtractCols() []*Column {
 	cols := make([]*Column, 0, len(gs))
 	for _, groupingExprs := range gs {
@@ -191,6 +196,7 @@ func (gs GroupingSet) ExtractCols() []*Column {
 	return cols
 }
 
+// Clone is used to clone a copy of current grouping set.
 func (gs GroupingSet) Clone() GroupingSet {
 	gc := make(GroupingSet, 0, len(gs))
 	for _, one := range gs {
@@ -199,6 +205,7 @@ func (gs GroupingSet) Clone() GroupingSet {
 	return gc
 }
 
+// String is used to output a string which simply described current grouping set.
 func (gs GroupingSet) String() string {
 	var str strings.Builder
 	str.WriteString("{")
@@ -212,6 +219,7 @@ func (gs GroupingSet) String() string {
 	return str.String()
 }
 
+// MemoryUsage is used to output current memory usage by current grouping set.
 func (gs GroupingSet) MemoryUsage() int64 {
 	sum := size.SizeOfSlice + int64(cap(gs))*size.SizeOfPointer
 	for _, one := range gs {
@@ -220,6 +228,7 @@ func (gs GroupingSet) MemoryUsage() int64 {
 	return sum
 }
 
+// ToPB is used to convert current grouping set to pb constructor.
 func (gs GroupingSet) ToPB(sc *stmtctx.StatementContext, client kv.Client) (*tipb.GroupingSet, error) {
 	res := &tipb.GroupingSet{}
 	for _, gExprs := range gs {
@@ -232,6 +241,7 @@ func (gs GroupingSet) ToPB(sc *stmtctx.StatementContext, client kv.Client) (*tip
 	return res, nil
 }
 
+// IsEmpty indicates whether current grouping sets is empty.
 func (gss GroupingSets) IsEmpty() bool {
 	if len(gss) == 0 {
 		return true
@@ -244,6 +254,7 @@ func (gss GroupingSets) IsEmpty() bool {
 	return true
 }
 
+// AllSetsColIDs is used to collect all the column id inside into a fast int set.
 func (gss GroupingSets) AllSetsColIDs() *fd.FastIntSet {
 	res := fd.NewFastIntSet()
 	for _, groupingSet := range gss {
@@ -252,6 +263,7 @@ func (gss GroupingSets) AllSetsColIDs() *fd.FastIntSet {
 	return &res
 }
 
+// String is used to output a string which simply described current grouping sets.
 func (gss GroupingSets) String() string {
 	var str strings.Builder
 	str.WriteString("[")
@@ -265,6 +277,7 @@ func (gss GroupingSets) String() string {
 	return str.String()
 }
 
+// ToPB is used to convert current grouping sets to pb constructor.
 func (gss GroupingSets) ToPB(sc *stmtctx.StatementContext, client kv.Client) ([]*tipb.GroupingSet, error) {
 	res := make([]*tipb.GroupingSet, 0, len(gss))
 	for _, gs := range gss {
@@ -283,10 +296,12 @@ func newGroupingSet(oneGroupingExpr GroupingExprs) GroupingSet {
 	return res
 }
 
+// IsEmpty indicates whether current grouping expressions are empty.
 func (g GroupingExprs) IsEmpty() bool {
 	return len(g) == 0
 }
 
+// SubSetOf is used to do the logical computation of subset between two grouping expressions.
 func (g GroupingExprs) SubSetOf(other GroupingExprs) bool {
 	oldOne := fd.NewFastIntSet()
 	newOne := fd.NewFastIntSet()
@@ -299,6 +314,7 @@ func (g GroupingExprs) SubSetOf(other GroupingExprs) bool {
 	return oldOne.SubsetOf(newOne)
 }
 
+// IDSet is used to collect column ids inside grouping expressions into a fast int set.
 func (g GroupingExprs) IDSet() *fd.FastIntSet {
 	res := fd.NewFastIntSet()
 	for _, one := range g {
@@ -307,6 +323,7 @@ func (g GroupingExprs) IDSet() *fd.FastIntSet {
 	return &res
 }
 
+// Clone is used to clone a copy of current grouping expressions.
 func (g GroupingExprs) Clone() GroupingExprs {
 	gc := make(GroupingExprs, 0, len(g))
 	for _, one := range g {
@@ -315,6 +332,7 @@ func (g GroupingExprs) Clone() GroupingExprs {
 	return gc
 }
 
+// String is used to output a string which simply described current grouping expressions.
 func (g GroupingExprs) String() string {
 	var str strings.Builder
 	str.WriteString("<")
@@ -328,6 +346,7 @@ func (g GroupingExprs) String() string {
 	return str.String()
 }
 
+// MemoryUsage is used to output current memory usage by current grouping expressions.
 func (g GroupingExprs) MemoryUsage() int64 {
 	sum := size.SizeOfSlice + int64(cap(g))*size.SizeOfInterface
 	for _, one := range g {
