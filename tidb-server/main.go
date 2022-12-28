@@ -121,6 +121,7 @@ const (
 
 	nmInitializeSecure            = "initialize-secure"
 	nmInitializeInsecure          = "initialize-insecure"
+	nmInitializeSQLFile           = "initialize-sql-file"
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 )
 
@@ -165,9 +166,10 @@ var (
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used)")
 
-	// Security
+	// Bootstrap and security
 	initializeSecure            = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
 	initializeInsecure          = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
+	initializeSQLFile           = flag.String(nmInitializeSQLFile, "", "SQL file to execute on first bootstrap")
 	disconnectOnExpiredPassword = flagBoolean(nmDisconnectOnExpiredPassword, true, "the server disconnects the client when the password is expired")
 )
 
@@ -528,7 +530,7 @@ func overrideConfig(cfg *config.Config) {
 
 	// Sanity check: can't specify both options
 	if actualFlags[nmInitializeSecure] && actualFlags[nmInitializeInsecure] {
-		err = fmt.Errorf("the options --initialize-insecure and --initialize-secure are mutually exclusive")
+		err = fmt.Errorf("the options -initialize-insecure and -initialize-secure are mutually exclusive")
 		terror.MustNil(err)
 	}
 	// The option --initialize-secure=true ensures that a secure bootstrap is used.
@@ -547,8 +549,18 @@ func overrideConfig(cfg *config.Config) {
 	// which is not supported on windows. Only the insecure bootstrap
 	// method is supported.
 	if runtime.GOOS == "windows" && cfg.Security.SecureBootstrap {
-		err = fmt.Errorf("the option --initialize-secure is not supported on Windows")
+		err = fmt.Errorf("the option -initialize-secure is not supported on Windows")
 		terror.MustNil(err)
+	}
+	// Initialize SQL File is used to run a set of SQL statements after first bootstrap.
+	// It is important in the use case that you want to set GLOBAL variables, which
+	// are persisted to the cluster and not read from a config file.
+	if actualFlags[nmInitializeSQLFile] {
+		if _, err := os.Stat(*initializeSQLFile); err != nil {
+			err = fmt.Errorf("can not access -initialize-sql-file %s", *initializeSQLFile)
+			terror.MustNil(err)
+		}
+		cfg.InitializeSQLFile = *initializeSQLFile
 	}
 }
 
