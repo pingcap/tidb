@@ -695,6 +695,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
+		if err != nil && gCol.FieldType.IsArray() {
+			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
+		}
 		if e.ctx.GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
 			return nil, err
 		}
@@ -715,6 +718,29 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		}
 	}
 	return row, nil
+}
+
+func completeError(tbl *model.TableInfo, offset int, rowIdx int, err error) error {
+	name := "expression_index"
+	for _, idx := range tbl.Indices {
+		for _, column := range idx.Columns {
+			if column.Offset == offset {
+				name = idx.Name.O
+				break
+			}
+		}
+	}
+
+	if expression.ErrInvalidJSONForFuncIndex.Equal(err) {
+		return expression.ErrInvalidJSONForFuncIndex.GenWithStackByArgs(name)
+	}
+	if types.ErrOverflow.Equal(err) {
+		return expression.ErrDataOutOfRangeFuncIndex.GenWithStackByArgs(name, rowIdx+1)
+	}
+	if types.ErrDataTooLong.Equal(err) {
+		return expression.ErrFuncIndexDataIsTooLong.GenWithStackByArgs(name)
+	}
+	return err
 }
 
 // isAutoNull can help judge whether a datum is AutoIncrement Null quickly.
