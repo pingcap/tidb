@@ -2180,10 +2180,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	if err == nil {
-		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
-	}
-
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -3297,7 +3293,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 9)
+	ses, err := createSessions(store, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -3397,7 +3393,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	// setup historical stats worker
 	dom.SetupHistoricalStatsWorker(ses[8])
 	dom.StartHistoricalStatsWorker()
-
+	if runBootstrapSQLFile {
+		pm := &privileges.UserPrivileges{
+			Handle: dom.PrivilegeHandle(),
+		}
+		privilege.BindPrivilegeManager(ses[9], pm)
+		doBootstrapSQLFile(ses[9])
+	}
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
 	syncStatsCtxs, err := createSessions(store, cnt)
