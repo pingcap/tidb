@@ -24,7 +24,7 @@ RESTORE_LOG="$TEST_DIR/restore.log"
 rm -rf $PROGRESS_FILE
 
 run_sql "create schema $DB;"
-run_sql "create table $DB.ttl_test_tbl(id int primary key, t datetime) TTL=`t` + interval 1 day TTL_ENABLE='ON'"
+run_sql "create table $DB.ttl_test_tbl(id int primary key, t datetime) TTL=\`t\` + interval 1 day TTL_ENABLE='ON'"
 
 # backup db
 echo "full backup meta v2 start..."
@@ -36,7 +36,8 @@ echo "full backup meta v1 start..."
 rm -f $BACKUPMETAV1_LOG
 run_br backup full --log-file $BACKUPMETAV1_LOG -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
-CREATE_SQL_CONTAINS="/*T\![ttl] TTL=\`t\` + INTERVAL 1 DAY */ /*T\![ttl] TTL_ENABLE='OFF' */"
+TTL_MARK='![ttl]'
+CREATE_SQL_CONTAINS="/*T${TTL_MARK} TTL=\`t\` + INTERVAL 1 DAY */ /*T${TTL_MARK} TTL_ENABLE='OFF' */"
 
 # restore v2
 run_sql "DROP DATABASE $DB;"
@@ -49,4 +50,5 @@ check_contains "$CREATE_SQL_CONTAINS"
 run_sql "DROP DATABASE $DB;"
 echo "restore ttl table start v1..."
 run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
+run_sql "show create table $DB.ttl_test_tbl;"
 check_contains "$CREATE_SQL_CONTAINS"

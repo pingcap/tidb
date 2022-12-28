@@ -19,7 +19,8 @@ set -eu
 run_sql 'drop database if exists ttldb;'
 run_lightning
 
-CREATE_SQL_CONTAINS="/*T\![ttl] TTL=\`t\` + INTERVAL 1 DAY */ /*T\![ttl] TTL_ENABLE='OFF' */"
+TTL_MARK='![ttl]'
+CREATE_SQL_CONTAINS="/*T${TTL_MARK} TTL=\`t\` + INTERVAL 1 DAY */ /*T${TTL_MARK} TTL_ENABLE='OFF' */"
 
 run_sql 'show create table ttldb.t1'
 check_contains "$CREATE_SQL_CONTAINS"
