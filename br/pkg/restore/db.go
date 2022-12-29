@@ -308,6 +308,10 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 					return errors.Trace(err)
 				}
 			}
+
+			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+				ttlInfo.Enable = false
+			}
 		}
 		if err := batchSession.CreateTables(ctx, m, db.tableIDAllocFilter()); err != nil {
 			return err
@@ -334,6 +338,10 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+		ttlInfo.Enable = false
 	}
 
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, db.tableIDAllocFilter())

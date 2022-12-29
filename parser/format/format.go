@@ -235,6 +235,7 @@ const (
 
 	RestoreTiDBSpecialComment
 	SkipPlacementRuleForRestore
+	RestoreWithTTLEnableOff
 )
 
 const (
@@ -319,6 +320,11 @@ func (rf RestoreFlags) HasTiDBSpecialCommentFlag() bool {
 // HasSkipPlacementRuleForRestoreFlag returns a boolean indicating whether `rf` has `SkipPlacementRuleForRestore` flag.
 func (rf RestoreFlags) HasSkipPlacementRuleForRestoreFlag() bool {
 	return rf.has(SkipPlacementRuleForRestore)
+}
+
+// HasRestoreWithTTLEnableOff returns a boolean indicating whether to force set TTL_ENABLE='OFF' when restoring a TTL table
+func (rf RestoreFlags) HasRestoreWithTTLEnableOff() bool {
+	return rf.has(RestoreWithTTLEnableOff)
 }
 
 // RestoreCtx is `Restore` context to hold flags and writer.
