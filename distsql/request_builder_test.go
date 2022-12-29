@@ -576,21 +576,23 @@ func TestRequestBuilder7(t *testing.T) {
 
 func TestRequestBuilder8(t *testing.T) {
 	sv := variable.NewSessionVars(nil)
+	sv.ResourceGroupName = "test"
 	actual, err := (&RequestBuilder{}).
 		SetFromSessionVars(sv).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
-		Tp:               0,
-		StartTs:          0x0,
-		Data:             []uint8(nil),
-		KeyRanges:        kv.NewNonParitionedKeyRanges(nil),
-		Concurrency:      variable.DefDistSQLScanConcurrency,
-		IsolationLevel:   0,
-		Priority:         0,
-		MemTracker:       (*memory.Tracker)(nil),
-		SchemaVar:        0,
-		ReadReplicaScope: kv.GlobalReplicaScope,
+		Tp:                0,
+		StartTs:           0x0,
+		Data:              []uint8(nil),
+		KeyRanges:         kv.NewNonParitionedKeyRanges(nil),
+		Concurrency:       variable.DefDistSQLScanConcurrency,
+		IsolationLevel:    0,
+		Priority:          0,
+		MemTracker:        (*memory.Tracker)(nil),
+		SchemaVar:         0,
+		ReadReplicaScope:  kv.GlobalReplicaScope,
+		ResourceGroupName: "test",
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize

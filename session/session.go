@@ -691,6 +691,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	s.txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
@@ -2682,7 +2683,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		}
 		return err
 	}
-	s.sessionVars.ResourceGroupName = info.ResourceGroupName
+	s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
 	if info.InSandBoxMode {
 		// Enter sandbox mode, only execute statement for resetting password.
 		s.EnableSandBoxMode()
