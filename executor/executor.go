@@ -691,9 +691,19 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	}
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for _, id := range e.jobIDs {
-		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-			if id == e.jobs[i].ID {
+		i := e.cursor
+		numOfRowsToWrite := numCurBatch
+		appendedJobID := make(map[int64]struct{})
+		for {
+			_, ok := appendedJobID[e.jobs[i].ID]
+			if id == e.jobs[i].ID && !ok {
+				appendedJobID[e.jobs[i].ID] = struct{}{}
 				req.AppendString(0, e.jobs[i].Query)
+				numOfRowsToWrite--
+			}
+			i++
+			if i >= len(e.jobs) || numOfRowsToWrite == 0 {
+				break
 			}
 		}
 	}
@@ -765,22 +775,25 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Ch
 		return nil
 	}
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+	numOfRowsToWrite := numCurBatch
 	appendedJobID := make(map[int64]struct{})
+	if e.cursor < int(e.offset) {
+		e.cursor = int(e.offset)
+	}
 	i := e.cursor
 	for {
-		if i >= int(e.offset) && i < int(e.offset+e.limit) {
+		if i < int(e.offset+e.limit) {
 			// check whether the job has been read
 			// for situations when this operation happens at the same time with new DDLs being executed
-			if _, ok := appendedJobID[e.jobs[i].ID]; ok {
-				numCurBatch++
-			} else {
+			if _, ok := appendedJobID[e.jobs[i].ID]; !ok {
 				appendedJobID[e.jobs[i].ID] = struct{}{}
 				req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
 				req.AppendString(1, e.jobs[i].Query)
+				numOfRowsToWrite--
 			}
 		}
 		i++
-		if i >= e.cursor+numCurBatch {
+		if i >= len(e.jobs) || numOfRowsToWrite == 0 {
 			break
 		}
 	}
