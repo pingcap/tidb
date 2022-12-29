@@ -21,6 +21,7 @@ import (
 	"io"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -635,7 +636,33 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer,
 		break
 	}
 
+	failpointCheckForConsistentHash(res)
 	return res, nil
+}
+
+func failpointCheckForConsistentHash(tasks []*batchCopTask) {
+	failpoint.Inject("checkOnlyDispatchToTiFlashComputeNodes", func(val failpoint.Value) {
+		logutil.BgLogger().Debug("in checkOnlyDispatchToTiFlashComputeNodes")
+
+		// This failpoint will be tested in test-infra case, because we needs setup a cluster.
+		// All tiflash_compute nodes addrs are stored in val, separated by semicolon.
+		str := val.(string)
+		addrs := strings.Split(str, ";")
+		if len(addrs) < 1 {
+			err := fmt.Sprintf("unexpected length of tiflash_compute node addrs: %v, %s", len(addrs), str)
+			panic(err)
+		}
+		addrMap := make(map[string]struct{})
+		for _, addr := range addrs {
+			addrMap[addr] = struct{}{}
+		}
+		for _, batchTask := range tasks {
+			if _, ok := addrMap[batchTask.storeAddr]; !ok {
+				err := errors.Errorf("batchCopTask send to node which is not tiflash_compute: %v(tiflash_compute nodes: %s)", batchTask.storeAddr, str)
+				panic(err)
+			}
+		}
+	})
 }
 
 // When `partitionIDs != nil`, it means that buildBatchCopTasksCore is constructing a batch cop tasks for PartitionTableScan.
