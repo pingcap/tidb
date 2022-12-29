@@ -122,7 +122,6 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 				if v.IsNull() {
 					val = append(val, v)
 					jsonIsNull = true
-					jsonIdx++
 					continue
 				}
 				elemCount := v.GetMysqlJSON().GetElemCount()
