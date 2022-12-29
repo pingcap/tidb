@@ -1330,6 +1330,6 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 		"└─TableReader_23 3323.33 root  data:ExchangeSender_22",
 		"  └─ExchangeSender_22 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
-		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo",))
+		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
 	// tk.MustQuery("select * from t1 where c1 < 2").Check(testkit.Rows("1 1"))
 }
