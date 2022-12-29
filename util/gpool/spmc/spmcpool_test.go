@@ -79,8 +79,12 @@ func TestPool(t *testing.T) {
 }
 
 func TestPoolWithEnoughCapa(t *testing.T) {
-	const RunTimes = 1000
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithEnoughCapa", 30, WithExpiryDuration(DefaultExpiredTime))
+	const (
+		RunTimes    = 1000
+		poolsize    = 30
+		concurrency = 6
+	)
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithEnoughCapa", poolsize, WithExpiryDuration(DefaultExpiredTime))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
@@ -112,7 +116,7 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 					}
 				}
 			}
-			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(6))
+			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(concurrency))
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -134,16 +138,20 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 }
 
 func TestPoolWithoutEnoughCapa(t *testing.T) {
-	const RunTimes = 1000
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", 30,
-		WithExpiryDuration(DefaultExpiredTime))
+	const (
+		RunTimes    = 100
+		concurrency = 6
+		poolsize    = 3
+	)
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", poolsize,
+		WithExpiryDuration(DefaultExpiredTime), WithNonblocking(true))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
 	})
 	var twg util.WaitGroupWrapper
-	for i := 0; i < RunTimes; i++ {
+	for i := 0; i < 10; i++ {
 		twg.Run(func() {
 			sema := make(chan struct{}, 10)
 			var wg util.WaitGroupWrapper
@@ -168,7 +176,7 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 					}
 				}
 			}
-			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(6))
+			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(concurrency))
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
