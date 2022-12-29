@@ -857,6 +857,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			return false, ver, err
 		}
 		indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
+		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return true, ver, nil
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", indexInfo.BackfillState)
