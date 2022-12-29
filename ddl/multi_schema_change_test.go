@@ -1215,7 +1215,7 @@ func TestMultiSchemaChangeAddIndexChangeColumn(t *testing.T) {
 	tk.MustExec("CREATE TABLE t (a SMALLINT DEFAULT '30219', b TIME NULL DEFAULT '02:45:06', PRIMARY KEY (a));")
 	tk.MustExec("ALTER TABLE t ADD unique INDEX idx4 (b), change column a e MEDIUMINT DEFAULT '5280454' FIRST;")
 	tk.MustExec("insert ignore into t (e) values (5586359),(501788),(-5961048),(220083),(-4917129),(-7267211),(7750448);")
-	tk.MustQuery("select * from t;").Check(testkit.Rows())
+	tk.MustQuery("select * from t;").Check(testkit.Rows("5586359 02:45:06"))
 	tk.MustExec("admin check table t;")
 }
 
