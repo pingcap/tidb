@@ -22,6 +22,8 @@ run_sql 'CREATE DATABASE IF NOT EXISTS fk;'
 run_sql 'CREATE TABLE fk.t2 (a BIGINT PRIMARY KEY);'
 
 for BACKEND in tidb local; do
+  run_sql 'DROP TABLE IF EXISTS fk.t, fk.parent, fk.child;'
+
   run_lightning --backend $BACKEND
   run_sql 'SELECT GROUP_CONCAT(a) FROM fk.t ORDER BY a;'
   check_contains '1,2,3,4,5'
