@@ -808,10 +808,10 @@ func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 	for elemErr == nil {
 		sess := newSession(sctx)
 		if err := sess.begin(); err == nil {
-			elem, _, _, _, elemErr = getDDLReorgHandle(w.sess, job)
+			elem, _, _, _, elemErr = getDDLReorgHandle(sess, job)
 			if elemErr == nil {
 				elems := []*meta.Element{elem}
-				err = removeDDLReorgHandle(w.sess, job, elems)
+				err = removeDDLReorgHandle(sess, job, elems)
 				if err != nil {
 					logutil.Logger(w.logCtx).Warn("[ddl] removeDDLReorgHandle failed", zap.Int64("job.ID", job.ID))
 					return
