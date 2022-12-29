@@ -226,13 +226,13 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
 	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
-	taskCh := make(chan pooltask.Task[T], opt.TaskChanLen)
+	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
 			break
 		}
-		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, taskCh, result, taskID)
+		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, inputCh, result, taskID)
 		p.taskCh <- &taskBox
 	}
 	go func() {
@@ -241,7 +241,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			close(closeCh)
-			close(taskCh)
+			close(inputCh)
 		}()
 		for {
 			tasks, err := producer()
@@ -257,7 +257,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 				task := pooltask.Task[T]{
 					Task: task,
 				}
-				taskCh <- task
+				inputCh <- task
 			}
 		}
 	}()
@@ -273,13 +273,13 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
 	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
-	taskCh := make(chan pooltask.Task[T], opt.TaskChanLen)
+	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
 			break
 		}
-		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, taskCh, result, taskID)
+		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, inputCh, result, taskID)
 		p.taskCh <- &taskBox
 	}
 	go func() {
@@ -288,7 +288,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			close(closeCh)
-			close(taskCh)
+			close(inputCh)
 		}()
 		for {
 			task, err := producer()
@@ -303,7 +303,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 			t := pooltask.Task[T]{
 				Task: task,
 			}
-			taskCh <- t
+			inputCh <- t
 		}
 	}()
 	return result, tc
