@@ -104,7 +104,7 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 
 // OnJobUpdated is used to run the user customized logic of `OnJobUpdated` first.
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
-	logutil.BgLogger().Info("on job updated", zap.String("job", job.String()))
+	logutil.BgLogger().Info("on job updated", zap.String("job", job.String()), zap.Stack("stack"))
 	if onJobUpdatedExportedFunc := tc.OnJobUpdatedExported.Load(); onJobUpdatedExportedFunc != nil {
 		(*onJobUpdatedExportedFunc)(job)
 		return

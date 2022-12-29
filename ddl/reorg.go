@@ -837,7 +837,9 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	if r.enableConcurrentDDL {
+		logutil.BgLogger().Info("GetDDLReorgHandle using table")
 		return getDDLReorgHandle(r.s, job)
 	}
+	logutil.BgLogger().Info("GetDDLReorgHandle using queue")
 	return r.m.GetDDLReorgHandle(job)
 }

@@ -817,7 +817,7 @@ func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 			logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Error(err))
 			return
 		}
-		logutil.Logger(w.logCtx).Info("[ddl] cleanDDLReorgHandles completed")
+		logutil.Logger(w.logCtx).Info("[ddl] cleanDDLReorgHandles completed", zap.Stack("stack"))
 	}
 }
 
@@ -1016,7 +1016,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 					job.State = model.JobStateSynced
 				}
 				err = w.finishDDLJob(t, job)
-				w.cleanupDDLReorgHandle(job)
+				logutil.BgLogger().Info("finishDDLJob returned", zap.Error(err))
 				return errors.Trace(err)
 			}
 
@@ -1063,9 +1063,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 		if job != nil {
 			d.unlockSchemaVersion(job.ID)
-			if runJobErr == nil {
-				w.cleanupDDLReorgHandle(job)
-			}
 		}
 
 		if err != nil {
