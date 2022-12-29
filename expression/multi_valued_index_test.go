@@ -402,6 +402,34 @@ func TestWriteMultiValuedIndexUnique(t *testing.T) {
 	}
 }
 
+func TestWriteMultiValuedIndexComposite(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(pk int primary key, a json, c int, d int, index idx(c, (cast(a as signed array)), d))")
+	tk.MustExec("insert into t1 values (1, '[1,2,2]', 1, 1)")
+	tk.MustExec("insert into t1 values (2, '[2,2,2]', 2, 2)")
+	tk.MustExec("insert into t1 values (3, '[3,3,4]', 3, 3)")
+	tk.MustExec("insert into t1 values (4, null, 4, 4)")
+	tk.MustExec("insert into t1 values (5, '[]', 5, 5)")
+
+	t1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	for _, index := range t1.Indices() {
+		if index.Meta().MVIndex {
+			checkCount(t, t1.IndexPrefix(), index, store, 6)
+			checkKey(t, t1.IndexPrefix(), index, store, [][]types.Datum{
+				{types.NewIntDatum(1), types.NewIntDatum(1), types.NewIntDatum(1), types.NewIntDatum(1)},
+				{types.NewIntDatum(1), types.NewIntDatum(2), types.NewIntDatum(1), types.NewIntDatum(1)},
+				{types.NewIntDatum(2), types.NewIntDatum(2), types.NewIntDatum(2), types.NewIntDatum(2)},
+				{types.NewIntDatum(3), types.NewIntDatum(3), types.NewIntDatum(3), types.NewIntDatum(3)},
+				{types.NewIntDatum(3), types.NewIntDatum(4), types.NewIntDatum(3), types.NewIntDatum(3)},
+				{types.NewIntDatum(4), types.NewDatum(nil), types.NewIntDatum(4), types.NewIntDatum(4)},
+			})
+		}
+	}
+}
+
 func checkCount(t *testing.T, prefix kv.Key, index table.Index, store kv.Storage, except int) {
 	c := 0
 	checkIndex(t, prefix, index, store, func(it kv.Iterator) {
