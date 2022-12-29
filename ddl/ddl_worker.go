@@ -1085,7 +1085,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if job != nil {
 			logutil.BgLogger().Info("job != nil", zap.String("job", job.String()))
 			d.unlockSchemaVersion(job.ID)
-			if runJobErr != nil {
+			if runJobErr == nil {
 				w.cleanupDDLReorgHandle(job)
 			}
 		}
