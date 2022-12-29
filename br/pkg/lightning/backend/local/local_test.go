@@ -941,7 +941,7 @@ func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst
 			return f.createClientFn(store), nil
 		}
 	}
-	return nil, errors.New(fmt.Sprintf("store %d not found", storeID))
+	return nil, fmt.Errorf("store %d not found", storeID)
 }
 
 func (f *mockImportClientFactory) Close() {}
@@ -1274,7 +1274,7 @@ func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
 	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
 }
 
-func TestServerIsBusy(t *testing.T) {
+func TestCheckPeersBusy(t *testing.T) {
 	ctx := context.Background()
 	pdCli := &mockPdClient{}
 	pdCtl := &pdutil.PdController{}
