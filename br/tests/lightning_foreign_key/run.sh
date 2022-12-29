@@ -16,13 +16,23 @@
 
 set -eu
 
-# Create existing tables that import data will reference.
+run_sql 'DROP DATABASE IF EXISTS fk;'
 run_sql 'CREATE DATABASE IF NOT EXISTS fk;'
+# Create existing tables that import data will reference.
 run_sql 'CREATE TABLE fk.t2 (a BIGINT PRIMARY KEY);'
 
 for BACKEND in tidb local; do
-  run_sql 'DROP TABLE IF EXISTS fk.t;'
+  run_sql 'DROP TABLE IF EXISTS fk.t, fk.parent, fk.child;'
+
   run_lightning --backend $BACKEND
   run_sql 'SELECT GROUP_CONCAT(a) FROM fk.t ORDER BY a;'
   check_contains '1,2,3,4,5'
+
+  run_sql 'SELECT count(1), sum(a) FROM fk.parent;'
+  check_contains 'count(1): 4'
+  check_contains 'sum(a): 10'
+
+  run_sql 'SELECT count(1), sum(pid) FROM fk.child;'
+  check_contains 'count(1): 4'
+  check_contains 'sum(pid): 10'
 done
