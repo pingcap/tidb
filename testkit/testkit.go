@@ -553,6 +553,16 @@ func DebugDumpOnTimeout(wg *sync.WaitGroup, c chan struct{}, d time.Duration) {
 		_ = pprof.Lookup("mutex").WriteTo(os.Stdout, 2)
 		log.Print("dumping all stack traces led to creation of new OS threads:")
 		_ = pprof.Lookup("threadcreate").WriteTo(os.Stdout, 2)
+		log.Print("Waiting 2 seconds and to see if things changed...")
+		time.Sleep(2 * time.Second)
+		log.Print("Injected timeout, dumping all goroutines:")
+		_ = pprof.Lookup("goroutine").WriteTo(os.Stdout, 2)
+		log.Print("dumping all stack traces led to possible block:")
+		_ = pprof.Lookup("block").WriteTo(os.Stdout, 2)
+		log.Print("dumping all stack traces holding mutexes:")
+		_ = pprof.Lookup("mutex").WriteTo(os.Stdout, 2)
+		log.Print("dumping all stack traces led to creation of new OS threads:")
+		_ = pprof.Lookup("threadcreate").WriteTo(os.Stdout, 2)
 		panic("Injected timeout")
 	case <-c:
 		// Test finished

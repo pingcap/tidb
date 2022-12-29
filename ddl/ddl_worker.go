@@ -803,29 +803,17 @@ func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 	}
 	defer w.sessPool.put(sctx)
 	sctx.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	var elemErr error
-	var elem *meta.Element
-	for elemErr == nil {
-		sess := newSession(sctx)
-		if err := sess.begin(); err == nil {
-			elem, _, _, _, elemErr = getDDLReorgHandle(sess, job)
-			if elemErr == nil {
-				elems := []*meta.Element{elem}
-				err = removeDDLReorgHandle(sess, job, elems)
-				if err != nil {
-					logutil.Logger(w.logCtx).Warn("[ddl] removeDDLReorgHandle failed", zap.Int64("job.ID", job.ID))
-					return
-				}
-				err = sess.commit()
-				if err != nil {
-					logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Int64("job.ID", job.ID))
-					return
-				}
-				logutil.Logger(w.logCtx).Debug("Removed one entry from tidb_ddl_reorg", zap.Int64("elem.ID", elem.ID), zap.String("elem.TypeKey", string(elem.TypeKey)))
-			} else {
-				sess.rollback()
-				return
-			}
+	sess := newSession(sctx)
+	if err = sess.begin(); err == nil {
+		err = cleanDDLReorgHandles(sess)
+		if err != nil {
+			logutil.Logger(w.logCtx).Warn("[ddl] cleanDDLReorgHandles failed", zap.Error(err))
+			return
+		}
+		err = sess.commit()
+		if err != nil {
+			logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Error(err))
+			return
 		}
 	}
 }
@@ -1025,6 +1013,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 					job.State = model.JobStateSynced
 				}
 				err = w.finishDDLJob(t, job)
+				w.cleanupDDLReorgHandle(job)
 				return errors.Trace(err)
 			}
 
