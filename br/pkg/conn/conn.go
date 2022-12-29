@@ -7,9 +7,11 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/opentracing/opentracing-go"
@@ -33,6 +35,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
@@ -282,6 +285,7 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 
 // GetMergeRegionSizeAndCount returns the tikv config `coprocessor.region-split-size` and `coprocessor.region-split-key`.
 func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64, error) {
+	mu := sync.Mutex{}
 	regionSplitSize := DefaultMergeRegionSizeBytes
 	regionSplitKeys := DefaultMergeRegionKeyCount
 	type coprocessor struct {
@@ -303,10 +307,12 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 			return e
 		}
 		urs := uint64(rs)
+		mu.Lock()
 		if regionSplitSize == DefaultMergeRegionSizeBytes || urs < regionSplitSize {
 			regionSplitSize = urs
 			regionSplitKeys = c.Cop.RegionSplitKeys
 		}
+		mu.Unlock()
 		return nil
 	})
 	if err != nil {
@@ -327,36 +333,42 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 		httpPrefix = "https://"
 	}
 
+	workPool := utils.NewWorkerPool(16, "stores")
+	eg, ectx := errgroup.WithContext(ctx)
 	for _, store := range allStores {
 		if store.State != metapb.StoreState_Up {
 			continue
 		}
-		// we need make sure every available store support backup-stream otherwise we might lose data.
-		// so check every store's config
-		addr, err := handleTiKVAddress(store, httpPrefix)
-		if err != nil {
-			return err
-		}
-		configAddr := fmt.Sprintf("%s/config", addr.String())
-
-		err = utils.WithRetry(ctx, func() error {
-			resp, e := cli.Get(configAddr)
-			if e != nil {
-				return e
-			}
-			err = fn(resp)
+		storeReplica := store
+		workPool.ApplyOnErrorGroup(eg, func() error {
+			// we need make sure every available store support backup-stream otherwise we might lose data.
+			// so check every store's config
+			addr, err := handleTiKVAddress(storeReplica, httpPrefix)
 			if err != nil {
 				return err
 			}
-			_ = resp.Body.Close()
+			configAddr := fmt.Sprintf("%s/config", addr.String())
+
+			err = utils.WithRetry(ectx, func() error {
+				resp, e := cli.Get(configAddr)
+				if e != nil {
+					return e
+				}
+				err = fn(resp)
+				if err != nil {
+					return err
+				}
+				_ = resp.Body.Close()
+				return nil
+			}, utils.NewPDReqBackoffer())
+			if err != nil {
+				// if one store failed, break and return error
+				return err
+			}
 			return nil
-		}, utils.NewPDReqBackoffer())
-		if err != nil {
-			// if one store failed, break and return error
-			return err
-		}
+		})
 	}
-	return nil
+	return eg.Wait()
 }
 
 func handleTiKVAddress(store *metapb.Store, httpPrefix string) (*url.URL, error) {
@@ -383,7 +395,7 @@ func handleTiKVAddress(store *metapb.Store, httpPrefix string) (*url.URL, error)
 	// but in sometimes we may not get the correct status address from PD.
 	if statusUrl.Hostname() != nodeUrl.Hostname() {
 		// if not matched, we use the address as default, but change the port
-		addr.Host = nodeUrl.Hostname() + ":" + statusUrl.Port()
+		addr.Host = net.JoinHostPort(nodeUrl.Hostname(), statusUrl.Port())
 		log.Warn("store address and status address mismatch the host, we will use the store address as hostname",
 			zap.Uint64("store", store.Id),
 			zap.String("status address", statusAddr),
