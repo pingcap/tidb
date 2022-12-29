@@ -52,7 +52,7 @@ func NewZero() *Constant {
 	}
 }
 
-// NewUInt64Const  stands for constant of a given number.
+// NewUInt64Const stands for constant of a given number.
 func NewUInt64Const(num int64) *Constant {
 	retT := types.NewFieldType(mysql.TypeLonglong)
 	retT.AddFlag(mysql.UnsignedFlag) // shrink range to avoid integral promotion
