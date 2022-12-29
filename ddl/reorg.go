@@ -843,7 +843,7 @@ func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool, concurrentDDL boo
 	}
 	se, err := pool.get()
 	if err != nil {
-		logutil.BgLogger().Warn("CleanupDDLReorgHandles get sessionctx failed", zap.Error(err))
+		logutil.BgLogger().Info("CleanupDDLReorgHandles get sessionctx failed", zap.Error(err))
 		return
 	}
 	defer pool.put(se)
@@ -853,22 +853,22 @@ func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool, concurrentDDL boo
 	sess := newSession(se)
 	err = sess.begin()
 	if err != nil {
-		logutil.BgLogger().Warn("CleanupDDLReorgHandles new session failed", zap.Error(err))
+		logutil.BgLogger().Info("CleanupDDLReorgHandles new session failed", zap.Error(err))
 		return
 	}
 	txn, err := sess.txn()
 	if err != nil {
-		logutil.BgLogger().Warn("CleanupDDLReorgHandles new txn failed", zap.Error(err))
+		logutil.BgLogger().Info("CleanupDDLReorgHandles new txn failed", zap.Error(err))
 		sess.rollback()
 	}
 	if concurrentDDL {
 		err = cleanDDLReorgHandles(sess, job)
 		if err != nil {
-			logutil.BgLogger().Warn("cleanDDLReorgHandles failed", zap.Error(err))
+			logutil.BgLogger().Info("cleanDDLReorgHandles failed", zap.Error(err))
 		}
 		err = sess.commit()
 		if err != nil {
-			logutil.BgLogger().Warn("CleanupDDLReorgHandles commit failed", zap.Error(err))
+			logutil.BgLogger().Info("CleanupDDLReorgHandles commit failed", zap.Error(err))
 		}
 		return
 	}
@@ -876,20 +876,18 @@ func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool, concurrentDDL boo
 	rh := newReorgHandler(meta.NewMeta(txn), sess, concurrentDDL)
 	err = rh.m.ClearAllDDLReorgHandle()
 	if err != nil {
-		logutil.BgLogger().Warn("ClearAllDDLReorgHandle failed", zap.Error(err))
+		logutil.BgLogger().Info("ClearAllDDLReorgHandle failed", zap.Error(err))
 	}
 	err = sess.commit()
 	if err != nil {
-		logutil.BgLogger().Warn("CleanupDDLReorgHandles commit failed", zap.Error(err))
+		logutil.BgLogger().Info("CleanupDDLReorgHandles commit failed", zap.Error(err))
 	}
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	if r.enableConcurrentDDL {
-		logutil.BgLogger().Info("GetDDLReorgHandle using table")
 		return getDDLReorgHandle(r.s, job)
 	}
-	logutil.BgLogger().Info("GetDDLReorgHandle using queue")
 	return r.m.GetDDLReorgHandle(job)
 }
