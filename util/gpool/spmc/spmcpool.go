@@ -69,7 +69,6 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.workerCache.New = func() interface{} {
 		return &goWorker[T, U, C, CT, TF]{
 			pool: result,
-			exit: make(chan struct{}),
 		}
 	}
 	result.capacity.Add(size)

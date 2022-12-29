@@ -32,8 +32,6 @@ type goWorker[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	// taskBoxCh is a job should be done.
 	taskBoxCh chan *pooltask.TaskBox[T, U, C, CT, TF]
 
-	exit chan struct{}
-
 	// recycleTime will be updated when putting a worker back into queue.
 	recycleTime time.Time
 }
