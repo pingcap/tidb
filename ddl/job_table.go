@@ -402,7 +402,7 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 		return nil, nil, nil, 0, err
 	}
 	if len(rows) == 0 {
-		return nil, nil, nil, 0, meta.ErrDDLReorgElementNotExist
+		return nil, nil, nil, 0, errors.Trace(meta.ErrDDLReorgElementNotExist)
 	}
 	id := rows[0].GetInt64(0)
 	tp := rows[0].GetBytes(1)

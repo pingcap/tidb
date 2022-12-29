@@ -641,7 +641,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
-	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
+	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()), zap.Stack("stack"))
 	updateRawArgs := true
 	if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
 		// ActionAddPrimaryKey needs to check the warnings information in job.Args.
@@ -795,10 +795,12 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 // was started before the back filler.
 func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {
+		logutil.Logger(w.logCtx).Info("[ddl] cleanDDLReorgHandles nothing")
 		return
 	}
 	sctx, err := w.sessPool.get()
 	if err != nil {
+		logutil.Logger(w.logCtx).Info("[ddl] cleanDDLReorgHandles get session failed")
 		return
 	}
 	defer w.sessPool.put(sctx)
@@ -815,6 +817,7 @@ func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 			logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Error(err))
 			return
 		}
+		logutil.Logger(w.logCtx).Info("[ddl] cleanDDLReorgHandles completed")
 	}
 }
 
