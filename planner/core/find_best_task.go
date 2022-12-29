@@ -2027,7 +2027,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				// when got here, canMppConvertToRootForDisaggregatedTiFlash is true.
 				task = mppTask
 				task = task.convertToRootTask(ds.ctx)
-				ds.addSelection4PlanCache(task.(*rootTask), ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
+				if task != nil && !task.invalid() {
+					ds.addSelection4PlanCache(task.(*rootTask), ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
+				}
 			}
 		}
 		return task, nil
