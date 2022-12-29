@@ -779,46 +779,9 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	if err != nil {
 		return err
 	}
-	w.cleanupDDLReorgHandle(job)
+	CleanupDDLReorgHandles(job, w.sessPool, w.concurrentDDL)
 	asyncNotify(d.ddlJobDoneCh)
 	return nil
-}
-
-// Clean up tidb_ddl_reorg if there are abandoned entries.
-// Since there may be a write-conflict otherwise.
-// Like when the HandleDDLJobTable function starts a transaction,
-// the back filler commits changes to tidb_ddl_reorg (like insert/update/delete)
-// and then the HandleDDLJobTable deletes the entry in tidb_ddl_reorg,
-// which will fail on commit, due to write conflict as the transaction
-// Needs to be run after the DDL job is completed and committed,
-// normally after finishDDLJob + w.sess.commit() and before any signalling happens.
-// was started before the back filler.
-func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
-	if job != nil && !job.IsFinished() && !job.IsSynced() {
-		logutil.Logger(w.logCtx).Info("[ddl] cleanDDLReorgHandles nothing")
-		return
-	}
-	sctx, err := w.sessPool.get()
-	if err != nil {
-		logutil.Logger(w.logCtx).Info("[ddl] cleanDDLReorgHandles get session failed")
-		return
-	}
-	defer w.sessPool.put(sctx)
-	sctx.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	sess := newSession(sctx)
-	if err = sess.begin(); err == nil {
-		err = cleanDDLReorgHandles(sess)
-		if err != nil {
-			logutil.Logger(w.logCtx).Warn("[ddl] cleanDDLReorgHandles failed", zap.Error(err))
-			return
-		}
-		err = sess.commit()
-		if err != nil {
-			logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Error(err))
-			return
-		}
-		logutil.Logger(w.logCtx).Info("[ddl] cleanDDLReorgHandles completed", zap.Stack("stack"))
-	}
 }
 
 func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
@@ -915,7 +878,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.commit()
-	w.cleanupDDLReorgHandle(job)
+	CleanupDDLReorgHandles(job, w.sessPool, w.concurrentDDL)
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err

@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -832,6 +833,45 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 		return removeDDLReorgHandle(r.s, job, elements)
 	}
 	return r.m.RemoveDDLReorgHandle(job, elements)
+}
+
+// CleanupDDLReorgHandles removes the job reorganization related handles.
+func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool, concurrentDDL bool) {
+	if job != nil && !job.IsFinished() && !job.IsSynced() {
+		// Job is given but it is neither finished or synced; do nothing
+		logutil.BgLogger().Info("[ddl] cleanDDLReorgHandles do nothing")
+		return
+	}
+	se, err := pool.get()
+	if err != nil {
+		return
+	}
+	defer pool.put(se)
+
+	// Should there be any other options?
+	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	sess := newSession(se)
+	err = sess.begin()
+	if err != nil {
+		return
+	}
+	txn, err := sess.txn()
+	if err != nil {
+		sess.rollback()
+	}
+	if concurrentDDL {
+		cleanDDLReorgHandles(sess, job)
+		_ = sess.commit()
+		return
+	}
+	// Should never be called, since it should only origin from HandleDDLJobTable
+	logutil.BgLogger().Warn("non-concurrent DDL called CleanupDDLReorgHandles/HandleDDLJobTable")
+	// TODO: remove
+	panic("non-concurrent DDL should not use HandleDDLJobTable!!!")
+	// no concurrent DDL, simply remove all reorg handles
+	rh := newReorgHandler(meta.NewMeta(txn), sess, concurrentDDL)
+	rh.m.ClearAllDDLReorgHandle()
+	_ = sess.commit()
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
