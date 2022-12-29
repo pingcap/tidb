@@ -1208,6 +1208,10 @@ func restoreStream(
 		cfg.tiflashRecorder.AddTable(tableInfo.ID, *tableInfo.TiFlashReplica)
 		// Remove the replica firstly. Let's restore them at the end.
 		tableInfo.TiFlashReplica = nil
+		// Force to disable TTL_ENABLE.
+		if tableInfo.TTLInfo != nil {
+			tableInfo.TTLInfo.Enable = false
+		}
 	}
 
 	updateStats := func(kvCount uint64, size uint64) {
