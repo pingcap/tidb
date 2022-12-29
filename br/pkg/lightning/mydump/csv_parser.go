@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -341,7 +342,7 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 			if err == nil {
 				err = io.EOF
 			}
-			parser.pos += int64(len(buf))
+			// parser.pos += int64(len(buf))
 			return buf, 0, errors.Trace(err)
 		}
 		index := IndexAnyByte(parser.buf, chars)
@@ -450,6 +451,7 @@ func (parser *CSVParser) readQuotedField() error {
 		content, terminator, err := parser.readUntil(&parser.quoteByteSet)
 		err = parser.replaceEOF(err, errUnterminatedQuotedField)
 		if err != nil {
+			parser.Logger.Error("err content", zap.ByteString("content", content))
 			return err
 		}
 		parser.recordBuffer = append(parser.recordBuffer, content...)
