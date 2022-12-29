@@ -864,10 +864,6 @@ func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool, concurrentDDL boo
 		_ = sess.commit()
 		return
 	}
-	// Should never be called, since it should only origin from HandleDDLJobTable
-	logutil.BgLogger().Warn("non-concurrent DDL called CleanupDDLReorgHandles/HandleDDLJobTable")
-	// TODO: remove
-	panic("non-concurrent DDL should not use HandleDDLJobTable!!!")
 	// no concurrent DDL, simply remove all reorg handles
 	rh := newReorgHandler(meta.NewMeta(txn), sess, concurrentDDL)
 	rh.m.ClearAllDDLReorgHandle()
