@@ -838,12 +838,12 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 // CleanupDDLReorgHandles removes the job reorganization related handles.
 func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool, concurrentDDL bool) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {
-		// Job is given but it is neither finished or synced; do nothing
-		logutil.BgLogger().Info("[ddl] cleanDDLReorgHandles do nothing")
+		// Job is given, but it is neither finished nor synced; do nothing
 		return
 	}
 	se, err := pool.get()
 	if err != nil {
+		logutil.BgLogger().Warn("CleanupDDLReorgHandles get sessionctx failed", zap.Error(err))
 		return
 	}
 	defer pool.put(se)
@@ -853,21 +853,35 @@ func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool, concurrentDDL boo
 	sess := newSession(se)
 	err = sess.begin()
 	if err != nil {
+		logutil.BgLogger().Warn("CleanupDDLReorgHandles new session failed", zap.Error(err))
 		return
 	}
 	txn, err := sess.txn()
 	if err != nil {
+		logutil.BgLogger().Warn("CleanupDDLReorgHandles new txn failed", zap.Error(err))
 		sess.rollback()
 	}
 	if concurrentDDL {
-		cleanDDLReorgHandles(sess, job)
-		_ = sess.commit()
+		err = cleanDDLReorgHandles(sess, job)
+		if err != nil {
+			logutil.BgLogger().Warn("cleanDDLReorgHandles failed", zap.Error(err))
+		}
+		err = sess.commit()
+		if err != nil {
+			logutil.BgLogger().Warn("CleanupDDLReorgHandles commit failed", zap.Error(err))
+		}
 		return
 	}
 	// no concurrent DDL, simply remove all reorg handles
 	rh := newReorgHandler(meta.NewMeta(txn), sess, concurrentDDL)
-	rh.m.ClearAllDDLReorgHandle()
-	_ = sess.commit()
+	err = rh.m.ClearAllDDLReorgHandle()
+	if err != nil {
+		logutil.BgLogger().Warn("ClearAllDDLReorgHandle failed", zap.Error(err))
+	}
+	err = sess.commit()
+	if err != nil {
+		logutil.BgLogger().Warn("CleanupDDLReorgHandles commit failed", zap.Error(err))
+	}
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
