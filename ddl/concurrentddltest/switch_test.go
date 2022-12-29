@@ -156,4 +156,5 @@ func TestConcurrentDDLSwitchWithMDL(t *testing.T) {
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("set global tidb_enable_concurrent_ddl=off")
 	tk.MustExec("create table test.t(a int)")
+	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=DEFAULT")
 }
