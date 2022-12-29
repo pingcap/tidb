@@ -651,7 +651,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.writeDDLSeqNum(job)
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs, w.concurrentDDL)
-	logutil.BgLogger().Info("finishDDLJob done", zap.Error(err), zap.Stack("stack"))
 	return errors.Trace(err)
 }
 
@@ -770,22 +769,17 @@ func (w *JobContext) setDDLLabelForDiagnosis(job *model.Job) {
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
-	logutil.BgLogger().Info("HandleJobDone")
 	err := w.finishDDLJob(t, job)
 	if err != nil {
-		logutil.BgLogger().Info("HandleJobDone finishDDLJob failed")
 		w.sess.rollback()
 		return err
 	}
 
 	err = w.sess.commit()
 	if err != nil {
-		logutil.BgLogger().Info("HandleJobDone commit failed")
 		return err
 	}
-	logutil.BgLogger().Info("HandleJobDone calling cleanupDDLReorgHandle")
 	w.cleanupDDLReorgHandle(job)
-	logutil.BgLogger().Info("HandleJobDone done cleanupDDLReorgHandle")
 	asyncNotify(d.ddlJobDoneCh)
 	return nil
 }
@@ -801,10 +795,8 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 // was started before the back filler.
 func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 	if job == nil || !(job.IsFinished() || job.IsSynced()) {
-		logutil.BgLogger().Info("cleanupDDLReorgHandle job not in finished or synced state")
 		return
 	}
-	logutil.BgLogger().Info("cleanupDDLReorgHandle", zap.String("job", job.String()))
 	sctx, err := w.sessPool.get()
 	if err != nil {
 		return
@@ -816,9 +808,7 @@ func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 	for elemErr == nil {
 		sess := newSession(sctx)
 		if err := sess.begin(); err == nil {
-			logutil.BgLogger().Info("cleanupDDLReorgHandle begin done")
 			elem, _, _, _, elemErr = getDDLReorgHandle(w.sess, job)
-			logutil.BgLogger().Info("cleanupDDLReorgHandle", zap.Error(elemErr))
 			if elemErr == nil {
 				elems := []*meta.Element{elem}
 				err = removeDDLReorgHandle(w.sess, job, elems)
@@ -826,16 +816,13 @@ func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
 					logutil.Logger(w.logCtx).Warn("[ddl] removeDDLReorgHandle failed", zap.Int64("job.ID", job.ID))
 					return
 				}
-				logutil.BgLogger().Info("cleanupDDLReorgHandle one delete")
 				err = sess.commit()
 				if err != nil {
 					logutil.Logger(w.logCtx).Warn("[ddl] Failed cleaning up possible left overs from mysql.tidb_ddl_reorg", zap.Int64("job.ID", job.ID))
 					return
 				}
-				// TODO: downgrade to DEBUG level
-				logutil.Logger(w.logCtx).Info("Removed one entry from tidb_ddl_reorg", zap.Int64("elem.ID", elem.ID), zap.String("elem.TypeKey", string(elem.TypeKey)))
+				logutil.Logger(w.logCtx).Debug("Removed one entry from tidb_ddl_reorg", zap.Int64("elem.ID", elem.ID), zap.String("elem.TypeKey", string(elem.TypeKey)))
 			} else {
-				logutil.BgLogger().Info("getDDLReorgHandle had an error", zap.Error(elemErr))
 				sess.rollback()
 				return
 			}
@@ -933,12 +920,10 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	logutil.BgLogger().Info("before writeBinlog")
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.commit()
-	logutil.BgLogger().Info("calling cleanupDDLReorgHandle", zap.String("job", job.String()))
 	w.cleanupDDLReorgHandle(job)
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
@@ -1005,7 +990,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
 				d.runningJobs.Unlock()
-				logutil.BgLogger().Info("job == nil or err")
 				return errors.Trace(err)
 			}
 			d.runningJobs.ids[job.ID] = struct{}{}
@@ -1041,7 +1025,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 					job.State = model.JobStateSynced
 				}
 				err = w.finishDDLJob(t, job)
-				logutil.BgLogger().Info("Job is done or rolled back", zap.String("job", job.String()), zap.Error(err), zap.Stack("stack"))
 				return errors.Trace(err)
 			}
 
@@ -1057,7 +1040,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if job.IsCancelled() {
 				txn.Reset()
 				err = w.finishDDLJob(t, job)
-				logutil.BgLogger().Info("Job is cancelled", zap.String("job", job.String()), zap.Error(err), zap.Stack("stack"))
 				return errors.Trace(err)
 			}
 			if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
@@ -1074,14 +1056,12 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
-				logutil.BgLogger().Info("handleUpdateJobError", zap.String("job", job.String()), zap.Error(err), zap.Stack("stack"))
 				return errors.Trace(err)
 			}
 			writeBinlog(d.binlogCli, txn, job)
 			return nil
 		})
 
-		logutil.BgLogger().Info("RunInNewTxn done", zap.Error(err), zap.Error(runJobErr))
 		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
@@ -1090,7 +1070,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
 		if job != nil {
-			logutil.BgLogger().Info("job != nil", zap.String("job", job.String()))
 			d.unlockSchemaVersion(job.ID)
 			if runJobErr == nil {
 				w.cleanupDDLReorgHandle(job)
@@ -1099,11 +1078,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 		if err != nil {
 			w.unlockSeqNum(err)
-			logutil.BgLogger().Info("error from RunInNewTxn", zap.Error(err), zap.Error(runJobErr), zap.Stack("stack"))
 			return errors.Trace(err)
 		} else if job == nil {
 			// No job now, return and retry getting later.
-			logutil.BgLogger().Info("job == nil, no error", zap.Stack("stack"))
 			return nil
 		}
 		w.unlockSeqNum(err)

@@ -540,6 +540,8 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 }
 
 // DebugDumpOnTimeout will dump stack traces and possible blockers after given timeout.
+// wg is the WaitGroup to mark as done when finished (to avoid runaway goroutines)
+// c is the channel that will signal or close to cancel the timeout.
 func DebugDumpOnTimeout(wg *sync.WaitGroup, c chan struct{}, d time.Duration) {
 	select {
 	case <-time.After(d):
