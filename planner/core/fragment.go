@@ -388,7 +388,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		tmp, _ := e.is.TableByID(ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
 		if !isDisaggregatedTiFlashStaticPrune {
-			partitions, err := partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
+			var partitions []table.PhysicalTable
+			partitions, err = partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

@@ -1427,7 +1427,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 // WatchTiFlashComputeNodeChange create a routine to watch if the topology of tiflash_compute node is changed.
 // TODO: tiflashComputeNodeKey is not put to etcd yet(finish this when AutoScaler is done)
 //
-//	store cache will only be invalidated every 30 seconds.
+//	store cache will only be invalidated every n seconds.
 func (do *Domain) WatchTiFlashComputeNodeChange() error {
 	var watchCh clientv3.WatchChan
 	if do.etcdClient != nil {
