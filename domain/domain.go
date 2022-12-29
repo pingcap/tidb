@@ -191,21 +191,19 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 4. No regenrated schema diff.
 	startTime := time.Now()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
-		is, relatedChanges, regenerateSchemaMap, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
-		if !regenerateSchemaMap {
-			if err == nil {
-				do.infoCache.Insert(is, startTS)
-				logutil.BgLogger().Info("diff load InfoSchema success",
-					zap.Int64("currentSchemaVersion", currentSchemaVersion),
-					zap.Int64("neededSchemaVersion", neededSchemaVersion),
-					zap.Duration("start time", time.Since(startTime)),
-					zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
-					zap.Uint64s("actionTypes", relatedChanges.ActionTypes))
-				return is, false, currentSchemaVersion, relatedChanges, nil
-			}
-			// We can fall back to full load, don't need to return the error.
-			logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
+		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
+		if err == nil {
+			do.infoCache.Insert(is, startTS)
+			logutil.BgLogger().Info("diff load InfoSchema success",
+				zap.Int64("currentSchemaVersion", currentSchemaVersion),
+				zap.Int64("neededSchemaVersion", neededSchemaVersion),
+				zap.Duration("start time", time.Since(startTime)),
+				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
+				zap.Uint64s("actionTypes", relatedChanges.ActionTypes))
+			return is, false, currentSchemaVersion, relatedChanges, nil
 		}
+		// We can fall back to full load, don't need to return the error.
+		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
 
 	schemas, err := do.fetchAllSchemasWithTables(m)
@@ -326,14 +324,13 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-// The third returned value means whether to reload shema info from TiKV or not.
-func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, bool, error) {
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
 		diff, err := m.GetSchemaDiff(usedVersion)
 		if err != nil {
-			return nil, nil, false, err
+			return nil, nil, err
 		}
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
@@ -349,10 +346,10 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	for _, diff := range diffs {
 		IDs, err := builder.ApplyDiff(m, diff)
 		if err != nil {
-			return nil, nil, false, err
+			return nil, nil, err
 		}
 		if diff.RegenerateSchemaMap {
-			return nil, nil, true, nil
+			return nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
@@ -367,7 +364,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	relatedChange := transaction.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
 	relatedChange.ActionTypes = actions
-	return is, &relatedChange, false, nil
+	return is, &relatedChange, nil
 }
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {

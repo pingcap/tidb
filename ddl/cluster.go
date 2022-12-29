@@ -190,7 +190,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 
 	flashbackTSString := oracle.GetTimeFromTS(flashbackTS).String()
 
-	// Check is there a upgrade during [flashbackTS, now)
+	// Check if there is an upgrade during [flashbackTS, now)
 	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb as of timestamp '%s' where VARIABLE_NAME='tidb_server_version'", flashbackTSString)
 	rows, err := newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
 	if err != nil || len(rows) == 0 {
