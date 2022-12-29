@@ -41,3 +41,9 @@ for BACKEND in tidb local; do
   check_not_contains 'id:'
 
 done
+
+run_lightning --backend local -d "tests/$TEST_NAME/errData" --log-file "$TEST_DIR/lightning-err.log"
+# err content presented
+grep ",7,8" "$TEST_DIR/lightning-err.log"
+# pos should not set to end
+grep "[\"syntax error\"] [pos=31]" "$TEST_DIR/lightning-err.log"
