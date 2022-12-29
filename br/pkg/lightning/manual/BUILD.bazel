@@ -10,4 +10,5 @@ go_library(
     cgo = True,
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/manual",
     visibility = ["//visibility:public"],
+    deps = ["@org_uber_go_atomic//:atomic"],
 )

@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
@@ -890,7 +891,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
-		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
+		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		onClose:             onClose,
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 		mdlCheckTableInfo: &mdlCheckTableInfo{
@@ -1060,10 +1061,6 @@ func (do *Domain) Init(
 	if err != nil {
 		return err
 	}
-
-	do.wg.Run(func() {
-		do.runTTLJobManager(ctx)
-	})
 
 	return nil
 }
@@ -1647,8 +1644,8 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 	}
 	taskCH := make(chan *PlanReplayerDumpTask, 16)
 	taskStatus := &planReplayerDumpTaskStatus{}
-	taskStatus.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
-	taskStatus.runningTaskMu.runningTasks = map[PlanReplayerTaskKey]struct{}{}
+	taskStatus.finishedTaskMu.finishedTask = map[replayer.PlanReplayerTaskKey]struct{}{}
+	taskStatus.runningTaskMu.runningTasks = map[replayer.PlanReplayerTaskKey]struct{}{}
 
 	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
 		taskCH: taskCH,
@@ -1940,8 +1937,10 @@ func (do *Domain) loadStatsWorker() {
 		lease = 3 * time.Second
 	}
 	loadTicker := time.NewTicker(lease)
+	updStatsHealthyTicker := time.NewTicker(20 * lease)
 	defer func() {
 		loadTicker.Stop()
+		updStatsHealthyTicker.Stop()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 	statsHandle := do.StatsHandle()
@@ -1967,6 +1966,8 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
+		case <-updStatsHealthyTicker.C:
+			statsHandle.UpdateStatsHealthyMetrics()
 		case <-do.exit:
 			return
 		}
@@ -2452,22 +2453,21 @@ func (do *Domain) serverIDKeeper() {
 	}
 }
 
-func (do *Domain) runTTLJobManager(ctx context.Context) {
-	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store)
-	ttlJobManager.Start()
-	do.ttlJobManager = ttlJobManager
+// StartTTLJobManager creates and starts the ttl job manager
+func (do *Domain) StartTTLJobManager() {
+	do.wg.Run(func() {
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store)
+		do.ttlJobManager = ttlJobManager
+		ttlJobManager.Start()
 
-	// TODO: read the worker count from `do.sysVarCache` and resize the workers
-	ttlworker.ScanWorkersCount.Store(4)
-	ttlworker.DeleteWorkerCount.Store(4)
+		<-do.exit
 
-	<-do.exit
-
-	ttlJobManager.Stop()
-	err := ttlJobManager.WaitStopped(ctx, 30*time.Second)
-	if err != nil {
-		logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
-	}
+		ttlJobManager.Stop()
+		err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
+		if err != nil {
+			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+		}
+	})
 }
 
 // TTLJobManager returns the ttl job manager on this domain
