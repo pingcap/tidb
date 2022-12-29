@@ -15,10 +15,6 @@
 package core
 
 import (
-	"fmt"
-	"math"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
@@ -43,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"math"
 )
 
 var (
@@ -2483,9 +2480,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	mpp, ok := t.(*mppTask)
 	if !ok {
 		return invalidTask
-	}
-	if strings.HasPrefix(p.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select count(distinct a, b), count(distinct b), count(c) from t group by d") {
-		fmt.Println(1)
 	}
 	switch p.MppRunMode {
 	case Mpp1Phase:
