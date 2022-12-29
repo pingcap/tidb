@@ -1609,6 +1609,11 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 				OldTableID:  recoverTabsInfo[i].TableInfo.ID,
 			}
 		}
+	case model.ActionFlashbackCluster:
+		diff.TableID = -1
+		if job.SchemaState == model.StatePublic {
+			diff.RegenerateSchemaMap = true
+		}
 	default:
 		diff.TableID = job.TableID
 	}
