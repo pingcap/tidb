@@ -140,7 +140,7 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 func TestPoolWithoutEnoughCapa(t *testing.T) {
 	const (
 		RunTimes    = 100
-		concurrency = 6
+		concurrency = 2
 		poolsize    = 3
 	)
 	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", poolsize,
