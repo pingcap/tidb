@@ -1562,8 +1562,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType().EvalType() == types.ETString {
 						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
 						// here and skip this refine operation in all other cases for safety.
-						er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-						er.sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
+						er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
 						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 					} else {
 						continue
