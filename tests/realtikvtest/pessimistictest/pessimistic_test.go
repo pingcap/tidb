@@ -3720,7 +3720,7 @@ func TestAggressiveLockingBasic(t *testing.T) {
 }
 
 func TestAggressiveLockingInsert(t *testing.T) {
-	t.Skip("this test failed. under investigation.")
+	//t.Skip("this test failed. under investigation.")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
