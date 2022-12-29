@@ -2515,7 +2515,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				})
 			}
 		}
-		// 形成新的 partition cols property
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
 		if newMpp.invalid() {
@@ -2647,7 +2646,6 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(p, t)
 		}
 	} else if _, ok := t.(*mppTask); ok {
-		// 如果底层暂时还是个 mppTask 的话
 		return final.attach2TaskForMpp(tasks...)
 	} else {
 		attachPlan2Task(p, t)
@@ -2856,7 +2854,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
-		HashCols:     prop.MPPPartitionCols, // 执行层面怎么挂钩 hash key 和具体的 node 节点？
+		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
 
 	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
