@@ -416,12 +416,13 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		task := &kv.MPPTask{Meta: meta,
-			ID:                AllocMPPTaskID(e.ctx),
-			StartTs:           e.startTS,
-			MppQueryID:        e.mppQueryID,
-			TableID:           ts.Table.ID,
-			PartitionTableIDs: allPartitionsIDs,
+		task := &kv.MPPTask{
+			Meta:                              meta,
+			ID:                                AllocMPPTaskID(e.ctx),
+			StartTs:                           e.startTS,
+			MppQueryID:                        e.mppQueryID,
+			TableID:                           ts.Table.ID,
+			PartitionTableIDs:                 allPartitionsIDs,
 			IsDisaggregatedTiFlashStaticPrune: isDisaggregatedTiFlashStaticPrune,
 		}
 		tasks = append(tasks, task)
