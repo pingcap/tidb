@@ -25,10 +25,11 @@ import (
 )
 
 const (
-	flagKeyFormat        = "format"
-	flagTiKVColumnFamily = "cf"
-	flagStartKey         = "start"
-	flagEndKey           = "end"
+	flagKeyFormat            = "format"
+	flagTiKVColumnFamily     = "cf"
+	flagStartKey             = "start"
+	flagEndKey               = "end"
+	flagRawBackupReplicaRead = "replica-read"
 )
 
 // RawKvConfig is the common config for rawkv backup and restore.
@@ -39,7 +40,8 @@ type RawKvConfig struct {
 	EndKey   []byte `json:"end-key" toml:"end-key"`
 	CF       string `json:"cf" toml:"cf"`
 	CompressionConfig
-	RemoveSchedulers bool `json:"remove-schedulers" toml:"remove-schedulers"`
+	RemoveSchedulers bool   `json:"remove-schedulers" toml:"remove-schedulers"`
+	ReplicaRead      string `json:"replica-read" toml:"replica-read"`
 }
 
 // DefineRawBackupFlags defines common flags for the backup command.
@@ -52,6 +54,7 @@ func DefineRawBackupFlags(command *cobra.Command) {
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	command.Flags().Bool(flagRemoveSchedulers, false,
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
+	command.Flags().String(flagRawBackupReplicaRead, "leader", "replica read mode, available values: 'leader', 'follower', 'learner'")
 	// This flag can impact the online cluster, so hide it in case of abuse.
 	_ = command.Flags().MarkHidden(flagRemoveSchedulers)
 }
@@ -87,6 +90,9 @@ func (cfg *RawKvConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if err = cfg.Config.ParseFromFlags(flags); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.ReplicaRead, err = flags.GetString(flagRawBackupReplicaRead); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -224,7 +230,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 	}
 	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRange(ctx, req, progressRange, metaWriter, progressCallBack)
+	err = client.BackupRange(ctx, req, backuppb.BackupReplicaRead_LEADER, map[string]string{}, progressRange, metaWriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
