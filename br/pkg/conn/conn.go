@@ -501,7 +501,7 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 		return nil
 	})
 	if err != nil {
-		log.Warn("meet error when getting checkpoint from TiKV; using default", logutil.ShortError(err))
+		log.Warn("meet error when getting config from TiKV; using default", logutil.ShortError(err))
 		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount
 	}
 	return regionSplitSize, regionSplitKeys
