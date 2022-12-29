@@ -280,7 +280,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if containTableDual(p) && paramNum > 0 {
 		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a TableDual plan"))
 	}
-	if stmtAst.UseCache && !ignorePlanCache {
+	if stmtCtx.UseCache && !ignorePlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
