@@ -846,6 +846,7 @@ func (e mockGrpcErr) Error() string {
 type mockImportClient struct {
 	sst.ImportSSTClient
 	store              *metapb.Store
+	resp               *sst.IngestResponse
 	err                error
 	retry              int
 	cnt                int
@@ -868,8 +869,8 @@ func (c *mockImportClient) MultiIngest(context.Context, *sst.MultiIngestRequest,
 	if c.apiInvokeRecorder != nil {
 		c.apiInvokeRecorder["MultiIngest"] = append(c.apiInvokeRecorder["MultiIngest"], c.store.GetId())
 	}
-	if c.cnt < c.retry && c.err != nil {
-		return nil, c.err
+	if c.cnt < c.retry && (c.err != nil || c.resp != nil) {
+		return c.resp, c.err
 	}
 
 	if !c.multiIngestCheckFn(c.store) {
@@ -1283,7 +1284,12 @@ func TestCheckPeersBusy(t *testing.T) {
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
 	splitCli := initTestSplitClient3Replica(keys, nil)
 	apiInvokeRecorder := map[string][]uint64{}
+	serverIsBusyResp := &sst.IngestResponse{
+		Error: &errorpb.Error{
+			ServerIsBusy: &errorpb.ServerIsBusy{},
+		}}
 
+	createTimeStore12 := 0
 	local := &local{
 		pdCtl:    pdCtl,
 		splitCli: splitCli,
@@ -1297,6 +1303,14 @@ func TestCheckPeersBusy(t *testing.T) {
 				importCli := newMockImportClient()
 				importCli.store = store
 				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 12 {
+					createTimeStore12++
+					// the second time to checkWriteStall
+					if createTimeStore12 == 2 {
+						importCli.retry = 1
+						importCli.resp = serverIsBusyResp
+					}
+				}
 				return importCli
 			},
 		},
@@ -1329,5 +1343,6 @@ func TestCheckPeersBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, []uint64{11, 12, 13, 21, 22, 23}, apiInvokeRecorder["Write"])
-	require.Equal(t, []uint64{11, 12, 13, 11, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
+	// store 12 has a follower busy, so it will cause region peers (11, 12, 13) retry once
+	require.Equal(t, []uint64{11, 12, 11, 12, 13, 11, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
 }
