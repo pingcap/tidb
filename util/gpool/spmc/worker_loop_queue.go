@@ -137,6 +137,7 @@ func (wq *loopQueue[T, U, C, CT, TF]) retrieveExpiry(duration time.Duration) []*
 	return wq.expiry
 }
 
+// binarySearch is to find the first worker which is idle for more than duration.
 func (wq *loopQueue[T, U, C, CT, TF]) binarySearch(expiryTime time.Time) int {
 	var mid, nlen, basel, tmid int
 	nlen = len(wq.items)
