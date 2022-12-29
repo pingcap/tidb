@@ -742,7 +742,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 }
 
 func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property.PhysicalProperty) string {
-	if !ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain || len(candidates) == len(ds.possibleAccessPaths) {
+	if len(candidates) == len(ds.possibleAccessPaths) {
 		return ""
 	}
 	if len(candidates) == 1 && len(candidates[0].path.Ranges) == 0 {
@@ -889,10 +889,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	pruningInfo := ds.getPruningInfo(candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.invalid() && pruningInfo != "" {
-			if ds.ctx.GetSessionVars().StmtCtx.OptimInfo == nil {
-				ds.ctx.GetSessionVars().StmtCtx.OptimInfo = make(map[int]string)
+			warnErr := errors.New(pruningInfo)
+			if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(warnErr)
+			} else {
+				ds.ctx.GetSessionVars().StmtCtx.AppendExtraNote(warnErr)
 			}
-			ds.ctx.GetSessionVars().StmtCtx.OptimInfo[t.plan().ID()] = pruningInfo
 		}
 	}()
 
@@ -926,8 +928,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if len(path.Ranges) == 0 {
 			// We should uncache the tableDual plan.
 			if expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
-				ds.ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-				ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: get a TableDual plan"))
+				ds.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: get a TableDual plan"))
 			}
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
@@ -1417,6 +1418,12 @@ func (ds *DataSource) addSelection4PlanCache(task *rootTask, stats *property.Sta
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
+	if candidate.path.Index.MVIndex {
+		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
+		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
+		// TODO: make IndexReader support accessing MVIndex directly.
+		return invalidTask, nil
+	}
 	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
@@ -2024,10 +2031,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
 				task = invalidTask
 			} else if prop.TaskTp == property.RootTaskType {
-				// When got here, canMppConvertToRootForDisaggregatedTiFlash is true.
+				// when got here, canMppConvertToRootForDisaggregatedTiFlash is true.
 				task = mppTask
 				task = task.convertToRootTask(ds.ctx)
-				ds.addSelection4PlanCache(task.(*rootTask), ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
+				if !task.invalid() {
+					ds.addSelection4PlanCache(task.(*rootTask), ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
+				}
 			}
 		}
 		return task, nil

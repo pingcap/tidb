@@ -1239,12 +1239,17 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		ret = false
 	}
 
-	if !ret && sc.InExplainStmt {
+	if !ret {
 		storageName := storeType.Name()
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
-		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
+		warnErr := errors.New("Aggregation can not be pushed to " + storageName + " because " + reason)
+		if sc.InExplainStmt {
+			sc.AppendWarning(warnErr)
+		} else {
+			sc.AppendExtraWarning(warnErr)
+		}
 	}
 	return ret
 }
@@ -1977,10 +1982,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		attachPlan2Task(proj, newMpp)
 		return newMpp
-	case NoMpp:
-		t = mpp.convertToRootTask(p.ctx)
-		attachPlan2Task(p, t)
-		return t
 	default:
 		return invalidTask
 	}
