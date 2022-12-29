@@ -188,6 +188,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 1. Not first time bootstrap loading, which needs a full load.
 	// 2. It is newer than the current one, so it will be "the current one" after this function call.
 	// 3. There are less 100 diffs.
+	// 4. No regenrated schema diff.
 	startTime := time.Now()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
 		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
@@ -346,6 +347,9 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		IDs, err := builder.ApplyDiff(m, diff)
 		if err != nil {
 			return nil, nil, err
+		}
+		if diff.RegenerateSchemaMap {
+			return nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
