@@ -794,7 +794,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 // normally after finishDDLJob + w.sess.commit() and before any signalling happens.
 // was started before the back filler.
 func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
-	if job == nil || !(job.IsFinished() || job.IsSynced()) {
+	if job != nil && !job.IsFinished() && !job.IsSynced() {
 		return
 	}
 	sctx, err := w.sessPool.get()
