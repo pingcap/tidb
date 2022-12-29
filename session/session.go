@@ -1988,6 +1988,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
+		s.sessionVars.MemTracker.Detach()
 	}, nil
 }
 
@@ -2049,6 +2050,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
 		se.sessionVars.InspectionTableCache = nil
+		se.sessionVars.MemTracker.Detach()
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
@@ -2089,7 +2091,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		metrics.SessionRestrictedSQLCounter.Inc()
 		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 		ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
-		rs, err := se.ExecuteStmt(ctx, stmt)
+		rs, err := se.ExecuteInternalStmt(ctx, stmt)
 		if err != nil {
 			se.sessionVars.StmtCtx.AppendError(err)
 		}
@@ -2109,6 +2111,18 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
+}
+
+// ExecuteInternalStmt execute internal stmt
+func (s *session) ExecuteInternalStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	origin := s.sessionVars.InRestrictedSQL
+	s.sessionVars.InRestrictedSQL = true
+	defer func() {
+		s.sessionVars.InRestrictedSQL = origin
+		// Restore the goroutine label by using the original ctx after execution is finished.
+		pprof.SetGoroutineLabels(ctx)
+	}()
+	return s.ExecuteStmt(ctx, stmtNode)
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
@@ -2166,10 +2180,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	if err == nil {
-		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
-	}
-
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -3283,7 +3293,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 9)
+	ses, err := createSessions(store, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -3359,10 +3369,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if dom.GetEtcdClient() != nil {
 		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
 		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
-		go func() {
-			dom.TelemetryReportLoop(ses[5])
-			dom.TelemetryRotateSubWindowLoop(ses[5])
-		}()
+		if config.GetGlobalConfig().EnableTelemetry {
+			// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
+			// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
+			go func() {
+				dom.TelemetryReportLoop(ses[5])
+				dom.TelemetryRotateSubWindowLoop(ses[5])
+			}()
+		}
 	}
 
 	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
@@ -3383,7 +3397,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	// setup historical stats worker
 	dom.SetupHistoricalStatsWorker(ses[8])
 	dom.StartHistoricalStatsWorker()
-
+	if runBootstrapSQLFile {
+		pm := &privileges.UserPrivileges{
+			Handle: dom.PrivilegeHandle(),
+		}
+		privilege.BindPrivilegeManager(ses[9], pm)
+		doBootstrapSQLFile(ses[9])
+	}
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
 	syncStatsCtxs, err := createSessions(store, cnt)
@@ -4141,22 +4161,25 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 		} else {
 			s.sessionVars.RequestSourceType = stmtLabel
 		}
-	} else {
-		if source := ctx.Value(kv.RequestSourceKey); source != nil {
-			s.sessionVars.RequestSourceType = source.(kv.RequestSource).RequestSourceType
-		} else {
-			// panic in test mode in case there are requests without source in the future.
-			// log warnings in production mode.
-			if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-				panic("unexpected no source type context, if you see this error, " +
-					"the `RequestSourceTypeKey` is missing in your context")
-			} else {
-				logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
-					"the `RequestSourceTypeKey` is missing in the context",
-					zap.Bool("internal", s.isInternal()),
-					zap.String("sql", stmtNode.Text()))
-			}
+		return
+	}
+	if source := ctx.Value(kv.RequestSourceKey); source != nil {
+		requestSource := source.(kv.RequestSource)
+		if requestSource.RequestSourceType != "" {
+			s.sessionVars.RequestSourceType = requestSource.RequestSourceType
+			return
 		}
+	}
+	// panic in test mode in case there are requests without source in the future.
+	// log warnings in production mode.
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		panic("unexpected no source type context, if you see this error, " +
+			"the `RequestSourceTypeKey` is missing in your context")
+	} else {
+		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
+			"the `RequestSourceTypeKey` is missing in the context",
+			zap.Bool("internal", s.isInternal()),
+			zap.String("sql", stmtNode.Text()))
 	}
 }
 

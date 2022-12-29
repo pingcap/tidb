@@ -1375,7 +1375,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *
 		return nil
 	}
 
-	e, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, expr)
+	e, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, expr, false)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -115,6 +115,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
+	if v := ctx.Value("____GetPlanFromSessionPlanCacheErr"); v != nil { // for testing
+		return nil, nil, errors.New("____GetPlanFromSessionPlanCacheErr")
+	}
+
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
@@ -274,7 +278,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// We only cache the tableDual plan when the number of parameters are zero.
 	if containTableDual(p) && paramNum > 0 {
-		stmtCtx.SkipPlanCache = true
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a TableDual plan"))
 	}
 	if stmtAst.UseCache && !stmtCtx.SkipPlanCache && !ignorePlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
