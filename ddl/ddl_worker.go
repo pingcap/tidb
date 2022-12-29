@@ -1043,6 +1043,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// the newest schema.
 		waitSchemaChanged(context.Background(), d, waitTime, schemaVer, job)
 
+		CleanupDDLReorgHandles(job, w.sessPool, w.concurrentDDL)
+
 		if RunInGoTest {
 			// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
 			d.mu.RLock()
