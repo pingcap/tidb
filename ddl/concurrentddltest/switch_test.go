@@ -70,8 +70,9 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 		}
 	}
 
-	c := atomic.NewInt32(0)
-	ch := make(chan struct{})
+	ddlDoneCnt := atomic.NewInt32(0)
+	chDone := make(chan struct{})
+	defer close(chDone)
 	go func() {
 		var wg util.WaitGroupWrapper
 		for i := range ddls {
@@ -80,24 +81,32 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 				tk := testkit.NewTestKit(t, store)
 				tk.MustExec("use test")
 				tk.MustExec(ddls[idx])
-				c.Add(1)
+				ddlDoneCnt.Add(1)
 				wg.Done()
 			}(i)
 		}
 		wg.Wait()
-		ch <- struct{}{}
+		chDone <- struct{}{}
 	}()
 
-	// sleep 2s to make sure the ddl jobs is into table.
-	time.Sleep(2 * time.Second)
-	ticker := time.NewTicker(time.Second)
+	ddlDoneChecked := ddlDoneCnt.Load()
+	for ddlDoneChecked < 3 {
+		time.Sleep(10 * time.Millisecond)
+		ddlDoneChecked = ddlDoneCnt.Load()
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
 	count := 0
 	done := false
 	for !done {
 		select {
-		case <-ch:
+		case <-chDone:
 			done = true
 		case <-ticker.C:
+			tmpCnt := ddlDoneCnt.Load()
+			if tmpCnt <= ddlDoneChecked {
+				continue
+			}
+			ddlDoneChecked = tmpCnt
 			var b bool
 			var err error
 			err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -121,7 +130,7 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, int32(ddlCount), c.Load())
+	require.Equal(t, int32(ddlCount), ddlDoneCnt.Load())
 	require.Greater(t, count, 0)
 
 	tk = testkit.NewTestKit(t, store)
@@ -134,6 +143,7 @@ func TestConcurrentDDLSwitch(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("admin check index t%d idx%d", i, j))
 		}
 	}
+	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=DEFAULT")
 }
 
 func TestConcurrentDDLSwitchWithMDL(t *testing.T) {

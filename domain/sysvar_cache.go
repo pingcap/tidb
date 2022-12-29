@@ -51,6 +51,7 @@ func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {
 		if err = do.rebuildSysVarCache(nil); err != nil {
 			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 		}
+		logutil.BgLogger().Info("sysvar cache have been rebuilt")
 	}
 	return err
 }
@@ -120,6 +121,8 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	// where an earlier fetchTableValues() finishes last.
 	do.sysVarCache.rebuildLock.Lock()
 	defer do.sysVarCache.rebuildLock.Unlock()
+	// TODO: remove CI debug
+	logutil.BgLogger().Info("rebuilding sysvar cache", zap.Stack("stack"))
 	tableContents, err := do.fetchTableValues(ctx)
 	if err != nil {
 		return err
@@ -152,7 +155,8 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 		}
 	}
 
-	logutil.BgLogger().Debug("rebuilding sysvar cache")
+	// TODO: lower back to Debug, currently using as CI debug
+	logutil.BgLogger().Info("rebuilt sysvar cache")
 
 	do.sysVarCache.Lock()
 	defer do.sysVarCache.Unlock()
