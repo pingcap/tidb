@@ -875,7 +875,7 @@ func (c *mockImportClient) MultiIngest(context.Context, *sst.MultiIngestRequest,
 	if !c.multiIngestCheckFn(c.store) {
 		return nil, mockGrpcErr{}
 	}
-	return nil, nil
+	return &sst.IngestResponse{}, nil
 }
 
 type mockWriteClient struct {
@@ -1300,11 +1300,12 @@ func TestServerIsBusy(t *testing.T) {
 				return importCli
 			},
 		},
-		logger:             log.L(),
-		ingestConcurrency:  worker.NewPool(ctx, 1, "ingest"),
-		writeLimiter:       noopStoreWriteLimiter{},
-		bufferPool:         membuf.NewPool(),
-		supportMultiIngest: true,
+		logger:                log.L(),
+		ingestConcurrency:     worker.NewPool(ctx, 1, "ingest"),
+		writeLimiter:          noopStoreWriteLimiter{},
+		bufferPool:            membuf.NewPool(),
+		supportMultiIngest:    true,
+		shouldCheckWriteStall: true,
 	}
 
 	db, tmpPath := makePebbleDB(t, nil)
@@ -1328,5 +1329,5 @@ func TestServerIsBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, []uint64{11, 12, 13, 21, 22, 23}, apiInvokeRecorder["Write"])
-	require.Equal(t, []uint64{11, 21}, apiInvokeRecorder["MultiIngest"])
+	require.Equal(t, []uint64{11, 12, 13, 11, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
 }
