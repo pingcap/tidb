@@ -143,7 +143,7 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 		return struct{}{}
 	})
 	var twg util.WaitGroupWrapper
-	for i := 0; i < 3; i++ {
+	for i := 0; i < RunTimes; i++ {
 		twg.Run(func() {
 			sema := make(chan struct{}, 10)
 			var wg util.WaitGroupWrapper

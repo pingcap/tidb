@@ -24,7 +24,7 @@ import (
 
 func TestNewLoopQueue(t *testing.T) {
 	size := 100
-	q := newWorkerLoopQueue(size)
+	q := newWorkerLoopQueue[struct{}, struct{}, int, any, pooltask.NilContext](size)
 	require.EqualValues(t, 0, q.len(), "Len error")
 	require.Equal(t, true, q.isEmpty(), "IsEmpty error")
 	require.Nil(t, q.detach(), "Dequeue error")
