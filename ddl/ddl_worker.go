@@ -800,11 +800,11 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 // normally after finishDDLJob + w.sess.commit() and before any signalling happens.
 // was started before the back filler.
 func (w *worker) cleanupDDLReorgHandle(job *model.Job) {
-	logutil.BgLogger().Info("cleanupDDLReorgHandle", zap.String("job", job.String()))
-	if !job.IsFinished() && !job.IsSynced() {
+	if job == nil || !(job.IsFinished() || job.IsSynced()) {
 		logutil.BgLogger().Info("cleanupDDLReorgHandle job not in finished or synced state")
 		return
 	}
+	logutil.BgLogger().Info("cleanupDDLReorgHandle", zap.String("job", job.String()))
 	sctx, err := w.sessPool.get()
 	if err != nil {
 		return
