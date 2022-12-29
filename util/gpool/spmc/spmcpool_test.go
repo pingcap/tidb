@@ -144,7 +144,7 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 		poolsize    = 3
 	)
 	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", poolsize,
-		WithExpiryDuration(DefaultExpiredTime), WithNonblocking(true))
+		WithExpiryDuration(DefaultExpiredTime), WithNonblocking(false))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
