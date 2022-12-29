@@ -65,6 +65,7 @@ go_library(
         "//table/temptable",
         "//tablecodec",
         "//telemetry",
+        "//ttl/ttlworker",
         "//types",
         "//types/parser_driver",
         "//util",

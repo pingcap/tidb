@@ -1062,10 +1062,6 @@ func (do *Domain) Init(
 		return err
 	}
 
-	do.wg.Run(func() {
-		do.runTTLJobManager(ctx)
-	})
-
 	return nil
 }
 
@@ -2457,18 +2453,21 @@ func (do *Domain) serverIDKeeper() {
 	}
 }
 
-func (do *Domain) runTTLJobManager(ctx context.Context) {
-	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store)
-	ttlJobManager.Start()
-	do.ttlJobManager = ttlJobManager
+// StartTTLJobManager creates and starts the ttl job manager
+func (do *Domain) StartTTLJobManager() {
+	do.wg.Run(func() {
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store)
+		do.ttlJobManager = ttlJobManager
+		ttlJobManager.Start()
 
-	<-do.exit
+		<-do.exit
 
-	ttlJobManager.Stop()
-	err := ttlJobManager.WaitStopped(ctx, 30*time.Second)
-	if err != nil {
-		logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
-	}
+		ttlJobManager.Stop()
+		err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
+		if err != nil {
+			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+		}
+	})
 }
 
 // TTLJobManager returns the ttl job manager on this domain

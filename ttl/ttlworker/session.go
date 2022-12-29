@@ -33,6 +33,27 @@ import (
 	"go.uber.org/zap"
 )
 
+// The following two functions are using `sqlexec.SQLExecutor` to represent session
+// which is actually not correct. It's a work around for the cyclic dependency problem.
+// It actually doesn't accept arbitrary SQLExecutor, but just `*session.session`, which means
+// you cannot pass the `(ttl/session).Session` into it.
+// Use `sqlexec.SQLExecutor` and `sessionctx.Session` or another other interface (including
+// `interface{}`) here is the same, I just pick one small enough interface.
+// Also, we cannot use the functions in `session/session.go` (to avoid cyclic dependency), so
+// registering function here is really needed.
+
+// AttachStatsCollector attaches the stats collector for the session.
+// this function is registered in BootstrapSession in /session/session.go
+var AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
+
+// DetachStatsCollector removes the stats collector for the session
+// this function is registered in BootstrapSession in /session/session.go
+var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
+
 type sessionPool interface {
 	Get() (pools.Resource, error)
 	Put(pools.Resource)
@@ -80,8 +101,12 @@ func getSession(pool sessionPool) (session.Session, error) {
 			terror.Log(err)
 		}
 
+		DetachStatsCollector(exec)
+
 		pool.Put(resource)
 	})
+
+	exec = AttachStatsCollector(exec)
 
 	// store and set the retry limit to 0
 	_, err = se.ExecuteSQL(context.Background(), "set tidb_retry_limit=0")
