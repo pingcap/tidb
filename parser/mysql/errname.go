@@ -956,7 +956,6 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrJsonValueOutOfRangeForFuncIndex:                       Message("Out of range JSON value for CAST for functional index '%s'", nil),
 	ErrFunctionalIndexDataIsTooLong:                          Message("Data too long for functional index '%s'", nil),
 	ErrFunctionalIndexNotApplicable:                          Message("Cannot use functional index '%s' due to type or collation conversion", nil),
-	ErrDependentByPartitionFunctional:                        Message("Column '%s' has a partitioning function dependency and cannot be dropped or renamed", nil),
 
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         Message("Only one DEFAULT partition allowed", nil),
