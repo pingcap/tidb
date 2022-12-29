@@ -149,7 +149,8 @@
       "EXPLAIN select count(distinct a+b), sum(c) from t",
       "select count(distinct a+b), sum(c) from t",
       "EXPLAIN select count(distinct a+b), count(distinct b+c), count(c) from t",
-      "select count(distinct a+b), count(distinct b+c), count(c) from t"
+      "select count(distinct a+b), count(distinct b+c), count(c) from t",
+      "explain select count(distinct a,c), count(distinct b,c), count(c) from t"
     ]
   }
 ]

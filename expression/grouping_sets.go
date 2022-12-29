@@ -162,6 +162,25 @@ func (gss GroupingSets) TargetOne(targetOne GroupingExprs) int {
 	return -1
 }
 
+// NeedCloneColumn indicate whether we need to copy column to when expanding datasource.
+func (gss GroupingSets) NeedCloneColumn() bool {
+	// for grouping sets like: {<a,c>},{<c>} / {<a,c>},{<b,c>}
+	// the column c should be copied one more time here, otherwise it will be filled with null values and not visible for the other grouping set again.
+	setIDs := make([]*fd.FastIntSet, 0, len(gss))
+	for _, groupingSet := range gss {
+		setIDs = append(setIDs, groupingSet.allSetColIDs())
+	}
+	for idx, oneSetIDs := range setIDs {
+		for j := idx + 1; j < len(setIDs); j++ {
+			otherSetIDs := setIDs[j]
+			if oneSetIDs.Intersects(*otherSetIDs) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsEmpty indicates whether current grouping set is empty.
 func (gs GroupingSet) IsEmpty() bool {
 	if len(gs) == 0 {

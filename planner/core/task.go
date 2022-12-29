@@ -1929,8 +1929,13 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 	}
 	Compressed := GroupingSets.Merge()
 	if len(Compressed) != len(GroupingSets) {
-		// todo arenatlx: some grouping set should be merged which is not supported by now temporarily.
 		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some grouping sets should be merged"))
+		// todo arenatlx: some grouping set should be merged which is not supported by now temporarily.
+		return false, nil
+	}
+	if GroupingSets.NeedCloneColumn() {
+		// todo: column clone haven't implemented.
+		return false, nil
 	}
 	if len(GroupingSets) > 1 {
 		// fill the grouping ID for normal agg.
