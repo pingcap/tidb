@@ -1277,3 +1277,35 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	})
 	tk.MustQuery("select * from t;").Check(testkit.Rows())
 }
+
+func TestDisaggregatedTiFlashQuery(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = true
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
+
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl_1")
+	tk.MustExec(`create table tbl_1 ( col_1 bigint not null default -1443635317331776148,
+		col_2 text ( 176 ) collate utf8mb4_bin not null,
+		col_3 decimal ( 8, 3 ),
+		col_4 varchar ( 128 ) collate utf8mb4_bin not null,
+		col_5 varchar ( 377 ) collate utf8mb4_bin,
+		col_6 double,
+		col_7 varchar ( 459 ) collate utf8mb4_bin,
+		col_8 tinyint default -88 ) charset utf8mb4 collate utf8mb4_bin ;`)
+	tk.MustExec("alter table tbl_1 set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "tbl_1")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+
+	needCheckTiFlashComputeNode := "false"
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery", fmt.Sprintf("return(%s)", needCheckTiFlashComputeNode))
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery")
+	tk.MustExec("explain select max( tbl_1.col_1 ) as r0 , sum( tbl_1.col_1 ) as r1 , sum( tbl_1.col_8 ) as r2 from tbl_1 where tbl_1.col_8 != 68 or tbl_1.col_3 between null and 939 order by r0,r1,r2;")
+}
