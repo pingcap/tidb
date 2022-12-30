@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
@@ -1747,5 +1749,73 @@ PARTITION BY RANGE COLUMNS ( id ) (
 		tableids := rse.GetTablesID()
 		slices.Sort(tableids)
 		require.Equal(t, ca.tableIDs, tableids)
+	}
+}
+
+func TestExtractorInPreparedStmt(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf(`set @a=1, @b=2, @c="a%%", @d=cast('2019-10-10 10:10:10' as datetime)`))
+
+	var cases = []struct {
+		prepared string
+		exec     string
+		checker  func(extractor plannercore.MemTablePredicateExtractor)
+	}{
+		{
+			prepared: "prepare stmt from 'select * from information_schema.TIKV_REGION_STATUS where table_id = ?'",
+			exec:     "execute stmt using @a",
+			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
+				tableids := rse.GetTablesID()
+				slices.Sort(tableids)
+				require.Equal(t, []int64{1}, tableids)
+			},
+		},
+		{
+			prepared: "prepare stmt from 'select * from information_schema.TIKV_REGION_STATUS where table_id = ? or table_id = ?'",
+			exec:     "execute stmt using @a, @b",
+			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
+				tableids := rse.GetTablesID()
+				slices.Sort(tableids)
+				require.Equal(t, []int64{1, 2}, tableids)
+			},
+		},
+		{
+			prepared: "prepare stmt from 'select * from information_schema.TIKV_REGION_STATUS where table_id in (?,?)'",
+			exec:     "execute stmt using @a, @b",
+			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
+				tableids := rse.GetTablesID()
+				slices.Sort(tableids)
+				require.Equal(t, []int64{1, 2}, tableids)
+			},
+		},
+		{
+			prepared: "prepare stmt from 'select * from information_schema.COLUMNS where table_name like ?'",
+			exec:     "execute stmt using @c",
+			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+				rse := extractor.(*plannercore.ColumnsTableExtractor)
+				require.EqualValues(t, []string{"a%"}, rse.TableNamePatterns)
+			},
+		},
+		{
+			prepared: "prepare stmt from 'select * from information_schema.tidb_hot_regions_history where update_time>=?'",
+			exec:     "execute stmt using @d",
+			checker: func(extractor plannercore.MemTablePredicateExtractor) {
+				rse := extractor.(*plannercore.HotRegionsHistoryTableExtractor)
+				require.Equal(t, timestamp(t, "2019-10-10 10:10:10"), rse.StartTime)
+			},
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		tk.MustExec(ca.prepared)
+		stmt, err := parser.ParseOneStmt(ca.exec, "", "")
+		require.NoError(t, err)
+		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), stmt.(*ast.ExecuteStmt), dom.InfoSchema())
+		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		ca.checker(extractor)
 	}
 }
