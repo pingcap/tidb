@@ -56,10 +56,6 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	defer func() {
 		ddl.ReorgWaitTimeout = originalTimeout
 	}()
-	// If this test fails and you cannot reproduce it in other environments, try uncomment these:
-	//tkPre := testkit.NewTestKit(t, store)
-	//tkPre.MustExec("set @@global.tidb_enable_metadata_lock=0")
-	//tkPre.MustExec("set @@global.tidb_enable_concurrent_ddl=0")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -126,14 +122,11 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		for i, e := range gotElements {
 			require.Equal(t, expectedElements[i], e)
 		}
-		res := tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Rows()[0][0]
-		if res != "0" {
-			// check the consistency of the tables.
-			currJobID := strconv.FormatInt(currJob.ID, 10)
-			tk.MustQuery("select job_id, reorg, schema_ids, table_ids, type, processing from mysql.tidb_ddl_job where job_id = " + currJobID).Check(testkit.Rows())
-			tk.MustQuery("select job_id from mysql.tidb_ddl_history where job_id = " + currJobID).Check(testkit.Rows(currJobID))
-			tk.MustQuery("select job_id, ele_id, ele_type, physical_id from mysql.tidb_ddl_reorg where job_id = " + currJobID).Check(testkit.Rows())
-		}
+		// check the consistency of the tables.
+		currJobID := strconv.FormatInt(currJob.ID, 10)
+		tk.MustQuery("select job_id, reorg, schema_ids, table_ids, type, processing from mysql.tidb_ddl_job where job_id = " + currJobID).Check(testkit.Rows())
+		tk.MustQuery("select job_id from mysql.tidb_ddl_history where job_id = " + currJobID).Check(testkit.Rows(currJobID))
+		tk.MustQuery("select job_id, ele_id, ele_type, physical_id from mysql.tidb_ddl_reorg where job_id = " + currJobID).Check(testkit.Rows())
 		require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
