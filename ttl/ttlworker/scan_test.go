@@ -47,8 +47,7 @@ func newMockScanWorker(t *testing.T) *mockScanWorker {
 	w.ttlScanWorker = newScanWorker(w.delCh, w.notifyCh, w.sessPoll)
 	require.Equal(t, workerStatusCreated, w.Status())
 	require.False(t, w.Idle())
-	result, ok := w.PollTaskResult()
-	require.False(t, ok)
+	result := w.PollTaskResult()
 	require.Nil(t, result)
 	return w
 }
@@ -61,8 +60,8 @@ func (w *mockScanWorker) checkWorkerStatus(status workerStatus, idle bool, curTa
 
 func (w *mockScanWorker) checkPollResult(exist bool, err string) {
 	curTask := w.CurrentTask()
-	r, ok := w.PollTaskResult()
-	require.Equal(w.t, exist, ok)
+	r := w.PollTaskResult()
+	require.Equal(w.t, exist, r != nil)
 	if !exist {
 		require.Nil(w.t, r)
 	} else {
@@ -135,6 +134,7 @@ func TestScanWorkerSchedule(t *testing.T) {
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
+		ctx:        context.Background(),
 		tbl:        tbl,
 		expire:     time.UnixMilli(0),
 		statistics: &ttlStatistics{},
@@ -181,6 +181,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
+		ctx:        context.Background(),
 		tbl:        tbl,
 		expire:     time.UnixMilli(0),
 		statistics: &ttlStatistics{},
@@ -220,9 +221,12 @@ func newMockScanTask(t *testing.T, sqlCnt int) *mockScanTask {
 	task := &mockScanTask{
 		t: t,
 		ttlScanTask: &ttlScanTask{
-			tbl:        tbl,
-			expire:     time.UnixMilli(0),
-			rangeStart: []types.Datum{types.NewIntDatum(0)},
+			ctx:    context.Background(),
+			tbl:    tbl,
+			expire: time.UnixMilli(0),
+			scanRange: cache.ScanRange{
+				Start: []types.Datum{types.NewIntDatum(0)},
+			},
 			statistics: &ttlStatistics{},
 		},
 		tbl:             tbl,
@@ -236,7 +240,11 @@ func newMockScanTask(t *testing.T, sqlCnt int) *mockScanTask {
 }
 
 func (t *mockScanTask) selectSQL(i int) string {
-	return fmt.Sprintf("SELECT LOW_PRIORITY `_tidb_rowid` FROM `test`.`t1` WHERE `_tidb_rowid` > %d AND `time` < '1970-01-01 08:00:00' ORDER BY `_tidb_rowid` ASC LIMIT 3", i*100)
+	op := ">"
+	if i == 0 {
+		op = ">="
+	}
+	return fmt.Sprintf("SELECT LOW_PRIORITY `_tidb_rowid` FROM `test`.`t1` WHERE `_tidb_rowid` %s %d AND `time` < '1970-01-01 08:00:00' ORDER BY `_tidb_rowid` ASC LIMIT 3", op, i*100)
 }
 
 func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlScanTaskExecResult {

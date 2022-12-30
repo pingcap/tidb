@@ -65,6 +65,7 @@ go_library(
         "//table/temptable",
         "//tablecodec",
         "//telemetry",
+        "//ttl/ttlworker",
         "//types",
         "//types/parser_driver",
         "//util",
@@ -107,7 +108,7 @@ go_library(
 
 go_test(
     name = "session_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",

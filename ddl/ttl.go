@@ -63,7 +63,7 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 
 	if ttlInfo != nil {
 		// if the TTL_ENABLE is not set explicitly, use the original value
-		if ttlInfoEnable == nil {
+		if ttlInfoEnable == nil && tblInfo.TTLInfo != nil {
 			ttlInfo.Enable = tblInfo.TTLInfo.Enable
 		}
 		tblInfo.TTLInfo = ttlInfo

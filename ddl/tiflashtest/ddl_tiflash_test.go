@@ -16,7 +16,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSES/QL-LICENSE file.
 
-package ddl_test
+package tiflashtest
 
 import (
 	"context"
@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/zap"
 )
@@ -124,10 +125,6 @@ func ChangeGCSafePoint(tk *testkit.TestKit, t time.Time, enable string, lifeTime
 			       UPDATE variable_value = '%[1]s'`
 	s = fmt.Sprintf(s, lifeTime)
 	tk.MustExec(s)
-}
-
-func CheckPlacementRule(tiflash *infosync.MockTiFlash, rule placement.TiFlashRule) bool {
-	return tiflash.CheckPlacementRule(rule)
 }
 
 func (s *tiflashContext) CheckFlashback(tk *testkit.TestKit, t *testing.T) {
@@ -442,6 +439,44 @@ func TestTiFlashDropPartition(t *testing.T) {
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 }
 
+func TestTiFlashFlashbackCluster(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+
+	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
+	tk.MustExec("alter table t set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
+	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "t")
+
+	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+
+	ChangeGCSafePoint(tk, time.Now().Add(-10*time.Second), "true", "10m0s")
+	defer func() {
+		ChangeGCSafePoint(tk, time.Now(), "true", "10m0s")
+	}()
+
+	errorMsg := fmt.Sprintf("[ddl:-1]Detected unsupported DDL job type(%s) during [%s, now), can't do flashback",
+		model.ActionSetTiFlashReplica.String(), oracle.GetTimeFromTS(ts).String())
+	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)), errorMsg)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+}
+
 func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, table string) {
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	require.NoError(t, err)
@@ -524,7 +559,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := CheckPlacementRule(s.tiflash, *expectRule)
+	res := s.tiflash.CheckPlacementRule(*expectRule)
 	require.True(t, res)
 
 	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
@@ -536,7 +571,7 @@ func TestSetPlacementRuleNormal(t *testing.T) {
 	defer fCancelPD()
 	tk.MustExec("drop table ddltiflash")
 	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res = CheckPlacementRule(s.tiflash, *expectRule)
+	res = s.tiflash.CheckPlacementRule(*expectRule)
 	require.True(t, res)
 }
 
@@ -580,7 +615,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
-	res := CheckPlacementRule(s.tiflash, *expectRule)
+	res := s.tiflash.CheckPlacementRule(*expectRule)
 	require.True(t, res)
 
 	ChangeGCSafePoint(tk, time.Now().Add(-time.Hour), "true", "10m0s")
@@ -590,7 +625,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 
 	// Wait GC
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	res = CheckPlacementRule(s.tiflash, *expectRule)
+	res = s.tiflash.CheckPlacementRule(*expectRule)
 	require.False(t, res)
 }
 
@@ -611,7 +646,7 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.NoError(t, err)
 
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
-	res := CheckPlacementRule(s.tiflash, *expectRule)
+	res := s.tiflash.CheckPlacementRule(*expectRule)
 	require.False(t, res)
 }
 

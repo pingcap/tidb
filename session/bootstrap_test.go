@@ -17,12 +17,14 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
@@ -46,7 +48,7 @@ func TestBootstrap(t *testing.T) {
 	se := createSessionAndSetID(t, store)
 	mustExec(t, se, "set global tidb_txn_mode=''")
 	mustExec(t, se, "use mysql")
-	r := mustExec(t, se, "select * from user")
+	r := mustExecToRecodeSet(t, se, "select * from user")
 	require.NotNil(t, r)
 
 	ctx := context.Background()
@@ -64,19 +66,14 @@ func TestBootstrap(t *testing.T) {
 	mustExec(t, se, "use test")
 
 	// Check privilege tables.
-	rs := mustExec(t, se, "SELECT * from mysql.global_priv")
-	require.NoError(t, rs.Close())
-	rs = mustExec(t, se, "SELECT * from mysql.db")
-	require.NoError(t, rs.Close())
-	rs = mustExec(t, se, "SELECT * from mysql.tables_priv")
-	require.NoError(t, rs.Close())
-	rs = mustExec(t, se, "SELECT * from mysql.columns_priv")
-	require.NoError(t, rs.Close())
-	rs = mustExec(t, se, "SELECT * from mysql.global_grants")
-	require.NoError(t, rs.Close())
+	mustExec(t, se, "SELECT * from mysql.global_priv")
+	mustExec(t, se, "SELECT * from mysql.db")
+	mustExec(t, se, "SELECT * from mysql.tables_priv")
+	mustExec(t, se, "SELECT * from mysql.columns_priv")
+	mustExec(t, se, "SELECT * from mysql.global_grants")
 
 	// Check privilege tables.
-	r = mustExec(t, se, "SELECT COUNT(*) from mysql.global_variables")
+	r = mustExecToRecodeSet(t, se, "SELECT COUNT(*) from mysql.global_variables")
 	require.NotNil(t, r)
 
 	req = r.NewChunk(nil)
@@ -100,7 +97,7 @@ func TestBootstrap(t *testing.T) {
 	se, err = CreateSession4Test(store)
 	require.NoError(t, err)
 	mustExec(t, se, "USE test")
-	r = mustExec(t, se, "select * from t")
+	r = mustExecToRecodeSet(t, se, "select * from t")
 	require.NotNil(t, r)
 
 	req = r.NewChunk(nil)
@@ -116,7 +113,7 @@ func TestBootstrap(t *testing.T) {
 	se, err = CreateSession4Test(store)
 	require.NoError(t, err)
 	doDMLWorks(se)
-	r = mustExec(t, se, "select * from mysql.expr_pushdown_blacklist where name = 'date_add'")
+	r = mustExecToRecodeSet(t, se, "select * from mysql.expr_pushdown_blacklist where name = 'date_add'")
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -179,7 +176,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	se := createSessionAndSetID(t, store)
 	mustExec(t, se, "USE mysql")
-	r := mustExec(t, se, `select * from user`)
+	r := mustExecToRecodeSet(t, se, `select * from user`)
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -192,15 +189,15 @@ func TestBootstrapWithError(t *testing.T) {
 
 	mustExec(t, se, "USE test")
 	// Check privilege tables.
-	mustExec(t, se, "SELECT * from mysql.global_priv").Close()
-	mustExec(t, se, "SELECT * from mysql.db").Close()
-	mustExec(t, se, "SELECT * from mysql.tables_priv").Close()
-	mustExec(t, se, "SELECT * from mysql.columns_priv").Close()
+	mustExec(t, se, "SELECT * from mysql.global_priv")
+	mustExec(t, se, "SELECT * from mysql.db")
+	mustExec(t, se, "SELECT * from mysql.tables_priv")
+	mustExec(t, se, "SELECT * from mysql.columns_priv")
 	// Check role tables.
-	mustExec(t, se, "SELECT * from mysql.role_edges").Close()
-	mustExec(t, se, "SELECT * from mysql.default_roles").Close()
+	mustExec(t, se, "SELECT * from mysql.role_edges")
+	mustExec(t, se, "SELECT * from mysql.default_roles")
 	// Check global variables.
-	r = mustExec(t, se, "SELECT COUNT(*) from mysql.global_variables")
+	r = mustExecToRecodeSet(t, se, "SELECT COUNT(*) from mysql.global_variables")
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -208,7 +205,7 @@ func TestBootstrapWithError(t *testing.T) {
 	require.Equal(t, globalVarsCount(), v.GetInt64(0))
 	require.NoError(t, r.Close())
 
-	r = mustExec(t, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped"`)
+	r = mustExecToRecodeSet(t, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped"`)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -219,7 +216,7 @@ func TestBootstrapWithError(t *testing.T) {
 	require.NoError(t, r.Close())
 
 	// Check tidb_ttl_table_status table
-	mustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status").Close()
+	mustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
 }
 
 // TestUpgrade tests upgrading
@@ -233,7 +230,7 @@ func TestUpgrade(t *testing.T) {
 	mustExec(t, se, "USE mysql")
 
 	// bootstrap with currentBootstrapVersion
-	r := mustExec(t, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
+	r := mustExecToRecodeSet(t, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	req := r.NewChunk(nil)
 	err := r.Next(ctx, req)
 	row := req.GetRow(0)
@@ -262,7 +259,7 @@ func TestUpgrade(t *testing.T) {
 	mustExec(t, se1, `commit`)
 	unsetStoreBootstrapped(store.UUID())
 	// Make sure the version is downgraded.
-	r = mustExec(t, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
+	r = mustExecToRecodeSet(t, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -278,7 +275,7 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 
 	se2 := createSessionAndSetID(t, store)
-	r = mustExec(t, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
+	r = mustExecToRecodeSet(t, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -293,7 +290,7 @@ func TestUpgrade(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// Verify that 'new_collation_enabled' is false.
-	r = mustExec(t, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbNewCollationEnabled))
+	r = mustExecToRecodeSet(t, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbNewCollationEnabled))
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -331,7 +328,7 @@ func TestIssue17979_1(t *testing.T) {
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
-	r := mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
+	r := mustExecToRecodeSet(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, variable.OOMActionLog, req.GetRow(0).GetString(0))
@@ -368,7 +365,7 @@ func TestIssue17979_2(t *testing.T) {
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
-	r := mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
+	r := mustExecToRecodeSet(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 0, req.NumRows())
@@ -409,12 +406,12 @@ func TestIssue20900_2(t *testing.T) {
 	ver, err = getBootstrapVersion(seV4)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
-	r := mustExec(t, seV4, "select @@tidb_mem_quota_query")
+	r := mustExecToRecodeSet(t, seV4, "select @@tidb_mem_quota_query")
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, "1073741824", req.GetRow(0).GetString(0))
 	require.Equal(t, int64(1073741824), seV4.GetSessionVars().MemQuotaQuery)
-	r = mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
+	r = mustExecToRecodeSet(t, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
 	req = r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 0, req.NumRows())
@@ -476,7 +473,7 @@ func TestStmtSummary(t *testing.T) {
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
 
-	r := mustExec(t, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
+	r := mustExecToRecodeSet(t, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	row := req.GetRow(0)
@@ -538,7 +535,7 @@ func TestUpdateBindInfo(t *testing.T) {
 		mustExec(t, se, sql)
 
 		upgradeToVer67(se, version66)
-		r := mustExec(t, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
+		r := mustExecToRecodeSet(t, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
 		req := r.NewChunk(nil)
 		require.NoError(t, r.Next(ctx, req))
 		row := req.GetRow(0)
@@ -549,7 +546,7 @@ func TestUpdateBindInfo(t *testing.T) {
 		require.NoError(t, r.Close())
 		sql = fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
 		mustExec(t, se, sql)
-		r = mustExec(t, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
+		r = mustExecToRecodeSet(t, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
 		require.NoError(t, r.Next(ctx, req))
 		row = req.GetRow(0)
 		require.Equal(t, bindCase.originWithDB, row.GetString(0))
@@ -581,7 +578,7 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 
 	upgradeToVer67(se, version66)
 
-	r := mustExec(t, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
+	r := mustExecToRecodeSet(t, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 3, req.NumRows())
@@ -637,7 +634,7 @@ func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
 
-	r := mustExec(t, seV68, `select @@global.tidb_enable_clustered_index, @@session.tidb_enable_clustered_index`)
+	r := mustExecToRecodeSet(t, seV68, `select @@global.tidb_enable_clustered_index, @@session.tidb_enable_clustered_index`)
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(context.Background(), req))
 	require.Equal(t, 1, req.NumRows())
@@ -674,7 +671,7 @@ func TestUpgradeVersion66(t *testing.T) {
 	ver, err = getBootstrapVersion(seV66)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
-	r := mustExec(t, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
+	r := mustExecToRecodeSet(t, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 1, req.NumRows())
@@ -724,7 +721,7 @@ func TestUpgradeVersion74(t *testing.T) {
 			ver, err = getBootstrapVersion(seV74)
 			require.NoError(t, err)
 			require.Equal(t, currentBootstrapVersion, ver)
-			r := mustExec(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
+			r := mustExecToRecodeSet(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
 			req := r.NewChunk(nil)
 			require.NoError(t, r.Next(ctx, req))
 			require.Equal(t, 1, req.NumRows())
@@ -757,7 +754,7 @@ func TestUpgradeVersion75(t *testing.T) {
 	ver, err := getBootstrapVersion(seV74)
 	require.NoError(t, err)
 	require.Equal(t, int64(74), ver)
-	r := mustExec(t, seV74, `desc mysql.user`)
+	r := mustExecToRecodeSet(t, seV74, `desc mysql.user`)
 	req := r.NewChunk(nil)
 	row := req.GetRow(0)
 	require.NoError(t, r.Next(ctx, req))
@@ -771,7 +768,7 @@ func TestUpgradeVersion75(t *testing.T) {
 	ver, err = getBootstrapVersion(seV75)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
-	r = mustExec(t, seV75, `desc mysql.user`)
+	r = mustExecToRecodeSet(t, seV75, `desc mysql.user`)
 	req = r.NewChunk(nil)
 	row = req.GetRow(0)
 	require.NoError(t, r.Next(ctx, req))
@@ -853,7 +850,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, int64(ver300), ver)
 
 	// We are now in 3.0.0, check tidb_analyze_version should not exist.
-	res := mustExec(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeVersion))
+	res := mustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeVersion))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -868,7 +865,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in version no lower than 5.x, tidb_enable_index_merge should be 1.
-	res = mustExec(t, seCurVer, "select @@tidb_analyze_version")
+	res = mustExecToRecodeSet(t, seCurVer, "select @@tidb_analyze_version")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -891,7 +888,7 @@ func TestIndexMergeInNewCluster(t *testing.T) {
 
 	// In a new created cluster(above 5.4+), tidb_enable_index_merge is 1 by default.
 	mustExec(t, se, "use test;")
-	r := mustExec(t, se, "select @@tidb_enable_index_merge;")
+	r := mustExecToRecodeSet(t, se, "select @@tidb_enable_index_merge;")
 	require.NotNil(t, r)
 
 	ctx := context.Background()
@@ -928,7 +925,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	require.Equal(t, int64(ver300), ver)
 
 	// We are now in 3.0.0, check tidb_enable_index_merge shoudle not exist.
-	res := mustExec(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	res := mustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -943,7 +940,7 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 5.x, tidb_enable_index_merge should be off.
-	res = mustExec(t, seCurVer, "select @@tidb_enable_index_merge")
+	res = mustExecToRecodeSet(t, seCurVer, "select @@tidb_enable_index_merge")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -979,7 +976,7 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 			require.Equal(t, int64(ver400), ver)
 
 			// We are now in 4.0.0, tidb_enable_index_merge is off.
-			res := mustExec(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+			res := mustExecToRecodeSet(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
 			chk := res.NewChunk(nil)
 			err = res.Next(ctx, chk)
 			require.NoError(t, err)
@@ -1005,7 +1002,7 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 			require.Equal(t, currentBootstrapVersion, ver)
 
 			// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
-			res = mustExec(t, seCurVer, "select @@tidb_enable_index_merge")
+			res = mustExecToRecodeSet(t, seCurVer, "select @@tidb_enable_index_merge")
 			chk = res.NewChunk(nil)
 			err = res.Next(ctx, chk)
 			require.NoError(t, err)
@@ -1037,7 +1034,7 @@ func TestUpgradeToVer85(t *testing.T) {
 	mustExec(t, se, `insert into mysql.bind_info values('select * from t4', 'select /*+ use_index(t4, idx_a)*/ * from t4', 'test', 'invalid', '2021-01-08 14:50:58.257', '2021-01-08 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	upgradeToVer85(se, version84)
 
-	r := mustExec(t, se, `select count(*) from mysql.bind_info where status = 'enabled'`)
+	r := mustExecToRecodeSet(t, se, `select count(*) from mysql.bind_info where status = 'enabled'`)
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 1, req.NumRows())
@@ -1046,6 +1043,60 @@ func TestUpgradeToVer85(t *testing.T) {
 
 	require.NoError(t, r.Close())
 	mustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
+}
+
+func TestInitializeSQLFile(t *testing.T) {
+	// We create an initialize-sql-file and then bootstrap the server with it.
+	// The observed behavior should be that tidb_enable_noop_variables is now
+	// disabled, and the feature works as expected.
+	initializeSQLFile, err := os.CreateTemp("", "init.sql")
+	require.NoError(t, err)
+	defer func() {
+		path := initializeSQLFile.Name()
+		err = initializeSQLFile.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+	// Implicitly test multi-line init files
+	_, err = initializeSQLFile.WriteString(
+		"CREATE DATABASE initsqlfiletest;\n" +
+			"SET GLOBAL tidb_enable_noop_variables = OFF;\n")
+	require.NoError(t, err)
+
+	// Create a mock store
+	// Set the config parameter for initialize sql file
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = initializeSQLFile.Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the InitializeSQLFile config option
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+	ctx := context.Background()
+	r, err := exec(se, `SHOW VARIABLES LIKE 'query_cache_type'`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows()) // not shown in noopvariables mode
+	require.NoError(t, r.Close())
+
+	r, err = exec(se, `SHOW VARIABLES LIKE 'tidb_enable_noop_variables'`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, []byte("OFF"), row.GetBytes(1))
+	require.NoError(t, r.Close())
 }
 
 func TestTiDBEnablePagingVariable(t *testing.T) {
@@ -1058,7 +1109,7 @@ func TestTiDBEnablePagingVariable(t *testing.T) {
 		"select @@global.tidb_enable_paging",
 		"select @@session.tidb_enable_paging",
 	} {
-		r := mustExec(t, se, sql)
+		r := mustExecToRecodeSet(t, se, sql)
 		require.NotNil(t, r)
 
 		req := r.NewChunk(nil)
@@ -1100,7 +1151,7 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	require.Equal(t, int64(ver94), ver)
 
 	// We are now in 6.3.0, check tidb_opt_range_max_size should not exist.
-	res := mustExec(t, seV630, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBOptRangeMaxSize))
+	res := mustExecToRecodeSet(t, seV630, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBOptRangeMaxSize))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1115,7 +1166,7 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in version no lower than v6.4.0, tidb_opt_range_max_size should be 0.
-	res = mustExec(t, seCurVer, "select @@session.tidb_opt_range_max_size")
+	res = mustExecToRecodeSet(t, seCurVer, "select @@session.tidb_opt_range_max_size")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1124,7 +1175,7 @@ func TestTiDBOptRangeMaxSizeWhenUpgrading(t *testing.T) {
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, "0", row.GetString(0))
 
-	res = mustExec(t, seCurVer, "select @@global.tidb_opt_range_max_size")
+	res = mustExecToRecodeSet(t, seCurVer, "select @@global.tidb_opt_range_max_size")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1147,7 +1198,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 
 	// In a new created cluster(above 6.5+), tidb_cost_model_version is 2 by default.
 	mustExec(t, se, "use test;")
-	r := mustExec(t, se, "select @@tidb_cost_model_version;")
+	r := mustExecToRecodeSet(t, se, "select @@tidb_cost_model_version;")
 	require.NotNil(t, r)
 
 	ctx := context.Background()
@@ -1184,7 +1235,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	require.Equal(t, int64(ver300), ver)
 
 	// We are now in 3.0.0, check TiDBCostModelVersion should not exist.
-	res := mustExec(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
+	res := mustExecToRecodeSet(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1199,7 +1250,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// We are now in 6.5+, TiDBCostModelVersion should be 1.
-	res = mustExec(t, seCurVer, "select @@tidb_cost_model_version")
+	res = mustExecToRecodeSet(t, seCurVer, "select @@tidb_cost_model_version")
 	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1235,7 +1286,7 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 			require.Equal(t, int64(ver61), ver)
 
 			// We are now in 6.1, tidb_cost_model_version is 1.
-			res := mustExec(t, seV61, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
+			res := mustExecToRecodeSet(t, seV61, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBCostModelVersion))
 			chk := res.NewChunk(nil)
 			err = res.Next(ctx, chk)
 			require.NoError(t, err)
@@ -1243,6 +1294,7 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 			row := chk.GetRow(0)
 			require.Equal(t, 2, row.Len())
 			require.Equal(t, "1", row.GetString(1))
+			res.Close()
 
 			if i == 0 {
 				// For the first time, We set tidb_cost_model_version to 2.
@@ -1261,7 +1313,7 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 			require.Equal(t, currentBootstrapVersion, ver)
 
 			// We are now in 6.5.
-			res = mustExec(t, seCurVer, "select @@tidb_cost_model_version")
+			res = mustExecToRecodeSet(t, seCurVer, "select @@tidb_cost_model_version")
 			chk = res.NewChunk(nil)
 			err = res.Next(ctx, chk)
 			require.NoError(t, err)
@@ -1273,6 +1325,60 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 			} else {
 				require.Equal(t, "1", row.GetString(0))
 			}
+			res.Close()
 		}()
 	}
+}
+
+func TestTiDBGCAwareUpgradeFrom630To650(t *testing.T) {
+	ctx := context.Background()
+	store, _ := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// upgrade from 6.3 to 6.5+.
+	ver63 := version93
+	seV63 := createSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver63))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	mustExec(t, seV63, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver63))
+	mustExec(t, seV63, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", variable.TiDBEnableGCAwareMemoryTrack))
+	mustExec(t, seV63, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV63)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver63), ver)
+
+	// We are now in 6.3, tidb_enable_gc_aware_memory_track is ON.
+	res := mustExecToRecodeSet(t, seV63, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableGCAwareMemoryTrack))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 2, row.Len())
+	require.Equal(t, "1", row.GetString(1))
+
+	// Upgrade to 6.5.
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := createSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// We are now in 6.5.
+	res = mustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableGCAwareMemoryTrack))
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, 2, row.Len())
+	require.Equal(t, "0", row.GetString(1))
 }

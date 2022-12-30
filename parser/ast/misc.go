@@ -1511,10 +1511,11 @@ const (
 	PasswordHistoryDefault
 	PasswordReuseInterval
 	PasswordReuseDefault
-
 	Lock
 	Unlock
-
+	FailedLoginAttempts
+	PasswordLockTime
+	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
 
@@ -1542,6 +1543,14 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ACCOUNT LOCK")
 	case Unlock:
 		ctx.WriteKeyWord("ACCOUNT UNLOCK")
+	case FailedLoginAttempts:
+		ctx.WriteKeyWord("FAILED_LOGIN_ATTEMPTS")
+		ctx.WritePlainf(" %d", p.Count)
+	case PasswordLockTime:
+		ctx.WriteKeyWord("PASSWORD_LOCK_TIME")
+		ctx.WritePlainf(" %d", p.Count)
+	case PasswordLockTimeUnbounded:
+		ctx.WriteKeyWord("PASSWORD_LOCK_TIME UNBOUNDED")
 	case PasswordHistory:
 		ctx.WriteKeyWord("PASSWORD HISTORY")
 		ctx.WritePlainf(" %d", p.Count)
@@ -1994,6 +2003,7 @@ type SetBindingStmt struct {
 	BindingStatusType BindingStatusType
 	OriginNode        StmtNode
 	HintedNode        StmtNode
+	SQLDigest         string
 }
 
 func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -2006,13 +2016,18 @@ func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("DISABLED ")
 	}
 	ctx.WriteKeyWord("FOR ")
-	if err := n.OriginNode.Restore(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	if n.HintedNode != nil {
-		ctx.WriteKeyWord(" USING ")
-		if err := n.HintedNode.Restore(ctx); err != nil {
+	if n.OriginNode == nil {
+		ctx.WriteKeyWord("SQL DIGEST ")
+		ctx.WriteString(n.SQLDigest)
+	} else {
+		if err := n.OriginNode.Restore(ctx); err != nil {
 			return errors.Trace(err)
+		}
+		if n.HintedNode != nil {
+			ctx.WriteKeyWord(" USING ")
+			if err := n.HintedNode.Restore(ctx); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -2024,17 +2039,20 @@ func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetBindingStmt)
-	origNode, ok := n.OriginNode.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.OriginNode = origNode.(StmtNode)
-	if n.HintedNode != nil {
-		hintedNode, ok := n.HintedNode.Accept(v)
+	if n.OriginNode != nil {
+		// OriginNode is nil means we set binding stmt by sql digest
+		origNode, ok := n.OriginNode.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.HintedNode = hintedNode.(StmtNode)
+		n.OriginNode = origNode.(StmtNode)
+		if n.HintedNode != nil {
+			hintedNode, ok := n.HintedNode.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.HintedNode = hintedNode.(StmtNode)
+		}
 	}
 	return v.Leave(n)
 }
@@ -3750,7 +3768,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index":
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "keep_order", "no_keep_order":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {
