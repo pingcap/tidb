@@ -4673,7 +4673,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if i < len(columns) {
 			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
 				var err error
+				originVal := b.allowBuildCastArray
+				b.allowBuildCastArray = true
 				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
+				b.allowBuildCastArray = originVal
 				if err != nil {
 					return nil, err
 				}
