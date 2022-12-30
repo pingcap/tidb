@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "queue",
+    srcs = [
+        "chunk.go",
+        "chunkqueue.go",
+        "iterator.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/queue",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "queue_test",
+    srcs = [
+        "chunkqueue_test.go",
+        "iterator_test.go",
+    ],
+    embed = [":queue"],
+    deps = [
+        "@com_github_edwingeng_deque//:go_default_library",
+        "@com_github_labstack_gommon//random",
+        "@com_github_stretchr_testify//require",
+    ],
+)
