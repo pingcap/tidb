@@ -746,13 +746,17 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 	var err error
 	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
 	if err == nil && d.GetInt64() < id {
-		// Auto ID is out of range, the truncated ID is possible to duplicate with an existing ID.
-		// To prevent updating unrelated rows in the REPLACE statement, it is better to throw an error.
+		// Auto ID is out of range.
 		sc := ctx.GetSessionVars().StmtCtx
 		insertPlan, ok := sc.GetPlan().(*core.Insert)
 		if ok && sc.TruncateAsWarning && len(insertPlan.OnDuplicate) > 0 {
-			return err
+			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
+			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.
+			// We should allow the SQL to be executed successfully.
+			return nil
 		}
+		// The truncated ID is possible to duplicate with an existing ID.
+		// To prevent updating unrelated rows in the REPLACE statement, it is better to throw an error.
 		return autoid.ErrAutoincReadFailed
 	}
 	return err
