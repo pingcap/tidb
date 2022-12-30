@@ -644,14 +644,11 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 // jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}
 func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expression) ([]expression.Expression, bool) {
 	// only support cast(const as JSON)
-	jsonCast, ok := jsonArrayExpr.(*expression.ScalarFunction)
-	if !ok {
+	arrayExpr, wrappedByJSONCast := unwrapJSONCast(jsonArrayExpr)
+	if !wrappedByJSONCast {
 		return nil, false
 	}
-	if jsonCast.FuncName.L != ast.Cast && jsonCast.GetType().EvalType() != types.ETJson {
-		return nil, false
-	}
-	if _, isConst := jsonCast.GetArgs()[0].(*expression.Constant); !isConst {
+	if _, isConst := arrayExpr.(*expression.Constant); !isConst {
 		return nil, false
 	}
 
