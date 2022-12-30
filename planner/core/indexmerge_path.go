@@ -651,6 +651,9 @@ func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expre
 	if _, isConst := arrayExpr.(*expression.Constant); !isConst {
 		return nil, false
 	}
+	if expression.IsMutableEffectsExpr(arrayExpr) {
+		return nil, false
+	}
 
 	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx, chunk.Row{})
 	if isNull || err != nil {
