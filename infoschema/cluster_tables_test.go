@@ -1146,7 +1146,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	updateTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][5].(string), loc)
 	require.Greater(t, createTime1.UnixNano(), createTime.UnixNano())
 	require.Greater(t, updateTime1.UnixNano(), updateTime.UnixNano())
-	for i, _ := range binding1[0] {
+	for i := range binding1[0] {
 		if i != 4 && i != 5 {
 			require.Equal(t, binding[0][i], binding1[0][i])
 		}
@@ -1160,7 +1160,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	require.Greater(t, updateTime2.UnixNano(), updateTime1.UnixNano())
 	require.Equal(t, binding2[0][8], "manual")
 	require.Equal(t, binding2[0][10], "")
-	for i, _ := range binding2[0] {
+	for i := range binding2[0] {
 		if i != 1 && i != 4 && i != 5 && i != 8 && i != 10 {
 			// bind_sql, create_time, update_time, source, plan_digest may be different
 			require.Equal(t, binding1[0][i], binding2[0][i])
@@ -1175,7 +1175,7 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	require.Greater(t, updateTime3.UnixNano(), updateTime2.UnixNano())
 	require.Equal(t, binding3[0][8], "history")
 	require.Equal(t, binding3[0][10], planDigest[0][0])
-	for i, _ := range binding3[0] {
+	for i := range binding3[0] {
 		if i != 1 && i != 4 && i != 5 && i != 8 && i != 10 {
 			// bind_sql, create_time, update_time, source, plan_digest may be different
 			require.Equal(t, binding2[0][i], binding3[0][i])
