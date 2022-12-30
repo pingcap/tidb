@@ -30,6 +30,7 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/docker/go-units v0.4.0
+	github.com/edwingeng/deque v1.0.3
 	github.com/emirpasic/gods v1.18.1
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.13.0
@@ -59,6 +60,7 @@ require (
 	github.com/kisielk/errcheck v1.6.2
 	github.com/klauspost/compress v1.15.13
 	github.com/kyoh86/exportloopref v0.1.8
+	github.com/labstack/gommon v0.3.0
 	github.com/lestrrat-go/jwx/v2 v2.0.6
 	github.com/mgechev/revive v1.2.4
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
