@@ -616,9 +616,7 @@ func TestIssue38950(t *testing.T) {
 	require.Equal(t, int64(2), int64(tk.Session().AffectedRows()))
 	require.Empty(t, tk.Session().LastMessage())
 
-	r = tk.MustQuery("select * from t;")
-	rowStr = fmt.Sprintf("%v %v", "32767", "2")
-	r.Check(testkit.Rows(rowStr))
+	tk.MustQuery("select * from t").Check(testkit.Rows("32767 2"))
 }
 
 func TestInsertOnDup(t *testing.T) {
