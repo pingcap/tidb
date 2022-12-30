@@ -596,16 +596,10 @@ func TestIssue38950(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	var cfg kv.InjectionConfig
 	tk := testkit.NewTestKit(t, kv.NewInjectedStore(store, &cfg))
-	tk.MustExec("use test")
-	testSQL := `drop table if exists t;
-    create table t (id smallint auto_increment primary key);`
-	tk.MustExec(testSQL)
-
-	testSQL = `alter table t add column c1 int default 1;`
-	tk.MustExec(testSQL)
-
-	testSQL = `insert ignore into t(id) values (194626268);`
-	tk.MustExec(testSQL)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t; create table t (id smallint auto_increment primary key);")
+	tk.MustExec("alter table t add column c1 int default 1;")
+	tk.MustExec("insert ignore into t(id) values (194626268);")
 	require.Empty(t, tk.Session().LastMessage())
 
 	tk.MustQuery("select * from t").Check(testkit.Rows("32767 1"))
