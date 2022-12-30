@@ -235,9 +235,7 @@ const (
 
 	RestoreTiDBSpecialComment
 	SkipPlacementRuleForRestore
-  
 	RestoreWithTTLEnableOff
-  
 	RestoreWithoutSchemaName
 	RestoreWithoutTableName
 )
