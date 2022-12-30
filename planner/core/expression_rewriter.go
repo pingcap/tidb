@@ -1567,7 +1567,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					} else {
 						continue
 					}
-				} else if er.sctx.GetSessionVars().StmtCtx.SkipPlanCache {
+				} else if !er.sctx.GetSessionVars().StmtCtx.UseCache {
 					// We should remove the mutable constant for correctness, because its value may be changed.
 					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
