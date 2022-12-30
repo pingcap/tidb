@@ -1256,13 +1256,3 @@ func (SchemaTracker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infosc
 func (SchemaTracker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return nil
 }
-
-// MoveJobFromQueue2Table implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) MoveJobFromQueue2Table(b bool) error {
-	panic("implement me")
-}
-
-// MoveJobFromTable2Queue implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) MoveJobFromTable2Queue() error {
-	panic("implement me")
-}
