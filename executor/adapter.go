@@ -2043,5 +2043,10 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,
 	}
+	if _, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		nsql, _ := sctx.GetSessionVars().StmtCtx.SQLDigest()
+		dumpTask.InExecute = true
+		dumpTask.NormalizedSQL = nsql
+	}
 	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }

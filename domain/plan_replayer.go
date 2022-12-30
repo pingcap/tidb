@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -99,7 +100,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 			logutil.BgLogger().Error("[dumpFileGcChecker] parseTime failed", zap.Error(err), zap.String("filename", fileName))
 			continue
 		}
-		isPlanReplayer := parseType(fileName) == "replayer"
+		isPlanReplayer := strings.Contains(fileName, "replayer")
 		if !createTime.After(gcTime) {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
@@ -419,6 +420,19 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 	task.Zf = file
 	task.FileName = fileName
 	task.EncodedPlan, _ = task.EncodePlan(task.SessionVars.StmtCtx, false)
+	if task.InExecute && len(task.NormalizedSQL) > 0 {
+		p := parser.New()
+		stmts, _, err := p.ParseSQL(task.NormalizedSQL)
+		if err != nil {
+			logutil.BgLogger().Warn("[plan-replayer-capture] parse normalized sql failed",
+				zap.String("sql", task.NormalizedSQL),
+				zap.String("sqlDigest", taskKey.SQLDigest),
+				zap.String("planDigest", taskKey.PlanDigest),
+				zap.Error(err))
+			return false
+		}
+		task.ExecStmts = stmts
+	}
 	err = DumpPlanReplayerInfo(w.ctx, w.sctx, task)
 	if err != nil {
 		logutil.BgLogger().Warn("[plan-replayer-capture] dump task result failed",
@@ -512,8 +526,10 @@ type PlanReplayerDumpTask struct {
 	replayer.PlanReplayerTaskKey
 
 	// tmp variables stored during the query
-	EncodePlan func(*stmtctx.StatementContext, bool) (string, string)
-	TblStats   map[int64]interface{}
+	EncodePlan    func(*stmtctx.StatementContext, bool) (string, string)
+	TblStats      map[int64]interface{}
+	InExecute     bool
+	NormalizedSQL string
 
 	// variables used to dump the plan
 	StartTS         uint64
