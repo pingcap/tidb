@@ -1958,7 +1958,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc.UseDynamicPruneMode = false
 	}
-	sc.StmtSnapshotTS = 0
 
 	sc.StatsLoad.Timeout = 0
 	sc.StatsLoad.NeededItems = nil

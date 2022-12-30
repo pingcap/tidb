@@ -390,9 +390,6 @@ type StatementContext struct {
 	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
-
-	// StmtSnapshotTS indicates the snapshot ts for the stmt
-	StmtSnapshotTS uint64
 }
 
 // StmtHints are SessionVars related sql hints.

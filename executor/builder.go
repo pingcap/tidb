@@ -1725,11 +1725,6 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 // `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise the isolation read ts
 // Please notice that in RC isolation, the above two ts are the same
 func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
-	defer func() {
-		if err == nil {
-			b.ctx.GetSessionVars().StmtCtx.StmtSnapshotTS = ts
-		}
-	}()
 	if b.forDataReaderBuilder {
 		return b.dataReaderTS, nil
 	}
