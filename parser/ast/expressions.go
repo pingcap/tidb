@@ -512,11 +512,15 @@ type ColumnName struct {
 
 // Restore implements Node interface.
 func (n *ColumnName) Restore(ctx *format.RestoreCtx) error {
+<<<<<<< HEAD
 	if n.Schema.O != "" {
+=======
+	if n.Schema.O != "" && !ctx.IsCTETableName(n.Table.L) && !ctx.Flags.HasWithoutSchemaNameFlag() {
+>>>>>>> 702a5598f9 (ddl, parser: make generated column and expression index same as MySQL (#39888))
 		ctx.WriteName(n.Schema.O)
 		ctx.WritePlain(".")
 	}
-	if n.Table.O != "" {
+	if n.Table.O != "" && !ctx.Flags.HasWithoutTableNameFlag() {
 		ctx.WriteName(n.Table.O)
 		ctx.WritePlain(".")
 	}

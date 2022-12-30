@@ -281,6 +281,7 @@ func (*TableName) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableName) restoreName(ctx *format.RestoreCtx) {
+<<<<<<< HEAD
 	if n.Schema.String() != "" {
 		ctx.WriteName(n.Schema.String())
 		ctx.WritePlain(".")
@@ -295,7 +296,19 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 		}
 		if !ok {
 			ctx.WriteName(ctx.DefaultDB)
+=======
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		// restore db name
+		if n.Schema.String() != "" {
+			ctx.WriteName(n.Schema.String())
+>>>>>>> 702a5598f9 (ddl, parser: make generated column and expression index same as MySQL (#39888))
 			ctx.WritePlain(".")
+		} else if ctx.DefaultDB != "" {
+			// Try CTE, for a CTE table name, we shouldn't write the database name.
+			if !ctx.IsCTETableName(n.Name.L) {
+				ctx.WriteName(ctx.DefaultDB)
+				ctx.WritePlain(".")
+			}
 		}
 	}
 	ctx.WriteName(n.Name.String())
