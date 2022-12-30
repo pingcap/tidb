@@ -39,23 +39,46 @@ require (
 	github.com/iancoleman/strcase v0.2.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
+<<<<<<< HEAD
+=======
+	github.com/kisielk/errcheck v1.6.2
+	github.com/klauspost/compress v1.15.13
+	github.com/kyoh86/exportloopref v0.1.8
+	github.com/lestrrat-go/jwx/v2 v2.0.6
+	github.com/mgechev/revive v1.2.4
+>>>>>>> 0134d0b00d (go.mod: upgrade badger to 20221229114011 (#40236))
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
+<<<<<<< HEAD
 	github.com/pingcap/badger v1.5.1-0.20220314162537-ab58fbf40580
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
+=======
+	github.com/pingcap/badger v1.5.1-0.20221229114011-ddffaa0fff7a
+	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
+>>>>>>> 0134d0b00d (go.mod: upgrade badger to 20221229114011 (#40236))
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20220517085838-12e2f5a9d167
 	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+<<<<<<< HEAD
 	github.com/pingcap/tipb v0.0.0-20220314125451-bfb5c2c55188
 	github.com/prometheus/client_golang v1.11.0
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.32.1
 	github.com/shirou/gopsutil/v3 v3.21.12
+=======
+	github.com/pingcap/tipb v0.0.0-20221123081521-2fb828910813
+	github.com/pkg/errors v0.9.1
+	github.com/prometheus/client_golang v1.14.0
+	github.com/prometheus/client_model v0.3.0
+	github.com/prometheus/common v0.39.0
+	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
+	github.com/shirou/gopsutil/v3 v3.22.9
+>>>>>>> 0134d0b00d (go.mod: upgrade badger to 20221229114011 (#40236))
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/shurcooL/vfsgen v0.0.0-20200824052919-0d455de96546 // indirect
 	github.com/soheilhy/cmux v0.1.5
@@ -77,6 +100,7 @@ require (
 	go.etcd.io/etcd/tests/v3 v3.5.2
 	go.uber.org/atomic v1.9.0
 	go.uber.org/automaxprocs v1.4.0
+<<<<<<< HEAD
 	go.uber.org/goleak v1.1.12
 	go.uber.org/multierr v1.8.0
 	go.uber.org/zap v1.21.0
@@ -91,6 +115,22 @@ require (
 	golang.org/x/tools v0.1.8
 	google.golang.org/api v0.69.0
 	google.golang.org/grpc v1.44.0
+=======
+	go.uber.org/goleak v1.2.0
+	go.uber.org/multierr v1.9.0
+	go.uber.org/zap v1.24.0
+	golang.org/x/exp v0.0.0-20221023144134-a1e5550cf13e
+	golang.org/x/net v0.4.0
+	golang.org/x/oauth2 v0.3.0
+	golang.org/x/sync v0.1.0
+	golang.org/x/sys v0.3.0
+	golang.org/x/term v0.3.0
+	golang.org/x/text v0.5.0
+	golang.org/x/time v0.3.0
+	golang.org/x/tools v0.2.0
+	google.golang.org/api v0.74.0
+	google.golang.org/grpc v1.45.0
+>>>>>>> 0134d0b00d (go.mod: upgrade badger to 20221229114011 (#40236))
 	gopkg.in/yaml.v2 v2.4.0
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
@@ -110,8 +150,14 @@ require (
 	github.com/apache/thrift v0.13.1-0.20201008052519-daf620915714 // indirect
 	github.com/benbjohnson/clock v1.3.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+<<<<<<< HEAD
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/cockroachdb/errors v1.8.1 // indirect
+=======
+	github.com/cespare/xxhash v1.1.0 // indirect
+	github.com/cespare/xxhash/v2 v2.2.0 // indirect
+	github.com/chavacava/garif v0.0.0-20220630083739-93517212f375 // indirect
+>>>>>>> 0134d0b00d (go.mod: upgrade badger to 20221229114011 (#40236))
 	github.com/cockroachdb/logtags v0.0.0-20190617123548-eb05cc24525f // indirect
 	github.com/cockroachdb/redact v1.0.8 // indirect
 	github.com/cockroachdb/sentry-go v0.6.1-cockroachdb.2 // indirect
@@ -150,10 +196,17 @@ require (
 	github.com/kr/pretty v0.3.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
+<<<<<<< HEAD
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/mattn/go-runewidth v0.0.12 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
+=======
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.16 // indirect
+	github.com/mattn/go-runewidth v0.0.14 // indirect
+	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
+>>>>>>> 0134d0b00d (go.mod: upgrade badger to 20221229114011 (#40236))
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.1 // indirect
 	github.com/ncw/directio v1.0.5 // indirect
@@ -164,7 +217,12 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
+<<<<<<< HEAD
 	github.com/prometheus/procfs v0.6.0 // indirect
+=======
+	github.com/prometheus/procfs v0.9.0 // indirect
+	github.com/prometheus/tsdb v0.8.0 // indirect
+>>>>>>> 0134d0b00d (go.mod: upgrade badger to 20221229114011 (#40236))
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
