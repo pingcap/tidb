@@ -961,11 +961,6 @@ func upgrade(s Session) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
 
-	if err == nil && ver <= version92 {
-		logutil.BgLogger().Info("start migrate DDLs")
-		err = domain.GetDomain(s).DDL().MoveJobFromQueue2Table(true)
-	}
-
 	if err != nil {
 		sleepTime := 1 * time.Second
 		logutil.BgLogger().Info("update bootstrap ver failed",

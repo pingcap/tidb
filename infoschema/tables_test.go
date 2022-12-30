@@ -1670,10 +1670,6 @@ func TestVariablesInfo(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skip("skip test when concurrent DDL is disabled")
-	}
-
 	tk.MustExec("use information_schema")
 	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")
 
