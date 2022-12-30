@@ -196,6 +196,9 @@ type Table interface {
 
 	// Type returns the type of table
 	Type() Type
+
+	// GetPartitionedTable returns nil if not partitioned
+	GetPartitionedTable() PartitionedTable
 }
 
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
@@ -245,6 +248,7 @@ type PartitionedTable interface {
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
+	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
 	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error
 }

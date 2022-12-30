@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -67,11 +68,17 @@ var _ table.PartitionedTable = &partitionedTable{}
 // partition also implements the table.Table interface.
 type partition struct {
 	TableCommon
+	table *partitionedTable
 }
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (p *partition) GetPhysicalID() int64 {
 	return p.physicalTableID
+}
+
+// GetPartitionedTable implements table.Table GetPhysicalID interface.
+func (p *partition) GetPartitionedTable() table.PartitionedTable {
+	return p.table
 }
 
 // partitionedTable implements the table.PartitionedTable interface.
@@ -87,7 +94,7 @@ type partitionedTable struct {
 	reorgPartitionExpr *PartitionExpr
 }
 
-func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Table, error) {
+func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.PartitionedTable, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || len(pi.Definitions) == 0 {
 		return nil, table.ErrUnknownPartition
@@ -114,6 +121,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		t.table = ret
 		partitions[p.ID] = &t
 	}
 	ret.partitions = partitions
@@ -962,11 +970,20 @@ func (t *partitionedTable) PartitionExpr() *PartitionExpr {
 	return t.partitionExpr
 }
 
-func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
+func (t *partitionedTable) GetPartitionColumnIDs() []int64 {
 	// PARTITION BY {LIST|RANGE} COLUMNS uses columns directly without expressions
 	pi := t.Meta().Partition
 	if len(pi.Columns) > 0 {
-		return pi.Columns
+		colIDs := make([]int64, 0, len(pi.Columns))
+		for _, name := range pi.Columns {
+			col := table.FindColLowerCase(t.Cols(), name.L)
+			if col == nil {
+				// For safety, should not happen
+				continue
+			}
+			colIDs = append(colIDs, col.ID)
+		}
+		return colIDs
 	}
 
 	partitionCols := expression.ExtractColumns(t.partitionExpr.Expr)
@@ -974,7 +991,16 @@ func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
 	for _, col := range partitionCols {
 		colIDs = append(colIDs, col.ID)
 	}
-	colNames := make([]model.CIStr, 0, len(partitionCols))
+	return colIDs
+}
+
+func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
+	pi := t.Meta().Partition
+	if len(pi.Columns) > 0 {
+		return pi.Columns
+	}
+	colIDs := t.GetPartitionColumnIDs()
+	colNames := make([]model.CIStr, 0, len(colIDs))
 	for _, colID := range colIDs {
 		for _, col := range t.Cols() {
 			if col.ID == colID {
@@ -1192,9 +1218,51 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	// Because A nil of type *partition is a kind of `table.PhysicalTable`
 	p, ok := t.partitions[pid]
 	if !ok {
+		// We might want an old or new partition.
+		pi := t.meta.Partition
+		for _, defs := range [][]model.PartitionDefinition{
+			pi.AddingDefinitions,
+			pi.DroppingDefinitions,
+		} {
+			for _, def := range defs {
+				if pid != def.ID {
+					continue
+				}
+				var newPart partition
+				err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs)
+				if err != nil {
+					return nil
+				}
+				newPart.table = t
+				t.partitions[pid] = &newPart
+				return &newPart
+			}
+		}
 		return nil
 	}
 	return p
+}
+
+// GetReorganizedPartitionedTable returns the same table
+// but only with the AddingDefinitions used.
+func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, error) {
+	// This is used during Reorganize partitions; All data from DroppingDefinitions
+	// will be copied to AddingDefinitions, so only setup with AddingDefinitions!
+
+	// Do not change any Definitions of t, but create a new struct.
+	if t.GetPartitionedTable() == nil {
+		return nil, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+	}
+	tblInfo := t.Meta().Clone()
+	tblInfo.Partition.Definitions = tblInfo.Partition.AddingDefinitions
+	tblInfo.Partition.AddingDefinitions = nil
+	tblInfo.Partition.DroppingDefinitions = nil
+	var tc TableCommon
+	tc.meta = tblInfo
+
+	// and rebuild the partitioning structure
+
+	return newPartitionedTable(&tc, tblInfo)
 }
 
 // GetPartitionByRow returns a Table, which is actually a Partition.
