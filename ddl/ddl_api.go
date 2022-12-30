@@ -4734,7 +4734,7 @@ func GetModifiableColumnJob(
 			// TODO: update the partitioning columns with new names if column is renamed
 			// Would be an extension from MySQL which does not support it.
 			if col.Name.L != newCol.Name.L {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("Column '%s' has a partitioning function dependency and cannot be renamed", col.Name.O))
+				return nil, dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 			}
 			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
 				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
@@ -5108,6 +5108,11 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 				return dbterror.ErrDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
 			}
 		}
+	}
+
+	err = checkDropColumnWithPartitionConstraint(tbl, oldColName)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
