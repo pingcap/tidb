@@ -612,8 +612,8 @@ func SplitPoint(
 					// scan from the range's start-key
 					startKey = vStartKey
 				}
-				// scan at most 128 regions into the region buffer
-				regions, err = split.ScanRegionsWithRetry(ctx, client, startKey, endKey, 128)
+				// scan at most 64 regions into the region buffer
+				regions, err = split.ScanRegionsWithRetry(ctx, client, startKey, endKey, 64)
 				if err != nil {
 					return false
 				}
@@ -711,7 +711,9 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 	regionSplitter := NewRegionSplitter(helper.client)
 	for _, region := range scatterRegions {
 		regionSplitter.waitForScatterRegion(ctx, region)
-		if time.Since(startTime) > split.ScatterWaitUpperInterval {
+		// It is too expensive to stop recovery and wait for a small number of regions
+		// to complete scatter, so the maximum waiting time is reduced to 1 minute.
+		if time.Since(startTime) > time.Minute {
 			break
 		}
 	}
@@ -726,7 +728,7 @@ type LogFilesIterWithSplitHelper struct {
 	next   int
 }
 
-const SplitFilesBufferSize = 2048
+const SplitFilesBufferSize = 4096
 
 func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, client split.SplitClient) LogIter {
 	return &LogFilesIterWithSplitHelper{
