@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tiancaiamao/gp"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -77,8 +76,6 @@ type CopClient struct {
 	store           *Store
 	replicaReadSeed uint32
 }
-
-var gP = gp.New(64, 10*time.Second)
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
@@ -749,7 +746,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			enableCollectExecutionInfo: enableCollectExecutionInfo,
 			pagingTaskIdx:              &it.pagingTaskIdx,
 		}
-		gP.Go(func() { worker.run(ctx) })
+		it.store.Go(func() { worker.run(ctx) })
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:      taskCh,
@@ -767,7 +764,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
 	})
-	gP.Go(func() { taskSender.run() })
+	it.store.Go(func() { taskSender.run() })
 }
 
 func (sender *copIteratorTaskSender) run() {

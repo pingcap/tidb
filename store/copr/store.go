@@ -34,6 +34,11 @@ type kvStore struct {
 	store *tikv.KVStore
 }
 
+// Go run f() in a separate goroutine.
+func (s *kvStore) Go(f func()) {
+	s.store.Go(f)
+}
+
 // GetRegionCache returns the region cache instance.
 func (s *kvStore) GetRegionCache() *RegionCache {
 	return &RegionCache{s.store.GetRegionCache()}
