@@ -392,10 +392,11 @@ func TestUncacheableReason(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 
 	tk.MustExec("prepare st from 'select * from t limit ?'")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
 
 	tk.MustExec("set @a=1")
 	tk.MustQuery("execute st using @a").Check(testkit.Rows())
 	tk.MustExec("prepare st from 'select * from t limit ?'")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	// show the corresponding un-cacheable reason at execute-stage as well
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
 }
