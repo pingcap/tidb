@@ -66,7 +66,7 @@ func OnInit(ctx context.Context, manifest *plugin.Manifest) error {
 		// (Optional) the SetGlobal function is called when a global variable is changed.
 		// This will only be called on the TiDB server that the change is made on,
 		// and not on the tidb-server peers which will also update their global variable eventually.
-		SetGlobal: func(vars *variable.SessionVars, value string) error {
+		SetGlobal: func(_ context.Context, vars *variable.SessionVars, value string) error {
 			fmt.Println("The set global function was called")
 			return nil
 		},

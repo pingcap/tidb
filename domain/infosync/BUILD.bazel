@@ -28,7 +28,6 @@ go_library(
         "//sessionctx/variable",
         "//store/helper",
         "//tablecodec",
-        "//types",
         "//util",
         "//util/codec",
         "//util/dbterror",

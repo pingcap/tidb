@@ -105,17 +105,22 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		hasDelRange := job.State == model.JobStateRollbackDone
-		if !hasDelRange {
-			return 0, nil
-		}
 		var indexID int64
 		var ifExists bool
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
+			var unique bool
+			if err := job.DecodeArgs(&unique); err == nil {
+				// The first argument is bool means nothing need to be added to delete-range table.
+				return 0, nil
+			}
 			return 0, errors.Trace(err)
 		}
-		return mathutil.Max(len(partitionIDs), 1), nil
+		idxIDNumFactor := 1 // Add temporary index to del-range table.
+		if job.State == model.JobStateRollbackDone {
+			idxIDNumFactor = 2 // Add origin index to del-range table.
+		}
+		return mathutil.Max(len(partitionIDs)*idxIDNumFactor, idxIDNumFactor), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		var indexName interface{}
 		var ifNotExists bool

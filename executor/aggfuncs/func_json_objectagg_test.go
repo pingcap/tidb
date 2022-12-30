@@ -52,6 +52,8 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeJSON),
 		types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(10).SetCharset(charset.CharsetBin).BuildP(),
+		types.NewFieldType(mysql.TypeDate),
+		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
 	for i := 0; i < len(typeList); i++ {
@@ -112,6 +114,8 @@ func TestJsonObjectagg(t *testing.T) {
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeJSON),
 		types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(10).SetCharset(charset.CharsetBin).BuildP(),
+		types.NewFieldType(mysql.TypeDate),
+		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
 	for i := 0; i < len(typeList); i++ {
@@ -244,11 +248,9 @@ func jsonMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType
 			// +1 for the memory usage of the JSONTypeCode of json
 			memDelta += int64(len(val.Value) + 1)
 		case mysql.TypeDuration:
-			val := row.GetDuration(1, dataTypes[1].GetDecimal())
-			memDelta += int64(len(val.String()))
+			memDelta += aggfuncs.DefDurationSize
 		case mysql.TypeDate:
-			val := row.GetTime(1)
-			memDelta += int64(len(val.String()))
+			memDelta += aggfuncs.DefTimeSize
 		case mysql.TypeNewDecimal:
 			memDelta += aggfuncs.DefFloat64Size
 		default:

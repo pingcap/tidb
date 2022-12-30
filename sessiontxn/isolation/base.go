@@ -119,7 +119,12 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	if p.onInitializeTxnCtx != nil {
 		p.onInitializeTxnCtx(txnCtx)
 	}
+	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
+	sessVars.TxnCtxMu.Unlock()
+	if variable.EnableMDL.Load() {
+		sessVars.TxnCtx.EnableMDL = true
+	}
 
 	txn, err := p.sctx.Txn(false)
 	if err != nil {
@@ -138,7 +143,17 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	if is := p.sctx.GetSessionVars().SnapshotInfoschema; is != nil {
 		return is.(infoschema.InfoSchema)
 	}
+	if _, ok := p.infoSchema.(*infoschema.SessionExtendedInfoSchema); !ok {
+		p.infoSchema = &infoschema.SessionExtendedInfoSchema{
+			InfoSchema: p.infoSchema,
+		}
+		p.sctx.GetSessionVars().TxnCtx.InfoSchema = p.infoSchema
+	}
 	return p.infoSchema
+}
+
+func (p *baseTxnContextProvider) SetTxnInfoSchema(is infoschema.InfoSchema) {
+	p.infoSchema = is
 }
 
 // GetTxnScope returns the current txn scope
@@ -252,6 +267,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
+	if sessVars.MemDBFootprint != nil {
+		sessVars.MemDBFootprint.Detach()
+	}
+	sessVars.MemDBFootprint = nil
 
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
@@ -415,7 +434,9 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	)
 
 	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+	if replicaReadType.IsFollowerRead() &&
+		!sessVars.StmtCtx.RCCheckTS &&
+		!sessVars.RcWriteCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 

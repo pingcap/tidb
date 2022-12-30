@@ -42,12 +42,12 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 
 // DisableGC will disable GC enable variable.
 func DisableGC(ctx sessionctx.Context) error {
-	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.Off)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBGCEnable, variable.Off)
 }
 
 // EnableGC will enable GC enable variable.
 func EnableGC(ctx sessionctx.Context) error {
-	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.On)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBGCEnable, variable.On)
 }
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.

@@ -28,6 +28,7 @@ go_test(
         "rtree_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         ":rtree",
         "//testkit/testsetup",

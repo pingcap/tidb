@@ -153,7 +153,7 @@ func TestEval(t *testing.T) {
 				toPBFieldType(newIntFieldType()),
 				jsonDatumExpr(t, `[{"a":{"a":1},"b":2}]`),
 			),
-			types.NewIntDatum(25),
+			types.NewIntDatum(82),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_JsonSearchSig,

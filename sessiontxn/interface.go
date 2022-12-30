@@ -117,6 +117,8 @@ type TxnContextProvider interface {
 	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
+	// SetTxnInfoSchema sets the information schema used by txn.
+	SetTxnInfoSchema(is infoschema.InfoSchema)
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope
@@ -151,13 +153,17 @@ type TxnManager interface {
 	// If the session is not in any transaction, for example: between two autocommit statements,
 	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
+	// SetTxnInfoSchema sets the information schema used by txn.
+	SetTxnInfoSchema(infoschema.InfoSchema)
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
 	// GetReadReplicaScope returns the read replica scope
 	GetReadReplicaScope() string
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+	// Calling this method will activate the txn implicitly if current read is not stale/historical read
 	GetStmtReadTS() (uint64, error)
 	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
+	// Calling this method will activate the txn implicitly if current read is not stale/historical read
 	GetStmtForUpdateTS() (uint64, error)
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider

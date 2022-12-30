@@ -43,7 +43,9 @@ var (
 	_ functionClass = &jsonMergeFunctionClass{}
 	_ functionClass = &jsonObjectFunctionClass{}
 	_ functionClass = &jsonArrayFunctionClass{}
+	_ functionClass = &jsonMemberOfFunctionClass{}
 	_ functionClass = &jsonContainsFunctionClass{}
+	_ functionClass = &jsonOverlapsFunctionClass{}
 	_ functionClass = &jsonContainsPathFunctionClass{}
 	_ functionClass = &jsonValidFunctionClass{}
 	_ functionClass = &jsonArrayAppendFunctionClass{}
@@ -71,7 +73,9 @@ var (
 	_ builtinFunc = &builtinJSONReplaceSig{}
 	_ builtinFunc = &builtinJSONRemoveSig{}
 	_ builtinFunc = &builtinJSONMergeSig{}
+	_ builtinFunc = &builtinJSONMemberOfSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
+	_ builtinFunc = &builtinJSONOverlapsSig{}
 	_ builtinFunc = &builtinJSONStorageSizeSig{}
 	_ builtinFunc = &builtinJSONDepthSig{}
 	_ builtinFunc = &builtinJSONSearchSig{}
@@ -136,6 +140,16 @@ func (b *builtinJSONExtractSig) Clone() builtinFunc {
 	newSig := &builtinJSONExtractSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+func (c *jsonExtractFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_extract")
+	}
+	return nil
 }
 
 func (c *jsonExtractFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -554,7 +568,11 @@ func (b *builtinJSONObjectSig) evalJSON(row chunk.Row) (res types.BinaryJSON, is
 			jsons[key] = value
 		}
 	}
-	return types.CreateBinaryJSON(jsons), false, nil
+	bj, err := types.CreateBinaryJSONWithCheck(jsons)
+	if err != nil {
+		return res, true, err
+	}
+	return bj, false, nil
 }
 
 type jsonArrayFunctionClass struct {
@@ -603,7 +621,11 @@ func (b *builtinJSONArraySig) evalJSON(row chunk.Row) (res types.BinaryJSON, isN
 		}
 		jsons = append(jsons, j)
 	}
-	return types.CreateBinaryJSON(jsons), false, nil
+	bj, err := types.CreateBinaryJSONWithCheck(jsons)
+	if err != nil {
+		return res, true, err
+	}
+	return bj, false, nil
 }
 
 type jsonContainsPathFunctionClass struct {
@@ -618,6 +640,16 @@ func (b *builtinJSONContainsPathSig) Clone() builtinFunc {
 	newSig := &builtinJSONContainsPathSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+func (c *jsonContainsPathFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_contains_path")
+	}
+	return nil
 }
 
 func (c *jsonContainsPathFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -712,6 +744,68 @@ func jsonModify(ctx sessionctx.Context, args []Expression, row chunk.Row, mt typ
 	return res, false, nil
 }
 
+type jsonMemberOfFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONMemberOfSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONMemberOfSig) Clone() builtinFunc {
+	newSig := &builtinJSONMemberOfSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (c *jsonMemberOfFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "member of")
+	}
+	return nil
+}
+
+func (c *jsonMemberOfFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := []types.EvalType{types.ETJson, types.ETJson}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	DisableParseJSONFlag4Expr(args[0])
+	sig := &builtinJSONMemberOfSig{bf}
+	return sig, nil
+}
+
+func (b *builtinJSONMemberOfSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	target, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	obj, isNull, err := b.args[1].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	if obj.TypeCode != types.JSONTypeCodeArray {
+		return boolToInt64(types.CompareBinaryJSON(obj, target) == 0), false, nil
+	}
+
+	elemCount := obj.GetElemCount()
+	for i := 0; i < elemCount; i++ {
+		if types.CompareBinaryJSON(obj.ArrayGetElem(i), target) == 0 {
+			return 1, false, nil
+		}
+	}
+
+	return 0, false, nil
+}
+
 type jsonContainsFunctionClass struct {
 	baseFunctionClass
 }
@@ -776,8 +870,8 @@ func (b *builtinJSONContainsSig) evalInt(row chunk.Row) (res int64, isNull bool,
 		if err != nil {
 			return res, true, err
 		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return res, true, types.ErrInvalidJSONPathWildcard
+		if pathExpr.CouldMatchMultipleValues() {
+			return res, true, types.ErrInvalidJSONPathMultipleSelection
 		}
 		var exists bool
 		obj, exists = obj.Extract([]types.JSONPathExpression{pathExpr})
@@ -787,6 +881,62 @@ func (b *builtinJSONContainsSig) evalInt(row chunk.Row) (res int64, isNull bool,
 	}
 
 	if types.ContainsBinaryJSON(obj, target) {
+		return 1, false, nil
+	}
+	return 0, false, nil
+}
+
+type jsonOverlapsFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONOverlapsSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONOverlapsSig) Clone() builtinFunc {
+	newSig := &builtinJSONOverlapsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (c *jsonOverlapsFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+		return types.ErrInvalidJSONData.GenWithStackByArgs(1, "json_overlaps")
+	}
+	if evalType := args[1].GetType().EvalType(); evalType != types.ETJson && evalType != types.ETString {
+		return types.ErrInvalidJSONData.GenWithStackByArgs(2, "json_overlaps")
+	}
+	return nil
+}
+
+func (c *jsonOverlapsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	argTps := []types.EvalType{types.ETJson, types.ETJson}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinJSONOverlapsSig{bf}
+	return sig, nil
+}
+
+func (b *builtinJSONOverlapsSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	target, isNull, err := b.args[1].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	if types.OverlapsBinaryJSON(obj, target) {
 		return 1, false, nil
 	}
 	return 0, false, nil
@@ -962,8 +1112,8 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 	if err != nil {
 		return res, true, types.ErrInvalidJSONPath.GenWithStackByArgs(p)
 	}
-	if pathExpr.ContainsAnyAsterisk() {
-		return res, true, types.ErrInvalidJSONPathWildcard.GenWithStackByArgs(p)
+	if pathExpr.CouldMatchMultipleValues() {
+		return res, true, types.ErrInvalidJSONPathMultipleSelection
 	}
 
 	obj, exists := res.Extract([]types.JSONPathExpression{pathExpr})
@@ -976,7 +1126,10 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 		// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
 		// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
 		// We should wrap them to a single array first.
-		obj = types.CreateBinaryJSON([]interface{}{obj})
+		obj, err = types.CreateBinaryJSONWithCheck([]interface{}{obj})
+		if err != nil {
+			return res, true, err
+		}
 	}
 
 	obj = types.MergeBinaryJSON([]types.BinaryJSON{obj, v})
@@ -1040,8 +1193,8 @@ func (b *builtinJSONArrayInsertSig) evalJSON(row chunk.Row) (res types.BinaryJSO
 		if err != nil {
 			return res, true, types.ErrInvalidJSONPath.GenWithStackByArgs(s)
 		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return res, true, types.ErrInvalidJSONPathWildcard.GenWithStackByArgs(s)
+		if pathExpr.CouldMatchMultipleValues() {
+			return res, true, types.ErrInvalidJSONPathMultipleSelection
 		}
 
 		value, isnull, err := b.args[i+1].EvalJSON(b.ctx, row)
@@ -1272,6 +1425,16 @@ func (b *builtinJSONSearchSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (c *jsonSearchFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_search")
+	}
+	return nil
+}
+
 func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -1351,6 +1514,43 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res types.BinaryJSON, is
 	return obj.Search(containType, searchStr, escape, nil)
 }
 
+type jsonStorageFreeFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONStorageFreeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONStorageFreeSig) Clone() builtinFunc {
+	newSig := &builtinJSONStorageFreeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (c *jsonStorageFreeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinJSONStorageFreeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonStorageFreeSig)
+	return sig, nil
+}
+
+func (b *builtinJSONStorageFreeSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	return 0, false, nil
+}
+
 type jsonStorageSizeFunctionClass struct {
 	baseFunctionClass
 }
@@ -1385,12 +1585,8 @@ func (b *builtinJSONStorageSizeSig) evalInt(row chunk.Row) (res int64, isNull bo
 		return res, isNull, err
 	}
 
-	buf, err := obj.MarshalJSON()
-	if err != nil {
-		return res, isNull, err
-	}
-
-	return int64(len(buf)), false, nil
+	// returns the length of obj value plus 1 (the TypeCode)
+	return int64(len(obj.Value)) + 1, false, nil
 }
 
 type jsonDepthFunctionClass struct {
@@ -1422,6 +1618,10 @@ func (c *jsonDepthFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 }
 
 func (b *builtinJSONDepthSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	// as TiDB doesn't support partial update json value, so only check the
+	// json format and whether it's NULL. For NULL return NULL, for invalid json, return
+	// an error, otherwise return 0
+
 	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1432,6 +1632,16 @@ func (b *builtinJSONDepthSig) evalInt(row chunk.Row) (res int64, isNull bool, er
 
 type jsonKeysFunctionClass struct {
 	baseFunctionClass
+}
+
+func (c *jsonKeysFunctionClass) verifyArgs(args []Expression) error {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return err
+	}
+	if evalType := args[0].GetType().EvalType(); evalType != types.ETString && evalType != types.ETJson {
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(0, "json_keys")
+	}
+	return nil
 }
 
 func (c *jsonKeysFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1504,8 +1714,8 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(row chunk.Row) (res types.BinaryJSON,
 	if err != nil {
 		return res, true, err
 	}
-	if pathExpr.ContainsAnyAsterisk() {
-		return res, true, types.ErrInvalidJSONPathWildcard
+	if pathExpr.CouldMatchMultipleValues() {
+		return res, true, types.ErrInvalidJSONPathMultipleSelection
 	}
 
 	res, exists := res.Extract([]types.JSONPathExpression{pathExpr})
@@ -1573,8 +1783,8 @@ func (b *builtinJSONLengthSig) evalInt(row chunk.Row) (res int64, isNull bool, e
 		if err != nil {
 			return res, true, err
 		}
-		if pathExpr.ContainsAnyAsterisk() {
-			return res, true, types.ErrInvalidJSONPathWildcard
+		if pathExpr.CouldMatchMultipleValues() {
+			return res, true, types.ErrInvalidJSONPathMultipleSelection
 		}
 
 		var exists bool

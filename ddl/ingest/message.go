@@ -15,54 +15,53 @@
 package ingest
 
 import (
-	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 // Message const text
 const (
-	LitErrAllocMemFail      string = "[ddl-lightning] allocate memory failed"
-	LitErrOutMaxMem         string = "[ddl-lightning] memory used up for lightning add index"
-	LitErrCreateDirFail     string = "[ddl-lightning] create lightning sort path error"
-	LitErrStatDirFail       string = "[ddl-lightning] stat lightning sort path error"
-	LitErrDeleteDirFail     string = "[ddl-lightning] delete lightning sort path error"
-	LitErrCreateBackendFail string = "[ddl-lightning] build lightning backend failed, will use kernel index reorg method to backfill the index"
-	LitErrCreateEngineFail  string = "[ddl-lightning] build lightning engine failed, will use kernel index reorg method to backfill the index"
-	LitErrCreateContextFail string = "[ddl-lightning] build lightning worker context failed, will use kernel index reorg method to backfill the index"
-	LitErrGetEngineFail     string = "[ddl-lightning] can not get cached engine info"
-	LitErrGetStorageQuota   string = "[ddl-lightning] get storage quota error"
-	LitErrGetSysLimitErr    string = "[ddl-lightning] get system open file limit error"
-	LitErrCloseEngineErr    string = "[ddl-lightning] close engine error"
-	LitErrCleanEngineErr    string = "[ddl-lightning] clean engine error"
-	LitErrFlushEngineErr    string = "[ddl-lightning] flush engine data err"
-	LitErrIngestDataErr     string = "[ddl-lightning] ingest data into storage error"
-	LitErrRemoteDupExistErr string = "[ddl-lightning] remote duplicate index key exist"
-	LitErrExceedConcurrency string = "[ddl-lightning] the concurrency is greater than lightning limit(tikv-importer.range-concurrency)"
-	LitErrUpdateDiskStats   string = "[ddl-lightning] update disk usage error"
-	LitWarnEnvInitFail      string = "[ddl-lightning] initialize environment failed"
-	LitWarnConfigError      string = "[ddl-lightning] build config for backend failed"
-	LitWarnGenMemLimit      string = "[ddl-lightning] generate memory max limitation"
-	LitInfoEnvInitSucc      string = "[ddl-lightning] init global lightning backend environment finished"
-	LitInfoSortDir          string = "[ddl-lightning] the lightning sorted dir"
-	LitInfoCreateBackend    string = "[ddl-lightning] create one backend for an DDL job"
-	LitInfoCloseBackend     string = "[ddl-lightning] close one backend for DDL job"
-	LitInfoOpenEngine       string = "[ddl-lightning] open an engine for index reorg task"
-	LitInfoCreateWrite      string = "[ddl-lightning] create one local Writer for Index reorg task"
-	LitInfoCloseEngine      string = "[ddl-lightning] flush all writer and get closed engine"
-	LitInfoRemoteDupCheck   string = "[ddl-lightning] start remote duplicate checking"
-	LitInfoStartImport      string = "[ddl-lightning] start to import data"
-	LitInfoSetMemLimit      string = "[ddl-lightning] set max memory limitation"
-	LitInfoChgMemSetting    string = "[ddl-lightning] change memory setting for lightning"
-	LitInfoInitMemSetting   string = "[ddl-lightning] initial memory setting for lightning"
-	LitInfoUnsafeImport     string = "[ddl-lightning] do a partial import data into the storage"
+	LitErrAllocMemFail      string = "[ddl-ingest] allocate memory failed"
+	LitErrCreateDirFail     string = "[ddl-ingest] create ingest sort path error"
+	LitErrStatDirFail       string = "[ddl-ingest] stat ingest sort path error"
+	LitErrDeleteDirFail     string = "[ddl-ingest] delete ingest sort path error"
+	LitErrCreateBackendFail string = "[ddl-ingest] build ingest backend failed"
+	LitErrGetBackendFail    string = "[ddl-ingest] cannot get ingest backend"
+	LitErrCreateEngineFail  string = "[ddl-ingest] build ingest engine failed"
+	LitErrCreateContextFail string = "[ddl-ingest] build ingest writer context failed"
+	LitErrGetEngineFail     string = "[ddl-ingest] can not get ingest engine info"
+	LitErrGetStorageQuota   string = "[ddl-ingest] get storage quota error"
+	LitErrCloseEngineErr    string = "[ddl-ingest] close engine error"
+	LitErrCleanEngineErr    string = "[ddl-ingest] clean engine error"
+	LitErrFlushEngineErr    string = "[ddl-ingest] flush engine data err"
+	LitErrIngestDataErr     string = "[ddl-ingest] ingest data into storage error"
+	LitErrRemoteDupExistErr string = "[ddl-ingest] remote duplicate index key exist"
+	LitErrExceedConcurrency string = "[ddl-ingest] the concurrency is greater than ingest limit"
+	LitErrUpdateDiskStats   string = "[ddl-ingest] update disk usage error"
+	LitWarnEnvInitFail      string = "[ddl-ingest] initialize environment failed"
+	LitWarnConfigError      string = "[ddl-ingest] build config for backend failed"
+	LitInfoEnvInitSucc      string = "[ddl-ingest] init global ingest backend environment finished"
+	LitInfoSortDir          string = "[ddl-ingest] the ingest sorted directory"
+	LitInfoCreateBackend    string = "[ddl-ingest] create one backend for an DDL job"
+	LitInfoCloseBackend     string = "[ddl-ingest] close one backend for DDL job"
+	LitInfoOpenEngine       string = "[ddl-ingest] open an engine for index reorg task"
+	LitInfoAddWriter        string = "[ddl-ingest] reuse engine and add a writer for index reorg task"
+	LitInfoCreateWrite      string = "[ddl-ingest] create one local writer for index reorg task"
+	LitInfoCloseEngine      string = "[ddl-ingest] flush all writer and get closed engine"
+	LitInfoRemoteDupCheck   string = "[ddl-ingest] start remote duplicate checking"
+	LitInfoStartImport      string = "[ddl-ingest] start to import data"
+	LitInfoChgMemSetting    string = "[ddl-ingest] change memory setting for ingest"
+	LitInfoInitMemSetting   string = "[ddl-ingest] initial memory setting for ingest"
+	LitInfoUnsafeImport     string = "[ddl-ingest] do a partial import data into the storage"
+	LitErrCloseWriterErr    string = "[ddl-ingest] close writer error"
 )
 
 func genBackendAllocMemFailedErr(memRoot MemRoot, jobID int64) error {
 	logutil.BgLogger().Warn(LitErrAllocMemFail, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", memRoot.MaxMemoryQuota()))
-	return errors.New(LitErrOutMaxMem)
+	return dbterror.ErrIngestFailed.FastGenByArgs("memory used up")
 }
 
 func genEngineAllocMemFailedErr(memRoot MemRoot, jobID, idxID int64) error {
@@ -70,5 +69,5 @@ func genEngineAllocMemFailedErr(memRoot MemRoot, jobID, idxID int64) error {
 		zap.Int64("index ID", idxID),
 		zap.Int64("current memory usage", memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", memRoot.MaxMemoryQuota()))
-	return errors.New(LitErrOutMaxMem)
+	return dbterror.ErrIngestFailed.FastGenByArgs("memory used up")
 }

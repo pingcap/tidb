@@ -5,7 +5,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
@@ -26,6 +25,7 @@ const (
 	CheckTargetClusterVersion     CheckItemID = "CHECK_TARGET_CLUSTER_VERSION"
 	CheckLocalDiskPlacement       CheckItemID = "CHECK_LOCAL_DISK_PLACEMENT"
 	CheckLocalTempKVDir           CheckItemID = "CHECK_LOCAL_TEMP_KV_DIR"
+	CheckTargetUsingCDCPITR       CheckItemID = "CHECK_TARGET_USING_CDC_PITR"
 )
 
 type CheckResult struct {
@@ -73,11 +73,11 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	}
 	mdl, err := mydump.NewMyDumpLoader(ctx, cfg, builderCfg.MDLoaderSetupOptions...)
 	if err != nil {
-		if errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
-			gerr = err
-		} else {
+		if mdl == nil {
 			return nil, errors.Trace(err)
 		}
+		// here means the partial result is returned, so we can continue on processing
+		gerr = err
 	}
 	dbMetas := mdl.GetDatabases()
 	srcStorage := mdl.GetStore()
@@ -139,7 +139,9 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 	case CheckLocalDiskPlacement:
 		return NewLocalDiskPlacementCheckItem(b.cfg), nil
 	case CheckLocalTempKVDir:
-		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter), nil
+		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
+	case CheckTargetUsingCDCPITR:
+		return NewCDCPITRCheckItem(b.cfg), nil
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}

@@ -26,7 +26,7 @@ import (
 )
 
 func TestMergePartialResult4JsonArrayagg(t *testing.T) {
-	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON, mysql.TypeDate, mysql.TypeDuration}
 
 	tests := make([]aggTest, 0, len(typeList))
 	numRows := 5
@@ -64,7 +64,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 }
 
 func TestJsonArrayagg(t *testing.T) {
-	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON, mysql.TypeDate, mysql.TypeDuration}
 
 	tests := make([]aggTest, 0, len(typeList))
 	numRows := 5
@@ -116,11 +116,9 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 			// +1 for the memory usage of the JSONTypeCode of json
 			memDelta += int64(len(val.Value) + 1)
 		case mysql.TypeDuration:
-			val := row.GetDuration(0, dataType.GetDecimal())
-			memDelta += int64(len(val.String()))
-		case mysql.TypeDate:
-			val := row.GetTime(0)
-			memDelta += int64(len(val.String()))
+			memDelta += aggfuncs.DefDurationSize
+		case mysql.TypeDate, mysql.TypeDatetime:
+			memDelta += aggfuncs.DefTimeSize
 		case mysql.TypeNewDecimal:
 			memDelta += aggfuncs.DefFloat64Size
 		default:

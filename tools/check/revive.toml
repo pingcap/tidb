@@ -29,7 +29,7 @@ warningCode = -1
 [rule.var-naming]
 [rule.package-comments]
 [rule.range]
-[rule.receiver-naming]
+#[rule.receiver-naming]
 [rule.indent-error-flow]
 [rule.superfluous-else]
 [rule.modifies-parameter]

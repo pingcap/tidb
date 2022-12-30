@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cockroachdb/errors"
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,7 +57,7 @@ func (s *pickStack) PickValue(values []any) (any, error) {
 
 	stackLen := len(s.stack)
 	if s.pos > stackLen {
-		return nil, errors.Newf("illegal state %d > %d", s.pos, stackLen)
+		return nil, errors.Errorf("illegal state %d > %d", s.pos, stackLen)
 	}
 
 	defer func() {

@@ -16,11 +16,13 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
@@ -295,7 +297,10 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if err != nil {
 		return nil, 0, err
 	}
-	finalPlan := postOptimize(sctx, physical)
+	finalPlan, err := postOptimize(sctx, physical)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
@@ -372,9 +377,13 @@ func mergeContinuousSelections(p PhysicalPlan) {
 	}
 }
 
-func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, error) {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
+	err := prunePhysicalColumns(sctx, plan)
+	if err != nil {
+		return nil, err
+	}
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
@@ -382,7 +391,261 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
-	return plan
+	propagateProbeParents(plan, nil)
+	countStarRewrite(plan)
+	return plan, nil
+}
+
+// prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
+// Here add projection instead of pruning columns directly for safety considerations.
+// And projection is cheap here for it saves the network cost and work in memory.
+func prunePhysicalColumns(sctx sessionctx.Context, plan PhysicalPlan) error {
+	if tableReader, ok := plan.(*PhysicalTableReader); ok {
+		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+			err := prunePhysicalColumnsInternal(sctx, tableReader.tablePlan)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		for _, child := range plan.Children() {
+			return prunePhysicalColumns(sctx, child)
+		}
+	}
+	return nil
+}
+
+func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
+	for _, eqCond := range p.EqualConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
+	}
+	for _, neCond := range p.NAEqualConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(neCond)...)
+	}
+	for _, leftCond := range p.LeftConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(leftCond)...)
+	}
+	for _, rightCond := range p.RightConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(rightCond)...)
+	}
+	for _, otherCond := range p.OtherConditions {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
+	}
+	lChild := p.children[0]
+	rChild := p.children[1]
+	for _, col := range parentUsedCols {
+		if lChild.Schema().Contains(col) {
+			leftCols = append(leftCols, col)
+		} else if rChild.Schema().Contains(col) {
+			rightCols = append(rightCols, col)
+		}
+	}
+	return leftCols, rightCols
+}
+
+func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
+	var err error
+	joinUsed := expression.GetUsedList(joinUsedCols, sender.Schema())
+	hashCols := make([]*expression.Column, len(sender.HashCols))
+	for i, mppCol := range sender.HashCols {
+		hashCols[i] = mppCol.Col
+	}
+	hashUsed := expression.GetUsedList(hashCols, sender.Schema())
+
+	needPrune := false
+	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))
+	prunedSchema := sender.Schema().Clone()
+	for i := len(joinUsed) - 1; i >= 0; i-- {
+		usedExprs[i] = sender.Schema().Columns[i]
+		if !joinUsed[i] && !hashUsed[i] {
+			needPrune = true
+			usedExprs = append(usedExprs[:i], usedExprs[i+1:]...)
+			prunedSchema.Columns = append(prunedSchema.Columns[:i], prunedSchema.Columns[i+1:]...)
+		}
+	}
+
+	if needPrune && len(sender.children) > 0 {
+		ch := sender.children[0]
+		proj := PhysicalProjection{
+			Exprs: usedExprs,
+		}.Init(sctx, ch.statsInfo(), ch.SelectBlockOffset())
+
+		proj.SetSchema(prunedSchema)
+		proj.SetChildren(ch)
+		sender.children[0] = proj
+
+		// Resolve Indices from bottom to up
+		err = proj.ResolveIndicesItself()
+		if err != nil {
+			return err
+		}
+		err = sender.ResolveIndicesItself()
+		if err != nil {
+			return err
+		}
+		err = hashJoin.ResolveIndicesItself()
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
+func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) error {
+	var err error
+	switch x := plan.(type) {
+	case *PhysicalHashJoin:
+		schemaColumns := x.Schema().Clone().Columns
+		leftCols, rightCols := x.extractUsedCols(schemaColumns)
+		matchPattern := false
+		for i := 0; i <= 1; i++ {
+			// Pattern: HashJoin <- ExchangeReceiver <- ExchangeSender
+			matchPattern = false
+			var exchangeSender *PhysicalExchangeSender
+			if receiver, ok := x.children[i].(*PhysicalExchangeReceiver); ok {
+				exchangeSender, matchPattern = receiver.children[0].(*PhysicalExchangeSender)
+			}
+
+			if matchPattern {
+				if i == 0 {
+					err = prunePhysicalColumnForHashJoinChild(sctx, x, leftCols, exchangeSender)
+				} else {
+					err = prunePhysicalColumnForHashJoinChild(sctx, x, rightCols, exchangeSender)
+				}
+				if err != nil {
+					return nil
+				}
+			}
+
+			/// recursively travel the physical plan
+			err = prunePhysicalColumnsInternal(sctx, x.children[i])
+			if err != nil {
+				return nil
+			}
+		}
+	default:
+		for _, child := range x.Children() {
+			err = prunePhysicalColumnsInternal(sctx, child)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+/*
+*
+The countStarRewriter is used to rewrite
+
+	count(*) -> count(not null column)
+
+**Only for TiFlash**
+Attention:
+Since count(*) is directly translated into count(1) during grammar parsing,
+the rewritten pattern actually matches count(constant)
+
+Pattern:
+PhysicalAggregation: count(constant)
+
+	    |
+	TableFullScan: TiFlash
+
+Optimize:
+Table
+
+	<k1 bool not null, k2 int null, k3 bigint not null>
+
+Query: select count(*) from table
+ColumnPruningRule: datasource pick row_id
+countStarRewrite: datasource pick k1 instead of row_id
+
+	rewrite count(*) -> count(k1)
+
+Rewritten Query: select count(k1) from table
+*/
+func countStarRewrite(plan PhysicalPlan) {
+	countStarRewriteInternal(plan)
+	if tableReader, ok := plan.(*PhysicalTableReader); ok {
+		countStarRewrite(tableReader.tablePlan)
+	} else {
+		for _, child := range plan.Children() {
+			countStarRewrite(child)
+		}
+	}
+}
+
+func countStarRewriteInternal(plan PhysicalPlan) {
+	// match pattern any agg(count(constant)) -> tablefullscan(tiflash)
+	var physicalAgg *basePhysicalAgg
+	switch x := plan.(type) {
+	case *PhysicalHashAgg:
+		physicalAgg = x.getPointer()
+	case *PhysicalStreamAgg:
+		physicalAgg = x.getPointer()
+	default:
+		return
+	}
+	if len(physicalAgg.GroupByItems) > 0 || len(physicalAgg.children) != 1 {
+		return
+	}
+	for _, aggFunc := range physicalAgg.AggFuncs {
+		if aggFunc.Name != "count" || len(aggFunc.Args) != 1 || aggFunc.HasDistinct {
+			return
+		}
+		if _, ok := aggFunc.Args[0].(*expression.Constant); !ok {
+			return
+		}
+	}
+	physicalTableScan, ok := physicalAgg.Children()[0].(*PhysicalTableScan)
+	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.schema.Columns) != 1 {
+		return
+	}
+	// rewrite datasource and agg args
+	rewriteTableScanAndAggArgs(physicalTableScan, physicalAgg.AggFuncs)
+}
+
+// rewriteTableScanAndAggArgs Pick the narrowest and not null column from table
+// If there is no not null column in Data Source, the row_id or pk column will be retained
+func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
+	var resultColumnInfo *model.ColumnInfo
+	var resultColumn *expression.Column
+
+	resultColumnInfo = physicalTableScan.Columns[0]
+	resultColumn = physicalTableScan.schema.Columns[0]
+	// prefer not null column from table
+	for _, columnInfo := range physicalTableScan.Table.Columns {
+		if columnInfo.FieldType.IsVarLengthType() {
+			continue
+		}
+		if mysql.HasNotNullFlag(columnInfo.GetFlag()) {
+			if columnInfo.GetFlen() < resultColumnInfo.GetFlen() {
+				resultColumnInfo = columnInfo
+				resultColumn = &expression.Column{
+					UniqueID: physicalTableScan.ctx.GetSessionVars().AllocPlanColumnID(),
+					ID:       resultColumnInfo.ID,
+					RetType:  resultColumnInfo.FieldType.Clone(),
+					OrigName: fmt.Sprintf("%s.%s.%s", physicalTableScan.DBName.L, physicalTableScan.Table.Name.L, resultColumnInfo.Name),
+				}
+			}
+		}
+	}
+	// table scan (row_id) -> (not null column)
+	physicalTableScan.Columns[0] = resultColumnInfo
+	physicalTableScan.schema.Columns[0] = resultColumn
+	// agg arg count(1) -> count(not null column)
+	arg := resultColumn.Clone()
+	for _, aggFunc := range aggFuncs {
+		constExpr, ok := aggFunc.Args[0].(*expression.Constant)
+		if !ok {
+			return
+		}
+		// count(null) shouldn't be rewritten
+		if constExpr.Value.IsNull() {
+			continue
+		}
+		aggFunc.Args[0] = arg
+	}
 }
 
 // Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).
@@ -519,7 +782,43 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 // Todo: make more careful check here.
 func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
 	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
-		sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: TiFlash plan is un-cacheable"))
+	}
+}
+
+// propagateProbeParents doesn't affect the execution plan, it only sets the probeParents field of a PhysicalPlan.
+// It's for handling the inconsistency between row count in the statsInfo and the recorded actual row count. Please
+// see comments in PhysicalPlan for details.
+func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
+	plan.setProbeParents(probeParents)
+	switch x := plan.(type) {
+	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
+			propagateProbeParents(plan.Children()[1-join.getInnerChildIdx()], probeParents)
+
+			// The core logic of this method:
+			// Record every Apply and Index Join we met, record it in a slice, and set it in their inner children.
+			newParents := make([]PhysicalPlan, len(probeParents), len(probeParents)+1)
+			copy(newParents, probeParents)
+			newParents = append(newParents, plan)
+			propagateProbeParents(plan.Children()[join.getInnerChildIdx()], newParents)
+		}
+	case *PhysicalTableReader:
+		propagateProbeParents(x.tablePlan, probeParents)
+	case *PhysicalIndexReader:
+		propagateProbeParents(x.indexPlan, probeParents)
+	case *PhysicalIndexLookUpReader:
+		propagateProbeParents(x.indexPlan, probeParents)
+		propagateProbeParents(x.tablePlan, probeParents)
+	case *PhysicalIndexMergeReader:
+		for _, pchild := range x.partialPlans {
+			propagateProbeParents(pchild, probeParents)
+		}
+		propagateProbeParents(x.tablePlan, probeParents)
+	default:
+		for _, child := range plan.Children() {
+			propagateProbeParents(child, probeParents)
+		}
 	}
 }
 
@@ -656,8 +955,11 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
-	err = t.plan().ResolveIndices()
-	return t.plan(), t.cost(), err
+	if err = t.plan().ResolveIndices(); err != nil {
+		return nil, 0, err
+	}
+	cost, err = getPlanCost(t.plan(), property.RootTaskType, NewDefaultPlanCostOption())
+	return t.plan(), cost, err
 }
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.

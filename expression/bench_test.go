@@ -428,7 +428,7 @@ func newJSONTimeGener() *jsonTimeGener {
 
 func (g *jsonTimeGener) gen() interface{} {
 	tm := types.NewTime(getRandomTime(g.randGen.Rand), mysql.TypeDatetime, types.DefaultFsp)
-	return types.CreateBinaryJSON(tm.String())
+	return types.CreateBinaryJSON(tm)
 }
 
 type rangeDurationGener struct {

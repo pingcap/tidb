@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -40,15 +41,21 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"google.golang.org/grpc"
 )
 
@@ -66,7 +73,7 @@ func TestForClusterServerInfo(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -148,7 +155,7 @@ func TestTestDataLockWaits(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -180,7 +187,7 @@ func SubTestDataLockWaitsPrivilege(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -214,7 +221,7 @@ func TestSelectClusterTable(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -271,7 +278,7 @@ func SubTestSelectClusterTablePrivilege(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -327,7 +334,7 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -420,7 +427,7 @@ func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -472,7 +479,7 @@ func TestStmtSummaryHistoryTable(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -530,7 +537,7 @@ func TestStmtSummaryHistoryTable(t *testing.T) {
 func TestIssue26379(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -588,7 +595,7 @@ func TestStmtSummaryResultRows(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -601,7 +608,7 @@ func TestStmtSummaryResultRows(t *testing.T) {
 	tk.MustExec("set global tidb_stmt_summary_max_sql_length=4096")
 	tk.MustExec("set global tidb_enable_stmt_summary=0")
 	tk.MustExec("set global tidb_enable_stmt_summary=1")
-	if !config.GetGlobalConfig().Instance.EnableCollectExecutionInfo {
+	if !config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
 		tk.MustExec("set @@tidb_enable_collect_execution_info=1")
 		defer tk.MustExec("set @@tidb_enable_collect_execution_info=0")
 	}
@@ -625,7 +632,7 @@ func TestStmtSummaryResultRows(t *testing.T) {
 func TestSlowQueryOOM(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -714,16 +721,18 @@ select * from t1;
 	tk.MustQuery("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 }
 
-func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string) (*grpc.Server, string) {
+func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.SessionManager) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	// Fix issue 9836
-	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 1)}
-	sm.PS[0] = &util.ProcessInfo{
-		ID:      1,
-		User:    "root",
-		Host:    "127.0.0.1",
-		Command: mysql.ComQuery,
+	if sm == nil {
+		sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 1)}
+		sm.(*testkit.MockSessionManager).PS[0] = &util.ProcessInfo{
+			ID:      1,
+			User:    "root",
+			Host:    "127.0.0.1",
+			Command: mysql.ComQuery,
+		}
 	}
 	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
@@ -805,4 +814,248 @@ func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 	tk.MustExec("use test")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
+}
+
+func TestMDLView(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skipf("test requires concurrent ddl")
+	}
+
+	// setup suite
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+
+	tk := s.newTestKitWithRoot(t)
+	tkDDL := s.newTestKitWithRoot(t)
+	tk3 := s.newTestKitWithRoot(t)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+
+	tk.MustExec("begin")
+	tk.MustQuery("select 1;")
+	tk.MustQuery("select * from t;")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tkDDL.MustExec("alter table test.t add column b int;")
+		wg.Done()
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", tk3.Session().GetSessionManager())
+	defer s.rpcserver.Stop()
+
+	tk3.MustQuery("select DB_NAME, QUERY, SQL_DIGESTS from mysql.tidb_mdl_view").Check(testkit.Rows("test alter table test.t add column b int; [\"begin\",\"select ? ;\",\"select * from `t` ;\"]"))
+
+	tk.MustExec("commit")
+
+	wg.Wait()
+}
+
+func TestCreateBindingFromHistory(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(id int primary key, a int, b int, key(a))")
+	tk.MustExec("create table t2(id int primary key, a int, b int, key(a))")
+
+	var testCases = []struct {
+		sqls []string
+		hint string
+	}{
+		{
+			sqls: []string{
+				"select %s * from t1, t2 where t1.id = t2.id",
+				"select %s * from test.t1, t2 where t1.id = t2.id",
+				"select %s * from test.t1, test.t2 where t1.id = t2.id",
+				"select %s * from t1, test.t2 where t1.id = t2.id",
+			},
+			hint: "/*+ merge_join(t1, t2) */",
+		},
+		{
+			sqls: []string{
+				"select %s * from t1 where a = 1",
+				"select %s * from test.t1 where a = 1",
+			},
+			hint: "/*+ ignore_index(t, a) */",
+		},
+	}
+
+	for _, testCase := range testCases {
+		for _, bind := range testCase.sqls {
+			stmtsummary.StmtSummaryByDigestMap.Clear()
+			bindSQL := fmt.Sprintf(bind, testCase.hint)
+			tk.MustExec(bindSQL)
+			planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", bindSQL)).Rows()
+			tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+			showRes := tk.MustQuery("show bindings").Rows()
+			require.Equal(t, len(showRes), 1)
+			require.Equal(t, planDigest[0][0], showRes[0][10])
+			for _, sql := range testCase.sqls {
+				tk.MustExec(fmt.Sprintf(sql, ""))
+				tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			}
+		}
+		showRes := tk.MustQuery("show bindings").Rows()
+		require.Equal(t, len(showRes), 1)
+		tk.MustExec(fmt.Sprintf("drop binding for sql digest '%s'", showRes[0][9]))
+	}
+
+	// exception cases
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", "1"), "can't find any plans for '1'")
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", ""), "plan digest is empty")
+	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2) */ * from t1, t2 where t1.id = t2.id")
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Equal(t, showRes[0][10], "") // plan digest should be nil by create for
+}
+
+func TestCreateBindingForPrepareFromHistory(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, key(a))")
+
+	tk.MustExec("prepare stmt from 'select /*+ ignore_index(t,a) */ * from t where a = ?'")
+	tk.MustExec("set @a = 1")
+	tk.MustExec("execute stmt using @a")
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", "select /*+ ignore_index(t,a) */ * from t where a = ? [arguments: 1]")).Rows()
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Equal(t, len(showRes), 0)
+	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	showRes = tk.MustQuery("show bindings").Rows()
+	require.Equal(t, len(showRes), 1)
+	require.Equal(t, planDigest[0][0], showRes[0][10])
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+}
+
+func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+	tk.MustExec("create table t3(id int)")
+
+	sql := "select * from t1 where t1.id in (select id from t2)"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with sub query")
+
+	sql = "select * from t1, t2, t3 where t1.id = t2.id and t2.id = t3.id"
+	tk.MustExec(sql)
+	planDigest = tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with more than two table join")
+}
+
+// withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
+	return mockstore.WithMultipleOptions(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+}
+
+func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.store = testkit.CreateMockStore(t, withMockTiFlash(2))
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("alter table test.t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+
+	sql := "select * from t"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with tiflash engine")
+}
+
+func TestSetBindingStatusBySQLDigest(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, a int, key(a))")
+	sql := "select /*+ ignore_index(t, a) */ * from t where t.a = 1"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.cluster_statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustExec(fmt.Sprintf("create global binding from history using plan digest '%s'", planDigest[0][0]))
+	sql = "select * from t where t.a = 1"
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	sqlDigest := tk.MustQuery("show global bindings").Rows()
+	tk.MustExec(fmt.Sprintf("set binding disabled for sql digest '%s'", sqlDigest[0][9]))
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec(fmt.Sprintf("set binding enabled for sql digest '%s'", sqlDigest[0][9]))
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	tk.MustGetErrMsg("set binding enabled for sql digest '2'", "can't find any binding for '2'")
 }

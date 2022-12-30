@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -65,7 +64,8 @@ func NewEngineInfo(ctx context.Context, jobID, indexID int64, cfg *backend.Engin
 func (ei *engineInfo) Flush() error {
 	err := ei.openedEngine.Flush(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrFlushEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
 	return nil
@@ -78,13 +78,20 @@ func (ei *engineInfo) Clean() {
 	indexEngine := ei.openedEngine
 	closedEngine, err := indexEngine.Close(ei.ctx, ei.cfg)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 	ei.openedEngine = nil
+	err = ei.closeWriters()
+	if err != nil {
+		logutil.BgLogger().Error(LitErrCloseWriterErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+	}
 	// Here the local intermediate files will be removed.
 	err = closedEngine.Cleanup(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrCleanEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 	}
 }
 
@@ -94,14 +101,22 @@ func (ei *engineInfo) ImportAndClean() error {
 	indexEngine := ei.openedEngine
 	closeEngine, err1 := indexEngine.Close(ei.ctx, ei.cfg)
 	if err1 != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-		return errors.New(LitErrCloseEngineErr)
+		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err1),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return err1
 	}
 	ei.openedEngine = nil
-
-	err := ei.diskRoot.UpdateUsageAndQuota()
+	err := ei.closeWriters()
 	if err != nil {
-		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		logutil.BgLogger().Error(LitErrCloseWriterErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return err
+	}
+
+	err = ei.diskRoot.UpdateUsageAndQuota()
+	if err != nil {
+		logutil.BgLogger().Error(LitErrUpdateDiskStats, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}
 
@@ -111,15 +126,17 @@ func (ei *engineInfo) ImportAndClean() error {
 		zap.String("split region size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
 	err = closeEngine.Import(ei.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
-		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-		return errors.New(LitErrIngestDataErr)
+		logutil.BgLogger().Error(LitErrIngestDataErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return err
 	}
 
 	// Clean up the engine local workspace.
 	err = closeEngine.Cleanup(ei.ctx)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-		return errors.New(LitErrCloseEngineErr)
+		logutil.BgLogger().Error(LitErrCloseEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return err
 	}
 	return nil
 }
@@ -139,7 +156,8 @@ func (ei *engineInfo) NewWriterCtx(id int) (*WriterContext, error) {
 
 	wCtx, err := ei.newWriterContext(id)
 	if err != nil {
-		logutil.BgLogger().Error(LitErrCreateContextFail, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID),
+		logutil.BgLogger().Error(LitErrCreateContextFail, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID),
 			zap.Int("worker ID", id))
 		return nil, err
 	}
@@ -172,6 +190,22 @@ func (ei *engineInfo) newWriterContext(workerID int) (*WriterContext, error) {
 		ctx:    ei.ctx,
 		lWrite: lWrite,
 	}, nil
+}
+
+func (ei *engineInfo) closeWriters() error {
+	var firstErr error
+	for wid := range ei.writerCache.Keys() {
+		if w, ok := ei.writerCache.Load(wid); ok {
+			_, err := w.Close(ei.ctx)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		ei.writerCache.Delete(wid)
+	}
+	return firstErr
 }
 
 // WriteRow Write one row into local writer buffer.

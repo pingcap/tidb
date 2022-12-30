@@ -72,21 +72,22 @@ import (
 )
 
 const (
-	pDBName     = "db"
-	pHexKey     = "hexKey"
-	pIndexName  = "index"
-	pHandle     = "handle"
-	pRegionID   = "regionID"
-	pStartTS    = "startTS"
-	pTableName  = "table"
-	pTableID    = "tableID"
-	pColumnID   = "colID"
-	pColumnTp   = "colTp"
-	pColumnFlag = "colFlag"
-	pColumnLen  = "colLen"
-	pRowBin     = "rowBin"
-	pSnapshot   = "snapshot"
-	pFileName   = "filename"
+	pDBName             = "db"
+	pHexKey             = "hexKey"
+	pIndexName          = "index"
+	pHandle             = "handle"
+	pRegionID           = "regionID"
+	pStartTS            = "startTS"
+	pTableName          = "table"
+	pTableID            = "tableID"
+	pColumnID           = "colID"
+	pColumnTp           = "colTp"
+	pColumnFlag         = "colFlag"
+	pColumnLen          = "colLen"
+	pRowBin             = "rowBin"
+	pSnapshot           = "snapshot"
+	pFileName           = "filename"
+	pDumpPartitionStats = "dumpPartitionStats"
 )
 
 // For query string
@@ -658,9 +659,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch asyncCommit {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableAsyncCommit, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -680,9 +681,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch onePC {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnable1PC, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -747,9 +748,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch mutationChecker {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.On)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -799,14 +800,22 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case "reset":
 		binloginfo.ResetSkippedCommitterCounter()
 	case "nowait":
-		binloginfo.DisableSkipBinlogFlag()
+		err := binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	case "status":
 	default:
 		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
 		if sec <= 0 || err != nil {
 			sec = 1800
 		}
-		binloginfo.DisableSkipBinlogFlag()
+		err = binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		timeout := time.Duration(sec) * time.Second
 		err = binloginfo.WaitBinlogRecover(timeout)
 		if err != nil {
@@ -971,9 +980,12 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 	}
 	if available {
-		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
+		var tableInfo model.TableInfo
+		tableInfo.ID = status.ID
+		err = infosync.DeleteTiFlashTableSyncProgress(&tableInfo)
 	} else {
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+		progress := float64(status.FlashRegionCount) / float64(status.RegionCount)
+		err = infosync.UpdateTiFlashProgressCache(status.ID, progress)
 	}
 	if err != nil {
 		writeError(w, err)
@@ -1200,7 +1212,13 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, data.Meta())
 			return
 		}
-		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		// The tid maybe a partition ID of the partition-table.
+		tbl, _, _ := schema.FindTableByPartitionID(int64(tid))
+		if tbl == nil {
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+			return
+		}
+		writeData(w, tbl.Meta())
 		return
 	}
 

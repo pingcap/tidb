@@ -16,7 +16,7 @@
 
 set -eu
 
-if grep -Fq "$1" "$TEST_DIR/sql_res.$TEST_NAME.txt"; then
+if grep -Fq -- "$1" "$TEST_DIR/sql_res.$TEST_NAME.txt"; then
     echo "TEST FAILED: OUTPUT CONTAINS '$1'"
     echo "____________________________________"
     cat "$TEST_DIR/sql_res.$TEST_NAME.txt"

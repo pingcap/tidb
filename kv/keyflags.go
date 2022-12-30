@@ -34,6 +34,7 @@ const (
 	// the flag indicates the conflict and constraint check of the key should be postponed
 	// to the next pessimistic lock or prewrite request.
 	flagNeedConstraintCheckInPrewrite
+	flagPreviousPresumeKNE
 )
 
 // HasPresumeKeyNotExists returns whether the associated key use lazy check.
@@ -89,6 +90,9 @@ const (
 	SetAssertNone
 	// SetNeedConstraintCheckInPrewrite sets the flag flagNeedConstraintCheckInPrewrite
 	SetNeedConstraintCheckInPrewrite
+	// SetPreviousPresumeKeyNotExists marks the PNE flag is set in previous statements, thus it cannot be unset when
+	// retrying or rolling back a statement.
+	SetPreviousPresumeKeyNotExists
 )
 
 // ApplyFlagsOps applys flagspos to origin.
@@ -110,6 +114,8 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin |= flagAssertNotExists
 		case SetNeedConstraintCheckInPrewrite:
 			origin |= flagNeedConstraintCheckInPrewrite
+		case SetPreviousPresumeKeyNotExists:
+			origin |= flagPreviousPresumeKNE
 		}
 	}
 	return origin

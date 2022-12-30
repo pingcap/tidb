@@ -18,10 +18,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -47,6 +47,14 @@ const maxMemoryQuota = 2 * size.GB
 // InitGlobalLightningEnv initialize Lightning backfill environment.
 func InitGlobalLightningEnv() {
 	log.SetAppLogger(logutil.BgLogger())
+	globalCfg := config.GetGlobalConfig()
+	if globalCfg.Store != "tikv" {
+		logutil.BgLogger().Warn(LitWarnEnvInitFail,
+			zap.String("storage limitation", "only support TiKV storage"),
+			zap.String("current storage", globalCfg.Store),
+			zap.Bool("lightning is initialized", LitInitialized))
+		return
+	}
 	sPath, err := genLightningDataDir()
 	if err != nil {
 		logutil.BgLogger().Warn(LitWarnEnvInitFail, zap.Error(err),
@@ -63,25 +71,13 @@ func InitGlobalLightningEnv() {
 		return
 	}
 	LitBackCtxMgr.init(LitMemRoot, LitDiskRoot)
-	LitRLimit = genRLimit()
+	LitRLimit = util.GenRLimit()
 	LitInitialized = true
 	logutil.BgLogger().Info(LitInfoEnvInitSucc,
 		zap.Uint64("memory limitation", maxMemoryQuota),
 		zap.Uint64("sort path disk quota", LitDiskRoot.MaxQuota()),
 		zap.Uint64("max open file number", LitRLimit),
 		zap.Bool("lightning is initialized", LitInitialized))
-}
-
-func genRLimit() uint64 {
-	rLimit := uint64(1024)
-	var rl syscall.Rlimit
-	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl)
-	if err != nil {
-		logutil.BgLogger().Warn(LitErrGetSysLimitErr, zap.Error(err), zap.String("default", "1024"))
-	} else {
-		rLimit = rl.Cur
-	}
-	return rLimit
 }
 
 // Generate lightning local store dir in TiDB data dir.
@@ -113,9 +109,6 @@ func genLightningDataDir() (string, error) {
 	logutil.BgLogger().Info(LitInfoSortDir, zap.String("data path:", sortPath))
 	return sortPath, nil
 }
-
-// GenRLimitForTest is only used for test.
-var GenRLimitForTest = genRLimit
 
 // GenLightningDataDirForTest is only used for test.
 var GenLightningDataDirForTest = genLightningDataDir

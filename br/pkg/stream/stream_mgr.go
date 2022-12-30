@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -156,35 +157,168 @@ func BuildObserveMetaRange() *kv.KeyRange {
 	return &kv.KeyRange{StartKey: sk, EndKey: ek}
 }
 
+type ContentRef struct {
+	ref  int
+	data []byte
+}
+
+// MetadataHelper make restore/truncate compatible with metadataV1 and metadataV2.
+type MetadataHelper struct {
+	cache   map[string]*ContentRef
+	decoder *zstd.Decoder
+}
+
+func NewMetadataHelper() *MetadataHelper {
+	decoder, _ := zstd.NewReader(nil)
+	return &MetadataHelper{
+		cache:   make(map[string]*ContentRef),
+		decoder: decoder,
+	}
+}
+
+func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
+	if ref <= 0 {
+		return
+	}
+	m.cache[path] = &ContentRef{
+		ref:  ref,
+		data: nil,
+	}
+}
+
+func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backuppb.CompressionType) ([]byte, error) {
+	switch compressionType {
+	case backuppb.CompressionType_UNKNOWN:
+		return data, nil
+	case backuppb.CompressionType_ZSTD:
+		return m.decoder.DecodeAll(data, nil)
+	}
+	return nil, errors.Errorf("failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
+}
+
+func (m *MetadataHelper) ReadFile(ctx context.Context, path string, offset uint64, length uint64, compressionType backuppb.CompressionType, storage storage.ExternalStorage) ([]byte, error) {
+	var err error
+	cref, exist := m.cache[path]
+	if !exist {
+		// Only files from metaV2 are cached,
+		// so the file should be from metaV1.
+		if offset > 0 || length > 0 {
+			// But the file is from metaV2.
+			return nil, errors.Errorf("the cache entry is uninitialized")
+		}
+		data, err := storage.ReadFile(ctx, path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return m.decodeCompressedData(data, compressionType)
+	}
+
+	cref.ref -= 1
+
+	if len(cref.data) == 0 {
+		cref.data, err = storage.ReadFile(ctx, path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	buf, err := m.decodeCompressedData(cref.data[offset:offset+length], compressionType)
+
+	if cref.ref <= 0 {
+		cref.data = nil
+		delete(m.cache, path)
+	}
+
+	return buf, errors.Trace(err)
+}
+
+func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error) {
+	meta := &backuppb.Metadata{}
+	err := meta.Unmarshal(rawMetaData)
+	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+		group := &backuppb.DataFileGroup{
+			// For MetaDataV2, file's path is stored in it.
+			Path: "",
+			// In fact, each file in MetaDataV1 can be regard
+			// as a file group in MetaDataV2. But for simplicity,
+			// the files in MetaDataV1 are considered as a group.
+			DataFilesInfo: meta.Files,
+			// Other fields are Unused.
+		}
+		meta.FileGroups = []*backuppb.DataFileGroup{group}
+	}
+	return meta, errors.Trace(err)
+}
+
+// Only for deleting, after MetadataV1 is deprecated, we can remove it.
+// Hard means convert to MetaDataV2 deeply.
+func (*MetadataHelper) ParseToMetadataHard(rawMetaData []byte) (*backuppb.Metadata, error) {
+	meta := &backuppb.Metadata{}
+	err := meta.Unmarshal(rawMetaData)
+	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+		groups := make([]*backuppb.DataFileGroup, 0, len(meta.Files))
+		for _, d := range meta.Files {
+			groups = append(groups, &backuppb.DataFileGroup{
+				// For MetaDataV2, file's path is stored in it.
+				Path: d.Path,
+				// Each file in MetaDataV1 can be regard
+				// as a file group in MetaDataV2.
+				DataFilesInfo: []*backuppb.DataFileInfo{d},
+				MaxTs:         d.MaxTs,
+				MinTs:         d.MinTs,
+				MinResolvedTs: d.ResolvedTs,
+				// File from MetaVersion_V1 isn't compressed.
+				Length: d.Length,
+				// Other fields are Unused.
+			})
+		}
+		meta.FileGroups = groups
+	}
+	return meta, errors.Trace(err)
+}
+
+// For truncate command. Marshal metadata to reupload to external storage.
+// The metadata must be unmarshal by `ParseToMetadataHard`
+func (*MetadataHelper) Marshal(meta *backuppb.Metadata) ([]byte, error) {
+	// the field `Files` isn't modified.
+	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+		if len(meta.FileGroups) != len(meta.Files) {
+			// some files are deleted
+			files := make([]*backuppb.DataFileInfo, 0, len(meta.FileGroups))
+			for _, g := range meta.FileGroups {
+				files = append(files, g.DataFilesInfo...)
+			}
+			meta.Files = files
+		}
+		meta.FileGroups = nil
+	}
+	return meta.Marshal()
+}
+
 // FastUnmarshalMetaData used a 128 worker pool to speed up
 // read metadata content from external_storage.
 func FastUnmarshalMetaData(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	fn func(path string, m *backuppb.Metadata) error,
+	fn func(path string, rawMetaData []byte) error,
 ) error {
 	log.Info("use workers to speed up reading metadata files", zap.Int("workers", metaDataWorkerPoolSize))
 	pool := utils.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
 	eg, ectx := errgroup.WithContext(ctx)
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
+		if !strings.HasSuffix(path, ".meta") {
+			return nil
+		}
 		readPath := path
 		pool.ApplyOnErrorGroup(eg, func() error {
-			log.Info("fast read meta file from storage", zap.String("path", readPath))
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {
 				log.Error("failed to read file", zap.String("file", readPath))
 				return errors.Annotatef(err, "during reading meta file %s from storage", readPath)
 			}
-			m := &backuppb.Metadata{}
-			err = m.Unmarshal(b)
-			if err != nil {
-				if !strings.HasSuffix(readPath, ".meta") {
-					return nil
-				}
-				return err
-			}
-			return fn(readPath, m)
+
+			return fn(readPath, b)
 		})
 		return nil
 	})

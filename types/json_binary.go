@@ -24,11 +24,15 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -49,6 +53,10 @@ import (
        0x0b |       // double
        0x0c |       // utf8mb4 string
        0x0d |       // opaque value
+       0x0e |       // date
+       0x0f |       // datetime
+       0x10 |       // timestamp
+       0x11 |       // time
 
    value ::=
        object  |
@@ -57,6 +65,8 @@ import (
        number  |
        string  |
        opaque  |
+       time    |
+       duration |
 
    object ::= element-count size key-entry* value-entry* key* value*
 
@@ -103,8 +113,16 @@ import (
 
    opaque ::= typeId data-length byte*
 
+   time ::= uint64
+
+   duration ::= uint64 uint32
+
    typeId ::= byte
 */
+
+var jsonZero = CreateBinaryJSON(uint64(0))
+
+const maxJSONDepth = 100
 
 // BinaryJSON represents a binary encoded JSON object.
 // It can be randomly accessed without deserialization.
@@ -151,33 +169,29 @@ func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 		return bj.marshalArrayTo(buf)
 	case JSONTypeCodeObject:
 		return bj.marshalObjTo(buf)
+	case JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp:
+		return jsonMarshalTimeTo(buf, bj.GetTime()), nil
+	case JSONTypeCodeDuration:
+		return jsonMarshalDurationTo(buf, bj.GetDuration()), nil
 	}
 	return buf, nil
 }
 
 // IsZero return a boolean indicate whether BinaryJSON is Zero
 func (bj BinaryJSON) IsZero() bool {
-	isZero := false
-	switch bj.TypeCode {
-	case JSONTypeCodeString:
-		isZero = false
-	case JSONTypeCodeLiteral:
-		isZero = false
-	case JSONTypeCodeInt64:
-		isZero = bj.GetInt64() == 0
-	case JSONTypeCodeUint64:
-		isZero = bj.GetUint64() == 0
-	case JSONTypeCodeFloat64:
-		isZero = bj.GetFloat64() == 0
-	case JSONTypeCodeArray:
-		isZero = false
-	case JSONTypeCodeObject:
-		isZero = false
-	// FIXME: TiDB always casts the json to double BINARY so this function will never be called.
-	case JSONTypeCodeOpaque:
-		isZero = false
-	}
-	return isZero
+	// This behavior is different on MySQL 5.7 and 8.0
+	//
+	// In MySQL 5.7, most of these non-integer values are 0, and return a warning:
+	// "Invalid JSON value for CAST to INTEGER from column j"
+	//
+	// In MySQL 8, most of these non-integer values are not zero, with a warning:
+	// > "Evaluating a JSON value in SQL boolean context does an implicit comparison
+	// > against JSON integer 0; if this is not what you want, consider converting
+	// > JSON to a SQL numeric type with JSON_VALUE RETURNING"
+	//
+	// TODO: return a warning as MySQL 8 does
+
+	return CompareBinaryJSON(bj, jsonZero) == 0
 }
 
 // GetInt64 gets the int64 value.
@@ -221,6 +235,28 @@ func (bj BinaryJSON) GetOpaque() Opaque {
 	}
 }
 
+// GetTime gets the time value
+func (bj BinaryJSON) GetTime() Time {
+	coreTime := CoreTime(bj.GetUint64())
+
+	tp := mysql.TypeDate
+	if bj.TypeCode == JSONTypeCodeDatetime {
+		tp = mysql.TypeDatetime
+	} else if bj.TypeCode == JSONTypeCodeTimestamp {
+		tp = mysql.TypeTimestamp
+	}
+
+	return NewTime(coreTime, tp, DefaultFsp)
+}
+
+// GetDuration gets the duration value
+func (bj BinaryJSON) GetDuration() Duration {
+	return Duration{
+		time.Duration(bj.GetInt64()),
+		int(jsonEndian.Uint32(bj.Value[8:])),
+	}
+}
+
 // GetOpaqueFieldType returns the type of opaque value
 func (bj BinaryJSON) GetOpaqueFieldType() byte {
 	return bj.Value[0]
@@ -241,7 +277,8 @@ func (bj BinaryJSON) GetElemCount() int {
 	return int(jsonEndian.Uint32(bj.Value))
 }
 
-func (bj BinaryJSON) arrayGetElem(idx int) BinaryJSON {
+// ArrayGetElem gets the element of the index `idx`.
+func (bj BinaryJSON) ArrayGetElem(idx int) BinaryJSON {
 	return bj.valEntryGet(headerSize + idx*valEntrySize)
 }
 
@@ -272,6 +309,10 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 		strLen, lenLen := binary.Uvarint(bj.Value[valOff+1:])
 		totalLen := 1 + uint32(lenLen) + uint32(strLen)
 		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+totalLen]}
+	case JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp:
+		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+8]}
+	case JSONTypeCodeDuration:
+		return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+12]}
 	}
 	dataSize := jsonEndian.Uint32(bj.Value[valOff+dataSizeOff:])
 	return BinaryJSON{TypeCode: tpCode, Value: bj.Value[valOff : valOff+dataSize]}
@@ -317,7 +358,7 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 			buf = append(buf, ", "...)
 		}
 		var err error
-		buf, err = bj.arrayGetElem(i).marshalTo(buf)
+		buf, err = bj.ArrayGetElem(i).marshalTo(buf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -438,6 +479,20 @@ func jsonMarshalLiteralTo(b []byte, litType byte) []byte {
 	return b
 }
 
+func jsonMarshalTimeTo(buf []byte, time Time) []byte {
+	// printing json datetime/duration will always keep 6 fsp
+	time.SetFsp(6)
+	buf = append(buf, []byte(quoteJSONString(time.String()))...)
+	return buf
+}
+
+func jsonMarshalDurationTo(buf []byte, duration Duration) []byte {
+	// printing json datetime/duration will always keep 6 fsp
+	duration.Fsp = 6
+	buf = append(buf, []byte(quoteJSONString(duration.String()))...)
+	return buf
+}
+
 // ParseBinaryJSONFromString parses a json from string.
 func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 	if len(s) == 0 {
@@ -464,19 +519,19 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	buf := make([]byte, 0, len(data))
-	var typeCode JSONTypeCode
-	typeCode, buf, err = appendBinaryJSON(buf, in)
+	newBj, err := CreateBinaryJSONWithCheck(in)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bj.TypeCode = typeCode
-	bj.Value = buf
+	bj.TypeCode = newBj.TypeCode
+	bj.Value = newBj.Value
 	return nil
 }
 
 // HashValue converts certain JSON values for aggregate comparisons.
 // For example int64(3) == float64(3.0)
+// Other than the numeric condition, this function has to construct a bidirectional map between hash value
+// and the original representation
 func (bj BinaryJSON) HashValue(buf []byte) []byte {
 	switch bj.TypeCode {
 	case JSONTypeCodeInt64:
@@ -484,34 +539,88 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		// In the future, it will be better to convert to a DECIMAL value instead
 		// See: https://github.com/pingcap/tidb/issues/9988
 		if bj.GetInt64() == int64(float64(bj.GetInt64())) {
+			buf = append(buf, JSONTypeCodeFloat64)
 			buf = appendBinaryFloat64(buf, float64(bj.GetInt64()))
 		} else {
+			buf = append(buf, bj.TypeCode)
+			buf = append(buf, bj.Value...)
+		}
+	case JSONTypeCodeUint64:
+		if bj.GetUint64() == uint64(float64(bj.GetUint64())) {
+			buf = append(buf, JSONTypeCodeFloat64)
+			buf = appendBinaryFloat64(buf, float64(bj.GetUint64()))
+		} else {
+			buf = append(buf, bj.TypeCode)
 			buf = append(buf, bj.Value...)
 		}
 	case JSONTypeCodeArray:
+		// this hash value is bidirectional, because you can get the element one-by-one
+		// and you know the end of it, as the elemCount is also appended here
+		buf = append(buf, bj.TypeCode)
 		elemCount := int(jsonEndian.Uint32(bj.Value))
+		buf = append(buf, bj.Value[0:dataSizeOff]...)
 		for i := 0; i < elemCount; i++ {
-			buf = bj.arrayGetElem(i).HashValue(buf)
+			buf = bj.ArrayGetElem(i).HashValue(buf)
 		}
 	case JSONTypeCodeObject:
+		// this hash value is bidirectional, because you can get the key using the json
+		// string format, and get the value accordingly.
+		buf = append(buf, bj.TypeCode)
 		elemCount := int(jsonEndian.Uint32(bj.Value))
+		buf = append(buf, bj.Value[0:dataSizeOff]...)
 		for i := 0; i < elemCount; i++ {
-			buf = append(buf, bj.objectGetKey(i)...)
+			keyJSON := CreateBinaryJSON(string(bj.objectGetKey(i)))
+			buf = append(buf, keyJSON.Value...)
 			buf = bj.objectGetVal(i).HashValue(buf)
 		}
 	default:
+		buf = append(buf, bj.TypeCode)
 		buf = append(buf, bj.Value...)
 	}
 	return buf
 }
 
+// GetValue return the primitive value of the JSON.
+func (bj BinaryJSON) GetValue() any {
+	switch bj.TypeCode {
+	case JSONTypeCodeInt64:
+		return bj.GetInt64()
+	case JSONTypeCodeUint64:
+		return bj.GetUint64()
+	case JSONTypeCodeDuration:
+		return bj.GetDuration()
+	case JSONTypeCodeFloat64:
+		return bj.GetFloat64()
+	case JSONTypeCodeString:
+		return bj.GetString()
+	case JSONTypeCodeDate, JSONTypeCodeDatetime:
+		return bj.GetTime()
+	}
+	logutil.BgLogger().Error("unreachable JSON type", zap.Any("type", bj.TypeCode))
+	return nil
+}
+
 // CreateBinaryJSON creates a BinaryJSON from interface.
 func CreateBinaryJSON(in interface{}) BinaryJSON {
-	typeCode, buf, err := appendBinaryJSON(nil, in)
+	bj, err := CreateBinaryJSONWithCheck(in)
 	if err != nil {
 		panic(err)
 	}
-	return BinaryJSON{TypeCode: typeCode, Value: buf}
+	return bj
+}
+
+// CreateBinaryJSONWithCheck creates a BinaryJSON from interface with error check.
+func CreateBinaryJSONWithCheck(in interface{}) (BinaryJSON, error) {
+	typeCode, buf, err := appendBinaryJSON(nil, in)
+	if err != nil {
+		return BinaryJSON{}, err
+	}
+	bj := BinaryJSON{TypeCode: typeCode, Value: buf}
+	// GetElemDepth always returns +1.
+	if bj.GetElemDepth()-1 > maxJSONDepth {
+		return BinaryJSON{}, ErrJSONDocumentTooDeep
+	}
+	return bj, nil
 }
 
 func appendBinaryJSON(buf []byte, in interface{}) (JSONTypeCode, []byte, error) {
@@ -563,6 +672,18 @@ func appendBinaryJSON(buf []byte, in interface{}) (JSONTypeCode, []byte, error) 
 	case Opaque:
 		typeCode = JSONTypeCodeOpaque
 		buf = appendBinaryOpaque(buf, x)
+	case Time:
+		typeCode = JSONTypeCodeDate
+		if x.Type() == mysql.TypeDatetime {
+			typeCode = JSONTypeCodeDatetime
+		} else if x.Type() == mysql.TypeTimestamp {
+			typeCode = JSONTypeCodeTimestamp
+		}
+		buf = appendBinaryUint64(buf, uint64(x.CoreTime()))
+	case Duration:
+		typeCode = JSONTypeCodeDuration
+		buf = appendBinaryUint64(buf, uint64(x.Duration))
+		buf = appendBinaryUint32(buf, uint32(x.Fsp))
 	default:
 		msg := fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in))
 		err = errors.New(msg)
@@ -647,6 +768,13 @@ func appendBinaryUint64(buf []byte, v uint64) []byte {
 	off := len(buf)
 	buf = appendZero(buf, 8)
 	jsonEndian.PutUint64(buf[off:], v)
+	return buf
+}
+
+func appendBinaryUint32(buf []byte, v uint32) []byte {
+	off := len(buf)
+	buf = appendZero(buf, 4)
+	jsonEndian.PutUint32(buf[off:], v)
 	return buf
 }
 

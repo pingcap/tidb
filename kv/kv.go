@@ -15,6 +15,7 @@
 package kv
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	"golang.org/x/exp/slices"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -150,6 +152,8 @@ type MemBuffer interface {
 	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
 	SetWithFlags(Key, []byte, ...FlagsOp) error
+	// UpdateFlags updates the flags associated with key.
+	UpdateFlags(Key, ...FlagsOp)
 	// DeleteWithFlags delete key with the given KeyFlags
 	DeleteWithFlags(Key, ...FlagsOp) error
 
@@ -180,6 +184,17 @@ type MemBuffer interface {
 	RemoveFromBuffer(Key)
 }
 
+// FindKeysInStage returns all keys in the given stage that satisfies the given condition.
+func FindKeysInStage(m MemBuffer, h StagingHandle, predicate func(Key, KeyFlags, []byte) bool) []Key {
+	result := make([]Key, 0)
+	m.InspectStage(h, func(k Key, f KeyFlags, v []byte) {
+		if predicate(k, f, v) {
+			result = append(result, k)
+		}
+	})
+	return result
+}
+
 // LockCtx contains information for LockKeys method.
 type LockCtx = tikvstore.LockCtx
 
@@ -190,6 +205,10 @@ type Transaction interface {
 	AssertionProto
 	// Size returns sum of keys and values length.
 	Size() int
+	// Mem returns the memory consumption of the transaction.
+	Mem() uint64
+	// SetMemoryFootprintChangeHook sets the hook that will be called when the memory footprint changes.
+	SetMemoryFootprintChangeHook(func(uint64))
 	// Len returns the number of entries in the DB.
 	Len() int
 	// Reset reset the Transaction to initial states.
@@ -318,13 +337,148 @@ func (t StoreType) Name() string {
 	return "unspecified"
 }
 
+// KeyRanges wrap the ranges for partitioned table cases.
+// We might send ranges from different in the one request.
+type KeyRanges struct {
+	ranges [][]KeyRange
+
+	isPartitioned bool
+}
+
+// NewPartitionedKeyRanges constructs a new RequestRange for partitioned table.
+func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
+	return &KeyRanges{
+		ranges:        ranges,
+		isPartitioned: true,
+	}
+}
+
+// NewNonParitionedKeyRanges constructs a new RequestRange for a non partitioned table.
+func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
+	return &KeyRanges{
+		ranges:        [][]KeyRange{ranges},
+		isPartitioned: false,
+	}
+}
+
+// FirstPartitionRange returns the the result of first range.
+// We may use some func to generate ranges for both partitioned table and non partitioned table.
+// This method provides a way to fallback to non-partitioned ranges.
+func (rr *KeyRanges) FirstPartitionRange() []KeyRange {
+	if len(rr.ranges) == 0 {
+		return []KeyRange{}
+	}
+	return rr.ranges[0]
+}
+
+// SetToNonPartitioned set the status to non-partitioned.
+func (rr *KeyRanges) SetToNonPartitioned() error {
+	if len(rr.ranges) > 1 {
+		return errors.Errorf("you want to change the partitioned ranges to non-partitioned ranges")
+	}
+	rr.isPartitioned = false
+	return nil
+}
+
+// AppendSelfTo appends itself to another slice.
+func (rr *KeyRanges) AppendSelfTo(ranges []KeyRange) []KeyRange {
+	for _, r := range rr.ranges {
+		ranges = append(ranges, r...)
+	}
+	return ranges
+}
+
+// SortByFunc sorts each partition's ranges.
+// Since the ranges are sorted in most cases, we check it first.
+func (rr *KeyRanges) SortByFunc(sortFunc func(i, j KeyRange) bool) {
+	if !slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
+		// A simple short-circuit since the empty range actually won't make anything wrong.
+		if len(i) == 0 || len(j) == 0 {
+			return true
+		}
+		return sortFunc(i[0], j[0])
+	}) {
+		slices.SortFunc(rr.ranges, func(i, j []KeyRange) bool {
+			if len(i) == 0 {
+				return true
+			}
+			if len(j) == 0 {
+				return false
+			}
+			return sortFunc(i[0], j[0])
+		})
+	}
+	for i := range rr.ranges {
+		if !slices.IsSortedFunc(rr.ranges[i], sortFunc) {
+			slices.SortFunc(rr.ranges[i], sortFunc)
+		}
+	}
+}
+
+// ForEachPartitionWithErr runs the func for each partition with an error check.
+func (rr *KeyRanges) ForEachPartitionWithErr(theFunc func([]KeyRange) error) (err error) {
+	for i := range rr.ranges {
+		err = theFunc(rr.ranges[i])
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ForEachPartition runs the func for each partition without error check.
+func (rr *KeyRanges) ForEachPartition(theFunc func([]KeyRange)) {
+	for i := range rr.ranges {
+		theFunc(rr.ranges[i])
+	}
+}
+
+// PartitionNum returns how many partition is involved in the ranges.
+func (rr *KeyRanges) PartitionNum() int {
+	return len(rr.ranges)
+}
+
+// IsFullySorted checks whether the ranges are sorted inside partition and each partition is also sorated.
+func (rr *KeyRanges) IsFullySorted() bool {
+	sortedByPartition := slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
+		// A simple short-circuit since the empty range actually won't make anything wrong.
+		if len(i) == 0 || len(j) == 0 {
+			return true
+		}
+		return bytes.Compare(i[0].StartKey, j[0].StartKey) < 0
+	})
+	if !sortedByPartition {
+		return false
+	}
+	for _, ranges := range rr.ranges {
+		if !slices.IsSortedFunc(ranges, func(i, j KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+// TotalRangeNum returns how many ranges there are.
+func (rr *KeyRanges) TotalRangeNum() int {
+	ret := 0
+	for _, r := range rr.ranges {
+		ret += len(r)
+	}
+	return ret
+}
+
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
-	Tp        int64
-	StartTs   uint64
-	Data      []byte
-	KeyRanges []KeyRange
+	Tp      int64
+	StartTs uint64
+	Data    []byte
+
+	// KeyRanges makes sure that the request is sent first by partition then by region.
+	// When the table is small, it's possible that multiple partitions are in the same region.
+	KeyRanges *KeyRanges
 
 	// For PartitionTableScan used by tiflash.
 	PartitionIDAndRanges []PartitionIDAndRanges
@@ -381,6 +535,10 @@ type Request struct {
 	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
+	// FixedRowCountHint is the optimization hint for copr request for task scheduling.
+	FixedRowCountHint []int
+	// StoreBatchSize indicates the batch size of coprocessor in the same store.
+	StoreBatchSize int
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
