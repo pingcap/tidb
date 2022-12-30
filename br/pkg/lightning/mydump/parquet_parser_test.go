@@ -53,7 +53,7 @@ func TestParquetParser(t *testing.T) {
 	verifyRow := func(i int) {
 		require.Equal(t, int64(i+1), reader.lastRow.RowID)
 		require.Len(t, reader.lastRow.Row, 2)
-		require.Equal(t, types.NewCollationStringDatum(strconv.Itoa(i), ""), reader.lastRow.Row[0])
+		require.Equal(t, types.NewCollationStringDatum(strconv.Itoa(i), "utf8mb4_bin"), reader.lastRow.Row[0])
 		require.Equal(t, types.NewIntDatum(int64(i)), reader.lastRow.Row[1])
 	}
 

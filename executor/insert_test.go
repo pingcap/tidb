@@ -363,6 +363,20 @@ func TestUpdateDuplicateKey(t *testing.T) {
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
 }
 
+func TestIssue37187(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table t1 (a int(11) ,b varchar(100) ,primary key (a));")
+	tk.MustExec("create table t2 (c int(11) ,d varchar(100) ,primary key (c));")
+	tk.MustExec("prepare in1 from 'insert into t1 (a,b) select c,null from t2 t on duplicate key update b=t.d';")
+	err := tk.ExecToErr("execute in1;")
+	require.NoError(t, err)
+}
+
 func TestInsertWrongValueForField(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

@@ -255,6 +255,9 @@ type StatementContext struct {
 	IsSQLAndPlanRegistered atomic2.Bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan []int64
+	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
+	// results to the client, the transaction should be committed first. See issue #37373 for more details.
+	IsExplainAnalyzeDML bool
 }
 
 // StmtHints are SessionVars related sql hints.

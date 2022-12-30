@@ -28,12 +28,12 @@ type outerJoinEliminator struct {
 }
 
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
-// 1. outer join elimination: For example left outer join, if the parent only use the
-//    columns from left table and the join key of right table(the inner table) is a unique
-//    key of the right table. the left outer join can be eliminated.
-// 2. outer join elimination with duplicate agnostic aggregate functions: For example left outer join.
-//    If the parent only use the columns from left table with 'distinct' label. The left outer join can
-//    be eliminated.
+//  1. outer join elimination: For example left outer join, if the parent only use the
+//     columns from left table and the join key of right table(the inner table) is a unique
+//     key of the right table. the left outer join can be eliminated.
+//  2. outer join elimination with duplicate agnostic aggregate functions: For example left outer join.
+//     If the parent only use the columns from left table with 'distinct' label. The left outer join can
+//     be eliminated.
 func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
 	var innerChildIdx int
 	switch p.JoinType {
@@ -153,10 +153,10 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 // It extracts all the columns from the duplicate agnostic aggregate functions.
 // The returned column set is nil if not all the aggregate functions are duplicate agnostic.
 // Only the following functions are considered to be duplicate agnostic:
-//   1. MAX(arg)
-//   2. MIN(arg)
-//   3. FIRST_ROW(arg)
-//   4. Other agg functions with DISTINCT flag, like SUM(DISTINCT arg)
+//  1. MAX(arg)
+//  2. MIN(arg)
+//  3. FIRST_ROW(arg)
+//  4. Other agg functions with DISTINCT flag, like SUM(DISTINCT arg)
 func GetDupAgnosticAggCols(
 	p LogicalPlan,
 	oldAggCols []*expression.Column, // Reuse the original buffer.
@@ -210,6 +210,9 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		for _, aggDesc := range x.AggFuncs {
 			for _, expr := range aggDesc.Args {
 				parentCols = append(parentCols, expression.ExtractColumns(expr)...)
+			}
+			for _, byItem := range aggDesc.OrderByItems {
+				parentCols = append(parentCols, expression.ExtractColumns(byItem.Expr)...)
 			}
 		}
 	default:

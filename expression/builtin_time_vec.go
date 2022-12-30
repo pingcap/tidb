@@ -1133,7 +1133,6 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 	result.MergeNulls(bufStrings, bufFormats)
 	d64s := result.GoDurations()
 	sc := b.ctx.GetSessionVars().StmtCtx
-	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1141,13 +1140,6 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 		var t types.Time
 		succ := t.StrToDate(sc, bufStrings.GetString(i), bufFormats.GetString(i))
 		if !succ {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
-		if hasNoZeroDateMode && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
 			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
 				return err
 			}

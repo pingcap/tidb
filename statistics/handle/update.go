@@ -340,7 +340,7 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 	return mapper
 }
 
-//batchInsertSize is the every insert values size limit.Used in such as DumpIndexUsageToKV,DumpColStatsUsageToKV
+// batchInsertSize is the every insert values size limit.Used in such as DumpIndexUsageToKV,DumpColStatsUsageToKV
 const batchInsertSize = 10
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
@@ -882,7 +882,7 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	// feedback for partition is not ready.
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false, false)
+	err := h.SaveStatsToStorage(tableID, -1, 0, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -969,11 +969,11 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 }
 
 // NeedAnalyzeTable checks if we need to analyze the table:
-// 1. If the table has never been analyzed, we need to analyze it when it has
-//    not been modified for a while.
-// 2. If the table had been analyzed before, we need to analyze it when
-//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
-//    between `start` and `end`.
+//  1. If the table has never been analyzed, we need to analyze it when it has
+//     not been modified for a while.
+//  2. If the table had been analyzed before, we need to analyze it when
+//     "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
+//     between `start` and `end`.
 func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
