@@ -139,9 +139,9 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 
 func TestPoolWithoutEnoughCapa(t *testing.T) {
 	const (
-		RunTimes    = 100
+		RunTimes    = 20
 		concurrency = 2
-		poolsize    = 4
+		poolsize    = 2
 	)
 	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", poolsize,
 		WithExpiryDuration(DefaultExpiredTime))
@@ -152,7 +152,7 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 	})
 	var twg util.WaitGroupWrapper
 	for i := 0; i < 10; i++ {
-		twg.Run(func() {
+		func() {
 			sema := make(chan struct{}, 10)
 			var wg util.WaitGroupWrapper
 			exitCh := make(chan struct{})
@@ -177,6 +177,7 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 				}
 			}
 			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(concurrency))
+
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -192,7 +193,7 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 			}()
 			ctl.Wait()
 			wg.Wait()
-		})
+		}()
 	}
 	twg.Wait()
 }

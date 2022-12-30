@@ -224,8 +224,8 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, inputCh, closeCh, &wg)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
@@ -271,8 +271,8 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, inputCh, closeCh, &wg)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
