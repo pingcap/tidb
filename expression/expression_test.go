@@ -75,8 +75,9 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
-	_, isScalarFunc := res.(*ScalarFunction)
-	require.True(t, isScalarFunc) // the expression with parameters is not evaluated
+	_, isConst := res.(*Constant)
+	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
+	require.True(t, ctx.GetSessionVars().StmtCtx.SkipPlanCache)
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
