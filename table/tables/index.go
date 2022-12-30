@@ -103,6 +103,11 @@ func (c *index) GenIndexValue(sc *stmtctx.StatementContext, distinct bool, index
 	return tablecodec.GenIndexValuePortal(sc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData)
 }
 
+// getIndexedValue will produce the result like:
+// 1. If not multi-valued index, return directly.
+// 2. (i1, [m1,m2], i2, ...) ==> [(i1, m1, i2, ...), (i1, m2, i2, ...)]
+// 3. (i1, null, i2, ...) ==> [(i1, null, i2, ...)]
+// 4. (i1, [], i2, ...) ==> nothing.
 func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 	if !c.idxInfo.MVIndex {
 		return [][]types.Datum{indexedValues}
