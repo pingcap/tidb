@@ -15,6 +15,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"testing"
@@ -339,4 +340,60 @@ func TestCursorReadHoldTS(t *testing.T) {
 	c.Close()
 	require.Zero(t, tk.Session().ShowProcess().GetMinStartTS(0))
 	require.Zero(t, srv.GetMinStartTS(0))
+}
+
+func TestCursorExistsFlag(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	appendUint32 := binary.LittleEndian.AppendUint32
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	out := new(bytes.Buffer)
+	c.pkt.bufWriter.Reset(out)
+	c.capability |= mysql.ClientDeprecateEOF | mysql.ClientProtocol41
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8)")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("8"))
+
+	getLastStatus := func() uint16 {
+		raw := out.Bytes()
+		return binary.LittleEndian.Uint16(raw[len(raw)-4 : len(raw)-2])
+	}
+
+	stmt, _, _, err := c.Context().Prepare("select * from t")
+	require.NoError(t, err)
+
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
+
+	// fetch first 5
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
+	require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
+
+	// COM_QUERY during fetch
+	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComQuery}, "select * from t"...)))
+	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
+
+	// fetch last 3
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
+	require.True(t, mysql.HasCursorExistsFlag(getLastStatus()))
+
+	// final fetch with no row retured
+	// (tidb doesn't unset cursor-exists flag in the previous response like mysql, one more fetch is needed)
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 5)))
+	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
+	require.True(t, getLastStatus()&mysql.ServerStatusLastRowSend > 0)
+
+	// COM_QUERY after fetch
+	require.NoError(t, c.Dispatch(ctx, append([]byte{mysql.ComQuery}, "select * from t"...)))
+	require.False(t, mysql.HasCursorExistsFlag(getLastStatus()))
 }

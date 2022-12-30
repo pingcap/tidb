@@ -117,7 +117,7 @@ func NewJobContext() *JobContext {
 		cacheSQL:           "",
 		cacheNormalizedSQL: "",
 		cacheDigest:        nil,
-		tp:                 "unknown",
+		tp:                 "",
 	}
 }
 
@@ -681,6 +681,9 @@ func getDDLRequestSource(job *model.Job) string {
 }
 
 func (w *JobContext) setDDLLabelForDiagnosis(job *model.Job) {
+	if w.tp != "" {
+		return
+	}
 	w.tp = getDDLRequestSource(job)
 	w.ddlJobCtx = kv.WithInternalSourceType(w.ddlJobCtx, w.ddlJobSourceType())
 }
@@ -1379,6 +1382,11 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 				TableID:     recoverTabsInfo[i].TableInfo.ID,
 				OldTableID:  recoverTabsInfo[i].TableInfo.ID,
 			}
+		}
+	case model.ActionFlashbackCluster:
+		diff.TableID = -1
+		if job.SchemaState == model.StatePublic {
+			diff.RegenerateSchemaMap = true
 		}
 	default:
 		diff.TableID = job.TableID
