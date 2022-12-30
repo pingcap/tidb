@@ -235,6 +235,12 @@ const (
 
 	RestoreTiDBSpecialComment
 	SkipPlacementRuleForRestore
+<<<<<<< HEAD
+=======
+	RestoreWithTTLEnableOff
+	RestoreWithoutSchemaName
+	RestoreWithoutTableName
+>>>>>>> 702a5598f90 (ddl, parser: make generated column and expression index same as MySQL (#39888))
 )
 
 const (
@@ -244,6 +250,16 @@ const (
 
 func (rf RestoreFlags) has(flag RestoreFlags) bool {
 	return rf&flag != 0
+}
+
+// HasWithoutSchemaNameFlag returns a boolean indicating when `rf` has `RestoreWithoutSchemaName` flag.
+func (rf RestoreFlags) HasWithoutSchemaNameFlag() bool {
+	return rf.has(RestoreWithoutSchemaName)
+}
+
+// HasWithoutTableNameFlag returns a boolean indicating when `rf` has `RestoreWithoutTableName` flag.
+func (rf RestoreFlags) HasWithoutTableNameFlag() bool {
+	return rf.has(RestoreWithoutTableName)
 }
 
 // HasStringSingleQuotesFlag returns a boolean indicating when `rf` has `RestoreStringSingleQuotes` flag.
