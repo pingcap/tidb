@@ -370,7 +370,7 @@ func (p *PhysicalIndexScan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Ex
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
 		IndexId:          p.Index.ID,
-		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true),
 		Desc:             p.Desc,
 		PrimaryColumnIds: pkColIds,
 	}

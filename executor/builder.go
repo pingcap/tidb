@@ -2580,7 +2580,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
 		SampleRate:   sampleRate,
 		SketchSize:   maxSketchSize,
-		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
+		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false),
 		ColumnGroups: colGroups,
 	}
 	if task.TblInfo != nil {
@@ -2741,7 +2741,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    MaxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt()),
+		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt(), false),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}

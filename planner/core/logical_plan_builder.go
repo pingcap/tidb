@@ -5739,7 +5739,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				}
 			}
 
+			o := b.allowBuildCastArray
+			b.allowBuildCastArray = true
 			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess(assign))
+			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err
 			}
