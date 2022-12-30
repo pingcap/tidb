@@ -93,17 +93,15 @@ type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
 type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
 	pool   GPool[T, U, C, CT, TF]
 	close  chan struct{}
-	taskCh chan Task[T]
 	wg     *sync.WaitGroup
 	taskID uint64
 }
 
 // NewTaskController create a controller to deal with pooltask's status.
-func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, taskCh chan Task[T], closeCh chan struct{}, wg *sync.WaitGroup) TaskController[T, U, C, CT, TF] {
+func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup) TaskController[T, U, C, CT, TF] {
 	return TaskController[T, U, C, CT, TF]{
 		pool:   p,
 		taskID: taskID,
-		taskCh: taskCh,
 		close:  closeCh,
 		wg:     wg,
 	}
@@ -111,7 +109,6 @@ func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U
 
 // Wait is to wait the pooltask to stop.
 func (t *TaskController[T, U, C, CT, TF]) Wait() {
-	<-t.taskCh
 	<-t.close
 	t.wg.Wait()
 }

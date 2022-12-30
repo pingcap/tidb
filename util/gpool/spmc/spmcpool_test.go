@@ -139,7 +139,7 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 
 func TestPoolWithoutEnoughCapa(t *testing.T) {
 	const (
-		RunTimes    = 20
+		RunTimes    = 5
 		concurrency = 2
 		poolsize    = 2
 	)
