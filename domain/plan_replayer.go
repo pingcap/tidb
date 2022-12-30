@@ -34,8 +34,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/replayer"
@@ -410,7 +408,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
-	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsContinuesCapture)
+	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture)
 	if err != nil {
 		logutil.BgLogger().Warn("[plan-replayer-capture] generate task file failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
@@ -421,30 +419,6 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 	task.Zf = file
 	task.FileName = fileName
 	task.EncodedPlan, _ = task.EncodePlan(task.SessionVars.StmtCtx, false)
-	jsStats := make(map[int64]*handle.JSONTable)
-	is := GetDomain(w.sctx).InfoSchema()
-	if task.IsCapture && !task.IsContinuesCapture {
-		for tblID, stat := range task.TblStats {
-			tbl, ok := is.TableByID(tblID)
-			if !ok {
-				return false
-			}
-			schema, ok := is.SchemaByTable(tbl.Meta())
-			if !ok {
-				return false
-			}
-			r, err := handle.GenJSONTableFromStats(schema.Name.String(), tbl.Meta(), stat.(*statistics.Table))
-			if err != nil {
-				logutil.BgLogger().Warn("[plan-replayer-capture] generate task json stats failed",
-					zap.String("sqlDigest", taskKey.SQLDigest),
-					zap.String("planDigest", taskKey.PlanDigest),
-					zap.Error(err))
-				return false
-			}
-			jsStats[tblID] = r
-		}
-		task.JSONTblStats = jsStats
-	}
 	err = DumpPlanReplayerInfo(w.ctx, w.sctx, task)
 	if err != nil {
 		logutil.BgLogger().Warn("[plan-replayer-capture] dump task result failed",
@@ -546,7 +520,6 @@ type PlanReplayerDumpTask struct {
 	SessionBindings []*bindinfo.BindRecord
 	EncodedPlan     string
 	SessionVars     *variable.SessionVars
-	JSONTblStats    map[int64]*handle.JSONTable
 	ExecStmts       []ast.StmtNode
 	Analyze         bool
 
