@@ -388,7 +388,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		e.evalBuffer.SetDatum(offset, val1)
 	}
 	// Row may lack of generated column, autoIncrement column, empty column here.
-	return e.fillRow(ctx, row, hasValue)
+	return e.fillRow(ctx, row, hasValue, rowIdx)
 }
 
 var emptyRow chunk.Row
@@ -422,7 +422,7 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		offset := e.insertColumns[i].Offset
 		row[offset], hasValue[offset] = val1, true
 	}
-	return e.fillRow(ctx, row, hasValue)
+	return e.fillRow(ctx, row, hasValue, rowIdx)
 }
 
 // setValueForRefColumn set some default values for the row to eval the row value with other columns,
@@ -562,7 +562,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 		hasValue[offset] = true
 	}
 
-	return e.fillRow(ctx, row, hasValue)
+	return e.fillRow(ctx, row, hasValue, 0)
 }
 
 // getColDefaultValue gets the column default value.
@@ -647,7 +647,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 // `insert|replace values` can guarantee consecutive autoID in a batch.
 // Other statements like `insert select from` don't guarantee consecutive autoID.
 // https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
-func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
+func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) ([]types.Datum, error) {
 	gCols := make([]*table.Column, 0)
 	tCols := e.Table.Cols()
 	if e.hasExtraHandle {
@@ -693,6 +693,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
+		if err != nil && gCol.FieldType.IsArray() {
+			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
+		}
 		if e.ctx.GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
 			return nil, err
 		}
@@ -706,6 +709,29 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		}
 	}
 	return row, nil
+}
+
+func completeError(tbl *model.TableInfo, offset int, rowIdx int, err error) error {
+	name := "expression_index"
+	for _, idx := range tbl.Indices {
+		for _, column := range idx.Columns {
+			if column.Offset == offset {
+				name = idx.Name.O
+				break
+			}
+		}
+	}
+
+	if expression.ErrInvalidJSONForFuncIndex.Equal(err) {
+		return expression.ErrInvalidJSONForFuncIndex.GenWithStackByArgs(name)
+	}
+	if types.ErrOverflow.Equal(err) {
+		return expression.ErrDataOutOfRangeFuncIndex.GenWithStackByArgs(name, rowIdx+1)
+	}
+	if types.ErrDataTooLong.Equal(err) {
+		return expression.ErrFuncIndexDataIsTooLong.GenWithStackByArgs(name)
+	}
+	return err
 }
 
 // isAutoNull can help judge whether a datum is AutoIncrement Null quickly.

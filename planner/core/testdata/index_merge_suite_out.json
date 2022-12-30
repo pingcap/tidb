@@ -1,5 +1,58 @@
 [
   {
+    "Name": "TestIndexMergeJSONMemberOf",
+    "Cases": [
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where (1 member of (j0->'$.path0'))",
+        "Plan": [
+          "Selection 0.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path0\"))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and a<10",
+        "Plan": [
+          "Selection 0.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path1\"))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
+          "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.XXX')) and a<10",
+        "Plan": [
+          "Selection 2658.67 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.XXX\"))",
+          "└─TableReader 3323.33 root  data:Selection",
+          "  └─Selection 3323.33 cop[tikv]  lt(test.t.a, 10)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10",
+        "Plan": [
+          "Selection 0.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path1\")), json_memberof(cast(2, json BINARY), test.t.j1)",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_1(cast(json_extract(`j0`, _utf8mb4'$.path1') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
+          "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10",
+        "Plan": [
+          "Selection 0.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j0, \"$.path1\")), json_memberof(cast(2, json BINARY), test.t.j1)",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j1(cast(`j1` as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
+          "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIndexMergePathGeneration",
     "Cases": [
       "[]",

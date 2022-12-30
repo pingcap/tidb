@@ -185,7 +185,7 @@ func (d *ddl) startDispatchLoop() {
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
-		if !variable.EnableConcurrentDDL.Load() || !d.isOwner() || d.waiting.Load() {
+		if !d.isOwner() || d.waiting.Load() {
 			d.once.Store(true)
 			time.Sleep(time.Second)
 			continue
@@ -428,7 +428,8 @@ func updateDDLJob2Table(sctx *session, job *model.Job, updateRawArgs bool) error
 // getDDLReorgHandle gets DDL reorg handle.
 func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	rows, err := sess.execute(context.Background(), sql, "get_handle")
+	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job))
+	rows, err := sess.execute(ctx, sql, "get_handle")
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
@@ -635,6 +636,19 @@ func addBackfillJobs(sess *session, tableName string, backfillJobs []*BackfillJo
 	})
 }
 
+func runInTxn(se *session, f func(*session) error) (err error) {
+	err = se.begin()
+	if err != nil {
+		return err
+	}
+	err = f(se)
+	if err != nil {
+		se.rollback()
+		return
+	}
+	return errors.Trace(se.commit())
+}
+
 // GetBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element.
 func GetBackfillJobsForOneEle(sess *session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
 	eJobIDsBuilder := strings.Builder{}
@@ -813,143 +827,4 @@ func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob
 	// TODO: remove CI log
 	logutil.BgLogger().Info("updateBackfillJob", zap.String("sql", sql), zap.Error(err))
 	return err
-}
-
-// MoveJobFromQueue2Table move existing DDLs in queue to table.
-func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
-	sess, err := d.sessPool.get()
-	if err != nil {
-		return err
-	}
-	defer d.sessPool.put(sess)
-	return runInTxn(newSession(sess), func(se *session) error {
-		txn, err := se.txn()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		t := meta.NewMeta(txn)
-		isConcurrentDDL, err := t.IsConcurrentDDL()
-		if !inBootstrap && (isConcurrentDDL || err != nil) {
-			return errors.Trace(err)
-		}
-		systemDBID, err := t.GetSystemDBID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tp := range []workerType{addIdxWorker, generalWorker} {
-			t := newMetaWithQueueTp(txn, tp)
-			jobs, err := t.GetAllDDLJobsInQueue()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			for _, job := range jobs {
-				// In bootstrap, we can ignore the internal DDL.
-				if inBootstrap && job.SchemaID == systemDBID {
-					continue
-				}
-				err = insertDDLJobs2Table(se, false, job)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if tp == generalWorker {
-					// General job do not have reorg info.
-					continue
-				}
-				element, start, end, pid, err := t.GetDDLReorgHandle(job)
-				if meta.ErrDDLReorgElementNotExist.Equal(err) {
-					continue
-				}
-				if err != nil {
-					return errors.Trace(err)
-				}
-				err = initDDLReorgHandle(se, job.ID, start, end, pid, element)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-
-		if err = t.ClearALLDDLJob(); err != nil {
-			return errors.Trace(err)
-		}
-		if err = t.ClearAllDDLReorgHandle(); err != nil {
-			return errors.Trace(err)
-		}
-		return t.SetConcurrentDDL(true)
-	})
-}
-
-// MoveJobFromTable2Queue move existing DDLs in table to queue.
-func (d *ddl) MoveJobFromTable2Queue() error {
-	sess, err := d.sessPool.get()
-	if err != nil {
-		return err
-	}
-	defer d.sessPool.put(sess)
-	return runInTxn(newSession(sess), func(se *session) error {
-		txn, err := se.txn()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		t := meta.NewMeta(txn)
-		isConcurrentDDL, err := t.IsConcurrentDDL()
-		if !isConcurrentDDL || err != nil {
-			return errors.Trace(err)
-		}
-		jobs, err := getJobsBySQL(se, "tidb_ddl_job", "1 order by job_id")
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for _, job := range jobs {
-			jobListKey := meta.DefaultJobListKey
-			if job.MayNeedReorg() {
-				jobListKey = meta.AddIndexJobListKey
-			}
-			if err := t.EnQueueDDLJobNoUpdate(job, jobListKey); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		reorgHandle, err := se.execute(context.Background(), "select job_id, start_key, end_key, physical_id, ele_id, ele_type from mysql.tidb_ddl_reorg", "get_handle")
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, row := range reorgHandle {
-			if err := t.UpdateDDLReorgHandle(row.GetInt64(0), row.GetBytes(1), row.GetBytes(2), row.GetInt64(3), &meta.Element{ID: row.GetInt64(4), TypeKey: row.GetBytes(5)}); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		// clean up these 2 tables.
-		_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_job", "delete_old_ddl")
-		if err != nil {
-			return errors.Trace(err)
-		}
-		_, err = se.execute(context.Background(), "delete from mysql.tidb_ddl_reorg", "delete_old_reorg")
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return t.SetConcurrentDDL(false)
-	})
-}
-
-func runInTxn(se *session, f func(*session) error) (err error) {
-	err = se.begin()
-	if err != nil {
-		return err
-	}
-	err = f(se)
-	//TODO: Remove these two debug lines
-	txn, _ := se.txn()
-	StartTSO := uint64(0)
-	if txn != nil && txn.Valid() {
-		StartTSO = txn.StartTS()
-	}
-	logutil.BgLogger().Info("runInTxn", zap.Uint64("StartTSO", StartTSO), zap.Error(err))
-	if err != nil {
-		se.rollback()
-		return
-	}
-	return errors.Trace(se.commit())
 }

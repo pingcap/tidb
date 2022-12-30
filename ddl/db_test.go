@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1788,4 +1789,38 @@ func TestHashPartitionAddColumn(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t add column c int")
+}
+
+func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+
+	var wg sync.WaitGroup
+	var checkErr error
+	one := false
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateDeleteOnly {
+			return
+		}
+		if !one {
+			one = true
+		} else {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			_, checkErr = tk2.Exec("alter table t alter column a set default 1")
+			wg.Done()
+		}()
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t modify column a text(100)")
+	wg.Wait()
+	require.EqualError(t, checkErr, "[ddl:1101]BLOB/TEXT/JSON column 'a' can't have a default value")
 }
