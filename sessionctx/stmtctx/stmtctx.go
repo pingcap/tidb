@@ -171,7 +171,6 @@ type StatementContext struct {
 	InNullRejectCheck             bool
 	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
-	SkipPlanCache                 bool
 	IgnoreExplainIDSuffix         bool
 	SkipUTF8Check                 bool
 	SkipASCIICheck                bool
@@ -597,6 +596,18 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHint = hint
 }
 
+<<<<<<< HEAD
+=======
+// SetSkipPlanCache sets to skip the plan cache and records the reason.
+func (sc *StatementContext) SetSkipPlanCache(reason error) {
+	if !sc.UseCache {
+		return // avoid unnecessary warnings
+	}
+	sc.UseCache = false
+	sc.AppendWarning(reason)
+}
+
+>>>>>>> ffaf2ac9eee (planner: remove the unnecessary skip-plan-cache flag in StmtCtx (#40235))
 // TableEntry presents table in db.
 type TableEntry struct {
 	DB    string
