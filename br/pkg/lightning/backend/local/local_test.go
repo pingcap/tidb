@@ -58,7 +58,6 @@ import (
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -880,6 +879,7 @@ func (c *mockImportClient) MultiIngest(context.Context, *sst.MultiIngestRequest,
 }
 
 type mockWriteClient struct {
+	sst.ImportSST_WriteClient
 	writeResp *sst.WriteResponse
 }
 
@@ -889,36 +889,6 @@ func (m mockWriteClient) Send(request *sst.WriteRequest) error {
 
 func (m mockWriteClient) CloseAndRecv() (*sst.WriteResponse, error) {
 	return m.writeResp, nil
-}
-
-func (m mockWriteClient) Header() (metadata.MD, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (m mockWriteClient) Trailer() metadata.MD {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (m mockWriteClient) CloseSend() error {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (m mockWriteClient) Context() context.Context {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (m mockWriteClient) SendMsg(_ interface{}) error {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (m mockWriteClient) RecvMsg(_ interface{}) error {
-	//TODO implement me
-	panic("implement me")
 }
 
 func (c *mockImportClient) Write(ctx context.Context, opts ...grpc.CallOption) (sst.ImportSST_WriteClient, error) {
