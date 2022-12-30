@@ -15,6 +15,8 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
@@ -39,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"math"
 )
 
 var (
@@ -1954,7 +1955,7 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 	return false, nil
 }
 
-// canUse3StageDistinctAgg returns true if this agg can use 3 stage for distinct aggregation
+// canUse3Stage4SingleDistinctAgg returns true if this agg can use 3 stage for distinct aggregation
 func (p *basePhysicalAgg) canUse3Stage4SingleDistinctAgg() bool {
 	num := 0
 	if !p.ctx.GetSessionVars().Enable3StageDistinctAgg || len(p.GroupByItems) > 0 {

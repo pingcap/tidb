@@ -78,6 +78,53 @@ func TestGroupSetsTargetOne(t *testing.T) {
 	// shuffler take place.
 }
 
+func TestGroupingSetsMergeOneUnitTest(t *testing.T) {
+	defer view.Stop()
+	a := &Column{
+		UniqueID: 1,
+	}
+	b := &Column{
+		UniqueID: 2,
+	}
+	c := &Column{
+		UniqueID: 3,
+	}
+	d := &Column{
+		UniqueID: 4,
+	}
+	// test case about the right most fitness.
+	newGroupingSets := make(GroupingSets, 0, 3)
+	newGroupingSets = newGroupingSets[:0]
+	groupingExprs := []Expression{a}
+	newGroupingSets = append(newGroupingSets, GroupingSet{groupingExprs})
+	newGroupingSets.MergeOne([]Expression{a, b})
+
+	require.Equal(t, len(newGroupingSets), 1)
+	require.Equal(t, len(newGroupingSets[0]), 2)
+	//{a}
+	require.Equal(t, len(newGroupingSets[0][0]), 1)
+	//{a,b}
+	require.Equal(t, len(newGroupingSets[0][1]), 2)
+
+	newGroupingSets = newGroupingSets[:0]
+	groupingExprs = []Expression{a}
+	newGroupingSets = append(newGroupingSets, GroupingSet{groupingExprs})
+	newGroupingSets.MergeOne([]Expression{d, c, b, a})
+	newGroupingSets.MergeOne([]Expression{d, b, a})
+	newGroupingSets.MergeOne([]Expression{b, a})
+
+	require.Equal(t, len(newGroupingSets), 1)
+	require.Equal(t, len(newGroupingSets[0]), 4)
+	//{a}
+	require.Equal(t, len(newGroupingSets[0][0]), 1)
+	//{b,a}
+	require.Equal(t, len(newGroupingSets[0][1]), 2)
+	//{d,b,a}
+	require.Equal(t, len(newGroupingSets[0][2]), 3)
+	//{d,c,b,a}
+	require.Equal(t, len(newGroupingSets[0][3]), 4)
+}
+
 func TestGroupingSetsMergeUnitTest(t *testing.T) {
 	defer view.Stop()
 	a := &Column{

@@ -65,13 +65,14 @@ func (gss GroupingSets) Merge() GroupingSets {
 				newGroupingSets = append(newGroupingSets, newGroupingSet(oneGroupingExpr))
 				continue
 			}
-			newGroupingSets = newGroupingSets.mergeOne(oneGroupingExpr)
+			newGroupingSets = newGroupingSets.MergeOne(oneGroupingExpr)
 		}
 	}
 	return newGroupingSets
 }
 
-func (gss GroupingSets) mergeOne(targetOne GroupingExprs) GroupingSets {
+// MergeOne is used to merge one grouping expressions into current grouping sets.
+func (gss GroupingSets) MergeOne(targetOne GroupingExprs) GroupingSets {
 	// for every existing grouping set, check the grouping-exprs inside and whether the current grouping-exprs is
 	// super-set of it or sub-set of it, adding current one to the correct position of grouping-exprs slice.
 	//
@@ -110,6 +111,13 @@ func (gss GroupingSets) mergeOne(targetOne GroupingExprs) GroupingSets {
 				continue
 			}
 			if j == len(oneNewGroupingSet)-1 {
+				// which means the targetOne itself is the super set of current right-most grouping set.
+				if cur.SubSetOf(targetOne) {
+					// the right pos should be the len(oneNewGroupingSet)
+					oneNewGroupingSet = append(oneNewGroupingSet, targetOne)
+					gss[i] = oneNewGroupingSet
+					return gss
+				}
 				// which means the targetOne can't fit itself in this grouping set, continue next grouping set.
 				break
 			}
