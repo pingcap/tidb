@@ -59,6 +59,7 @@ const (
 	typeUpdateColumnWorker     backfillerType = 1
 	typeCleanUpIndexWorker     backfillerType = 2
 	typeAddIndexMergeTmpWorker backfillerType = 3
+	typeReorgPartitionWorker   backfillerType = 4
 
 	// InstanceLease is the instance lease.
 	InstanceLease = 1 * time.Minute
@@ -74,6 +75,8 @@ func (bT backfillerType) String() string {
 		return "clean up index"
 	case typeAddIndexMergeTmpWorker:
 		return "merge temporary index"
+	case typeReorgPartitionWorker:
+		return "reorganize partition"
 	default:
 		return "unknown"
 	}
@@ -126,6 +129,7 @@ func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
 // 1: add-index
 // 2: modify-column-type
 // 3: clean-up global index
+// 4: reorganize partition
 //
 // They all have a write reorganization state to back fill data into the rows existed.
 // Backfilling is time consuming, to accelerate this process, TiDB has built some sub
@@ -238,7 +242,7 @@ type backfillWorker struct {
 	sessCtx   sessionctx.Context
 	taskCh    chan *reorgBackfillTask
 	resultCh  chan *backfillResult
-	table     table.Table
+	table     table.PhysicalTable
 	priority  int
 	tp        backfillerType
 	ctx       context.Context
@@ -540,7 +544,7 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 }
 
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
+func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.PhysicalTable,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgBackfillTask, 0, backfillTaskChanSize)
 	reorgInfo := scheduler.reorgInfo
@@ -766,6 +770,12 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		case typeCleanUpIndexWorker:
 			idxWorker := newCleanUpIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			worker, runner = idxWorker, idxWorker.backfillWorker
+		case typeReorgPartitionWorker:
+			partWorker, err := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
+			if err != nil {
+				return err
+			}
+			worker, runner = partWorker, partWorker.backfillWorker
 		default:
 			return errors.New("unknown backfill type")
 		}

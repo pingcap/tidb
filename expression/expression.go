@@ -822,10 +822,6 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
 		return expr
 	}
-	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
-		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
-		return expr
-	}
 	return evaluateExprWithNull(ctx, schema, expr)
 }
 

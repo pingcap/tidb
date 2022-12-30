@@ -1066,10 +1066,6 @@ func (do *Domain) Init(
 		return err
 	}
 
-	do.wg.Run(func() {
-		do.runTTLJobManager(ctx)
-	})
-
 	return nil
 }
 

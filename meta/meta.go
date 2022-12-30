@@ -637,29 +637,6 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 	return bytes.Equal(val, []byte("1")), false, nil
 }
 
-// SetMetadataLock sets the metadata lock.
-func (m *Meta) SetMetadataLock(b bool) error {
-	var data []byte
-	if b {
-		data = []byte("1")
-	} else {
-		data = []byte("0")
-	}
-	return errors.Trace(m.txn.Set(mMetaDataLock, data))
-}
-
-// GetMetadataLock gets the metadata lock.
-func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
-	val, err := m.txn.Get(mMetaDataLock)
-	if err != nil {
-		return false, false, errors.Trace(err)
-	}
-	if len(val) == 0 {
-		return false, true, nil
-	}
-	return bytes.Equal(val, []byte("1")), false, nil
-}
-
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
 func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
