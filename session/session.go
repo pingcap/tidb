@@ -2377,7 +2377,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		stmtNode := s.GetStmtNode()
 		startTS := se.GetSessionVars().StmtCtx.StmtSnapshotTS
 		if se.GetSessionVars().EnablePlanReplayedContinuesCapture {
-			checkPlanReplayerContinuesCapture(se, stmtNode, startTS)
+			if checkPlanReplayerContinuesCaptureValidStmt(stmtNode) {
+				checkPlanReplayerContinuesCapture(se, stmtNode, startTS)
+			}
 		} else {
 			checkPlanReplayerCaptureTask(se, stmtNode, startTS)
 		}
@@ -2394,6 +2396,16 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err, false)
 	}
 	return nil, err
+}
+
+// only allow select/delete/update/insert/execute stmt captured by continues capture
+func checkPlanReplayerContinuesCaptureValidStmt(stmtNode ast.StmtNode) bool {
+	switch stmtNode.(type) {
+	case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.ExecuteStmt:
+		return true
+	default:
+		return false
+	}
 }
 
 func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
