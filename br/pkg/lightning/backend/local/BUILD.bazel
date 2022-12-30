@@ -103,6 +103,7 @@ go_test(
         "//br/pkg/lightning/glue",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
+        "//br/pkg/lightning/worker",
         "//br/pkg/membuf",
         "//br/pkg/mock",
         "//br/pkg/pdutil",

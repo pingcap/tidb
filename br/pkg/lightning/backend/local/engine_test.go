@@ -31,8 +31,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIngestSSTWithClosedEngine(t *testing.T) {
+func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
 	dir := t.TempDir()
+	db, err := pebble.Open(path.Join(dir, "test"), opt)
+	require.NoError(t, err)
+	tmpPath := filepath.Join(dir, "test.sst")
+	err = os.Mkdir(tmpPath, 0o755)
+	require.NoError(t, err)
+	return db, tmpPath
+}
+
+func TestIngestSSTWithClosedEngine(t *testing.T) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
 		MaxConcurrentCompactions: 16,
@@ -41,11 +50,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		DisableWAL:               true,
 		ReadOnly:                 false,
 	}
-	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
-	require.NoError(t, err)
-	tmpPath := filepath.Join(dir, "test.sst")
-	err = os.Mkdir(tmpPath, 0o755)
-	require.NoError(t, err)
+	db, tmpPath := makePebbleDB(t, opt)
 
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
