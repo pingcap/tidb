@@ -3720,7 +3720,6 @@ func TestAggressiveLockingBasic(t *testing.T) {
 }
 
 func TestAggressiveLockingInsert(t *testing.T) {
-	//t.Skip("this test failed. under investigation.")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3797,18 +3796,18 @@ func TestAggressiveLockingRetry(t *testing.T) {
 		tk.MustExec("rollback")
 	}
 
-	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 0")
+	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 1")
 	tk.MustExec("create table t1 (id int primary key, v int)")
 	tk.MustExec("create table t2 (id int primary key, v int)")
-	tk.MustExec("create table t3 (id int primary key, v int)")
+	tk.MustExec("create table t3 (id int primary key, v int, v2 int)")
 	tk.MustExec("insert into t1 values (1, 10)")
 	tk.MustExec("insert into t2 values (10, 100), (11, 101)")
-	tk.MustExec("insert into t3 values (100, 100), (101, 200)")
+	tk.MustExec("insert into t3 values (100, 100, 100), (101, 200, 200)")
 
 	// Test the case that the locks to acquire didn't change.
-	tk.MustExec("begin")
-	tk2.MustExec("begin")
-	tk2.MustExec("select * from t3 where id = 100 for update")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t3 set v2 = v2 + 1 where id = 100")
 	// It's rare that a statement causes multiple LockKeys invocation and each involves one single key, but it's
 	// theoretically possible. CTE makes it simple to construct this kind of test cases.
 	// Let t1's column `v` points to an `id` in t2, and so do t2 and t3.
@@ -3837,13 +3836,13 @@ func TestAggressiveLockingRetry(t *testing.T) {
 	mustLocked("select * from t2 where id = 10 for update nowait")
 
 	tk.MustExec("commit")
-	tk.MustQuery("select * from t3").Check(testkit.Rows("100 101", "101 200"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("100 101 101", "101 200 200"))
 
 	// Test the case that the locks to acquire changes after retry. This is done be letting `tk2` update table `t1`
 	// which is not locked by the `tk`.
-	tk.MustExec("begin")
-	tk2.MustExec("begin")
-	tk2.MustExec("select * from t3 where id = 100 for update")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t3 set v2 = v2 + 1 where id = 100")
 	res = mustExecAsync(tk, `
 		with
 			c1 as (select /*+ MERGE() */ * from t1 where id = 1),
@@ -3866,12 +3865,11 @@ func TestAggressiveLockingRetry(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/pessimisticSelectForUpdateRetry"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/pessimisticDMLRetry"))
 	mustRecv(t, res)
-	tk2.MustExec("begin")
-	// TODO: This lock is not released. Under investigation.
-	//tk2.MustQuery("select * from t2 where id = 10 for update").Check(testkit.Rows("10 101"))
+	tk2.MustExec("begin pessimistic")
+	tk2.MustQuery("select * from t2 where id = 10 for update").Check(testkit.Rows("10 100"))
 	tk2.MustExec("rollback")
 	mustLocked("select * from t2 where id = 11 for update nowait")
 
 	tk.MustExec("commit")
-	tk.MustQuery("select * from t3").Check(testkit.Rows("100 101", "101 201"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("100 101 102", "101 201 200"))
 }
