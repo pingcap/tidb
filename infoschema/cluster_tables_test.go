@@ -1131,18 +1131,48 @@ func TestCreateBindingRepeatedly(t *testing.T) {
 	createTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][4].(string), loc)
 	updateTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][5].(string), loc)
 
+	// binding from history cover binding from history
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
 	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
-	bindingNew := tk.MustQuery("show bindings").Rows()
-	createTimeNew, _ := time.ParseInLocation("2006-01-02 15:04:05", bindingNew[0][4].(string), loc)
-	updateTimeNew, _ := time.ParseInLocation("2006-01-02 15:04:05", bindingNew[0][5].(string), loc)
-
-	require.Greater(t, createTimeNew.UnixNano(), createTime.UnixNano())
-	require.Greater(t, updateTimeNew.UnixNano(), updateTime.UnixNano())
-	for i, _ := range bindingNew[0] {
+	binding1 := tk.MustQuery("show bindings").Rows()
+	createTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][4].(string), loc)
+	updateTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][5].(string), loc)
+	require.Greater(t, createTime1.UnixNano(), createTime.UnixNano())
+	require.Greater(t, updateTime1.UnixNano(), updateTime.UnixNano())
+	for i, _ := range binding1[0] {
 		if i != 4 && i != 5 {
-			require.Equal(t, binding[0][i], bindingNew[0][i])
+			require.Equal(t, binding[0][i], binding1[0][i])
+		}
+	}
+	// binding from sql cover binding from history
+	tk.MustExec("create binding for select * from t where a = 1 using select /*+ ignore_index(t, a) */ * from t where a = 1")
+	binding2 := tk.MustQuery("show bindings").Rows()
+	createTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][4].(string), loc)
+	updateTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][5].(string), loc)
+	require.Greater(t, createTime2.UnixNano(), createTime1.UnixNano())
+	require.Greater(t, updateTime2.UnixNano(), updateTime1.UnixNano())
+	require.Equal(t, binding2[0][8], "manual")
+	require.Equal(t, binding2[0][10], "")
+	for i, _ := range binding2[0] {
+		if i != 1 && i != 4 && i != 5 && i != 8 && i != 10 {
+			// bind_sql, create_time, update_time, source, plan_digest may be different
+			require.Equal(t, binding1[0][i], binding2[0][i])
+		}
+	}
+	// binding from history cover binding from sql
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	binding3 := tk.MustQuery("show bindings").Rows()
+	createTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][4].(string), loc)
+	updateTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][5].(string), loc)
+	require.Greater(t, createTime3.UnixNano(), createTime2.UnixNano())
+	require.Greater(t, updateTime3.UnixNano(), updateTime2.UnixNano())
+	require.Equal(t, binding3[0][8], "history")
+	require.Equal(t, binding3[0][10], planDigest[0][0])
+	for i, _ := range binding3[0] {
+		if i != 1 && i != 4 && i != 5 && i != 8 && i != 10 {
+			// bind_sql, create_time, update_time, source, plan_digest may be different
+			require.Equal(t, binding2[0][i], binding3[0][i])
 		}
 	}
 }
