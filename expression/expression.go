@@ -816,6 +816,10 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: %v affects null check"))
+	}
+	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
+		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
 		return expr
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
@@ -1267,7 +1271,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
-	case ast.Hex, ast.Bin:
+	case ast.Hex, ast.Unhex, ast.Bin:
 		return true
 	case ast.GetFormat:
 		return true

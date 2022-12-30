@@ -353,7 +353,7 @@ func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.errs, err = ddl.CancelJobs(newSess, e.ctx.GetStore(), e.jobIDs)
+	e.errs, err = ddl.CancelJobs(newSess, e.jobIDs)
 	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
 	return err
 }

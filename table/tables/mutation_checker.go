@@ -236,7 +236,7 @@ func checkIndexKeys(
 		}
 
 		for i, v := range decodedIndexValues {
-			fieldType := &t.Columns[indexInfo.Columns[i].Offset].FieldType
+			fieldType := t.Columns[indexInfo.Columns[i].Offset].FieldType.ArrayType()
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
 			if err != nil {
 				return errors.Trace(err)
@@ -347,9 +347,27 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
-		comparison, err := decodedMutationDatum.Compare(sc, &expectedDatum, collate.GetCollator(decodedMutationDatum.Collation()))
-		if err != nil {
-			return errors.Trace(err)
+		var comparison int
+		var err error
+		// If it is multi-valued index, we should check the JSON contains the indexed value.
+		if cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON {
+			bj := expectedDatum.GetMysqlJSON()
+			count := bj.GetElemCount()
+			for elemIdx := 0; elemIdx < count; elemIdx++ {
+				jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
+				comparison, err = jsonDatum.Compare(sc, &decodedMutationDatum, collate.GetBinaryCollator())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if comparison == 0 {
+					break
+				}
+			}
+		} else {
+			comparison, err = decodedMutationDatum.Compare(sc, &expectedDatum, collate.GetCollator(decodedMutationDatum.Collation()))
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		if comparison != 0 {

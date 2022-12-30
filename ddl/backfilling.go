@@ -59,7 +59,6 @@ const (
 	typeUpdateColumnWorker     backfillerType = 1
 	typeCleanUpIndexWorker     backfillerType = 2
 	typeAddIndexMergeTmpWorker backfillerType = 3
-	typeReorgPartitionWorker   backfillerType = 4
 
 	// InstanceLease is the instance lease.
 	InstanceLease = 1 * time.Minute
@@ -239,7 +238,7 @@ type backfillWorker struct {
 	sessCtx   sessionctx.Context
 	taskCh    chan *reorgBackfillTask
 	resultCh  chan *backfillResult
-	table     table.PhysicalTable
+	table     table.Table
 	priority  int
 	tp        backfillerType
 	ctx       context.Context
@@ -541,7 +540,7 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 }
 
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.PhysicalTable,
+func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgBackfillTask, 0, backfillTaskChanSize)
 	reorgInfo := scheduler.reorgInfo
@@ -767,12 +766,6 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 		case typeCleanUpIndexWorker:
 			idxWorker := newCleanUpIndexWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			worker, runner = idxWorker, idxWorker.backfillWorker
-		case typeReorgPartitionWorker:
-			partWorker, err := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
-			if err != nil {
-				return err
-			}
-			worker, runner = partWorker, partWorker.backfillWorker
 		default:
 			return errors.New("unknown backfill type")
 		}
