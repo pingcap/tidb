@@ -1305,7 +1305,12 @@ func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
 		return errors.Errorf("sess ctx:%#v convert session failed", w.backfillCtx.sessCtx)
 	}
 	return runInTxn(sess, func(se *session) error {
-		err := RemoveBackfillJob(sess, false, bfJob)
+		txn, err := se.txn()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		bfJob.FinishTS = txn.StartTS()
+		err = RemoveBackfillJob(sess, false, bfJob)
 		if err != nil {
 			return err
 		}

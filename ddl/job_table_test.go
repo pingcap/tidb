@@ -261,7 +261,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, bJobs)
 	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, instanceLease)
-	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job, lease is timeout").Error())
+	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job").Error())
 	require.Nil(t, bJobs)
 	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
 		jobID1, eleID2, meta.IndexElementKey), "check_backfill_job_count")
@@ -374,7 +374,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackfillHistoryTable, condition, "test_get_bj")
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
-	require.Greater(t, bJobs[0].FinishTS, uint64(0))
+	require.Equal(t, bJobs[0].FinishTS, uint64(0))
 
 	// test GetMaxBackfillJob and GetInterruptedBackfillJobsForOneEle
 	bjob, err := ddl.GetMaxBackfillJob(se, bJobs3[0].JobID, bJobs3[0].EleID, eleKey)

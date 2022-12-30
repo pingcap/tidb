@@ -496,51 +496,56 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 	return jobs, nil
 }
 
-// AddBackfillJobs adds the backfill jobs to the tidb_ddl_backfill table.
-func AddBackfillJobs(sess *session, backfillJobs []*BackfillJob) error {
-	return addBackfillJobs(sess, BackfillTable, backfillJobs)
+func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob) (string, error) {
+	sqlPrefix := fmt.Sprintf("insert into mysql.%s(id, ddl_job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, curr_key, start_key, end_key, start_ts, finish_ts, row_count, backfill_meta) values", tableName)
+	var sql string
+	for i, bj := range backfillJobs {
+		mateByte, err := bj.Meta.Encode()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+
+		if i == 0 {
+			sql = sqlPrefix + fmt.Sprintf("(%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s', '%s', '%s', %d, %d, %d, '%s')",
+				bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State,
+				bj.CurrKey, bj.StartKey, bj.EndKey, bj.StartTS, bj.FinishTS, bj.RowCount, mateByte)
+			continue
+		}
+		sql += fmt.Sprintf(", (%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s', '%s', '%s', %d, %d, %d, '%s')",
+			bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State,
+			bj.CurrKey, bj.StartKey, bj.EndKey, bj.StartTS, bj.FinishTS, bj.RowCount, mateByte)
+	}
+	return sql, nil
 }
 
 // AddBackfillHistoryJob adds the backfill jobs to the tidb_ddl_backfill_history table.
 func AddBackfillHistoryJob(sess *session, backfillJobs []*BackfillJob) error {
-	return addBackfillJobs(sess, BackfillHistoryTable, backfillJobs)
+	label := fmt.Sprintf("add_%s_job", BackfillHistoryTable)
+	sql, err := generateInsertBackfillJobSQL(BackfillHistoryTable, backfillJobs)
+	if err != nil {
+		return err
+	}
+	_, err = sess.execute(context.Background(), sql, label)
+	return errors.Trace(err)
 }
 
-// addBackfillJobs adds the backfill jobs to the tidb_ddl_backfill table.
-func addBackfillJobs(sess *session, tableName string, backfillJobs []*BackfillJob) error {
-	sqlPrefix := fmt.Sprintf(
-		"insert into mysql.%s(id, ddl_job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, curr_key, start_key, end_key, start_ts, finish_ts, row_count, backfill_meta) values", tableName)
-	var sql string
-	label := fmt.Sprintf("add_%s_job", tableName)
+// AddBackfillJobs adds the backfill jobs to the tidb_ddl_backfill table.
+func AddBackfillJobs(sess *session, backfillJobs []*BackfillJob) error {
+	label := fmt.Sprintf("add_%s_job", BackfillTable)
 	// Do runInTxn to get StartTS.
 	return runInTxn(newSession(sess), func(se *session) error {
 		txn, err := se.txn()
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		startTS := txn.StartTS()
-		for i, bj := range backfillJobs {
-			if tableName == BackfillTable {
-				bj.StartTS = startTS
-			}
-			if tableName == BackfillHistoryTable {
-				bj.FinishTS = startTS
-			}
-			mateByte, err := bj.Meta.Encode()
-			if err != nil {
-				return errors.Trace(err)
-			}
+		for _, bj := range backfillJobs {
+			bj.StartTS = startTS
+		}
 
-			if i == 0 {
-				sql = sqlPrefix + fmt.Sprintf("(%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s', '%s', '%s', %d, %d, %d, '%s')",
-					bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State,
-					bj.CurrKey, bj.StartKey, bj.EndKey, bj.StartTS, bj.FinishTS, bj.RowCount, mateByte)
-				continue
-			}
-			sql += fmt.Sprintf(", (%d, %d, %d, '%s', %d, %d, '%s', '%s', %d, '%s', '%s', '%s', %d, %d, %d, '%s')",
-				bj.ID, bj.JobID, bj.EleID, bj.EleKey, bj.StoreID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State,
-				bj.CurrKey, bj.StartKey, bj.EndKey, bj.StartTS, bj.FinishTS, bj.RowCount, mateByte)
+		sql, err := generateInsertBackfillJobSQL(BackfillTable, backfillJobs)
+		if err != nil {
+			return err
 		}
 		_, err = sess.execute(context.Background(), sql, label)
 		return errors.Trace(err)

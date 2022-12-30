@@ -1218,14 +1218,12 @@ func checkJobIsSynced(sess *session, jobID int64) (bool, error) {
 	var unsyncedInstanceIDs []string
 	for i := 0; i < retrySQLTimes; i++ {
 		unsyncedInstanceIDs, err = getUnsyncedInstanceIDs(sess, jobID, "check_backfill_history_job_sync")
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if len(unsyncedInstanceIDs) == 0 {
+		if err == nil && len(unsyncedInstanceIDs) == 0 {
 			return true, nil
 		}
 
-		logutil.BgLogger().Info("[ddl] checkJobIsSynced failed", zap.Int("tryTimes", i), zap.Error(err))
+		logutil.BgLogger().Info("[ddl] checkJobIsSynced failed",
+			zap.Strings("unsyncedInstanceIDs", unsyncedInstanceIDs), zap.Int("tryTimes", i), zap.Error(err))
 		time.Sleep(retrySQLInterval)
 	}
 
@@ -1339,10 +1337,16 @@ func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bfJob *BackfillJ
 			return nil
 		}
 
+		txn, err := se.txn()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startTS := txn.StartTS()
 		err = RemoveBackfillJob(sess, true, bJobs[0])
 		if err == nil {
 			for _, bj := range bJobs {
 				bj.State = model.JobStateCancelled
+				bj.FinishTS = startTS
 			}
 			err = AddBackfillHistoryJob(sess, bJobs)
 		}
