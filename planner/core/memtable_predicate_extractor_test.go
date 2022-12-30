@@ -1840,6 +1840,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		stmt, err := parser.ParseOneStmt(exec, "", "")
 		require.NoError(t, err)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), stmt.(*ast.ExecuteStmt), dom.InfoSchema())
+		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
@@ -1856,6 +1857,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			PrepStmt:   prepStmt,
 		}
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), execStmt, dom.InfoSchema())
+		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
