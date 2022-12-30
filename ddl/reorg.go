@@ -835,7 +835,6 @@ func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool) {
 	if err != nil {
 		logutil.BgLogger().Info("CleanupDDLReorgHandles commit failed", zap.Error(err))
 	}
-	return
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
