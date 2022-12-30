@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
@@ -310,6 +313,52 @@ func TestRewriteValueForExchangePartition(t *testing.T) {
 	err = json.Unmarshal(value, &tableInfo)
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.ID, pt1ID+100)
+}
+
+func TestRewriteValueForTTLTable(t *testing.T) {
+	var (
+		dbId      int64 = 40
+		tableID   int64 = 100
+		colID     int64 = 1000
+		colName         = "t"
+		tableName       = "t1"
+		tableInfo model.TableInfo
+	)
+
+	tbl := model.TableInfo{
+		ID:   tableID,
+		Name: model.NewCIStr(tableName),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        colID,
+				Name:      model.NewCIStr(colName),
+				FieldType: *types.NewFieldType(mysql.TypeTimestamp),
+			},
+		},
+		TTLInfo: &model.TTLInfo{
+			ColumnName:       model.NewCIStr(colName),
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: int(ast.TimeUnitDay),
+			Enable:           true,
+		},
+	}
+	value, err := json.Marshal(&tbl)
+	require.Nil(t, err)
+
+	sr := MockEmptySchemasReplace(nil)
+	newValue, needRewrite, err := sr.rewriteTableInfo(value, dbId)
+	require.Nil(t, err)
+	require.True(t, needRewrite)
+
+	err = json.Unmarshal(newValue, &tableInfo)
+	require.Nil(t, err)
+	require.Equal(t, tableInfo.Name.String(), tableName)
+	require.Equal(t, tableInfo.ID, sr.DbMap[dbId].TableMap[tableID].NewTableID)
+	require.NotNil(t, tableInfo.TTLInfo)
+	require.Equal(t, colName, tableInfo.TTLInfo.ColumnName.O)
+	require.Equal(t, "1", tableInfo.TTLInfo.IntervalExprStr)
+	require.Equal(t, int(ast.TimeUnitDay), tableInfo.TTLInfo.IntervalTimeUnit)
+	require.False(t, tableInfo.TTLInfo.Enable)
 }
 
 // db:70->80 -
