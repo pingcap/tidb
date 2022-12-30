@@ -844,6 +844,14 @@ def go_deps():
         version = "v1.1.0",
     )
     go_repository(
+        name = "com_github_edwingeng_deque",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/edwingeng/deque",
+        sum = "h1:gx+5OnQK8qMcYNUxcD/M76BT/LujVNVAZEP/MGF8WNw=",
+        version = "v1.0.3",
+    )
+
+    go_repository(
         name = "com_github_eknkc_amber",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/eknkc/amber",
