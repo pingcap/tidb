@@ -86,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -3369,10 +3370,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if dom.GetEtcdClient() != nil {
 		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
 		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
-		go func() {
-			dom.TelemetryReportLoop(ses[5])
-			dom.TelemetryRotateSubWindowLoop(ses[5])
-		}()
+		if config.GetGlobalConfig().EnableTelemetry {
+			// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
+			// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
+			go func() {
+				dom.TelemetryReportLoop(ses[5])
+				dom.TelemetryRotateSubWindowLoop(ses[5])
+			}()
+		}
 	}
 
 	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
@@ -3413,6 +3418,22 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err = dom.LoadAndUpdateStatsLoop(subCtxs); err != nil {
 		return nil, err
 	}
+
+	// start TTL job manager after setup stats collector
+	// because TTL could modify a lot of columns, and need to trigger auto analyze
+	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+		if s, ok := s.(*session); ok {
+			return attachStatsCollector(s, dom)
+		}
+		return s
+	}
+	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+		if s, ok := s.(*session); ok {
+			return detachStatsCollector(s)
+		}
+		return s
+	}
+	dom.StartTTLJobManager()
 
 	analyzeCtxs, err := createSessions(store, analyzeConcurrencyQuota)
 	if err != nil {
@@ -3517,6 +3538,26 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	s.SetSessionStatesHandler(sessionstates.StateBinding, sessionBindHandle)
 	return s, nil
+}
+
+// attachStatsCollector attaches the stats collector in the dom for the session
+func attachStatsCollector(s *session, dom *domain.Domain) *session {
+	if dom.StatsHandle() != nil && dom.StatsUpdating() {
+		s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
+		if GetIndexUsageSyncLease() > 0 {
+			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
+		}
+	}
+
+	return s
+}
+
+// detachStatsCollector removes the stats collector in the session
+func detachStatsCollector(s *session) *session {
+	s.statsCollector = nil
+	s.idxUsageCollector = nil
+
+	return s
 }
 
 // CreateSessionWithDomain creates a new Session and binds it with a Domain.
