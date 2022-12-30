@@ -42,6 +42,7 @@ go_test(
     name = "ttlworker_test",
     srcs = [
         "del_test.go",
+        "job_integration_test.go",
         "job_manager_integration_test.go",
         "job_manager_test.go",
         "job_test.go",

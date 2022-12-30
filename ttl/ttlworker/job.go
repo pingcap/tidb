@@ -47,7 +47,7 @@ const finishJobTemplate = `UPDATE mysql.tidb_ttl_table_status
 const updateJobStateTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_state = %? WHERE table_id = %? AND current_job_id = %? AND current_job_owner_id = %?"
 
 func updateJobCurrentStatusSQL(tableID int64, oldStatus cache.JobStatus, newStatus cache.JobStatus, jobID string) (string, []interface{}) {
-	return updateJobCurrentStatusTemplate, []interface{}{newStatus, tableID, oldStatus, jobID}
+	return updateJobCurrentStatusTemplate, []interface{}{string(newStatus), tableID, string(oldStatus), jobID}
 }
 
 func finishJobSQL(tableID int64, finishTime time.Time, summary string, jobID string) (string, []interface{}) {
