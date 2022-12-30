@@ -21,7 +21,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <tbody>
   <tr>
     <td rowspan="3">Scalability &amp; Stability</td>
-    <td><ul><li>✅ Optimize resource isolation in heavy read scenarios.</li><li>Optimize resource isolation in heavy (batch) write scenarios.</li><li>Provide resource management capability for background process.</li><li>Support resource management framework.</ul></td>
+    <td><ul><li>✅ Optimize resource isolation in heavy read scenarios.</li><li>✅ Optimize resource isolation in heavy (batch) write scenarios.</li><li>Provide resource management capability for background process.</li><li>Support resource management framework.</ul></td>
     <td><ul><li>Provide a basic resource management and control framework to effectively control the resource squeeze of background tasks on front-end tasks (user operations), and improve cluster stability.</li><li>Refine resource management in the multi-service aggregation scenario.</li></ul></td>
   </tr>
   <tr>
