@@ -608,9 +608,7 @@ func TestIssue38950(t *testing.T) {
 	tk.MustExec(testSQL)
 	require.Empty(t, tk.Session().LastMessage())
 
-	r := tk.MustQuery("select * from t;")
-	rowStr := fmt.Sprintf("%v %v", "32767", "1")
-	r.Check(testkit.Rows(rowStr))
+	tk.MustQuery("select * from t").Check(testkit.Rows("32767 1"))
 
 	tk.MustExec("insert ignore into t(id) values ('*') on duplicate key update c1 = 2;")
 	require.Equal(t, int64(2), int64(tk.Session().AffectedRows()))
