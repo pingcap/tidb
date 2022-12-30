@@ -3,3 +3,4 @@
 /config/config.toml.example @pingcap/tidb-configuration-reviewer
 /session/bootstrap.go @pingcap/tidb-configuration-reviewer
 /telemetry/ @pingcap/telemetry-reviewer
+roadmap.md @pingcap/document
