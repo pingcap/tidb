@@ -2325,7 +2325,6 @@ func (d *ddl) assignTableID(tbInfo *model.TableInfo) error {
 
 func (d *ddl) assignPartitionIDs(defs []model.PartitionDefinition) error {
 	genIDs, err := d.genGlobalIDs(len(defs))
-	logutil.BgLogger().Info("[ddl] Assigned new partition IDs", zap.Int64s("pids", genIDs))
 	if err != nil {
 		return errors.Trace(err)
 	}

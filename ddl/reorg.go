@@ -255,13 +255,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 
 		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
-		/*
-			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-				logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
-				return errors.Trace(err1)
-			}
-
-		*/
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
 		d.removeReorgCtx(job)
@@ -589,11 +582,11 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
 		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle",
+			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
 			zap.Bool("isEmptyTable", isEmptyTable),
 			zap.String("endHandle", hex.EncodeToString(endHandleKey)),
-			zap.String("startHandle", hex.EncodeToString(startHandleKey)),
-			zap.String("table", fmt.Sprintf("%v", tbl.Meta())))
+			zap.String("startHandle", hex.EncodeToString(startHandleKey)))
 		endHandleKey = startHandleKey
 	}
 	return
@@ -795,7 +788,6 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 		sess.rollback()
 		return err
 	}
-	logutil.BgLogger().Info("UpdateReorgMeta", zap.Uint64("txn.StartTS TSO", txn.StartTS()))
 	rh := newReorgHandler(meta.NewMeta(txn), sess)
 	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
 	err1 := sess.commit()

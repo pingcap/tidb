@@ -118,8 +118,6 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
 			return err
 		}
-		// TODO: remove or set to Debug
-		logutil.BgLogger().Info("RunInNewTxn", zap.Uint64("Start TSO", txn.StartTS()))
 		setRequestSourceForInnerTxn(ctx, txn)
 
 		// originalTxnTS is used to trace the original transaction when the function is retryable.

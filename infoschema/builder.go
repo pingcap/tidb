@@ -194,10 +194,6 @@ type Builder struct {
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
-	// TODO: Remove CI debug log
-	logutil.BgLogger().Info("ApplyDiff",
-		zap.String("diff.Type", diff.Type.String()),
-		zap.Int64("diff.Version", diff.Version))
 	switch diff.Type {
 	case model.ActionCreateSchema:
 		return nil, b.applyCreateSchema(m, diff)
@@ -295,17 +291,9 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// TODO: Remove CI debug log
-	logutil.BgLogger().Info("applyReorganizePartition",
-		zap.String("diff.Type", diff.Type.String()),
-		zap.Int64("diff.Ver", diff.Version))
 	// Minimum allocation, one partition is reorganized into 1 or more new ones
 	//tblIDs := make([]int64, 0, 1+len(diff.AffectedOpts))
 	for _, opt := range diff.AffectedOpts {
-		// TODO: Remove CI debug log
-		logutil.BgLogger().Info("AffectedOpts",
-			zap.Int64("OldTableID", opt.OldTableID),
-			zap.Int64("TableID", opt.TableID))
 		if opt.OldTableID != 0 {
 			b.deleteBundle(b.is, opt.OldTableID)
 			//tblIDs = append(tblIDs, opt.OldTableID)
@@ -407,10 +395,6 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	}
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
 	var oldTableID, newTableID int64
-	// TODO: remove CI debug logs
-	logutil.BgLogger().Info("applyTableUpdate",
-		zap.Int64("diff.Version", diff.Version),
-		zap.String("diff.Type", diff.Type.String()))
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID

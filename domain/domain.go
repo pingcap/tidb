@@ -209,25 +209,16 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
-		// TODO: Remove CI debug
-		logutil.BgLogger().Error("fetchAllSchemasWithTables error",
-			zap.Error(err))
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
-		// TODO: Remove CI debug
-		logutil.BgLogger().Error("fetchPolicies error",
-			zap.Error(err))
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
 	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
 	if err != nil {
-		// TODO: Remove CI debug
-		logutil.BgLogger().Error("fetchPolicies error",
-			zap.Error(err))
 		return nil, false, currentSchemaVersion, nil, err
 	}
 	logutil.BgLogger().Info("full load InfoSchema success",
@@ -345,8 +336,6 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
 			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
-			// TODO: remove CI debug
-			logutil.BgLogger().Info("tryLoadSchemaDiffs, diff is nil")
 			continue
 		}
 		diffs = append(diffs, diff)
@@ -382,8 +371,6 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
 	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
-		// TODO: remove this CI debug line
-		logutil.BgLogger().Info("canSkipSchemaCheckerDDL returns true")
 		return true
 	}
 	return false

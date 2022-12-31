@@ -31,9 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -248,8 +246,6 @@ func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
 // ActivateTxn activates the transaction and set the relevant context variables.
 func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
-		// TODO: remove CI debug
-		logutil.BgLogger().Info("ActivateTxn, txn already exists", zap.Uint64("StartTS", p.txn.StartTS()))
 		return p.txn, nil
 	}
 
@@ -271,8 +267,6 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
-	// TODO: remove CI debug
-	logutil.BgLogger().Info("ActivateTxn, new txn", zap.Uint64("StartTS", sessVars.TxnCtx.StartTS))
 	if sessVars.MemDBFootprint != nil {
 		sessVars.MemDBFootprint.Detach()
 	}

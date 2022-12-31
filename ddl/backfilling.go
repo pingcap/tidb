@@ -932,8 +932,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 		}
 		startKey = remains[0].StartKey
 	}
-	// TODO: delete CI debug log
-	logutil.BgLogger().Info("[ddl] backfill workers to reorg record done")
 	return nil
 }
 

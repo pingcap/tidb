@@ -906,11 +906,9 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
 			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
-			/*
-				if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-					logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
-				}
-			*/
+			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+			}
 		}
 		return false, ver, errors.Trace(err)
 	}
@@ -1638,7 +1636,6 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 		//nolint:forcetypeassert
 		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), reorgInfo)
 	}
-	// TODO: if no errors, remove entry in tidb_ddl_reorg ?
 	return errors.Trace(err)
 }
 
@@ -1669,6 +1666,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	if pid == 0 {
 		// Next partition does not exist, all the job done.
 		// TODO: Remove the ReorgMeta job?
+		// Or better, set to last key, since already processed!
 		return true, nil
 	}
 

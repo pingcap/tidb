@@ -1304,13 +1304,6 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 		return nil, err
 	}
 	info, err := GetDDLInfo(s)
-	//TODO: Remove these CI debug lines
-	txn, _ := sess.txn()
-	StartTSO := uint64(0)
-	if txn != nil && txn.Valid() {
-		StartTSO = txn.StartTS()
-	}
-	logutil.BgLogger().Info("cancelConcurrencyJobs", zap.Uint64("Start TSO", StartTSO), zap.Error(err))
 	sess.rollback()
 	return info, err
 }
@@ -1401,13 +1394,6 @@ func cancelConcurrencyJobs(se sessionctx.Context, ids []int64) ([]error, error) 
 	if err != nil {
 		return nil, err
 	}
-	//TODO: Remove these CI debug lines
-	txn, _ := sess.txn()
-	StartTSO := uint64(0)
-	if txn != nil && txn.Valid() {
-		StartTSO = txn.StartTS()
-	}
-	logutil.BgLogger().Info("cancelConcurrencyJobs", zap.Uint64("Start TSO", StartTSO))
 
 	idsStr := make([]string, 0, len(ids))
 	for idx, id := range ids {
@@ -1682,12 +1668,5 @@ func addHistoryDDLJob2Table(sess *session, job *model.Job, updateRawArgs bool) e
 			strconv.Quote(strconv.FormatInt(job.TableID, 10)),
 			strconv.Quote(model.TSConvert2Time(job.StartTS).String())),
 		"insert_history")
-	// TODO: remove CI log
-	txn, _ := sess.txn()
-	StartTSO := uint64(0)
-	if txn != nil && txn.Valid() {
-		StartTSO = txn.StartTS()
-	}
-	logutil.BgLogger().Info("addHistoryDDLJob2Table", zap.Uint64("txn TSO", StartTSO), zap.Error(err))
 	return errors.Trace(err)
 }
