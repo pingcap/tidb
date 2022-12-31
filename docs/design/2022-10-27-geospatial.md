@@ -83,6 +83,10 @@ CREATE TABLE t1 (
 );
 ```
 
+All geometry data types are `mysql.TypeGeometry` / `0xFF`, but have a separate geometric subtype, which basically acts as a constraint. A `GEOMETRY` column can store a `POINT` or `LINESTRING`. But a column with a `POINT` type only store a `POINT` value. 
+
+This is identical to how this is done in MySQL, where this is defined in `Field::geometry_type`.
+
 #### Phase 1
 
 Support for the `GEOMETRY` data type
