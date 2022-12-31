@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -832,6 +833,37 @@ func (r *reorgHandler) RemoveReorgElementFailPoint(job *model.Job) error {
 // RemoveDDLReorgHandle removes the job reorganization related handles.
 func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
 	return removeDDLReorgHandle(r.s, job, elements)
+}
+
+// CleanupDDLReorgHandles removes the job reorganization related handles.
+func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool) {
+	if job != nil && !job.IsFinished() && !job.IsSynced() {
+		// Job is given, but it is neither finished nor synced; do nothing
+		return
+	}
+	se, err := pool.get()
+	if err != nil {
+		logutil.BgLogger().Info("CleanupDDLReorgHandles get sessionctx failed", zap.Error(err))
+		return
+	}
+	defer pool.put(se)
+
+	// Should there be any other options?
+	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	sess := newSession(se)
+	err = sess.begin()
+	if err != nil {
+		logutil.BgLogger().Info("CleanupDDLReorgHandles new session failed", zap.Error(err))
+		return
+	}
+	err = cleanDDLReorgHandles(sess, job)
+	if err != nil {
+		logutil.BgLogger().Info("cleanDDLReorgHandles failed", zap.Error(err))
+	}
+	err = sess.commit()
+	if err != nil {
+		logutil.BgLogger().Info("CleanupDDLReorgHandles commit failed", zap.Error(err))
+	}
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.

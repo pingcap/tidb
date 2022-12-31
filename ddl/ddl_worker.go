@@ -702,6 +702,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	if err != nil {
 		return err
 	}
+	CleanupDDLReorgHandles(job, w.sessPool)
 	asyncNotify(d.ddlJobDoneCh)
 	return nil
 }
@@ -808,6 +809,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.commit()
+	CleanupDDLReorgHandles(job, w.sessPool)
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err
