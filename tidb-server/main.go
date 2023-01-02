@@ -214,10 +214,9 @@ func main() {
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-	storage, dom := createStoreAndDomain(keyspaceName)
 
 	resourcemanager.GlobalResourceManager.Start()
-	storage, dom := createStoreAndDomain()
+	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.

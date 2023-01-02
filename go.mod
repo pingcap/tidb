@@ -219,6 +219,7 @@ require (
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
+	github.com/tiancaiamao/gp v0.0.0-20221221095600-1a473d1f9b4b // indirect
 	github.com/tklauser/go-sysconf v0.3.10 // indirect
 	github.com/tklauser/numcpus v0.4.0 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 // indirect
@@ -255,6 +256,6 @@ replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/tikv/client-go/v2 => github.com/tikv/client-go/v2 v2.0.1-0.20221213085128-b2b3fd7abf44
+	github.com/tikv/client-go/v2 => github.com/AmoebaProtozoa/client-go/v2 v2.0.1-0.20221227034204-1c928737661f
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
