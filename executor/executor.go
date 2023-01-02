@@ -692,17 +692,15 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for _, id := range e.jobIDs {
 		i := e.cursor
-		numOfRowsToWrite := numCurBatch
 		appendedJobID := make(map[int64]struct{})
 		for {
 			_, ok := appendedJobID[e.jobs[i].ID]
 			if id == e.jobs[i].ID && !ok {
 				appendedJobID[e.jobs[i].ID] = struct{}{}
 				req.AppendString(0, e.jobs[i].Query)
-				numOfRowsToWrite--
 			}
 			i++
-			if i >= len(e.jobs) || numOfRowsToWrite == 0 {
+			if i >= len(e.jobs) {
 				break
 			}
 		}

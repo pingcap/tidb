@@ -5630,6 +5630,7 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
 	result = tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
 	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query), fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
+	require.NoError(t, err)
 
 	// check situations when `admin show ddl job 20` happens at the same time with new DDLs being executed
 	var wg sync.WaitGroup
@@ -5656,9 +5657,6 @@ func TestAdmin(t *testing.T) {
 					return
 				}
 				rowIDs[rowID] = struct{}{}
-			}
-			if !flag {
-				break
 			}
 		}
 	}()
@@ -5690,9 +5688,6 @@ func TestAdmin(t *testing.T) {
 					return
 				}
 				rowIDs[rowID] = struct{}{}
-			}
-			if !flag {
-				break
 			}
 		}
 	}()
