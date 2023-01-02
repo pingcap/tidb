@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -40,9 +39,6 @@ import (
 // This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
 // then the all the record of job A must before or after job B, no cross record between these 2 jobs should be in between.
 func TestDDLScheduling(t *testing.T) {
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skipf("test requires concurrent ddl")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
