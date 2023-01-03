@@ -1399,7 +1399,7 @@ func (local *local) isRetryableImportTiKVError(err error) bool {
 // writeAndIngestPairs writes the kv pairs in the range [start, end) to the peers
 // of the region, and then send the ingest command to do RocksDB ingest.
 // Return (true, any) means "continue this round and retry this region at the next round",
-// Return (false, error) means "creak this round and retry"
+// Return (false, error) means "break this round and retry"
 // Return (false, nil) means this region is successful imported.
 // TODO: regionSplitSize and regionSplitKeys can be a member of Engine, no need to pass it in every function.
 func (local *local) writeAndIngestPairs(
@@ -1584,7 +1584,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 			// max retry backoff time: 2+4+8+16+30*26=810s
 			backOffTime := time.Second
 			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
-				// TODO: after retry at this granularity, we should skip successful ranges
+				// TODO: when retry at this granularity, we should skip successful sub-ranges
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
