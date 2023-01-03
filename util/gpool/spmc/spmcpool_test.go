@@ -70,7 +70,7 @@ func TestPool(t *testing.T) {
 	pool.ReleaseAndWait()
 }
 
-func TestPoolWithEnoughCapa(t *testing.T) {
+func TestPoolWithEnoughCapacity(t *testing.T) {
 	const (
 		RunTimes    = 1000
 		poolsize    = 30
@@ -122,7 +122,7 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 	twg.Wait()
 }
 
-func TestPoolWithoutEnoughCapa(t *testing.T) {
+func TestPoolWithoutEnoughCapacity(t *testing.T) {
 	const (
 		RunTimes    = 5
 		concurrency = 2
