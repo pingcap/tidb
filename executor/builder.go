@@ -1724,7 +1724,7 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 
 // `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise the isolation read ts
 // Please notice that in RC isolation, the above two ts are the same
-func (b *executorBuilder) getSnapshotTS() (uint64, error) {
+func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	if b.forDataReaderBuilder {
 		return b.dataReaderTS, nil
 	}
@@ -2580,7 +2580,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
 		SampleRate:   sampleRate,
 		SketchSize:   maxSketchSize,
-		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
+		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false),
 		ColumnGroups: colGroups,
 	}
 	if task.TblInfo != nil {
@@ -2741,7 +2741,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    MaxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt()),
+		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt(), false),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
