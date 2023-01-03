@@ -342,7 +342,7 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 			if err == nil {
 				err = io.EOF
 			}
-			// parser.pos += int64(len(buf))
+			parser.pos += int64(len(buf))
 			return buf, 0, errors.Trace(err)
 		}
 		index := IndexAnyByte(parser.buf, chars)
@@ -448,9 +448,16 @@ outside:
 
 func (parser *CSVParser) readQuotedField() error {
 	for {
+		prevPos := parser.pos
 		content, terminator, err := parser.readUntil(&parser.quoteByteSet)
 		err = parser.replaceEOF(err, errUnterminatedQuotedField)
 		if err != nil {
+			if errors.Cause(err) == errUnterminatedQuotedField {
+				// return the position of quote to the caller.
+				// because we return an error here, the parser won't
+				// use the `pos` again, so it's safe to modify it here.
+				parser.pos = prevPos - 1
+			}
 			parser.Logger.Error("err content", zap.ByteString("content", content))
 			return err
 		}
