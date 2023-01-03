@@ -513,7 +513,7 @@ func TestRecoverTableWithTTL(t *testing.T) {
 	// flashback table
 	tk.MustExec("create table t_recover3 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover3")
-	tk.MustExec(fmt.Sprintf("flashback table t_recover3"))
+	tk.MustExec("flashback table t_recover3")
 	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */"))
 
 	// flashback database
