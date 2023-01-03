@@ -959,6 +959,9 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
+		if idx.MVIndex {
+			continue
+		}
 		idxNames = append(idxNames, idx.Name.O)
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
@@ -978,7 +981,13 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The number of table rows is equal to the number of index rows.
 	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
 	if len(e.srcs) == 1 {
-		return e.checkIndexHandle(ctx, e.srcs[0])
+		err = e.checkIndexHandle(ctx, e.srcs[0])
+		if err == nil && e.srcs[0].index.MVIndex {
+			err = e.checkTableRecord(ctx, 0)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	taskCh := make(chan *IndexLookUpExecutor, len(e.srcs))
 	failure := atomicutil.NewBool(false)
@@ -997,6 +1006,14 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					select {
 					case src := <-taskCh:
 						err1 := e.checkIndexHandle(ctx, src)
+						if err1 == nil && src.index.MVIndex {
+							for offset, idx := range e.indexInfos {
+								if idx.ID == src.index.ID {
+									err1 = e.checkTableRecord(ctx, offset)
+									break
+								}
+							}
+						}
 						if err1 != nil {
 							failure.Store(true)
 							logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
