@@ -191,18 +191,22 @@ func TestPoolWithoutEnoughCapacityParallel(t *testing.T) {
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
 	})
-	var twg util.WaitGroupWrapper
+	var twg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		twg.Run(func() {
+		twg.Add(1)
+		go func() {
+			defer twg.Done()
 			sema := make(chan struct{}, 10)
-			var wg util.WaitGroupWrapper
+			var wg sync.WaitGroup
 			exitCh := make(chan struct{})
-			wg.Run(func() {
+			wg.Add(1)
+			go func() {
+				wg.Done()
 				for j := 0; j < RunTimes; j++ {
 					sema <- struct{}{}
 				}
 				close(exitCh)
-			})
+			}()
 			producerFunc := func() (struct{}, error) {
 				for {
 					select {
@@ -218,14 +222,15 @@ func TestPoolWithoutEnoughCapacityParallel(t *testing.T) {
 				}
 			}
 			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(concurrency))
-
-			wg.Run(func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				for range resultCh {
 				}
-			})
+			}()
 			ctl.Wait()
 			wg.Wait()
-		})
+		}()
 	}
 	twg.Wait()
 }
@@ -240,14 +245,16 @@ func TestBenchPool(t *testing.T) {
 
 	for i := 0; i < 1000; i++ {
 		sema := make(chan struct{}, 10)
-		var wg util.WaitGroupWrapper
+		var wg sync.WaitGroup
 		exitCh := make(chan struct{})
-		wg.Run(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < RunTimes; j++ {
 				sema <- struct{}{}
 			}
 			close(exitCh)
-		})
+		}()
 		producerFunc := func() (struct{}, error) {
 			for {
 				select {

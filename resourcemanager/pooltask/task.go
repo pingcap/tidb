@@ -121,6 +121,11 @@ func (t *TaskController[T, U, C, CT, TF]) Wait() {
 	close(t.resultCh)
 }
 
+// TaskID is to get the task id.
+func (t *TaskController[T, U, C, CT, TF]) TaskID() uint64 {
+	return t.taskID
+}
+
 // Task is a task that can be executed.
 type Task[T any] struct {
 	Task T

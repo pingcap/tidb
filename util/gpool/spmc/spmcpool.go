@@ -196,6 +196,7 @@ func (p *Pool[T, U, C, CT, TF]) release() {
 	// There might be some callers waiting in retrieveWorker(), so we need to wake them up to prevent
 	// those callers blocking infinitely.
 	p.cond.Broadcast()
+	close(p.taskCh)
 }
 
 func isClose(exitCh chan struct{}) bool {
