@@ -114,6 +114,12 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 		return nil
 	}
 
+	if p.txn != nil {
+		// `p.txn != nil` means the txn has already been activated, we should not optimize the startTS because the startTS
+		// has already been used.
+		return nil
+	}
+
 	realPlan, ok := plan.(plannercore.Plan)
 	if !ok {
 		return nil
@@ -141,7 +147,7 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 				zap.Uint64("conn", sessVars.ConnectionID),
 				zap.String("text", sessVars.StmtCtx.OriginalSQL),
 			)
-			return nil
+			return err
 		}
 
 		p.optimizeWithMaxTS = true

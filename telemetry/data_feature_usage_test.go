@@ -500,10 +500,6 @@ func TestFlashbackCluster(t *testing.T) {
 }
 
 func TestAddIndexAccelerationAndMDL(t *testing.T) {
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skipf("test requires concurrent ddl")
-	}
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
