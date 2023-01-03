@@ -1254,36 +1254,44 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			sctx := w.idxLookup.ctx.GetSessionVars().StmtCtx
 			for i := range vals {
 				col := w.idxTblCols[i]
-				tp := &col.FieldType
-				idxVal := idxRow.GetDatum(i, tp)
+				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := idxVal.Compare(sctx, &vals[i], collators[i])
-				if err != nil {
-					fts := make([]*types.FieldType, 0, len(w.idxTblCols))
-					for _, c := range w.idxTblCols {
-						fts = append(fts, &c.FieldType)
+				var cmpRes int
+				if col.FieldType.IsArray() {
+					// If it is multi-valued index, we should check the JSON contains the indexed value.
+					bj := vals[i].GetMysqlJSON()
+					count := bj.GetElemCount()
+					for elemIdx := 0; elemIdx < count; elemIdx++ {
+						jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
+						cmpRes, err = jsonDatum.Compare(sctx, &idxVal, collate.GetBinaryCollator())
+						if err != nil {
+							return errors.Trace(err)
+						}
+						if cmpRes == 0 {
+							break
+						}
 					}
+				} else {
+					cmpRes, err = idxVal.Compare(sctx, &vals[i], collators[i])
+				}
+				if err != nil {
 					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
 						handle,
 						col.Name.O,
-						idxRow.GetDatum(i, tp),
+						idxVal,
 						vals[i],
 						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, fts)},
+						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
 					)
 				}
 				if cmpRes != 0 {
-					fts := make([]*types.FieldType, 0, len(w.idxTblCols))
-					for _, c := range w.idxTblCols {
-						fts = append(fts, &c.FieldType)
-					}
 					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
 						handle,
 						col.Name.O,
-						idxRow.GetDatum(i, tp),
+						idxRow.GetDatum(i, w.idxColTps[i]),
 						vals[i],
 						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, fts)},
+						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
 					)
 				}
 			}
