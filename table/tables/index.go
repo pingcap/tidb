@@ -464,7 +464,7 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 			case KeyInTempIndexConflict:
 				return true, h1, kv.ErrKeyExists
 			case KeyInTempIndexIsItself:
-				return true, h, nil
+				continue
 			}
 		}
 
@@ -486,7 +486,6 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 			if !handle.Equal(h) {
 				return true, handle, kv.ErrKeyExists
 			}
-			return true, handle, nil
 		}
 	}
 	return true, h, nil

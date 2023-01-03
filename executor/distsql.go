@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -1256,24 +1257,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				col := w.idxTblCols[i]
 				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				var cmpRes int
-				if col.FieldType.IsArray() {
-					// If it is multi-valued index, we should check the JSON contains the indexed value.
-					bj := vals[i].GetMysqlJSON()
-					count := bj.GetElemCount()
-					for elemIdx := 0; elemIdx < count; elemIdx++ {
-						jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
-						cmpRes, err = jsonDatum.Compare(sctx, &idxVal, collate.GetBinaryCollator())
-						if err != nil {
-							return errors.Trace(err)
-						}
-						if cmpRes == 0 {
-							break
-						}
-					}
-				} else {
-					cmpRes, err = idxVal.Compare(sctx, &vals[i], collators[i])
-				}
+				cmpRes, err := tables.CompareIndexAndVal(sctx, vals[i], idxVal, collators[i], col.FieldType.IsArray())
 				if err != nil {
 					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
 						handle,

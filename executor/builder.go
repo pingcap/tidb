@@ -433,6 +433,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	tps := make([]*types.FieldType, 0, fullColLen)
 	for _, col := range is.Columns {
+		// tps is used to decode the index, we should use the element type of the array if any.
 		tps = append(tps, col.FieldType.ArrayType())
 	}
 
