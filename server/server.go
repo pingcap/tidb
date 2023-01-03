@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
@@ -128,7 +129,7 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
-	rwlock            sync.RWMutex
+	rwlock            syncutil.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint64]*clientConn
 	capability        uint32
