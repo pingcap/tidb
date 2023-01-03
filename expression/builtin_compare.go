@@ -1586,7 +1586,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		} else {
 			return args
 		}
-	} else if ctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	} else if !ctx.GetSessionVars().StmtCtx.UseCache {
 		// We should remove the mutable constant for correctness, because its value may be changed.
 		RemoveMutableConst(ctx, args)
 	}

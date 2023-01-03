@@ -1993,8 +1993,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 	}
-	// In disaggregated tiflash mode, only MPP is allowed, Cop and BatchCop is deprecated.
-	if prop.TaskTp == property.MppTaskType || config.GetGlobalConfig().DisaggregatedTiFlash && ts.StoreType == kv.TiFlash {
+	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
+	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
+	isDisaggregatedTiFlashPath := config.GetGlobalConfig().DisaggregatedTiFlash && ts.StoreType == kv.TiFlash
+	canMppConvertToRootForDisaggregatedTiFlash := isDisaggregatedTiFlashPath && prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed()
+	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash {
 		if ts.KeepOrder {
 			return invalidTask, nil
 		}
@@ -2010,8 +2013,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			}
 		}
 		mppTask := &mppTask{
-			p:      ts,
-			partTp: property.AnyType,
+			p:           ts,
+			partTp:      property.AnyType,
+			tblColHists: ds.TblColHists,
 		}
 		ts.PartitionInfo = PartitionInfo{
 			PruningConds:   pushDownNot(ds.ctx, ds.allConds),
@@ -2020,7 +2024,26 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			ColumnNames:    ds.names,
 		}
 		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
-		return mppTask, nil
+		task = mppTask
+		if !mppTask.invalid() {
+			if prop.TaskTp == property.MppTaskType && len(mppTask.rootTaskConds) > 0 {
+				// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
+				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
+				task = invalidTask
+			} else if prop.TaskTp == property.RootTaskType {
+				// when got here, canMppConvertToRootForDisaggregatedTiFlash is true.
+				task = mppTask
+				task = task.convertToRootTask(ds.ctx)
+				if !task.invalid() {
+					ds.addSelection4PlanCache(task.(*rootTask), ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
+				}
+			}
+		}
+		return task, nil
+	}
+	if isDisaggregatedTiFlashPath {
+		// prop.TaskTp is cop related, just return invalidTask.
+		return invalidTask, nil
 	}
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -2230,10 +2253,8 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 	filterCondition, rootTaskConds := SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, filterCondition, ts.ctx.GetClient(), ts.StoreType)
-	rootTaskConds = append(rootTaskConds, newRootConds...)
-	if len(rootTaskConds) > 0 {
-		return &mppTask{}
-	}
+	mpp.rootTaskConds = append(rootTaskConds, newRootConds...)
+
 	ts.filterCondition = filterCondition
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
