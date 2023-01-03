@@ -68,6 +68,7 @@ const (
 	totalLockedRegionsOffset
 	startTSOffset
 	commitTSOffset
+	ttlJobEnableOffSet
 )
 
 func closePDSchedule() error {
@@ -122,6 +123,14 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	}
 
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
+}
+
+func getTiDBTTLJobEnable(sess sessionctx.Context) (string, error) {
+	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBTTLJobEnable)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return val, nil
 }
 
 func setTiDBTTLJobEnable(ctx context.Context, sess sessionctx.Context, value string) error {
@@ -560,9 +569,9 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue, readOnlyValue string
+	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -602,6 +611,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		job.Args[readOnlyOffset] = &readOnlyValue
+		ttlJobEnableValue, err = getTiDBTTLJobEnable(sess)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.Args[ttlJobEnableOffSet] = &ttlJobEnableValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
@@ -701,11 +716,10 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 
 	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue, readOnlyValue string
+	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 	var gcEnabled bool
-	ttlEnabled := true
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlEnabled); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
@@ -729,7 +743,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 
 		if job.IsCancelled() {
 			// only restore `tidb_ttl_job_enable` when flashback failed
-			if err = setTiDBTTLJobEnable(w.ctx, sess, variable.BoolToOnOff(ttlEnabled)); err != nil {
+			if err = setTiDBTTLJobEnable(w.ctx, sess, ttlJobEnableValue); err != nil {
 				return err
 			}
 		}
