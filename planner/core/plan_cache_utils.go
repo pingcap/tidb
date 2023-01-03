@@ -484,14 +484,17 @@ func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func ExtractLimitFromAst(node ast.Node) ([]int64, bool) {
+func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) []int64 {
 	if node == nil {
-		return []int64{}, true
+		return []int64{}
 	}
 	checker := limitExtractor{
 		cacheable:      true,
 		offsetAndCount: []int64{},
 	}
 	node.Accept(&checker)
-	return checker.offsetAndCount, checker.cacheable
+	if sctx != nil && !checker.cacheable {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: limit count more than 10000"))
+	}
+	return checker.offsetAndCount
 }

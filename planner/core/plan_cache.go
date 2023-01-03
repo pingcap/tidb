@@ -145,12 +145,8 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
-		var limitOffsetAndCount []int64
-		if limitOffsetAndCount, canBeCached = ExtractLimitFromAst(stmt.PreparedAst.Stmt); !canBeCached {
-			sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: limit count more than 10000"))
-		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
-			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, limitOffsetAndCount); err != nil {
+			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, ExtractLimitFromAst(stmt.PreparedAst.Stmt, sctx)); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -289,9 +285,8 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			limitOffsetAndCount, _ := ExtractLimitFromAst(stmt.PreparedAst.Stmt)
 			if cacheKey, err = NewPlanCacheKey(sessVars, stmt.StmtText, stmt.StmtDB,
-				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, limitOffsetAndCount); err != nil {
+				stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, ExtractLimitFromAst(stmt.PreparedAst.Stmt, nil)); err != nil {
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}

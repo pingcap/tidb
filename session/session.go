@@ -383,9 +383,8 @@ func (s *session) cleanRetryInfo() {
 				preparedAst = preparedObj.PreparedAst
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ := plannercore.GetBindSQL4PlanCache(s, preparedObj)
-				limitOffsetAndCount, _ := plannercore.ExtractLimitFromAst(preparedAst.Stmt)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
-					0, bindSQL, limitOffsetAndCount)
+					0, bindSQL, plannercore.ExtractLimitFromAst(preparedAst.Stmt, nil))
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
