@@ -55,10 +55,10 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 		}()
 
 		for f := range w.taskBoxCh {
-			w.pool.subWaitingTask()
 			if f == nil {
 				return
 			}
+			w.pool.subWaitingTask()
 			ctx := f.GetContextFunc().GetContext()
 			if f.GetResultCh() != nil {
 				for t := range f.GetTaskCh() {

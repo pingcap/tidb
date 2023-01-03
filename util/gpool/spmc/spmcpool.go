@@ -216,7 +216,8 @@ func (p *Pool[T, U, C, CT, TF]) ReleaseAndWait() {
 	close(p.stopCh)
 	p.release()
 	for {
-		if p.Running() == 0 && p.heartbeatDone.Load() {
+		// Wait for all workers to exit and all task to be completed.
+		if p.Running() == 0 && p.heartbeatDone.Load() && p.waitingTask.Load() == 0 {
 			return
 		}
 	}
