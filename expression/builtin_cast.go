@@ -458,6 +458,7 @@ func (b *castJSONAsArrayFunctionSig) Clone() builtinFunc {
 	return newSig
 }
 
+// fakeSctx is used to ignore the sql mode, `cast as array` should always return error if any.
 var fakeSctx = &stmtctx.StatementContext{InInsertStmt: true}
 
 func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
