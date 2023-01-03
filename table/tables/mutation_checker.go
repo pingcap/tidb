@@ -347,27 +347,11 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
-		var comparison int
-		var err error
-		// If it is multi-valued index, we should check the JSON contains the indexed value.
-		if cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON {
-			bj := expectedDatum.GetMysqlJSON()
-			count := bj.GetElemCount()
-			for elemIdx := 0; elemIdx < count; elemIdx++ {
-				jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
-				comparison, err = jsonDatum.Compare(sc, &decodedMutationDatum, collate.GetBinaryCollator())
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if comparison == 0 {
-					break
-				}
-			}
-		} else {
-			comparison, err = decodedMutationDatum.Compare(sc, &expectedDatum, collate.GetCollator(decodedMutationDatum.Collation()))
-			if err != nil {
-				return errors.Trace(err)
-			}
+		comparison, err := CompareIndexAndVal(sc, expectedDatum, decodedMutationDatum,
+			collate.GetCollator(decodedMutationDatum.Collation()),
+			cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		if comparison != 0 {
@@ -380,6 +364,30 @@ func compareIndexData(
 		}
 	}
 	return nil
+}
+
+// CompareIndexAndVal compare index valued and row value.
+func CompareIndexAndVal(sctx *stmtctx.StatementContext, rowVal types.Datum, idxVal types.Datum, collator collate.Collator, cmpMVIndex bool) (int, error) {
+	var cmpRes int
+	var err error
+	if cmpMVIndex {
+		// If it is multi-valued index, we should check the JSON contains the indexed value.
+		bj := rowVal.GetMysqlJSON()
+		count := bj.GetElemCount()
+		for elemIdx := 0; elemIdx < count; elemIdx++ {
+			jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
+			cmpRes, err = jsonDatum.Compare(sctx, &idxVal, collate.GetBinaryCollator())
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			if cmpRes == 0 {
+				break
+			}
+		}
+	} else {
+		cmpRes, err = idxVal.Compare(sctx, &rowVal, collator)
+	}
+	return cmpRes, err
 }
 
 // getColumnMaps tries to get the columnMaps from transaction options. If there isn't one, it builds one and stores it.
