@@ -248,6 +248,21 @@ func TestDDLColumnOptionRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "CREATE TABLE child (id INT %s)", extractNodeFunc)
 }
 
+func TestGeneratedRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"generated always as(id + 1)", "GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
+		{"generated always as(id + 1) virtual", "GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
+		{"generated always as(id + 1) stored", "GENERATED ALWAYS AS(`id`+1) STORED"},
+		{"generated always as(lower(id)) stored", "GENERATED ALWAYS AS(LOWER(`id`)) STORED"},
+		{"generated always as(lower(child.id)) stored", "GENERATED ALWAYS AS(LOWER(`id`)) STORED"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*CreateTableStmt).Cols[0].Options[0]
+	}
+	runNodeRestoreTestWithFlagsStmtChange(t, testCases, "CREATE TABLE child (id INT %s)", extractNodeFunc,
+		format.DefaultRestoreFlags|format.RestoreWithoutSchemaName|format.RestoreWithoutTableName)
+}
+
 func TestDDLColumnDefRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		// for type

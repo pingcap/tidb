@@ -191,7 +191,6 @@ func NewMgr(
 			return nil, errors.Trace(err)
 		}
 		// we must check tidb(tikv version) any time after concurrent ddl feature implemented in v6.2.
-		// when tidb < 6.2 we need set EnableConcurrentDDL false to make ddl works.
 		// we will keep this check until 7.0, which allow the breaking changes.
 		// NOTE: must call it after domain created!
 		// FIXME: remove this check in v7.0
