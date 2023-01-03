@@ -1412,10 +1412,14 @@ func (local *local) writeAndIngestPairs(
 	writeCheckpoint map[regionKey]*tikvWriteResult,
 ) (bool, error) {
 	var err error
-	checkpointKey := regionKey{
-		id:      region.Region.Id,
-		confVer: region.Region.RegionEpoch.Version,
-		version: region.Region.RegionEpoch.ConfVer,
+	var checkpointKey regionKey
+	// nil region is only used for test
+	if region != nil {
+		checkpointKey = regionKey{
+			id:      region.Region.GetId(),
+			confVer: region.Region.GetRegionEpoch().GetConfVer(),
+			version: region.Region.GetRegionEpoch().GetVersion(),
+		}
 	}
 
 loopWrite:
