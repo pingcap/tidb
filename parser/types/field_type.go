@@ -235,6 +235,9 @@ func (ft *FieldType) IsArray() bool {
 
 // ArrayType return the type of the array.
 func (ft *FieldType) ArrayType() *FieldType {
+	if !ft.array {
+		return ft
+	}
 	clone := ft.Clone()
 	clone.SetArray(false)
 	return clone
@@ -518,7 +521,7 @@ func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 // RestoreAsCastType is used for write AST back to string.
 func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset bool) {
 	switch ft.tp {
-	case mysql.TypeVarString:
+	case mysql.TypeVarString, mysql.TypeString:
 		skipWriteBinary := false
 		if ft.charset == charset.CharsetBin && ft.collate == charset.CollationBin {
 			ctx.WriteKeyWord("BINARY")

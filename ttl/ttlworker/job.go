@@ -17,7 +17,6 @@ package ttlworker
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -29,20 +28,34 @@ import (
 	"go.uber.org/zap"
 )
 
-const updateJobCurrentStatusTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_status = '%s' WHERE table_id = %d AND current_job_status = '%s' AND current_job_id = '%s'"
-const finishJobTemplate = "UPDATE mysql.tidb_ttl_table_status SET last_job_id = current_job_id, last_job_start_time = current_job_start_time, last_job_finish_time = '%s', last_job_ttl_expire = current_job_ttl_expire, last_job_summary = '%s', current_job_id = NULL, current_job_owner_id = NULL, current_job_owner_hb_time = NULL, current_job_start_time = NULL, current_job_ttl_expire = NULL, current_job_state = NULL, current_job_status = NULL, current_job_status_update_time = NULL WHERE table_id = %d AND current_job_id = '%s'"
-const updateJobStateTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_state = '%s' WHERE table_id = %d AND current_job_id = '%s' AND current_job_owner_id = '%s'"
+const updateJobCurrentStatusTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_status = %? WHERE table_id = %? AND current_job_status = %? AND current_job_id = %?"
+const finishJobTemplate = `UPDATE mysql.tidb_ttl_table_status
+	SET last_job_id = current_job_id,
+		last_job_start_time = current_job_start_time,
+		last_job_finish_time = %?,
+		last_job_ttl_expire = current_job_ttl_expire,
+		last_job_summary = %?,
+		current_job_id = NULL,
+		current_job_owner_id = NULL,
+		current_job_owner_hb_time = NULL,
+		current_job_start_time = NULL,
+		current_job_ttl_expire = NULL,
+		current_job_state = NULL,
+		current_job_status = NULL,
+		current_job_status_update_time = NULL
+	WHERE table_id = %? AND current_job_id = %?`
+const updateJobStateTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_state = %? WHERE table_id = %? AND current_job_id = %? AND current_job_owner_id = %?"
 
-func updateJobCurrentStatusSQL(tableID int64, oldStatus cache.JobStatus, newStatus cache.JobStatus, jobID string) string {
-	return fmt.Sprintf(updateJobCurrentStatusTemplate, newStatus, tableID, oldStatus, jobID)
+func updateJobCurrentStatusSQL(tableID int64, oldStatus cache.JobStatus, newStatus cache.JobStatus, jobID string) (string, []interface{}) {
+	return updateJobCurrentStatusTemplate, []interface{}{string(newStatus), tableID, string(oldStatus), jobID}
 }
 
-func finishJobSQL(tableID int64, finishTime time.Time, summary string, jobID string) string {
-	return fmt.Sprintf(finishJobTemplate, finishTime.Format(timeFormat), summary, tableID, jobID)
+func finishJobSQL(tableID int64, finishTime time.Time, summary string, jobID string) (string, []interface{}) {
+	return finishJobTemplate, []interface{}{finishTime.Format(timeFormat), summary, tableID, jobID}
 }
 
-func updateJobState(tableID int64, currentJobID string, currentJobState string, currentJobOwnerID string) string {
-	return fmt.Sprintf(updateJobStateTemplate, currentJobState, tableID, currentJobID, currentJobOwnerID)
+func updateJobState(tableID int64, currentJobID string, currentJobState string, currentJobOwnerID string) (string, []interface{}) {
+	return updateJobStateTemplate, []interface{}{currentJobState, tableID, currentJobID, currentJobOwnerID}
 }
 
 type ttlJob struct {
@@ -76,9 +89,10 @@ func (job *ttlJob) changeStatus(ctx context.Context, se session.Session, status 
 	job.status = status
 	job.statusMutex.Unlock()
 
-	_, err := se.ExecuteSQL(ctx, updateJobCurrentStatusSQL(job.tbl.ID, oldStatus, status, job.id))
+	sql, args := updateJobCurrentStatusSQL(job.tbl.ID, oldStatus, status, job.id)
+	_, err := se.ExecuteSQL(ctx, sql, args...)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Wrapf(err, "execute sql: %s", sql)
 	}
 
 	return nil
@@ -89,9 +103,10 @@ func (job *ttlJob) updateState(ctx context.Context, se session.Session) error {
 	if err != nil {
 		logutil.Logger(job.ctx).Warn("fail to generate summary for ttl job", zap.Error(err))
 	}
-	_, err = se.ExecuteSQL(ctx, updateJobState(job.tbl.ID, job.id, summary, job.ownerID))
+	sql, args := updateJobState(job.tbl.ID, job.id, summary, job.ownerID)
+	_, err = se.ExecuteSQL(ctx, sql, args...)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Wrapf(err, "execute sql: %s", sql)
 	}
 
 	return nil
@@ -115,9 +130,10 @@ func (job *ttlJob) finish(se session.Session, now time.Time) {
 	}
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
-	_, err = se.ExecuteSQL(context.TODO(), finishJobSQL(job.tbl.ID, now, summary, job.id))
+	sql, args := finishJobSQL(job.tbl.ID, now, summary, job.id)
+	_, err = se.ExecuteSQL(context.TODO(), sql, args...)
 	if err != nil {
-		logutil.Logger(job.ctx).Error("fail to finish a ttl job", zap.Error(err), zap.Int64("tableID", job.tbl.ID), zap.String("jobID", job.id))
+		logutil.Logger(job.ctx).Error("fail to finish a ttl job", zap.Error(err), zap.Int64("tableID", job.tbl.ID), zap.String("jobID", job.id), zap.String("sql", sql), zap.Any("arguments", args))
 	}
 }
 
