@@ -392,10 +392,7 @@ func (p *Pool[T, U, C, CT, TF]) retrieveWorker() (w *goWorker[T, U, C, CT, TF]) 
 
 // revertWorker puts a worker back into free pool, recycling the goroutines.
 func (p *Pool[T, U, C, CT, TF]) revertWorker(worker *goWorker[T, U, C, CT, TF]) bool {
-	if capacity := p.Cap(); capacity > 0 && p.Running() > capacity && p.waitingTask.Load() == 0 {
-		return true
-	}
-	if p.IsClosed() {
+	if capacity := p.Cap(); capacity > 0 && p.Running() > capacity || p.IsClosed() {
 		p.cond.Broadcast()
 		return false
 	}
