@@ -27,67 +27,67 @@ func NewMockGPool(name string) *MockGPool {
 }
 
 // Release is only for test
-func (m *MockGPool) Release() {
+func (*MockGPool) Release() {
 	panic("implement me")
 }
 
 // Tune is only for test
-func (m *MockGPool) Tune(size int) {
+func (*MockGPool) Tune(_ int) {
 	panic("implement me")
 }
 
 // LastTunerTs is only for test
-func (m *MockGPool) LastTunerTs() time.Time {
+func (*MockGPool) LastTunerTs() time.Time {
 	panic("implement me")
 }
 
 // MaxInFlight is only for test
-func (m *MockGPool) MaxInFlight() int64 {
+func (*MockGPool) MaxInFlight() int64 {
 	panic("implement me")
 }
 
 // InFlight is only for test
-func (m *MockGPool) InFlight() int64 {
+func (*MockGPool) InFlight() int64 {
 	panic("implement me")
 }
 
 // MinRT is only for test
-func (m *MockGPool) MinRT() uint64 {
+func (*MockGPool) MinRT() uint64 {
 	panic("implement me")
 }
 
 // MaxPASS is only for test
-func (m *MockGPool) MaxPASS() uint64 {
+func (*MockGPool) MaxPASS() uint64 {
 	panic("implement me")
 }
 
 // Cap is only for test
-func (m *MockGPool) Cap() int {
+func (*MockGPool) Cap() int {
 	panic("implement me")
 }
 
 // LongRTT is to represent the baseline latency by tracking a measurement of the long term, less volatile RTT.
-func (m *MockGPool) LongRTT() float64 {
+func (*MockGPool) LongRTT() float64 {
 	panic("implement me")
 }
 
 // UpdateLongRTT is only for test
-func (m *MockGPool) UpdateLongRTT(f func(float64) float64) {
+func (*MockGPool) UpdateLongRTT(_ func(float64) float64) {
 	panic("implement me")
 }
 
 // ShortRTT is to represent the current system latency by tracking a measurement of the short time, and more volatile RTT.
-func (m *MockGPool) ShortRTT() uint64 {
+func (*MockGPool) ShortRTT() uint64 {
 	panic("implement me")
 }
 
 // GetQueueSize is only for test
-func (m *MockGPool) GetQueueSize() int64 {
+func (*MockGPool) GetQueueSize() int64 {
 	panic("implement me")
 }
 
 // Running is only for test
-func (m *MockGPool) Running() int {
+func (*MockGPool) Running() int {
 	panic("implement me")
 }
 
