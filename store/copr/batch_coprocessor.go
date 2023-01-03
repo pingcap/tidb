@@ -525,15 +525,13 @@ func filterAliveStores(ctx context.Context, stores []*tikv.Store, ttl time.Durat
 			defer wg.Done()
 			s := stores[idx]
 
-			// check if store is failed already.
-			ok := GlobalMPPFailedStoreProber.IsRecovery(ctx, s.GetAddr(), ttl)
-			if !ok {
+			// Check if store is failed already.
+			if ok := GlobalMPPFailedStoreProber.IsRecovery(ctx, s.GetAddr(), ttl); !ok {
 				return
 			}
 
 			tikvClient := kvStore.GetTiKVClient()
-			ok = detectMPPStore(ctx, tikvClient, s.GetAddr(), DetectTimeoutLimit)
-			if !ok {
+			if ok := detectMPPStore(ctx, tikvClient, s.GetAddr(), DetectTimeoutLimit); !ok {
 				GlobalMPPFailedStoreProber.Add(ctx, s.GetAddr(), tikvClient)
 				return
 			}
