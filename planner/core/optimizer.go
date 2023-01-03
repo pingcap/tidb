@@ -768,7 +768,7 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Cont
 	case initialized:
 		streamCount = (*streamCountInfo).itemValue
 	case failed:
-		return false, 0 // probably this path won't reach
+		return false, 0 // probably won't reach this path
 	}
 
 	var tiflashServerCount uint64 = 0
