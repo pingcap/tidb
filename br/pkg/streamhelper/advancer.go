@@ -170,25 +170,31 @@ func tsoBefore(n time.Duration) uint64 {
 	return oracle.ComposeTS(now.UnixMilli()-n.Milliseconds(), 0)
 }
 
+func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
+	c.checkpointsMu.Lock()
+	defer c.checkpointsMu.Unlock()
+
+	f(c.checkpoints)
+}
+
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context, threshold time.Duration) (uint64, error) {
 	var targets []spans.Valued
-	c.checkpoints.TraverseValuesLessThan(tsoBefore(threshold), func(v spans.Valued) bool {
-		targets = append(targets, v)
-		return true
+	var minValue spans.Valued
+	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+		vsf.TraverseValuesLessThan(tsoBefore(threshold), func(v spans.Valued) bool {
+			targets = append(targets, v)
+			return true
+		})
+		minValue = vsf.Min()
 	})
+	log.Info("[log backup advancer hint] current last region",
+		zap.Stringer("min", minValue), zap.Int("for-polling", len(targets)),
+		zap.String("min-ts", oracle.GetTimeFromTS(minValue.Value).Format(time.RFC3339)))
 	if len(targets) == 0 {
 		c.checkpointsMu.Lock()
 		defer c.checkpointsMu.Unlock()
 		return c.checkpoints.MinValue(), nil
 	}
-	samples := targets
-	if len(targets) > 3 {
-		samples = targets[:3]
-	}
-	for _, sample := range samples {
-		log.Info("[log backup advancer hint] sample range.", zap.Stringer("sample", sample), zap.Int("total-len", len(targets)))
-	}
-
 	err := c.tryAdvance(ctx, len(targets), func(i int) kv.KeyRange { return targets[i].Key })
 	if err != nil {
 		return 0, err
@@ -399,9 +405,11 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	}
 	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint-1)
 	if err != nil {
-		return errors.Annotate(err, "failed to update service GC safepoint")
+		return errors.Annotate(err, "failed to update service GC safe point")
 	}
-	log.Info("[log backup advancer] Update service GC safe point", zap.Uint64("updated-to", p), zap.Uint64("checkpoint", c.lastCheckpoint))
+	if p >= c.lastCheckpoint-1 {
+		log.Info("updated log backup GC safe point.", zap.Uint64("checkpoint", p))
+	}
 	return nil
 }
 
