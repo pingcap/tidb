@@ -22,12 +22,9 @@ import (
 type Option func(opts *Options)
 
 func loadOptions(options ...Option) *Options {
-	opts := new(Options)
+	opts := DefaultOption()
 	for _, option := range options {
 		option(opts)
-	}
-	if opts.LimitDuration == 0 {
-		opts.LimitDuration = 200 * time.Millisecond
 	}
 	return opts
 }
@@ -54,6 +51,14 @@ type Options struct {
 	// ErrPoolOverload will be returned when Pool.Submit cannot be done at once.
 	// When Nonblocking is true, MaxBlockingTasks is inoperative.
 	Nonblocking bool
+}
+
+// DefaultOption is the default option.
+func DefaultOption() *Options {
+	return &Options{
+		LimitDuration: 200 * time.Millisecond,
+		Nonblocking:   true,
+	}
 }
 
 // WithExpiryDuration sets up the interval time of cleaning up goroutines.

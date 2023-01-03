@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/stretchr/testify/require"
+	atomicutil "go.uber.org/atomic"
 )
 
 func TestNewLoopQueue(t *testing.T) {
@@ -35,7 +36,7 @@ func TestLoopQueue(t *testing.T) {
 	q := newWorkerLoopQueue[struct{}, struct{}, int, any, pooltask.NilContext](size)
 
 	for i := 0; i < 5; i++ {
-		err := q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		err := q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 		if err != nil {
 			break
 		}
@@ -47,14 +48,14 @@ func TestLoopQueue(t *testing.T) {
 	time.Sleep(time.Second)
 
 	for i := 0; i < 6; i++ {
-		err := q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		err := q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 		if err != nil {
 			break
 		}
 	}
 	require.EqualValues(t, 10, q.len(), "Len error")
 
-	err := q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+	err := q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	require.Error(t, err, "Enqueue, error")
 
 	q.retrieveExpiry(time.Second)
@@ -67,27 +68,27 @@ func TestRotatedArraySearch(t *testing.T) {
 
 	expiry1 := time.Now()
 
-	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 
 	require.EqualValues(t, 0, q.binarySearch(time.Now()), "index should be 0")
 	require.EqualValues(t, -1, q.binarySearch(expiry1), "index should be -1")
 
 	expiry2 := time.Now()
-	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	require.EqualValues(t, -1, q.binarySearch(expiry1), "index should be -1")
 	require.EqualValues(t, 0, q.binarySearch(expiry2), "index should be 0")
 	require.EqualValues(t, 1, q.binarySearch(time.Now()), "index should be 1")
 
 	for i := 0; i < 5; i++ {
-		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	}
 
 	expiry3 := time.Now()
-	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: expiry3})
+	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(expiry3)})
 
 	var err error
 	for err != errQueueIsFull {
-		err = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		err = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	}
 
 	require.EqualValues(t, 7, q.binarySearch(expiry3), "index should be 7")
@@ -98,10 +99,10 @@ func TestRotatedArraySearch(t *testing.T) {
 	}
 
 	expiry4 := time.Now()
-	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: expiry4})
+	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(expiry4)})
 
 	for i := 0; i < 4; i++ {
-		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	}
 	//	head = 6, tail = 5, insert direction ->
 	// [expiry4, time, time, time,  time, nil/tail,  time/head, time, time, time]
@@ -111,20 +112,20 @@ func TestRotatedArraySearch(t *testing.T) {
 		_ = q.detach()
 	}
 	expiry5 := time.Now()
-	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: expiry5})
+	_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(expiry5)})
 
 	//	head = 6, tail = 5, insert direction ->
 	// [expiry4, time, time, time,  time, expiry5,  nil/tail, nil, nil, time/head]
 	require.EqualValues(t, 5, q.binarySearch(expiry5), "index should be 5")
 
 	for i := 0; i < 3; i++ {
-		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	}
 	//	head = 9, tail = 9, insert direction ->
 	// [expiry4, time, time, time,  time, expiry5,  time, time, time, time/head/tail]
 	require.EqualValues(t, -1, q.binarySearch(expiry2), "index should be -1")
 
-	require.EqualValues(t, 9, q.binarySearch(q.items[9].recycleTime), "index should be 9")
+	require.EqualValues(t, 9, q.binarySearch(q.items[9].recycleTime.Load()), "index should be 9")
 	require.EqualValues(t, 8, q.binarySearch(time.Now()), "index should be 8")
 }
 
@@ -136,13 +137,13 @@ func TestRetrieveExpiry(t *testing.T) {
 
 	// test [ time+1s, time+1s, time+1s, time+1s, time+1s, time, time, time, time, time]
 	for i := 0; i < size/2; i++ {
-		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	}
 	expirew = append(expirew, q.items[:size/2]...)
 	time.Sleep(u)
 
 	for i := 0; i < size/2; i++ {
-		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	}
 	workers := q.retrieveExpiry(u)
 
@@ -152,7 +153,7 @@ func TestRetrieveExpiry(t *testing.T) {
 	time.Sleep(u)
 
 	for i := 0; i < size/2; i++ {
-		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	}
 	expirew = expirew[:0]
 	expirew = append(expirew, q.items[size/2:]...)
@@ -163,13 +164,13 @@ func TestRetrieveExpiry(t *testing.T) {
 
 	// test [ time+1s, time+1s, time+1s, nil, nil, time+1s, time+1s, time+1s, time+1s, time+1s]
 	for i := 0; i < size/2; i++ {
-		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	}
 	for i := 0; i < size/2; i++ {
 		_ = q.detach()
 	}
 	for i := 0; i < 3; i++ {
-		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: time.Now()})
+		_ = q.insert(&goWorker[struct{}, struct{}, int, any, pooltask.NilContext]{recycleTime: *atomicutil.NewTime(time.Now())})
 	}
 	time.Sleep(u)
 

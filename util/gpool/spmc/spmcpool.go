@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/logutil"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -47,8 +48,10 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	capacity      atomic.Int32
 	running       atomic.Int32
 	state         atomic.Int32
-	waiting       atomic.Int32
+	waiting       atomic.Int32 // waiting is the number of goroutines that are waiting for the pool to be available.
 	heartbeatDone atomic.Bool
+
+	waitingTask atomicutil.Uint32 // waitingTask is the number of tasks that are waiting for the pool to be available.
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.
@@ -114,7 +117,7 @@ func (p *Pool[T, U, C, CT, TF]) purgePeriodically() {
 		// or another case where the pool capacity has been Tuned up,
 		// while some invokers still get stuck in "p.cond.Wait()",
 		// then it ought to wake all those invokers.
-		if p.Running() == 0 || (p.Waiting() > 0 && p.Free() > 0) {
+		if p.Running() == 0 || (p.Waiting() > 0 && p.Free() > 0) || p.waitingTask.Load() > 0 {
 			p.cond.Broadcast()
 		}
 	}
@@ -174,6 +177,14 @@ func (p *Pool[T, U, C, CT, TF]) addWaiting(delta int) {
 	p.waiting.Add(int32(delta))
 }
 
+func (p *Pool[T, U, C, CT, TF]) addWaitingTask() {
+	p.waitingTask.Inc()
+}
+
+func (p *Pool[T, U, C, CT, TF]) subWaitingTask() {
+	p.waitingTask.Dec()
+}
+
 // release closes this pool and releases the worker queue.
 func (p *Pool[T, U, C, CT, TF]) release() {
 	if !p.state.CompareAndSwap(gpool.OPENED, gpool.CLOSED) {
@@ -225,13 +236,14 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
 			break
 		}
 		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, inputCh, result, taskID)
+		p.addWaitingTask()
 		p.taskCh <- &taskBox
 	}
 	go func() {
@@ -272,12 +284,13 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
 			break
 		}
+		p.addWaitingTask()
 		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, inputCh, result, taskID)
 		p.taskCh <- &taskBox
 	}
@@ -377,14 +390,14 @@ func (p *Pool[T, U, C, CT, TF]) retrieveWorker() (w *goWorker[T, U, C, CT, TF]) 
 
 // revertWorker puts a worker back into free pool, recycling the goroutines.
 func (p *Pool[T, U, C, CT, TF]) revertWorker(worker *goWorker[T, U, C, CT, TF]) bool {
-	if capacity := p.Cap(); capacity > 0 && p.Running() > capacity {
+	if capacity := p.Cap(); capacity > 0 && p.Running() > capacity && p.waitingTask.Load() == 0 {
 		return true
 	}
 	if p.IsClosed() {
 		p.cond.Broadcast()
 		return false
 	}
-	worker.recycleTime = time.Now()
+	worker.recycleTime.Store(time.Now())
 	p.lock.Lock()
 
 	if p.IsClosed() {
@@ -395,6 +408,9 @@ func (p *Pool[T, U, C, CT, TF]) revertWorker(worker *goWorker[T, U, C, CT, TF]) 
 	err := p.workers.insert(worker)
 	if err != nil {
 		p.lock.Unlock()
+		if err == errQueueIsFull && p.waitingTask.Load() > 0 {
+			return true
+		}
 		return false
 	}
 

@@ -15,10 +15,9 @@
 package spmc
 
 import (
-	"time"
-
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -33,7 +32,7 @@ type goWorker[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	taskBoxCh chan *pooltask.TaskBox[T, U, C, CT, TF]
 
 	// recycleTime will be updated when putting a worker back into queue.
-	recycleTime time.Time
+	recycleTime atomicutil.Time
 }
 
 // run starts a goroutine to repeat the process
@@ -56,12 +55,13 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 		}()
 
 		for f := range w.taskBoxCh {
+			w.pool.subWaitingTask()
 			if f == nil {
 				return
 			}
 			ctx := f.GetContextFunc().GetContext()
 			if f.GetResultCh() != nil {
-				for t := range f.GeTaskCh() {
+				for t := range f.GetTaskCh() {
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
 					f.Done()
 				}

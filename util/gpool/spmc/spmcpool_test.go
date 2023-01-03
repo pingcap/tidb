@@ -55,25 +55,17 @@ func TestPool(t *testing.T) {
 	var count atomic.Uint32
 	var wg sync.WaitGroup
 	wg.Add(1)
-	exitCh2 := make(chan struct{})
 	go func() {
 		defer wg.Done()
-		for {
-			select {
-			case result := <-resultCh:
-				count.Add(1)
-				require.Greater(t, result, 10)
-			case <-exitCh2:
-				return
-			}
+		for result := range resultCh {
+			count.Add(1)
+			require.Greater(t, result, 10)
 		}
 	}()
 	// Waiting task finishing
 	control.Wait()
-	close(exitCh2)
 	wg.Wait()
 	require.Equal(t, uint32(10), count.Load())
-
 	// close pool
 	pool.ReleaseAndWait()
 }
@@ -120,14 +112,7 @@ func TestPoolWithEnoughCapa(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				for {
-					select {
-					case <-resultCh:
-					default:
-						if ctl.IsProduceClose() {
-							return
-						}
-					}
+				for range resultCh {
 				}
 			}()
 			ctl.Wait()
@@ -150,9 +135,65 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
 		return struct{}{}
 	})
-	var twg util.WaitGroupWrapper
+	var twg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		func() {
+			sema := make(chan struct{}, 10)
+			var wg util.WaitGroupWrapper
+			exitCh := make(chan struct{})
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < RunTimes; j++ {
+					sema <- struct{}{}
+				}
+				close(exitCh)
+			}()
+			producerFunc := func() (struct{}, error) {
+				for {
+					select {
+					case <-sema:
+						return struct{}{}, nil
+					default:
+						select {
+						case <-exitCh:
+							return struct{}{}, gpool.ErrProducerClosed
+						default:
+						}
+					}
+				}
+			}
+			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(concurrency))
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for range resultCh {
+				}
+			}()
+			ctl.Wait()
+			wg.Wait()
+		}()
+	}
+	twg.Wait()
+}
+
+func TestPoolWithoutEnoughCapacityParallel(t *testing.T) {
+	const (
+		RunTimes    = 5
+		concurrency = 2
+		poolsize    = 2
+	)
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", poolsize,
+		WithExpiryDuration(DefaultExpiredTime), WithNonblocking(true))
+	require.NoError(t, err)
+	defer p.ReleaseAndWait()
+	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
+		return struct{}{}
+	})
+	var twg util.WaitGroupWrapper
+	for i := 0; i < 10; i++ {
+		twg.Run(func() {
 			sema := make(chan struct{}, 10)
 			var wg util.WaitGroupWrapper
 			exitCh := make(chan struct{})
@@ -178,22 +219,13 @@ func TestPoolWithoutEnoughCapa(t *testing.T) {
 			}
 			resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(concurrency))
 
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for {
-					select {
-					case <-resultCh:
-					default:
-						if ctl.IsProduceClose() {
-							return
-						}
-					}
+			wg.Run(func() {
+				for range resultCh {
 				}
-			}()
+			})
 			ctl.Wait()
 			wg.Wait()
-		}()
+		})
 	}
 	twg.Wait()
 }
@@ -231,20 +263,13 @@ func TestBenchPool(t *testing.T) {
 			}
 		}
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(6))
-		exitCh2 := make(chan struct{})
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for {
-				select {
-				case <-exitCh2:
-					return
-				case <-resultCh:
-				}
+			for range resultCh {
 			}
 		}()
 		ctl.Wait()
-		close(exitCh2)
 		wg.Wait()
 	}
 	p.ReleaseAndWait()
