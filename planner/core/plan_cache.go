@@ -147,7 +147,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 		var limitOffsetAndCount []int64
 		if limitOffsetAndCount, canBeCached = ExtractLimitFromAst(stmt.PreparedAst.Stmt); !canBeCached {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("plan with limit count more than 10000 can't be cached"))
+			sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: limit count more than 10000"))
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
 			stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, limitOffsetAndCount); err != nil {
