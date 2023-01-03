@@ -178,12 +178,26 @@ func TestPlanReplayer(t *testing.T) {
 }
 
 func TestPlanReplayerCapture(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustQuery("select sql_digest, plan_digest from mysql.plan_replayer_task;").Check(testkit.Rows("123 123"))
 	tk.MustGetErrMsg("plan replayer capture '123' '123';", "plan replayer capture task already exists")
+	tk.MustExec("delete from mysql.plan_replayer_task")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("prepare stmt from 'update t set id = ?  where id = ? + 1';")
+	tk.MustExec("SET @number = 5;")
+	tk.MustExec("execute stmt using @number,@number")
+	_, sqlDigest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+	tk.MustExec("SET @@tidb_enable_plan_replayer_capture = ON;")
+	tk.MustExec(fmt.Sprintf("plan replayer capture '%v' '%v'", sqlDigest.String(), planDigest.String()))
+	err := dom.GetPlanReplayerHandle().CollectPlanReplayerTask()
+	require.NoError(t, err)
+	tk.MustExec("execute stmt using @number,@number")
+	task := dom.GetPlanReplayerHandle().DrainTask()
+	require.NotNil(t, task)
 }
 
 func TestPlanReplayerContinuesCapture(t *testing.T) {
