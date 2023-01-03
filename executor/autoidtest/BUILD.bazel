@@ -9,6 +9,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//autoid_service",
         "//config",
         "//ddl/testutil",
         "//meta/autoid",

@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"

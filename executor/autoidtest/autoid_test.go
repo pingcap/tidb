@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/autoid_service"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"

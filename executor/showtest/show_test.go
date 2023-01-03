@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"

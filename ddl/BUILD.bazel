@@ -202,6 +202,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//autoid_service",
         "//config",
         "//ddl/ingest",
         "//ddl/placement",
