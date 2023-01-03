@@ -49,6 +49,128 @@
           "  └─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
           "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '[1, 2, 3]')",
+        "Plan": [
+          "IndexMerge 0.00 root  type: intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]')",
+        "Plan": [
+          "Selection 0.00 root  json_overlaps(json_extract(test.t.j0, \"$.path0\"), cast(\"[1, 2, 3]\", json BINARY))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('[1, 2, 3]', (j0->'$.path0'))",
+        "Plan": [
+          "Selection 0.00 root  json_overlaps(cast(\"[1, 2, 3]\", json BINARY), json_extract(test.t.j0, \"$.path0\"))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '[1, 2, 3]') and a<10",
+        "Plan": [
+          "IndexMerge 0.00 root  type: intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]') and a<10",
+        "Plan": [
+          "Selection 0.00 root  json_overlaps(json_extract(test.t.j0, \"$.path0\"), cast(\"[1, 2, 3]\", json BINARY))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
+          "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('[1, 2, 3]', (j0->'$.path0')) and a<10",
+        "Plan": [
+          "Selection 0.00 root  json_overlaps(cast(\"[1, 2, 3]\", json BINARY), json_extract(test.t.j0, \"$.path0\"))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
+          "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '1')",
+        "Plan": [
+          "IndexMerge 0.00 root  type: intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '1')",
+        "Plan": [
+          "Selection 0.00 root  json_overlaps(json_extract(test.t.j0, \"$.path0\"), cast(\"1\", json BINARY))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('1', (j0->'$.path0'))",
+        "Plan": [
+          "Selection 0.00 root  json_overlaps(cast(\"1\", json BINARY), json_extract(test.t.j0, \"$.path0\"))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '1') and a<10",
+        "Plan": [
+          "IndexMerge 0.00 root  type: intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '1') and a<10",
+        "Plan": [
+          "Selection 0.00 root  json_overlaps(json_extract(test.t.j0, \"$.path0\"), cast(\"1\", json BINARY))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
+          "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps('1', (j0->'$.path0')) and a<10",
+        "Plan": [
+          "Selection 0.00 root  json_overlaps(cast(\"1\", json BINARY), json_extract(test.t.j0, \"$.path0\"))",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:j0_0(cast(json_extract(`j0`, _utf8mb4'$.path0') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.00 cop[tikv]  lt(test.t.a, 10)",
+          "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },

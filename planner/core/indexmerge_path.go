@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -552,6 +554,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 
 			var jsonPath expression.Expression
 			var vals []expression.Expression
+			var indexMergeIsIntersection bool
 			switch sf.FuncName.L {
 			case ast.JSONMemberOf: // (1 member of a->'$.zip')
 				jsonPath = sf.GetArgs()[1]
@@ -560,10 +563,29 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 					continue
 				}
 				vals = append(vals, v)
-			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-				continue // TODO: support json_overlaps
 			case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
-				continue // TODO: support json_contains
+				indexMergeIsIntersection = true
+				jsonPath = sf.GetArgs()[0]
+				var ok bool
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1])
+				if !ok {
+					continue
+				}
+			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				var jsonPathIdx int
+				if sf.GetArgs()[0].Equal(ds.ctx, targetJSONPath) {
+					jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				} else if sf.GetArgs()[1].Equal(ds.ctx, targetJSONPath) {
+					jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
+				} else {
+					continue
+				}
+				jsonPath = sf.GetArgs()[jsonPathIdx]
+				var ok bool
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx])
+				if !ok {
+					continue
+				}
 			default:
 				continue
 			}
@@ -612,10 +634,60 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 				partialPaths = append(partialPaths, partialPath)
 			}
 			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, filterIdx)
+			indexMergePath.IndexMergeIsIntersection = indexMergeIsIntersection
 			mvIndexPaths = append(mvIndexPaths, indexMergePath)
 		}
 	}
 	return
+}
+
+// jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}
+func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expression) ([]expression.Expression, bool) {
+	// only support cast(const as JSON)
+	arrayExpr, wrappedByJSONCast := unwrapJSONCast(jsonArrayExpr)
+	if !wrappedByJSONCast {
+		return nil, false
+	}
+	if _, isConst := arrayExpr.(*expression.Constant); !isConst {
+		return nil, false
+	}
+	if expression.IsMutableEffectsExpr(arrayExpr) {
+		return nil, false
+	}
+
+	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx, chunk.Row{})
+	if isNull || err != nil {
+		return nil, false
+	}
+	if jsonArray.TypeCode != types.JSONTypeCodeArray {
+		single, ok := jsonValue2Expr(jsonArray) // '1' -> []expr{1}
+		if ok {
+			return []expression.Expression{single}, true
+		}
+		return nil, false
+	}
+	var exprs []expression.Expression
+	for i := 0; i < jsonArray.GetElemCount(); i++ { // '[1, 2, 3]' -> []expr{1, 2, 3}
+		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i))
+		if !ok {
+			return nil, false
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs, true
+}
+
+func jsonValue2Expr(v types.BinaryJSON) (expression.Expression, bool) {
+	if v.TypeCode != types.JSONTypeCodeInt64 {
+		// only support INT now
+		// TODO: support more types
+		return nil, false
+	}
+	val := v.GetInt64()
+	return &expression.Constant{
+		Value:   types.NewDatum(val),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}, true
 }
 
 func unwrapJSONCast(expr expression.Expression) (expression.Expression, bool) {
