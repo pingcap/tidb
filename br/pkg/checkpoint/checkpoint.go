@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -345,8 +346,11 @@ func (r *CheckpointRunner) startCheckpointRunner(ctx context.Context, wg *sync.W
 }
 
 func (r *CheckpointRunner) sendError(err error) {
-	log.Error("stop checkpoint runner due to error", zap.Error(err))
-	r.errCh <- err
+	select {
+	case r.errCh <- err:
+	default:
+		log.Error("errCh is blocked", logutil.ShortError(err))
+	}
 }
 
 func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration time.Duration) {
