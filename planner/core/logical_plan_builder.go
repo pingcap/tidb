@@ -2041,17 +2041,75 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 	return 0, false, false
 }
 
+// getUintFromLimitNode gets uint64 value from ast.Node.
+// For ordinary statement, node should be uint64 constant value.
+// For prepared statement, node is string. We should convert it to uint64.
+func getUintFromLimitNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bool, isExpectedType bool) {
+	var val interface{}
+	switch v := n.(type) {
+	case *driver.ValueExpr:
+		val = v.GetValue()
+	case *driver.ParamMarkerExpr:
+		if !v.InExecute {
+			return 0, false, true
+		}
+		param, err := expression.ParamMarkerExpression(ctx, v, false)
+		if err != nil {
+			return 0, false, false
+		}
+		str, isNull, err := expression.GetStringFromConstant(ctx, param)
+		if err != nil {
+			return 0, false, false
+		}
+		if isNull {
+			return 0, true, true
+		}
+		if ok := isAllDigit(str); !ok {
+			return 0, false, false
+		}
+		val = str
+	default:
+		return 0, false, false
+	}
+	switch v := val.(type) {
+	case uint64:
+		return v, false, true
+	case int64:
+		if v >= 0 {
+			return uint64(v), false, true
+		}
+	case string:
+		sc := ctx.GetSessionVars().StmtCtx
+		uVal, err := types.StrToUint(sc, v, false)
+		if err != nil {
+			return 0, false, false
+		}
+		return uVal, false, true
+	}
+	return 0, false, false
+}
+
+func isAllDigit(str string) bool {
+	for _, c := range str {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count uint64,
 	offset uint64, err error) {
 	var isExpectedType bool
 	if limit.Count != nil {
-		count, _, isExpectedType = getUintFromNode(ctx, limit.Count)
+		count, _, isExpectedType = getUintFromLimitNode(ctx, limit.Count)
 		if !isExpectedType {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
+
 	if limit.Offset != nil {
-		offset, _, isExpectedType = getUintFromNode(ctx, limit.Offset)
+		offset, _, isExpectedType = getUintFromLimitNode(ctx, limit.Offset)
 		if !isExpectedType {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
