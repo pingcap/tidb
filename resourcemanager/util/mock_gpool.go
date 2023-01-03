@@ -71,6 +71,7 @@ func (m *MockGPool) LongRTT() float64 {
 	panic("implement me")
 }
 
+// UpdateLongRTT is only for test
 func (m *MockGPool) UpdateLongRTT(f func(float64) float64) {
 	panic("implement me")
 }
