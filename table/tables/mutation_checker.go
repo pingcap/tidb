@@ -347,7 +347,9 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
-		comparison, err := CompareIndexAndVal(sc, expectedDatum, decodedMutationDatum, collate.GetCollator(decodedMutationDatum.Collation()), cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray())
+		comparison, err := CompareIndexAndVal(sc, expectedDatum, decodedMutationDatum,
+			collate.GetCollator(decodedMutationDatum.Collation()),
+			cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)
 		}
