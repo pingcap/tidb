@@ -314,6 +314,7 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: some parameters may be overwritten"))
 }
 
+<<<<<<< HEAD
 func TestIssue40224(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -344,4 +345,20 @@ func TestIssue40224(t *testing.T) {
 			{"IndexReader_6"},
 			{"└─IndexRangeScan_5"}, // range scan not full scan
 		})
+=======
+func TestUncacheableReason(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	tk.MustExec("prepare st from 'select * from t limit ?'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
+
+	tk.MustExec("set @a=1")
+	tk.MustQuery("execute st using @a").Check(testkit.Rows())
+	tk.MustExec("prepare st from 'select * from t limit ?'")
+	// show the corresponding un-cacheable reason at execute-stage as well
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
+>>>>>>> 5327d07afc7 (planner: refactor plan-cache UseCache flag (#40256))
 }

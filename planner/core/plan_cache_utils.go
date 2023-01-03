@@ -113,12 +113,19 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	var (
 		normalizedSQL4PC, digest4PC string
 		selectStmtNode              ast.StmtNode
+		cacheable                   bool
+		reason                      string
 	)
 	if !vars.EnablePreparedPlanCache {
-		prepared.UseCache = false
+		cacheable = false
+		reason = "plan cache is disabled"
 	} else {
+<<<<<<< HEAD
 		cacheable, reason := CacheableWithCtx(sctx, stmt, ret.InfoSchema)
 		prepared.UseCache = cacheable
+=======
+		cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
+>>>>>>> 5327d07afc7 (planner: refactor plan-cache UseCache flag (#40256))
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
 		}
@@ -154,6 +161,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
+		StmtCacheable:       cacheable,
+		UncacheableReason:   reason,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -414,11 +423,26 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
+<<<<<<< HEAD
 	PreparedAst         *ast.Prepared
 	StmtDB              string // which DB the statement will be processed over
 	VisitInfos          []visitInfo
 	ColumnInfos         interface{}
 	Executor            interface{}
+=======
+	PreparedAst *ast.Prepared
+	StmtDB      string // which DB the statement will be processed over
+	VisitInfos  []visitInfo
+	ColumnInfos interface{}
+	// Executor is only used for point get scene.
+	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
+	Executor interface{}
+
+	StmtCacheable     bool   // Whether this stmt is cacheable.
+	UncacheableReason string // Why this stmt is uncacheable.
+
+>>>>>>> 5327d07afc7 (planner: refactor plan-cache UseCache flag (#40256))
 	NormalizedSQL       string
 	NormalizedPlan      string
 	SQLDigest           *parser.Digest
