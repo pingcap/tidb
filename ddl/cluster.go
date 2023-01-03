@@ -123,6 +123,10 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
+func setTiDBTTLJobEnable(ctx context.Context, sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBTTLJobEnable, value)
+}
+
 func setTiDBEnableAutoAnalyze(ctx context.Context, sess sessionctx.Context, value string) error {
 	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBEnableAutoAnalyze, value)
 }
@@ -162,6 +166,9 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 		return err
 	}
 	if err = setTiDBSuperReadOnly(d.ctx, sess, variable.On); err != nil {
+		return err
+	}
+	if err = setTiDBTTLJobEnable(d.ctx, sess, variable.Off); err != nil {
 		return err
 	}
 
@@ -648,8 +655,9 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue, readOnlyValue string
 	var gcEnabled bool
+	ttlEnabled := true
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlEnabled); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
@@ -670,6 +678,14 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		if err = setTiDBSuperReadOnly(w.ctx, sess, readOnlyValue); err != nil {
 			return err
 		}
+
+		if job.IsCancelled() {
+			// only restore `tidb_ttl_job_enable` when flashback failed
+			if err = setTiDBTTLJobEnable(w.ctx, sess, variable.BoolToOnOff(ttlEnabled)); err != nil {
+				return err
+			}
+		}
+
 		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
 	})
 	if err != nil {
