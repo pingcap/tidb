@@ -458,7 +458,7 @@ func (b *castJSONAsArrayFunctionSig) Clone() builtinFunc {
 	return newSig
 }
 
-var fakeSctx = &stmtctx.StatementContext{}
+var fakeSctx = &stmtctx.StatementContext{InInsertStmt: true}
 
 func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
