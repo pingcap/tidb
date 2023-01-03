@@ -16,6 +16,8 @@ package ttlworker
 
 import (
 	"time"
+
+	"github.com/pingcap/failpoint"
 )
 
 const jobManagerLoopTickerInterval = 10 * time.Second
@@ -27,3 +29,24 @@ const ttlInternalSQLTimeout = 30 * time.Second
 const resizeWorkersInterval = 30 * time.Second
 const splitScanCount = 64
 const ttlJobTimeout = 6 * time.Hour
+
+func getUpdateInfoSchemaCacheInterval() time.Duration {
+	failpoint.Inject("update-info-schema-cache-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return updateInfoSchemaCacheInterval
+}
+
+func getUpdateTTLTableStatusCacheInterval() time.Duration {
+	failpoint.Inject("update-status-table-cache-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return updateTTLTableStatusCacheInterval
+}
+
+func getResizeWorkersInterval() time.Duration {
+	failpoint.Inject("resize-workers-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return resizeWorkersInterval
+}

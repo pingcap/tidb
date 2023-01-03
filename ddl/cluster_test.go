@@ -42,15 +42,16 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 
 	kvRanges, err := ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
-	// The results are 6 key ranges
-	// 0: (stats_meta,stats_histograms,stats_buckets)
+	// The results are 8 key ranges
+	// 0: (stats_meta,stats_histograms,stats_buckets, gc_delete_range)
 	// 1: (stats_feedback)
 	// 2: (stats_top_n)
 	// 3: (stats_extended)
 	// 4: (stats_fm_sketch)
 	// 5: (stats_history, stats_meta_history)
 	// 6: (stats_table_locked)
-	require.Len(t, kvRanges, 7)
+	// 7: meta Ranges
+	require.Len(t, kvRanges, 8)
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE employees (" +
@@ -64,7 +65,7 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 		");")
 	tk.MustExec("truncate table mysql.analyze_jobs")
 
-	// truncate all `stats_` tables, make table ID consecutive.
+	// truncate all `stats_` and `gc_delete_range` tables, make table ID consecutive.
 	tk.MustExec("truncate table mysql.stats_meta")
 	tk.MustExec("truncate table mysql.stats_histograms")
 	tk.MustExec("truncate table mysql.stats_buckets")
@@ -75,14 +76,15 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	tk.MustExec("truncate table mysql.stats_history")
 	tk.MustExec("truncate table mysql.stats_meta_history")
 	tk.MustExec("truncate table mysql.stats_table_locked")
+	tk.MustExec("truncate table mysql.gc_delete_range")
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
-	require.Len(t, kvRanges, 2)
+	require.Len(t, kvRanges, 3)
 
 	tk.MustExec("truncate table test.employees")
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
-	require.Len(t, kvRanges, 1)
+	require.Len(t, kvRanges, 2)
 }
 
 func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
