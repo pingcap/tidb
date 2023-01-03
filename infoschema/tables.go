@@ -2237,6 +2237,9 @@ func (vt *VirtualTable) Type() table.Type {
 
 // GetTiFlashServerInfo returns all TiFlash server infos
 func GetTiFlashServerInfo(sctx sessionctx.Context) ([]ServerInfo, error) {
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		return nil, table.ErrUnsupportedOp
+	}
 	serversInfo, err := GetStoreServerInfo(sctx)
 	if err != nil {
 		return nil, err
