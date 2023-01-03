@@ -23,7 +23,7 @@ import (
 )
 
 func init() {
-	deadlock.Opts.DeadlockTimeout = 5 * time.Minute
+	deadlock.Opts.DeadlockTimeout = 20 * time.Second
 }
 
 // A Mutex is a mutual exclusion lock.
