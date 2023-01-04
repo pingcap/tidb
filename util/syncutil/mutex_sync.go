@@ -18,6 +18,9 @@ package syncutil
 
 import "sync"
 
+// EnableDeadlock is a flag to enable deadlock detection.
+const EnableDeadlock = false
+
 // A Mutex is a mutual exclusion lock.
 type Mutex struct {
 	sync.Mutex

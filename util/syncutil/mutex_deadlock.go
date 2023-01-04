@@ -22,6 +22,9 @@ import (
 	deadlock "github.com/sasha-s/go-deadlock"
 )
 
+// EnableDeadlock is a flag to enable deadlock detection.
+const EnableDeadlock = true
+
 func init() {
 	deadlock.Opts.DeadlockTimeout = 20 * time.Second
 }
