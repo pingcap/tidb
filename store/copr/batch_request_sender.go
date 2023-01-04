@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/config"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -36,7 +35,6 @@ type RegionInfo struct {
 	Ranges         *KeyRanges
 	AllStores      []uint64
 	PartitionIndex int64 // used by PartitionTableScan, indicates the n-th partition of the partition table
-	Addr           string
 }
 
 func (ri *RegionInfo) toCoprocessorRegionInfo() *coprocessor.RegionInfo {
@@ -100,22 +98,18 @@ func (ss *RegionBatchRequestSender) onSendFailForBatchRegions(bo *Backoffer, ctx
 		return tikverr.ErrTiDBShuttingDown
 	}
 
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		ss.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
-	} else {
-		// The reload region param is always true. Because that every time we try, we must
-		// re-build the range then re-create the batch sender. As a result, the len of "failStores"
-		// will change. If tiflash's replica is more than two, the "reload region" will always be false.
-		// Now that the batch cop and mpp has a relative low qps, it's reasonable to reload every time
-		// when meeting io error.
-		rc := RegionCache{ss.GetRegionCache()}
-		rc.OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, true, err)
+	// The reload region param is always true. Because that every time we try, we must
+	// re-build the range then re-create the batch sender. As a result, the len of "failStores"
+	// will change. If tiflash's replica is more than two, the "reload region" will always be false.
+	// Now that the batch cop and mpp has a relative low qps, it's reasonable to reload every time
+	// when meeting io error.
+	rc := RegionCache{ss.GetRegionCache()}
+	rc.OnSendFailForBatchRegions(bo, ctx.Store, regionInfos, true, err)
 
-		// Retry on send request failure when it's not canceled.
-		// When a store is not available, the leader of related region should be elected quickly.
-		// TODO: the number of retry time should be limited:since region may be unavailable
-		// when some unrecoverable disaster happened.
-		err = bo.Backoff(tikv.BoTiFlashRPC(), errors.Errorf("send request error: %v, ctx: %v, regionInfos: %v", err, ctx, regionInfos))
-	}
+	// Retry on send request failure when it's not canceled.
+	// When a store is not available, the leader of related region should be elected quickly.
+	// TODO: the number of retry time should be limited:since region may be unavailable
+	// when some unrecoverable disaster happened.
+	err = bo.Backoff(tikv.BoTiFlashRPC(), errors.Errorf("send request error: %v, ctx: %v, regionInfos: %v", err, ctx, regionInfos))
 	return errors.Trace(err)
 }
