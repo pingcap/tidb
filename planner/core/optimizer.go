@@ -778,6 +778,9 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Cont
 		if err != nil {
 			(*tiflashServerCountInfo).itemStatus = failed
 			(*tiflashServerCountInfo).itemValue = 0
+			if (*streamCountInfo).itemStatus == unInitialized {
+				setDefaultStreamCount(streamCountInfo)
+			}
 			return false, 0
 		}
 		tiflashServerCount = uint64(len(serversInfo))
