@@ -122,6 +122,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 
+	time.Sleep(10 * time.Millisecond)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 
@@ -144,6 +145,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
+	time.Sleep(10 * time.Millisecond)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 
@@ -182,6 +184,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
+	time.Sleep(10 * time.Millisecond)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 
@@ -260,6 +263,8 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	originHook := dom.DDL().GetHook()
 	tk := testkit.NewTestKit(t, store)
+
+	time.Sleep(10 * time.Millisecond)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 
