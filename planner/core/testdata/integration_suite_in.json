@@ -661,7 +661,40 @@
       "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
       "explain select /*+ no_keep_order(t, primary) */ * from t where a<10 order by a limit 1;",
       "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 limit 1;",
-      "explain select /*+ no_keep_order(t, primary) */ * from t where a<10 limit 1;"
+      "explain select /*+ no_keep_order(t, primary) */ * from t where a<10 limit 1;",
+
+      // Use the keep_order/ no_keep_order with use_index/ ignore_index/ force_index at the same time
+      "explain select /*+ keep_order(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+
+      "explain select /*+ keep_order(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
+
+      "explain select /*+ keep_order(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+
+      "explain select /*+ no_keep_order(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
+
+      "explain select /*+ no_keep_order(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+
+
     ]
   },
   {
