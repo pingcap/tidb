@@ -363,6 +363,7 @@ func (s *GlobalKillSuite) killByCtrlC(t *testing.T, port int, sleepTime int) tim
 
 	startErr := <-startCh // wait before mysql cli running.
 	require.NoError(t, startErr)
+	time.Sleep(waitToStartup)
 	log.Info("send signal")
 	err := cli.Process.Signal(os.Interrupt) // send "CTRL-C".
 	log.Info("send signal done")
