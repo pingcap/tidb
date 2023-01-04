@@ -26,7 +26,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	autoid "github.com/pingcap/tidb/autoid_service"
+	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -558,6 +558,11 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	return res
 }
 
+// MockForTest is exported for testing.
+// The actual implementation is in github.com/pingcap/tidb/autoid_service because of the
+// package circle depending issue.
+var MockForTest func(kv.Storage) autoid.AutoIDAllocClient
+
 func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *singlePointAlloc {
 	ebd, ok := store.(kv.EtcdBackend)
 	if !ok {
@@ -587,7 +592,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
 	} else {
 		spa.clientDiscover = clientDiscover{}
-		spa.mu.AutoIDAllocClient = autoid.MockForTest(store)
+		spa.mu.AutoIDAllocClient = MockForTest(store)
 	}
 
 	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.

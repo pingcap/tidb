@@ -520,7 +520,6 @@ type Prepared struct {
 	StmtType      string
 	Params        []ParamMarkerExpr
 	SchemaVersion int64
-	UseCache      bool
 	CachedPlan    interface{}
 	CachedNames   interface{}
 }

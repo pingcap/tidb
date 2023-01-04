@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -80,7 +79,7 @@ type temporaryIndexRecord struct {
 }
 
 type mergeIndexWorker struct {
-	*backfillWorker
+	*backfillCtx
 
 	index table.Index
 
@@ -90,15 +89,15 @@ type mergeIndexWorker struct {
 	jobContext    *JobContext
 }
 
-func newMergeTempIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo, jc *JobContext) *mergeIndexWorker {
-	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, reorgInfo.currElement.ID)
+func newMergeTempIndexWorker(bfCtx *backfillCtx, id int, t table.PhysicalTable, eleID int64, jc *JobContext) *mergeIndexWorker {
+	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, eleID)
 
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 
 	return &mergeIndexWorker{
-		backfillWorker: newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeAddIndexMergeTmpWorker),
-		index:          index,
-		jobContext:     jc,
+		backfillCtx: bfCtx,
+		index:       index,
+		jobContext:  jc,
 	}
 }
 
@@ -109,8 +108,8 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
-		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
+		txn.SetOption(kv.Priority, taskRange.priority)
+		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
@@ -163,7 +162,27 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 	return
 }
 
-func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
+func (*mergeIndexWorker) AddMetricInfo(float64) {
+}
+
+func (*mergeIndexWorker) String() string {
+	return typeAddIndexMergeTmpWorker.String()
+}
+
+func (*mergeIndexWorker) GetTask() (*BackfillJob, error) {
+	panic("[ddl] merge index worker GetTask function doesn't implement")
+}
+
+func (*mergeIndexWorker) UpdateTask(*BackfillJob) error {
+	panic("[ddl] merge index worker UpdateTask function doesn't implement")
+}
+
+func (*mergeIndexWorker) FinishTask(*BackfillJob) error {
+	panic("[ddl] merge index worker FinishTask function doesn't implement")
+}
+
+func (w *mergeIndexWorker) GetCtx() *backfillCtx {
+	return w.backfillCtx
 }
 
 func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
@@ -177,7 +196,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 	idxPrefix := w.table.IndexPrefix()
 	var lastKey kv.Key
 	isCommonHandle := w.table.Meta().IsCommonHandle
-	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, idxPrefix, txn.StartTS(),
+	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, idxPrefix, txn.StartTS(),
 		taskRange.startKey, taskRange.endKey, func(_ kv.Handle, indexKey kv.Key, rawValue []byte) (more bool, err error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)
