@@ -3779,7 +3779,7 @@ func TestUpgradeSysvars(t *testing.T) {
 	// i.e. implying that it was set from an earlier version of TiDB.
 
 	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', '0')`)
-	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache() // update cache
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true) // update cache
 	v, err := se.GetGlobalSysVar("tidb_enable_noop_functions")
 	require.NoError(t, err)
 	require.Equal(t, "OFF", v)
@@ -3790,7 +3790,7 @@ func TestUpgradeSysvars(t *testing.T) {
 	// to handle upgrade/downgrade issues correctly.
 
 	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('rpl_semi_sync_slave_enabled', '')`)
-	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache() // update cache
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true) // update cache
 	v, err = se.GetGlobalSysVar("rpl_semi_sync_slave_enabled")
 	require.NoError(t, err)
 	require.Equal(t, "OFF", v) // the default value is restored.
@@ -3801,7 +3801,7 @@ func TestUpgradeSysvars(t *testing.T) {
 	// This further helps for https://github.com/pingcap/tidb/pull/28842
 
 	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_executor_concurrency', '999')`)
-	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache() // update cache
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true) // update cache
 	v, err = se.GetGlobalSysVar("tidb_executor_concurrency")
 	require.NoError(t, err)
 	require.Equal(t, "256", v) // the max value is restored.
@@ -3810,7 +3810,7 @@ func TestUpgradeSysvars(t *testing.T) {
 	// This could be the case if an ENUM sysvar removes a value.
 
 	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', 'SOMEVAL')`)
-	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache() // update cache
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true) // update cache
 	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
 	require.NoError(t, err)
 	require.Equal(t, "OFF", v) // the default value is restored.
