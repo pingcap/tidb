@@ -256,7 +256,7 @@ func (sv *SysVar) SetGlobalFromHook(ctx context.Context, s *SessionVars, val str
 
 	if !skipAliases && sv.Aliases != nil {
 		for _, aliasName := range sv.Aliases {
-			if err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(ctx, aliasName, val); err != nil {
+			if err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(ctx, aliasName, val, true); err != nil {
 				return err
 			}
 		}
@@ -631,7 +631,7 @@ type GlobalVarAccessor interface {
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
 	// SetGlobalSysVarOnly sets the global system variable without calling the validation function or updating aliases.
-	SetGlobalSysVarOnly(ctx context.Context, name string, value string) error
+	SetGlobalSysVarOnly(ctx context.Context, name string, value string, updateLocal bool) error
 	// GetTiDBTableValue gets a value from mysql.tidb for the key 'name'
 	GetTiDBTableValue(name string) (string, error)
 	// SetTiDBTableValue sets a value+comment for the mysql.tidb key 'name'

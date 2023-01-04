@@ -36,7 +36,7 @@ func TestMockAPI(t *testing.T) {
 	// invalid option name
 	err = mock.SetGlobalSysVar(context.Background(), "illegalopt", "val")
 	require.Error(t, err)
-	err = mock.SetGlobalSysVarOnly(context.Background(), "illegalopt", "val")
+	err = mock.SetGlobalSysVarOnly(context.Background(), "illegalopt", "val", true)
 	require.Error(t, err)
 
 	// valid option, invalid value
@@ -46,7 +46,7 @@ func TestMockAPI(t *testing.T) {
 	// valid option, valid value
 	err = mock.SetGlobalSysVar(context.Background(), DefaultAuthPlugin, "mysql_native_password")
 	require.NoError(t, err)
-	err = mock.SetGlobalSysVarOnly(context.Background(), DefaultAuthPlugin, "mysql_native_password")
+	err = mock.SetGlobalSysVarOnly(context.Background(), DefaultAuthPlugin, "mysql_native_password", true)
 	require.NoError(t, err)
 
 	// Test GetTiDBTableValue
