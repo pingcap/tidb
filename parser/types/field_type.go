@@ -235,6 +235,9 @@ func (ft *FieldType) IsArray() bool {
 
 // ArrayType return the type of the array.
 func (ft *FieldType) ArrayType() *FieldType {
+	if !ft.array {
+		return ft
+	}
 	clone := ft.Clone()
 	clone.SetArray(false)
 	return clone
