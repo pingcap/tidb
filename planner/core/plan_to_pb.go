@@ -187,7 +187,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	}
 	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
 	tsExec.Desc = p.Desc
-	keepOrder := p.KeepOrder
+	keepOrder := !(p.KeepOrder == NoOrder)
 	tsExec.KeepOrder = &keepOrder
 	tsExec.IsFastScan = &(ctx.GetSessionVars().TiFlashFastScan)
 

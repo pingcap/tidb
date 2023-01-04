@@ -427,7 +427,7 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx sessionctx.Context) {
 		// and all table scans contained are not keepOrder, try to use batch cop.
 		if len(tableScans) > 0 {
 			for _, tableScan := range tableScans {
-				if tableScan.KeepOrder {
+				if !(tableScan.KeepOrder == NoOrder) {
 					return
 				}
 			}

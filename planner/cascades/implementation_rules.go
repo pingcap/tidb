@@ -198,7 +198,7 @@ func (*ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 	logicalScan := expr.ExprNode.(*plannercore.LogicalTableScan)
 	ts := logicalScan.GetPhysicalScan(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
-		ts.KeepOrder = true
+		ts.KeepOrder = plannercore.KeepOrderBetweenRequest
 		ts.Desc = reqProp.SortItems[0].Desc
 	}
 	tblCols, tblColHists := logicalScan.Source.TblCols, logicalScan.Source.TblColHists

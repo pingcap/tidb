@@ -42,6 +42,22 @@ import (
 	"go.uber.org/zap"
 )
 
+// We need three status for the KEEP ORDER of the table reader.
+// It's very strange problem.
+// At the very beginning time, TiKV stores the unsigned pk at a wrong order: [MaxInt64+1, MaxUint64] is the beginning, then following [0, MaxInt64].
+// So if we just directly KEEP ORDER, we will get data of [MaxInt64+1, MaxUint64] first, then [0, MaxInt64].
+// We need to specially handle this case.
+// And then we have the func pushTopNDownToDynamicPartition. It pushes part of the order property down to the partition table.
+// It does not need KEEP ORDER between the request. But only need to nodify that each request itself should read the data in correct order.
+// So we introduce the third type KeepOrderInRequest.
+type KeepOrderTypeForTableReader uint
+
+const (
+	NoOrder KeepOrderTypeForTableReader = iota
+	KeepOrderInRequest
+	KeepOrderBetweenRequest
+)
+
 const (
 	// SelectionFactor is the default factor of the selectivity.
 	// For example, If we have no idea how to estimate the selectivity
@@ -1976,7 +1992,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	ts, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
-	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
+	if ts.KeepOrder != NoOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return invalidTask, nil
 	}
@@ -1998,7 +2014,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	isDisaggregatedTiFlashPath := config.GetGlobalConfig().DisaggregatedTiFlash && ts.StoreType == kv.TiFlash
 	canMppConvertToRootForDisaggregatedTiFlash := isDisaggregatedTiFlashPath && prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed()
 	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash {
-		if ts.KeepOrder {
+		if ts.KeepOrder != NoOrder {
 			return invalidTask, nil
 		}
 		if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
@@ -2352,7 +2368,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	ts.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	if isMatchProp {
 		ts.Desc = prop.SortItems[0].Desc
-		ts.KeepOrder = true
+		ts.KeepOrder = KeepOrderBetweenRequest
 	}
 	return ts, rowCount
 }

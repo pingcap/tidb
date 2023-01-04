@@ -205,7 +205,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 	}
 	buffer.WriteString("keep order:")
-	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
+	buffer.WriteString(strconv.FormatBool(p.KeepOrder == KeepOrderBetweenRequest))
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
