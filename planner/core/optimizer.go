@@ -904,7 +904,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 		probChild := child1
 		joinKeys := x.LeftJoinKeys
 		if x.InnerChildIdx != 0 {
-			// Child0 is build side.
+			// Child1 is build side.
 			buildChild = child1
 			joinKeys = x.RightJoinKeys
 			probChild = child0
