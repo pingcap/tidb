@@ -2088,7 +2088,7 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
-	if tp.EvalType() != types.ETJson && err == nil {
+	if err == nil {
 		res = FoldConstant(res)
 	}
 	return res, err
