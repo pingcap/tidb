@@ -1611,8 +1611,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 }
 
 func extractMsgFromSQLWarn(SQLWarn *stmtctx.SQLWarn) string {
+	// Currently, this function is only used in extractMsgFromSQLWarn().
+	// extractMsgFromSQLWarn() can make sure SQLWarn is not nil so no need to add a nil check here.
 	warn := errors.Cause(SQLWarn.Err)
-	if x, ok := warn.(*terror.Error); ok {
+	if x, ok := warn.(*terror.Error); ok && x != nil {
 		sqlErr := terror.ToSQLError(x)
 		return sqlErr.Message
 	}
