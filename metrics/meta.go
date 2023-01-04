@@ -34,8 +34,6 @@ var (
 
 	GetSchemaDiff    = "get_schema_diff"
 	SetSchemaDiff    = "set_schema_diff"
-	GetDDLJobByIdx   = "get_ddl_job"
-	UpdateDDLJob     = "update_ddl_job"
 	GetHistoryDDLJob = "get_history_ddl_job"
 
 	MetaHistogram = prometheus.NewHistogramVec(
