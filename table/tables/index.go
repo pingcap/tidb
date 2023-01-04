@@ -438,55 +438,56 @@ func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tem
 	return indexKey, nil, TempIndexKeyTypeNone
 }
 
-func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
-	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
-	if err != nil {
-		return false, nil, err
-	}
-
-	var (
-		tempKey []byte
-		keyVer  byte
-	)
-	// If index current is in creating status and using ingest mode, we need first
-	// check key exist status in temp index.
-	key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
-	if keyVer != TempIndexKeyTypeNone {
-		KeyExistInfo, h1, err1 := KeyExistInTempIndex(context.TODO(), txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
-		if err1 != nil {
-			return false, nil, err
-		}
-		switch KeyExistInfo {
-		case KeyInTempIndexNotExist, KeyInTempIndexIsDeleted:
-			return false, nil, nil
-		case KeyInTempIndexConflict:
-			return true, h1, kv.ErrKeyExists
-		case KeyInTempIndexIsItself:
-			return true, h, nil
-		}
-	}
-
-	value, err := txn.Get(context.TODO(), key)
-	if kv.IsErrNotFound(err) {
-		return false, nil, nil
-	}
-	if err != nil {
-		return false, nil, err
-	}
-
-	// For distinct index, the value of key is handle.
-	if distinct {
-		var handle kv.Handle
-		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
+func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
+	indexedValues := c.getIndexedValue(indexedValue)
+	for _, val := range indexedValues {
+		key, distinct, err := c.GenIndexKey(sc, val, h, nil)
 		if err != nil {
 			return false, nil, err
 		}
-		if !handle.Equal(h) {
-			return true, handle, kv.ErrKeyExists
-		}
-		return true, handle, nil
-	}
 
+		var (
+			tempKey []byte
+			keyVer  byte
+		)
+		// If index current is in creating status and using ingest mode, we need first
+		// check key exist status in temp index.
+		key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
+		if keyVer != TempIndexKeyTypeNone {
+			KeyExistInfo, h1, err1 := KeyExistInTempIndex(context.TODO(), txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
+			if err1 != nil {
+				return false, nil, err
+			}
+			switch KeyExistInfo {
+			case KeyInTempIndexNotExist, KeyInTempIndexIsDeleted:
+				return false, nil, nil
+			case KeyInTempIndexConflict:
+				return true, h1, kv.ErrKeyExists
+			case KeyInTempIndexIsItself:
+				continue
+			}
+		}
+
+		value, err := txn.Get(context.TODO(), key)
+		if kv.IsErrNotFound(err) {
+			return false, nil, nil
+		}
+		if err != nil {
+			return false, nil, err
+		}
+
+		// For distinct index, the value of key is handle.
+		if distinct {
+			var handle kv.Handle
+			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
+			if err != nil {
+				return false, nil, err
+			}
+			if !handle.Equal(h) {
+				return true, handle, kv.ErrKeyExists
+			}
+		}
+	}
 	return true, h, nil
 }
 
