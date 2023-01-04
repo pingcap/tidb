@@ -1104,7 +1104,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			}
 		}
 		tblScan.Desc = isDesc
-		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func for more details.
+		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func and the struct tableResultHandler for more details.
 		tblScan.KeepOrder = true
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
