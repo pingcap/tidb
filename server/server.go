@@ -701,6 +701,17 @@ func killConn(conn *clientConn) {
 	}
 }
 
+// KillSysProcesses kill sys processes such as auto analyze.
+func (s *Server) KillSysProcesses() {
+	if s.dom == nil {
+		return
+	}
+	sysProcTracker := s.dom.SysProcTracker()
+	for connID := range sysProcTracker.GetSysProcessList() {
+		sysProcTracker.KillSysProcess(connID)
+	}
+}
+
 // KillAllConnections kills all connections when server is not gracefully shutdown.
 func (s *Server) KillAllConnections() {
 	logutil.BgLogger().Info("[server] kill all connections.")
@@ -714,6 +725,11 @@ func (s *Server) KillAllConnections() {
 		}
 		killConn(conn)
 	}
+<<<<<<< HEAD
+=======
+
+	s.KillSysProcesses()
+>>>>>>> 62a713394f (server, tidb-server: kill auto analyze when gracefully shutting down (#40284))
 }
 
 var gracefulCloseConnectionsTimeout = 15 * time.Second
