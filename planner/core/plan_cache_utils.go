@@ -478,9 +478,8 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 						checker.cacheable = false
 						checker.unCacheableReason = "limit count more than 10000"
 						return in, true
-					} else {
-						checker.offsetAndCount = append(checker.offsetAndCount, val)
 					}
+					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
 					checker.cacheable = false
 					checker.unCacheableReason = "limit count type un-cacheable"
