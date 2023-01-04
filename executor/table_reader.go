@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -186,6 +188,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 
+	if !e.ctx.GetSessionVars().InRestrictedSQL {
+		logutil.BgLogger().Warn("build table ranges", zap.String("first part", fmt.Sprintf("%v", firstPartRanges)), zap.String("second part", fmt.Sprintf("%v", secondPartRanges)))
+	}
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
 	// cached table and temporary table are similar
