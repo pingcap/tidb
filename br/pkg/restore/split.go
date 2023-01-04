@@ -5,6 +5,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -434,6 +435,39 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRu
 	return s, nil
 }
 
+type rewriteSplitter struct {
+	rewriteKey []byte
+	tableID    int64
+	rule       *RewriteRules
+	splitter   *split.SplitHelper
+}
+
+type splitHelperIterator struct {
+	tableSplitters []*rewriteSplitter
+}
+
+func (iter *splitHelperIterator) Traverse(fn func(v split.Valued, endKey []byte, rule *RewriteRules) bool) {
+	for _, entry := range iter.tableSplitters {
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(entry.tableID+1))
+		rule := entry.rule
+		entry.splitter.Traverse(func(v split.Valued) bool {
+			return fn(v, endKey, rule)
+		})
+	}
+}
+
+func NewSplitHelperIteratorForTest(helper *split.SplitHelper, tableID int64, rule *RewriteRules) *splitHelperIterator {
+	return &splitHelperIterator{
+		tableSplitters: []*rewriteSplitter{
+			{
+				tableID:  tableID,
+				rule:     rule,
+				splitter: helper,
+			},
+		},
+	}
+}
+
 const SplitThreShold = 128 * 1024 * 1024 // 128 MB
 
 type LogSplitHelper struct {
@@ -452,6 +486,35 @@ func NewLogSplitHelper(rules map[int64]*RewriteRules, client split.SplitClient) 
 		client:        client,
 		pool:          utils.NewWorkerPool(128, "split region"),
 		eg:            nil,
+	}
+}
+
+func (helper *LogSplitHelper) iterator() *splitHelperIterator {
+	tableSplitters := make([]*rewriteSplitter, 0, len(helper.tableSplitter))
+	for tableID, splitter := range helper.tableSplitter {
+		delete(helper.tableSplitter, tableID)
+		rewriteRule, exists := helper.rules[tableID]
+		if !exists {
+			log.Info("skip splitting due to no table id matched", zap.Int64("tableID", tableID))
+			continue
+		}
+		newTableID := GetRewriteTableID(tableID, rewriteRule)
+		if newTableID == 0 {
+			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
+			continue
+		}
+		tableSplitters = append(tableSplitters, &rewriteSplitter{
+			rewriteKey: codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(newTableID)),
+			tableID:    newTableID,
+			rule:       rewriteRule,
+			splitter:   splitter,
+		})
+	}
+	sort.Slice(tableSplitters, func(i, j int) bool {
+		return bytes.Compare(tableSplitters[i].rewriteKey, tableSplitters[j].rewriteKey) < 0
+	})
+	return &splitHelperIterator{
+		tableSplitters: tableSplitters,
 	}
 }
 
@@ -549,19 +612,12 @@ func GetRewriteTableID(tableID int64, rewriteRules *RewriteRules) int64 {
 // SplitPoint selects ranges overlapped with each region, and calls `splitF` to split the region
 func SplitPoint(
 	ctx context.Context,
-	tableID int64,
-	splitHelper *split.SplitHelper,
+	iter *splitHelperIterator,
 	client split.SplitClient,
-	rewriteRules *RewriteRules,
 	splitF splitFunc,
-) error {
+) (err error) {
 	// common status
 	var (
-		err       error  = nil
-		vStartKey []byte = nil
-		vEndKey   []byte = nil
-		endKey    []byte = codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(tableID+1))
-
 		regionSplitter *RegionSplitter = NewRegionSplitter(client)
 	)
 	// region traverse status
@@ -588,12 +644,16 @@ func SplitPoint(
 		regionOverCount uint64 = 0
 	)
 
-	splitHelper.Traverse(func(v split.Valued) bool {
+	iter.Traverse(func(v split.Valued, endKey []byte, rule *RewriteRules) bool {
 		if v.Value == 0 {
 			return true
 		}
+		var (
+			vStartKey []byte = nil
+			vEndKey   []byte = nil
+		)
 		// use `vStartKey` and `vEndKey` to compare with region's key
-		vStartKey, vEndKey, err = GetRewriteEncodedKeys(v, rewriteRules)
+		vStartKey, vEndKey, err = GetRewriteEncodedKeys(v, rule)
 		if err != nil {
 			return false
 		}
@@ -720,22 +780,9 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 
 	}()
 
-	for tableID, splitter := range helper.tableSplitter {
-		delete(helper.tableSplitter, tableID)
-		rewriteRule, exists := helper.rules[tableID]
-		if !exists {
-			log.Info("skip splitting due to no table id matched", zap.Int64("tableID", tableID))
-			continue
-		}
-		newTableID := GetRewriteTableID(tableID, rewriteRule)
-		if newTableID == 0 {
-			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
-			continue
-		}
-		if err := SplitPoint(ectx, newTableID, splitter, helper.client, rewriteRule, helper.splitRegionByPoints); err != nil {
-			return errors.Trace(err)
-		}
-
+	iter := helper.iterator()
+	if err := SplitPoint(ectx, iter, helper.client, helper.splitRegionByPoints); err != nil {
+		return errors.Trace(err)
 	}
 
 	// wait for completion of splitting regions
