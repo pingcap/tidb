@@ -728,7 +728,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
 		}
 	})
-	txn, err := w.sess.Txn()
+	txn, err := w.sess.Txn(true)
 	if err != nil {
 		w.sess.Rollback()
 		return 0, err

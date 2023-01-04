@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -242,7 +243,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	d := dom.DDL()
-	se := ddl.NewSession(tk.Session())
+	se := session.NewSession(tk.Session())
 
 	jobID1 := int64(1)
 	jobID2 := int64(2)
