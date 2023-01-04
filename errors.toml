@@ -1176,7 +1176,7 @@ error = '''
 Column '%s' has an expression index dependency and cannot be dropped or renamed
 '''
 
-["ddl:3885"]
+["ddl:3855"]
 error = '''
 Column '%s' has a partitioning function dependency and cannot be dropped or renamed
 '''

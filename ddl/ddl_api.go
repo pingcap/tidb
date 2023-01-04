@@ -1084,7 +1084,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
+			format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 		for _, v := range colDef.Options {
@@ -1144,7 +1144,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				}
 				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
-				_, dependColNames := findDependedColumnNames(colDef)
+				_, dependColNames, err := findDependedColumnNames(model.NewCIStr(""), model.NewCIStr(""), colDef)
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
 				col.Dependences = dependColNames
 			case ast.ColumnOptionCollate:
 				if field_types.HasCharset(colDef.Tp) {
@@ -1563,7 +1566,7 @@ func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
 	return false
 }
 
-func checkGeneratedColumn(ctx sessionctx.Context, colDefs []*ast.ColumnDef) error {
+func checkGeneratedColumn(ctx sessionctx.Context, schemaName model.CIStr, tableName model.CIStr, colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	var exists bool
 	var autoIncrementColumn string
@@ -1578,7 +1581,10 @@ func checkGeneratedColumn(ctx sessionctx.Context, colDefs []*ast.ColumnDef) erro
 		if containsColumnOption(colDef, ast.ColumnOptionAutoIncrement) {
 			exists, autoIncrementColumn = true, colDef.Name.Name.L
 		}
-		generated, depCols := findDependedColumnNames(colDef)
+		generated, depCols, err := findDependedColumnNames(schemaName, tableName, colDef)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if !generated {
 			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
 				position:  i,
@@ -2096,7 +2102,7 @@ func CheckTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
 	// All of these rely on the AST structure of expressions, which were
 	// lost in the model (got serialized into strings).
-	if err := checkGeneratedColumn(ctx, s.Cols); err != nil {
+	if err := checkGeneratedColumn(ctx, s.Table.Schema, tbInfo.Name, s.Cols); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2746,7 +2752,8 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 			variable.Off, /* tidb_super_read_only */
 			0,            /* totalRegions */
 			0,            /* startTS */
-			0 /* commitTS */},
+			0,            /* commitTS */
+			variable.On /* tidb_ttl_job_enable */},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -3693,7 +3700,10 @@ func CreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo,
 				return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
 			}
 
-			_, dependColNames := findDependedColumnNames(specNewColumn)
+			_, dependColNames, err := findDependedColumnNames(schema.Name, t.Meta().Name, specNewColumn)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
 				if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 					return nil, errors.Trace(err)
@@ -4506,7 +4516,7 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	var hasDefaultValue, setOnUpdateNow bool
@@ -4755,7 +4765,7 @@ func GetModifiableColumnJob(
 			// TODO: update the partitioning columns with new names if column is renamed
 			// Would be an extension from MySQL which does not support it.
 			if col.Name.L != newCol.Name.L {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("Column '%s' has a partitioning function dependency and cannot be renamed", col.Name.O))
+				return nil, dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 			}
 			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
 				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
@@ -4848,7 +4858,7 @@ func GetModifiableColumnJob(
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(sctx, t, col, newCol, specNewColumn, spec.Position); err != nil {
+	if err = checkModifyGeneratedColumn(sctx, schema.Name, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -5129,6 +5139,11 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 				return dbterror.ErrDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
 			}
 		}
+	}
+
+	err = checkDropColumnWithPartitionConstraint(tbl, oldColName)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
@@ -6322,7 +6337,7 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
+			format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 		sb.Reset()
 		err := idxPart.Expr.Restore(restoreCtx)
