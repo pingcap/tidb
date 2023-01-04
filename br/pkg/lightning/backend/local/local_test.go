@@ -1201,8 +1201,7 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
 	}()
-	retry, err := bak.writeAndIngestPairs(context.Background(), nil, nil, nil, nil, 0, 0, map[regionKey]*tikvWriteResult{})
-	require.False(t, retry)
+	err := bak.writeAndIngestPairs(context.Background(), nil, nil, nil, nil, 0, 0)
 	require.Error(t, err)
 	require.Regexp(t, "The available disk of TiKV.*", err.Error())
 }
@@ -1314,6 +1313,8 @@ func TestCheckPeersBusy(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, []uint64{11, 12, 13, 21, 22, 23}, apiInvokeRecorder["Write"])
-	// store 12 has a follower busy, so it will cause region peers (11, 12, 13) retry once after (21, 22, 23)
-	require.Equal(t, []uint64{11, 12, 21, 22, 23, 21, 11, 12, 13, 11}, apiInvokeRecorder["MultiIngest"])
+	// store 12 has a follower busy, so it will break the workflow for region (11, 12, 13)
+	require.Equal(t, []uint64{11, 12, 21, 22, 23, 21}, apiInvokeRecorder["MultiIngest"])
+	// region (11, 12, 13) has key range ["a", "b"), it's not finished.
+	require.Equal(t, []Range{{start: []byte("b"), end: []byte("c")}}, f.finishedRanges.ranges)
 }

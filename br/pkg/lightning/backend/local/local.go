@@ -1103,8 +1103,7 @@ func (local *local) WriteToTiKV(
 		log.FromContext(ctx).Warn("write to tikv no leader", logutil.Region(region.Region), logutil.Leader(region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
-		return nil, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Region.Id, leaderID)
+		return nil, common.ErrKVWriteNoLeader.GenWithStackByArgs(region.Region.Id, leaderID)
 	}
 
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
@@ -1269,15 +1268,8 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	return ranges, nil
 }
 
-// regionKey is the identity of a region, if two regions have same regionKey they are considered as same region.
-type regionKey struct {
-	id      uint64
-	confVer uint64
-	version uint64
-}
-
 func (local *local) writeAndIngestByRange(
-	ctxt context.Context,
+	ctx context.Context,
 	engine *Engine,
 	start, end []byte,
 	regionSplitSize int64,
@@ -1288,66 +1280,43 @@ func (local *local) writeAndIngestByRange(
 		return err
 	}
 	if pairStart == nil {
-		log.FromContext(ctxt).Info("There is no pairs in iterator",
+		log.FromContext(ctx).Info("There is no pairs in iterator",
 			logutil.Key("start", start),
 			logutil.Key("end", end))
 		engine.finishedRanges.add(Range{start: start, end: end})
 		return nil
 	}
 
-	var (
-		scannedRegions   []*split.RegionInfo
-		writeCheckpoint  = map[regionKey]*tikvWriteResult{}
-		retryOnNextRound bool
-		nextRoundRegions []*split.RegionInfo
-	)
+	var regions []*split.RegionInfo
 
 ScanWriteIngest:
 	for retry := 0; retry < maxRetryTimes; {
 		if retry != 0 {
 			select {
 			case <-time.After(time.Second):
-			case <-ctxt.Done():
-				return ctxt.Err()
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
 		startKey := codec.EncodeBytes([]byte{}, pairStart)
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
-		scannedRegions, err = split.PaginateScanRegion(ctxt, local.splitCli, startKey, endKey, scanRegionLimit)
-		if err != nil || len(scannedRegions) == 0 {
-			log.FromContext(ctxt).Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(scannedRegions)),
+		regions, err = split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
+		if err != nil || len(regions) == 0 {
+			log.FromContext(ctx).Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
 				logutil.Key("startKey", startKey), logutil.Key("endKey", endKey), zap.Int("retry", retry))
 			retry++
 			continue ScanWriteIngest
 		}
 
-		regions := make([]*split.RegionInfo, 0, len(scannedRegions)+len(nextRoundRegions))
-		regions = append(regions, nextRoundRegions...)
-		nextRoundRegions = nil
-		for _, r := range scannedRegions {
-			checkpointKey := regionKey{
-				id:      r.Region.GetId(),
-				confVer: r.Region.GetRegionEpoch().GetConfVer(),
-				version: r.Region.GetRegionEpoch().GetVersion(),
-			}
-			if _, ok := writeCheckpoint[checkpointKey]; !ok {
-				regions = append(regions, r)
-			}
-		}
-
 		for _, region := range regions {
-			log.FromContext(ctxt).Debug("get region", zap.Int("retry", retry), zap.Binary("startKey", startKey),
+			log.FromContext(ctx).Debug("get region", zap.Int("retry", retry), zap.Binary("startKey", startKey),
 				zap.Binary("endKey", endKey), zap.Uint64("id", region.Region.GetId()),
 				zap.Stringer("epoch", region.Region.GetRegionEpoch()), zap.Binary("start", region.Region.GetStartKey()),
 				zap.Binary("end", region.Region.GetEndKey()), zap.Reflect("peers", region.Region.GetPeers()))
 
 			w := local.ingestConcurrency.Apply()
-			retryOnNextRound, err = local.writeAndIngestPairs(ctxt, engine, region, pairStart, end, regionSplitSize, regionSplitKeys, writeCheckpoint)
+			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
-			if retryOnNextRound {
-				nextRoundRegions = append(nextRoundRegions, region)
-				continue
-			}
 			if err != nil {
 				if !local.isRetryableImportTiKVError(err) {
 					return err
@@ -1359,13 +1328,10 @@ ScanWriteIngest:
 				} else {
 					retry++
 				}
-				log.FromContext(ctxt).Info("retry write and ingest kv pairs", logutil.Key("startKey", pairStart),
+				log.FromContext(ctx).Info("retry write and ingest kv pairs", logutil.Key("startKey", pairStart),
 					logutil.Key("endKey", end), log.ShortError(err), zap.Int("retry", retry))
 				continue ScanWriteIngest
 			}
-		}
-		if len(nextRoundRegions) > 0 {
-			continue ScanWriteIngest
 		}
 
 		return err
@@ -1398,9 +1364,8 @@ func (local *local) isRetryableImportTiKVError(err error) bool {
 
 // writeAndIngestPairs writes the kv pairs in the range [start, end) to the peers
 // of the region, and then send the ingest command to do RocksDB ingest.
-// Return (true, any) means "continue this round and retry this region at the next round",
-// Return (false, error) means "break this round and retry"
-// Return (false, nil) means this region is successful imported.
+// when return nil, it does not mean the whole task success. The success ranges is
+// recorded in the engine.finishedRanges.
 // TODO: regionSplitSize and regionSplitKeys can be a member of Engine, no need to pass it in every function.
 func (local *local) writeAndIngestPairs(
 	ctx context.Context,
@@ -1409,41 +1374,24 @@ func (local *local) writeAndIngestPairs(
 	start, end []byte,
 	regionSplitSize int64,
 	regionSplitKeys int64,
-	writeCheckpoint map[regionKey]*tikvWriteResult,
-) (bool, error) {
+) error {
 	var err error
-	var checkpointKey regionKey
-	// nil region is only used for test
-	if region != nil {
-		checkpointKey = regionKey{
-			id:      region.Region.GetId(),
-			confVer: region.Region.GetRegionEpoch().GetConfVer(),
-			version: region.Region.GetRegionEpoch().GetVersion(),
-		}
-	}
-
+	var writeResult *tikvWriteResult
 loopWrite:
 	for i := 0; i < maxRetryTimes; i++ {
-		var writeResult *tikvWriteResult
-
-		if result, ok := writeCheckpoint[checkpointKey]; ok {
-			writeResult = result
-			delete(writeCheckpoint, checkpointKey)
-		} else {
-			writeResult, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
-			if err != nil {
-				if !local.isRetryableImportTiKVError(err) {
-					return false, err
-				}
-
-				log.FromContext(ctx).Warn("write to tikv failed", log.ShortError(err), zap.Int("retry", i))
-				continue loopWrite
+		writeResult, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
+		if err != nil {
+			if !local.isRetryableImportTiKVError(err) {
+				return err
 			}
+
+			log.FromContext(ctx).Warn("write to tikv failed", log.ShortError(err), zap.Int("retry", i))
+			continue loopWrite
 		}
 		metas, finishedRange, rangeStats := writeResult.sstMeta, writeResult.finishedRange, writeResult.rangeStats
 
 		if len(metas) == 0 {
-			return false, nil
+			return nil
 		}
 
 		batch := 1
@@ -1489,7 +1437,7 @@ loopWrite:
 				}
 				if err != nil {
 					if common.IsContextCanceledError(err) {
-						return false, err
+						return err
 					}
 					log.FromContext(ctx).Warn("ingest failed", log.ShortError(err), logutil.SSTMetas(ingestMetas),
 						logutil.Region(region.Region), logutil.Leader(region.Leader))
@@ -1501,7 +1449,7 @@ loopWrite:
 				var newRegion *split.RegionInfo
 				retryTy, newRegion, err = local.isIngestRetryable(ctx, resp, region, ingestMetas)
 				if common.IsContextCanceledError(err) {
-					return false, err
+					return err
 				}
 				if err == nil {
 					// ingest next meta
@@ -1513,7 +1461,7 @@ loopWrite:
 					log.FromContext(ctx).Warn("ingest failed noretry", log.ShortError(err), logutil.SSTMetas(ingestMetas),
 						logutil.Region(region.Region), logutil.Leader(region.Leader))
 					// met non-retryable error retry whole Write procedure
-					return false, err
+					return err
 				case retryWrite:
 					region = newRegion
 					continue loopWrite
@@ -1521,12 +1469,10 @@ loopWrite:
 					region = newRegion
 					continue
 				case retryBusyIngest:
-					writeCheckpoint[checkpointKey] = &tikvWriteResult{
-						sstMeta:       metas[start:],
-						finishedRange: finishedRange,
-						rangeStats:    rangeStats,
-					}
-					return true, err
+					log.FromContext(ctx).Warn("meet tikv busy when ingest", log.ShortError(err), logutil.SSTMetas(ingestMetas),
+						logutil.Region(region.Region))
+					// ImportEngine will continue on this unfinished range
+					return nil
 				}
 			}
 		}
@@ -1538,22 +1484,15 @@ loopWrite:
 			if local.metrics != nil {
 				local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
 			}
-
-			// let caller skip this region
-			writeCheckpoint[checkpointKey] = &tikvWriteResult{
-				sstMeta:       nil,
-				finishedRange: finishedRange,
-				rangeStats:    rangeStats,
-			}
-			return false, nil
+			return nil
 		}
 
 		log.FromContext(ctx).Warn("write and ingest region, will retry import full range", log.ShortError(err),
 			logutil.Region(region.Region), logutil.Key("start", start),
 			logutil.Key("end", end))
-		return false, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return false, errors.Trace(err)
+	return errors.Trace(err)
 }
 
 func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, ranges []Range, regionSplitSize int64, regionSplitKeys int64) error {
@@ -1588,7 +1527,6 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 			// max retry backoff time: 2+4+8+16+30*26=810s
 			backOffTime := time.Second
 			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
-				// TODO: when retry at this granularity, we should skip successful sub-ranges
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
