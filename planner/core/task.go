@@ -1064,9 +1064,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 	if pi == nil {
 		return nil, false
 	}
-	if pi.Type == model.PartitionTypeList {
-		return nil, false
-	}
 
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
