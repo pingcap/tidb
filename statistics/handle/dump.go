@@ -45,6 +45,7 @@ type JSONTable struct {
 	Count        int64                  `json:"count"`
 	ModifyCount  int64                  `json:"modify_count"`
 	Partitions   map[string]*JSONTable  `json:"partitions"`
+	Version      uint64                 `json:"version"`
 }
 
 type jsonExtendedStats struct {
@@ -214,6 +215,7 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		Indices:      make(map[string]*jsonColumn, len(tbl.Indices)),
 		Count:        tbl.Count,
 		ModifyCount:  tbl.ModifyCount,
+		Version:      tbl.Version,
 	}
 	for _, col := range tbl.Columns {
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
