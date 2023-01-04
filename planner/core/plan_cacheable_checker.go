@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -252,14 +253,12 @@ type nonPreparedPlanCacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join:
 	case *ast.BinaryOperationExpr:
 		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
 			return in, true
 		}
-	case *ast.FuncCallExpr:
-		checker.cacheable = false
-		return in, true
 	case *ast.TableName:
 		if checker.schema != nil {
 			if isPartitionTable(checker.schema, node) {
@@ -275,6 +274,10 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 				return in, true
 			}
 		}
+	default:
+		fmt.Println(">>>>>>>>>>>>>> unexpected >>> ", reflect.TypeOf(in))
+		checker.cacheable = false // unexpected cases
+		return in, true
 	}
 	return in, false
 }

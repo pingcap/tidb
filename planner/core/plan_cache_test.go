@@ -172,6 +172,7 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	}
 
 	for _, query := range queries {
+		fmt.Println(">>>> query >> ", query)
 		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
 		resultNormal := tk.MustQuery(query).Sort()
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
