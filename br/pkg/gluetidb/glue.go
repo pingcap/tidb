@@ -65,7 +65,8 @@ func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	dom, err := session.GetDomain(store)
+
+	dom, err := session.BootstrapSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
