@@ -16,9 +16,15 @@ package domain
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
+)
+
+var (
+	generateHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("generate", "success")
+	generateHistoricalStatsFailedCounter  = metrics.HistoricalStatsCounter.WithLabelValues("generate", "fail")
 )
 
 // HistoricalStatsWorker indicates for dump historical stats
@@ -64,6 +70,7 @@ func (w *HistoricalStatsWorker) DumpHistoricalStats(tableID int64, statsHandle *
 	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo, tableID, isPartition); err != nil {
 		return errors.Errorf("record table %s.%s's historical stats failed, err:%v", dbInfo.Name.O, tblInfo.Name.O, err)
 	}
+	generateHistoricalStatsSuccessCounter.Inc()
 	return nil
 }
 
