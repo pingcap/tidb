@@ -416,7 +416,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			batchStartTime = time.Now()
 			if err := w.updateLease(w.GetCtx().uuid, task.bfJob, result.nextKey); err != nil {
 				logutil.BgLogger().Info("[ddl] backfill worker handle task, update lease failed", zap.Stringer("worker", w),
-					zap.Stringer("task", task), zap.String("bj", task.bfJob.AbbrStr()), zap.Error(err))
+					zap.Stringer("task", task), zap.String("backfill job", task.bfJob.AbbrStr()), zap.Error(err))
 				result.err = err
 				return result
 			}
