@@ -912,6 +912,10 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 		// skip physical resolve locks for it.
 		return false, nil
 
+	case placement.EngineLabelTiFlashCompute:
+		logutil.BgLogger().Debug("[gc worker] will ignore gc tiflash_compute node")
+		return false, nil
+
 	case placement.EngineLabelTiKV, "":
 		// If no engine label is set, it should be a TiKV node.
 		return true, nil
