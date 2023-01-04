@@ -376,20 +376,18 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var allPartitionsIDs []int64
 	var err error
 	splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(ts.Ranges, false, false, ts.Table.IsCommonHandle)
-	// True when:
-	// 0. Is disaggregated tiflash. because in non-disaggregated tiflash, we dont use mpp for static pruning.
-	// 1. Is partition table.
-	// 2. Dynamic prune is not used.
-	var isDisaggregatedTiFlashStaticPrune bool
 	if ts.Table.GetPartitionInfo() != nil {
-		isDisaggregatedTiFlashStaticPrune = config.GetGlobalConfig().DisaggregatedTiFlash &&
+		// True when:
+		// 1. Is disaggregated tiflash. because in non-disaggregated tiflash, we dont use mpp for static pruning.
+		// 2. Is partition table.
+		// 3. Dynamic prune is not used.
+		isDisaggregatedTiFlashStaticPrune := config.GetGlobalConfig().DisaggregatedTiFlash &&
 			!e.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune()
 
 		tmp, _ := e.is.TableByID(ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
 		if !isDisaggregatedTiFlashStaticPrune {
-			var partitions []table.PhysicalTable
-			partitions, err = partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
+			partitions, err := partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
