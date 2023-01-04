@@ -1,0 +1,11 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "gpool",
+    srcs = [
+        "gpool.go",
+        "spinlock.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/gpool",
+    visibility = ["//visibility:public"],
+)

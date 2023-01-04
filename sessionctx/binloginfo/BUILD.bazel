@@ -33,6 +33,7 @@ go_test(
     embed = [":binloginfo"],
     flaky = True,
     deps = [
+        "//autoid_service",
         "//ddl",
         "//domain",
         "//kv",

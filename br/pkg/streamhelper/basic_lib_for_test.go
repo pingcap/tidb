@@ -134,7 +134,7 @@ func (t trivialFlushStream) Recv() (*logbackup.SubscribeFlushEventResponse, erro
 			return &item, nil
 		default:
 		}
-		return nil, t.cx.Err()
+		return nil, status.Error(codes.Canceled, t.cx.Err().Error())
 	}
 }
 

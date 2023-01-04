@@ -15,7 +15,7 @@ package format
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 	"strings"
 	"testing"
 
@@ -26,7 +26,7 @@ import (
 func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect string) {
 	_, err := f.Format(str, 3)
 	require.NoError(t, err)
-	b, err := ioutil.ReadAll(buf)
+	b, err := io.ReadAll(buf)
 	require.NoError(t, err)
 	require.Equal(t, expect, string(b))
 }

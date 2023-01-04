@@ -261,6 +261,9 @@ type Config struct {
 	// EnableGlobalKill indicates whether to enable global kill.
 	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	// InitializeSQLFile is a file that will be executed after first bootstrap only.
+	// It can be used to set GLOBAL system variable values
+	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -279,6 +282,7 @@ type Config struct {
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
 	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
 	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
+	DisaggregatedTiFlash       bool       `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
@@ -988,6 +992,7 @@ var defaultConf = Config{
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
+	DisaggregatedTiFlash:                 false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 }
