@@ -40,10 +40,10 @@ func NewResourceManger() *ResourceManager {
 	sc := make([]scheduler.Scheduler, 0, 1)
 	sc = append(sc, scheduler.NewCPUScheduler())
 	return &ResourceManager{
-		poolMap: util.NewShardPoolMap(),
-
-		exitCh:    make(chan struct{}),
-		scheduler: sc,
+		cpuObserver: cpu.NewCPUObserver(),
+		exitCh:      make(chan struct{}),
+		poolMap:     util.NewShardPoolMap(),
+		scheduler:   sc,
 	}
 }
 
