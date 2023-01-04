@@ -65,10 +65,13 @@ func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	dom, err := session.BootstrapSession(store)
+	dom, err := session.GetDomain(store)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	err = session.InitMDLVariable(store)
+	if err != nil {
+		return nil, err
 	}
 	// create stats handler for backup and restore.
 	err = dom.UpdateTableStatsLoop(se)
