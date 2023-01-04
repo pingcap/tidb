@@ -1,5 +1,6 @@
 # Proposal: Flashback To Timestamp
-- Author(s):     [Defined2014](https://github.com/Defined2014) and [JmPotato](https://github.com/JmPotato)
+- Author(s): [Defined2014](https://github.com/Defined2014) and [JmPotato](https://github.com/JmPotato)
+- Last updated: 2022-12-19
 - Tracking Issues: https://github.com/pingcap/tidb/issues/37197 and https://github.com/tikv/tikv/issues/13303
 
 ## Abstract
@@ -61,19 +62,19 @@ Then a `Flashback To Timestamp` DDL job can be simply divided into the following
 
 * Pre-checks. After all checks are passed, TiDB will disable GC and closed PD schedule for the cluster. The specific checks are as follows:
     * The FlashbackTS is after `tikv_gc_safe_point`.
-    * The FlashbackTS is before the minimal store resolved TS.
-    * No related DDL history in flashback time range.
+    * The FlashbackTS is before the minimal store resolved timestamp.
+    * No DDL job was executing at FlashbackTS.
     * No running related DDL jobs.
 
 * TiDB get flashback key ranges and splits them into separate regions to avoid locking unrelated key ranges. Then TiDB send `PrepareFlashbackToVersion` RPC requests to lock regions in TiKV. Once locked, no more read, write and scheduling operations are allowed for those regions.
 
-* After locked all relevant key ranges, the DDL Owner will update schema version and synchronize it to other TiDBs. When other TiDB applies the `SchemaDiff` of type `Flashback To Timestamp`, it will disconnect all relevant links.
+* After locked all relevant key ranges, the DDL owner will update schema version and synchronize it to other TiDBs. When other TiDB applies the `SchemaDiff` of type `Flashback To Timestamp`, it will disconnect all relevant links.
 
 * Send `FlashbackToVersion` RPC requests to all relevant key ranges with same `commit_ts`. Each region handles its own flashback progress independently.
     * Read the old MVCC data and write it again with the given `commit_ts` to pretend it's a new transaction commit.
     * Release the Raft proposing lock and resume the lease read.
 
-* TiDB checks whether all the requests returned successfully, and retries those that failed with same `commit_ts` until the whole flashback is done.
+* TiDB checks whether all the requests returned successfully, and retries those failed requests with the same `commit_ts`. After all requests finished, the DDL owner update the schema version with new type named `ReloadSchemaMap`, so that all TiDB servers regenerate the schema map from TiKV.
 
 * After `Flashback To Timestamp` is finished, TiDB will restore all changed global variables and restart PD schedule. At the same time, notify `Stats Handle` to reload statistics from TiKV.
 
@@ -101,17 +102,7 @@ FLASHBACK TABLE [table1], [table2] TO TIMESTAMP '2022-08-10 08:00:00';
 
 ### Limitations and future Work
 
-1. DDL history exists for the flashback time period is not currently supported, the error message is shown below:
-
-```sql
-mysql> ALTER TABLE t ADD INDEX i(a);
-Query OK, 0 rows affected (2.99 sec)
-
-mysql> FLASHBACK CLUSTER TO TIMESTAMP '2022-10-10 11:53:30';
-ERROR 1105 (HY000): Had ddl history during [2022-10-10 11:53:30 +0800 CST, now), can't do flashback
-```
-
-2. Compare with the other DDL jobs, `Flashback To Timestamp` job cannot be rollbacked after some regions failure and also needs to resend rpc to all regions when ddl owner crashed. In the future, we will improve those two issues with a new TiKV interface and new distributed processing ddl framework.
+1. Compare with the other DDL jobs, `Flashback To Timestamp` job cannot be rollbacked after some regions failure and also needs to resend rpc to all regions when ddl owner crashed. In the future, we will improve those two issues with a new TiKV interface and new distributed processing ddl framework.
 
 ### Alternative Solutions
 
