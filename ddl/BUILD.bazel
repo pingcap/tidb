@@ -212,6 +212,7 @@ go_test(
         "//autoid_service",
         "//config",
         "//ddl/ingest",
+        "//ddl/internal/session",
         "//ddl/placement",
         "//ddl/resourcegroup",
         "//ddl/schematracker",
