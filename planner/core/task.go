@@ -1898,8 +1898,8 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 			}
 		}
 	}()
-	// GroupingSets is alias of []GroupingSet, the below equal to = make([]GroupingSet, 0, 2)
-	GroupingSets := make(expression.GroupingSets, 0, 2)
+	// groupingSets is alias of []GroupingSet, the below equal to = make([]GroupingSet, 0, 2)
+	groupingSets := make(expression.GroupingSets, 0, 2)
 	for _, fun := range p.AggFuncs {
 		if fun.HasDistinct {
 			if fun.Name != ast.AggFuncCount {
@@ -1913,10 +1913,10 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 				}
 			}
 			// here it's a valid count distinct agg with normal column args, collecting its distinct expr.
-			GroupingSets = append(GroupingSets, expression.GroupingSet{fun.Args})
+			groupingSets = append(groupingSets, expression.GroupingSet{fun.Args})
 			// groupingID now is the offset of target grouping in GroupingSets.
 			// todo: it may be changed after grouping set merge in the future.
-			fun.GroupingID = int64(len(GroupingSets))
+			fun.GroupingID = len(groupingSets)
 		} else if len(fun.Args) > 1 {
 			return false, nil
 		}
@@ -1925,32 +1925,32 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 			return false, nil
 		}
 	}
-	Compressed := GroupingSets.Merge()
-	if len(Compressed) != len(GroupingSets) {
+	compressed := groupingSets.Merge()
+	if len(compressed) != len(groupingSets) {
 		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some grouping sets should be merged"))
 		// todo arenatlx: some grouping set should be merged which is not supported by now temporarily.
 		return false, nil
 	}
-	if GroupingSets.NeedCloneColumn() {
+	if groupingSets.NeedCloneColumn() {
 		// todo: column clone haven't implemented.
 		return false, nil
 	}
-	if len(GroupingSets) > 1 {
+	if len(groupingSets) > 1 {
 		// fill the grouping ID for normal agg.
 		for _, fun := range p.AggFuncs {
 			if fun.GroupingID == 0 {
 				// the grouping ID hasn't set. find the targeting grouping set.
-				groupingSetOffset := GroupingSets.TargetOne(fun.Args)
+				groupingSetOffset := groupingSets.TargetOne(fun.Args)
 				if groupingSetOffset == -1 {
 					// todo: if we couldn't find a existed current valid group layout, we need to copy the column out from being filled with null value.
 					p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("couldn't find a proper group set for normal agg"))
 					return false, nil
 				}
 				// starting with 1
-				fun.GroupingID = int64(groupingSetOffset + 1)
+				fun.GroupingID = groupingSetOffset + 1
 			}
 		}
-		return true, GroupingSets
+		return true, groupingSets
 	}
 	return false, nil
 }

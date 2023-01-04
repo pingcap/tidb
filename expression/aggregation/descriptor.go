@@ -43,7 +43,7 @@ type AggFuncDesc struct {
 	// OrderByItems represents the order by clause used in GROUP_CONCAT
 	OrderByItems []*util.ByItems
 	// GroupingID is used for distinguishing with not-set 0, starting from 1.
-	GroupingID int64
+	GroupingID int
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
