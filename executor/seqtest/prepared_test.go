@@ -280,11 +280,11 @@ func TestPreparedLimitOffset(t *testing.T) {
 		r.Check(testkit.Rows("2"))
 
 		tk.MustExec(`set @a=1.1`)
-		_, err := tk.Exec(`execute stmt_test_1 using @a, @b;`)
-		require.True(t, plannercore.ErrWrongArguments.Equal(err))
+		r = tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
+		r.Check(testkit.Rows("2"))
 
 		tk.MustExec(`set @c="-1"`)
-		_, err = tk.Exec("execute stmt_test_1 using @c, @c")
+		_, err := tk.Exec("execute stmt_test_1 using @c, @c")
 		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
