@@ -7,6 +7,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -441,6 +442,7 @@ type LogSplitHelper struct {
 	client        split.SplitClient
 	pool          *utils.WorkerPool
 	eg            *errgroup.Group
+	regionsCh     chan []*split.RegionInfo
 }
 
 func NewLogSplitHelper(rules map[int64]*RewriteRules, client split.SplitClient) *LogSplitHelper {
@@ -448,7 +450,7 @@ func NewLogSplitHelper(rules map[int64]*RewriteRules, client split.SplitClient) 
 		tableSplitter: make(map[int64]*split.SplitHelper),
 		rules:         rules,
 		client:        client,
-		pool:          utils.NewWorkerPool(16, "split region"),
+		pool:          utils.NewWorkerPool(128, "split region"),
 		eg:            nil,
 	}
 }
@@ -479,7 +481,7 @@ func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
 	})
 }
 
-type splitFunc = func(context.Context, *RegionSplitter, uint64, *split.RegionInfo, []split.Valued) ([]*split.RegionInfo, error)
+type splitFunc = func(context.Context, *RegionSplitter, uint64, *split.RegionInfo, []split.Valued) error
 
 func (helper *LogSplitHelper) splitRegionByPoints(
 	ctx context.Context,
@@ -487,7 +489,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	initialLength uint64,
 	region *split.RegionInfo,
 	valueds []split.Valued,
-) ([]*split.RegionInfo, error) {
+) error {
 	var (
 		splitPoints [][]byte = make([][]byte, 0)
 		lastKey     []byte   = region.Region.StartKey
@@ -505,25 +507,32 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	}
 
 	if len(splitPoints) == 0 {
-		return nil, nil
+		return nil
 	}
 
-	newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints)
-	if errSplit != nil {
-		log.Warn("failed to split regions by the scaned region, retry...")
-		_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
-		ranges := make([]rtree.Range, 0, len(splitPoints))
-		for _, point := range splitPoints {
-			ranges = append(ranges, rtree.Range{StartKey: startKey, EndKey: point})
-			startKey = point
-		}
-		helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
+	helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
+		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints)
+		if errSplit != nil {
+			log.Warn("failed to split the scaned region", zap.Error(errSplit))
+			_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
+			ranges := make([]rtree.Range, 0, len(splitPoints))
+			for _, point := range splitPoints {
+				ranges = append(ranges, rtree.Range{StartKey: startKey, EndKey: point})
+				startKey = point
+			}
+
 			return regionSplitter.Split(ctx, ranges, nil, false, func([][]byte) {})
-		})
-		return nil, nil
-	}
-	log.Info("split the region", zap.Uint64("region-id", region.Region.Id), zap.Int("split-point-number", len(splitPoints)))
-	return newRegions, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case helper.regionsCh <- newRegions:
+
+		}
+		log.Info("split the region", zap.Uint64("region-id", region.Region.Id), zap.Int("split-point-number", len(splitPoints)))
+		return nil
+	})
+	return nil
 }
 
 // GetRewriteTableID gets rewrite table id by the rewrite rule and original table id
@@ -545,7 +554,7 @@ func SplitPoint(
 	client split.SplitClient,
 	rewriteRules *RewriteRules,
 	splitF splitFunc,
-) ([]*split.RegionInfo, error) {
+) error {
 	// common status
 	var (
 		err       error  = nil
@@ -553,9 +562,7 @@ func SplitPoint(
 		vEndKey   []byte = nil
 		endKey    []byte = codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(tableID+1))
 
-		// scatterRegions is the region array that will be scattered
-		scatterRegions []*split.RegionInfo = make([]*split.RegionInfo, 0)
-		regionSplitter *RegionSplitter     = NewRegionSplitter(client)
+		regionSplitter *RegionSplitter = NewRegionSplitter(client)
 	)
 	// region traverse status
 	var (
@@ -634,12 +641,10 @@ func SplitPoint(
 						regionValueds = append(regionValueds, split.NewValued(vStartKey, regionInfo.Region.EndKey, endLength))
 					}
 					// try to split the region
-					newRegions, errSplit := splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
-					if errSplit != nil {
-						err = errSplit
+					err = splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
+					if err != nil {
 						return false
 					}
-					scatterRegions = append(scatterRegions, newRegions...)
 					regionValueds = make([]split.Valued, 0)
 				}
 				if regionOverCount == 1 {
@@ -666,24 +671,55 @@ func SplitPoint(
 	})
 
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if len(regionValueds) > 0 {
 		// try to split the region
-		newRegions, err := splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
+		err = splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		scatterRegions = append(scatterRegions, newRegions...)
 	}
 
-	return scatterRegions, nil
+	return nil
 }
 
 func (helper *LogSplitHelper) Split(ctx context.Context) error {
 	var ectx context.Context
+	var wg sync.WaitGroup
 	helper.eg, ectx = errgroup.WithContext(ctx)
-	scatterRegions := make([]*split.RegionInfo, 0)
+	helper.regionsCh = make(chan []*split.RegionInfo, 1024)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scatterRegions := make([]*split.RegionInfo, 0)
+	receiveNewRegions:
+		for {
+			select {
+			case <-ectx.Done():
+				return
+			case newRegions, ok := <-helper.regionsCh:
+				if !ok {
+					break receiveNewRegions
+				}
+
+				scatterRegions = append(scatterRegions, newRegions...)
+			}
+		}
+
+		startTime := time.Now()
+		regionSplitter := NewRegionSplitter(helper.client)
+		for _, region := range scatterRegions {
+			regionSplitter.waitForScatterRegion(ctx, region)
+			// It is too expensive to stop recovery and wait for a small number of regions
+			// to complete scatter, so the maximum waiting time is reduced to 1 minute.
+			if time.Since(startTime) > time.Minute {
+				break
+			}
+		}
+
+	}()
+
 	for tableID, splitter := range helper.tableSplitter {
 		delete(helper.tableSplitter, tableID)
 		rewriteRule, exists := helper.rules[tableID]
@@ -696,27 +732,20 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 			log.Warn("failed to get the rewrite table id", zap.Int64("tableID", tableID))
 			continue
 		}
-		newRegions, err := SplitPoint(ectx, newTableID, splitter, helper.client, rewriteRule, helper.splitRegionByPoints)
-		if err != nil {
+		if err := SplitPoint(ectx, newTableID, splitter, helper.client, rewriteRule, helper.splitRegionByPoints); err != nil {
 			return errors.Trace(err)
 		}
-		scatterRegions = append(scatterRegions, newRegions...)
+
 	}
 
+	// wait for completion of splitting regions
 	if err := helper.eg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
 
-	startTime := time.Now()
-	regionSplitter := NewRegionSplitter(helper.client)
-	for _, region := range scatterRegions {
-		regionSplitter.waitForScatterRegion(ctx, region)
-		// It is too expensive to stop recovery and wait for a small number of regions
-		// to complete scatter, so the maximum waiting time is reduced to 1 minute.
-		if time.Since(startTime) > time.Minute {
-			break
-		}
-	}
+	// wait for completion of scattering regions
+	close(helper.regionsCh)
+	wg.Wait()
 
 	return nil
 }
