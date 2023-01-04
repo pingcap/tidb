@@ -79,7 +79,7 @@ func TestPoolWithEnoughCapacity(t *testing.T) {
 		poolsize    = 30
 		concurrency = 6
 	)
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithEnoughCapa", poolsize, rmutil.UNKNOWN, WithExpiryDuration(DefaultExpiredTime))
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithEnoughCapacity", poolsize, rmutil.UNKNOWN, WithExpiryDuration(DefaultExpiredTime))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
@@ -131,7 +131,7 @@ func TestPoolWithoutEnoughCapacity(t *testing.T) {
 		concurrency = 2
 		poolsize    = 2
 	)
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", poolsize,
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapacity", poolsize,
 		rmutil.UNKNOWN, WithExpiryDuration(DefaultExpiredTime))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
@@ -186,7 +186,7 @@ func TestPoolWithoutEnoughCapacityParallel(t *testing.T) {
 		concurrency = 2
 		poolsize    = 2
 	)
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", poolsize,
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapacityParallel", poolsize,
 		rmutil.UNKNOWN, WithExpiryDuration(DefaultExpiredTime), WithNonblocking(true))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
