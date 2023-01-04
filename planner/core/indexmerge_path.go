@@ -26,6 +26,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -63,7 +66,19 @@ func (ds *DataSource) generateIndexMergePath() error {
 			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
 			stmtCtx.SetWarnings(warnings)
 			stmtCtx.SetExtraWarnings(extraWarnings)
-			if len(remaining) != 0 {
+
+			remainingExpr := 0
+			for _, expr := range remaining {
+				// Handle these 3 functions specially since they can be used to access MVIndex.
+				if sf, ok := expr.(*expression.ScalarFunction); ok {
+					if sf.FuncName.L == ast.JSONMemberOf || sf.FuncName.L == ast.JSONOverlaps ||
+						sf.FuncName.L == ast.JSONContains {
+						continue
+					}
+				}
+				remainingExpr++
+			}
+			if remainingExpr > 0 {
 				needConsiderIndexMerge = false
 			}
 		}
@@ -435,8 +450,16 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	if indexMergeAndPath != nil {
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
 	}
+	// 3. Generate possible IndexMerge paths for MVIndex.
+	mvIndexMergePath, err := ds.generateIndexMergeJSONMVIndexPath(regularPathCount, indexMergeConds)
+	if err != nil {
+		return err
+	}
+	if mvIndexMergePath != nil {
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvIndexMergePath...)
+	}
 
-	// 3. If needed, append a warning if no IndexMerge is generated.
+	// 4. If needed, append a warning if no IndexMerge is generated.
 
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
@@ -466,4 +489,217 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 		}
 	}
 	return nil
+}
+
+// generateIndexMergeJSONMVIndexPath generates paths for (json_member_of / json_overlaps / json_contains) on multi-valued index.
+/*
+	1. select * from t where 1 member of (a)
+		IndexMerge(AND)
+			IndexRangeScan(a, [1,1])
+			TableRowIdScan(t)
+	2. select * from t where json_contains(a, '[1, 2, 3]')
+		IndexMerge(AND)
+			IndexRangeScan(a, [1,1])
+			IndexRangeScan(a, [2,2])
+			IndexRangeScan(a, [3,3])
+			TableRowIdScan(t)
+	3. select * from t where json_overlap(a, '[1, 2, 3]')
+		IndexMerge(OR)
+			IndexRangeScan(a, [1,1])
+			IndexRangeScan(a, [2,2])
+			IndexRangeScan(a, [3,3])
+			TableRowIdScan(t)
+*/
+func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
+	for idx := 0; idx < normalPathCnt; idx++ {
+		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
+			continue // not a MVIndex path
+		}
+		if !ds.isSpecifiedInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
+			continue // for safety, only consider using MVIndex when there is a `use_index_merge` hint now.
+			// TODO: remove this limitation
+		}
+
+		// Step 1. Extract the underlying JSON column from MVIndex Info.
+		mvIndex := ds.possibleAccessPaths[idx].Index
+		if len(mvIndex.Columns) != 1 {
+			// only support single-column MVIndex now: idx((cast(a->'$.zip' as signed array)))
+			// TODO: support composite MVIndex idx((x, cast(a->'$.zip' as int array), z))
+			continue
+		}
+		mvVirColOffset := mvIndex.Columns[0].Offset
+		mvVirColMeta := ds.table.Meta().Cols()[mvVirColOffset]
+
+		var virCol *expression.Column
+		for _, ce := range ds.TblCols {
+			if ce.ID == mvVirColMeta.ID {
+				virCol = ce.Clone().(*expression.Column)
+				virCol.RetType = ce.GetType().ArrayType() // use the underlying type directly: JSON-ARRAY(INT) --> INT
+				break
+			}
+		}
+		// unwrap the outside cast: cast(json_extract(test.t.a, $.zip), JSON) --> json_extract(test.t.a, $.zip)
+		targetJSONPath, ok := unwrapJSONCast(virCol.VirtualExpr)
+		if !ok {
+			continue
+		}
+
+		// Step 2. Iterate all filters and generate corresponding IndexMerge paths.
+		for filterIdx, filter := range filters {
+			// Step 2.1. Extract jsonPath and vals from json_member / json_overlaps / json_contains functions.
+			sf, ok := filter.(*expression.ScalarFunction)
+			if !ok {
+				continue
+			}
+
+			var jsonPath expression.Expression
+			var vals []expression.Expression
+			var indexMergeIsIntersection bool
+			switch sf.FuncName.L {
+			case ast.JSONMemberOf: // (1 member of a->'$.zip')
+				jsonPath = sf.GetArgs()[1]
+				v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
+				if !ok {
+					continue
+				}
+				vals = append(vals, v)
+			case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
+				indexMergeIsIntersection = true
+				jsonPath = sf.GetArgs()[0]
+				var ok bool
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1])
+				if !ok {
+					continue
+				}
+			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				var jsonPathIdx int
+				if sf.GetArgs()[0].Equal(ds.ctx, targetJSONPath) {
+					jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				} else if sf.GetArgs()[1].Equal(ds.ctx, targetJSONPath) {
+					jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
+				} else {
+					continue
+				}
+				jsonPath = sf.GetArgs()[jsonPathIdx]
+				var ok bool
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx])
+				if !ok {
+					continue
+				}
+			default:
+				continue
+			}
+
+			// Step 2.2. Check some limitations.
+			if jsonPath == nil || len(vals) == 0 {
+				continue
+			}
+			if !jsonPath.Equal(ds.ctx, targetJSONPath) {
+				continue // not on the same JSON col
+			}
+			// only support INT now
+			// TODO: support more types
+			if jsonPath.GetType().EvalType() == types.ETInt {
+				continue
+			}
+			allInt := true
+			// TODO: support using IndexLookUp to handle single-value cases.
+			for _, v := range vals {
+				if v.GetType().EvalType() != types.ETInt {
+					allInt = false
+				}
+			}
+			if !allInt {
+				continue
+			}
+
+			// Step 2.3. Generate a IndexMerge Path of this filter on the current MVIndex.
+			var partialPaths []*util.AccessPath
+			for _, v := range vals {
+				partialPath := &util.AccessPath{Index: mvIndex}
+				partialPath.Ranges = ranger.FullRange()
+				// TODO: get the actual column length of this virtual column
+				partialPath.IdxCols, partialPath.IdxColLens = []*expression.Column{virCol}, []int{types.UnspecifiedLength}
+				partialPath.FullIdxCols, partialPath.FullIdxColLens = []*expression.Column{virCol}, []int{types.UnspecifiedLength}
+
+				// calculate the path range with the condition `a->'$.zip' = 1`.
+				eq, err := expression.NewFunction(ds.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
+				if err != nil {
+					return nil, err
+				}
+				if err = ds.detachCondAndBuildRangeForPath(partialPath, []expression.Expression{eq}); err != nil {
+					return nil, err
+				}
+
+				partialPaths = append(partialPaths, partialPath)
+			}
+			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, filterIdx)
+			indexMergePath.IndexMergeIsIntersection = indexMergeIsIntersection
+			mvIndexPaths = append(mvIndexPaths, indexMergePath)
+		}
+	}
+	return
+}
+
+// jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}
+func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expression) ([]expression.Expression, bool) {
+	// only support cast(const as JSON)
+	arrayExpr, wrappedByJSONCast := unwrapJSONCast(jsonArrayExpr)
+	if !wrappedByJSONCast {
+		return nil, false
+	}
+	if _, isConst := arrayExpr.(*expression.Constant); !isConst {
+		return nil, false
+	}
+	if expression.IsMutableEffectsExpr(arrayExpr) {
+		return nil, false
+	}
+
+	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx, chunk.Row{})
+	if isNull || err != nil {
+		return nil, false
+	}
+	if jsonArray.TypeCode != types.JSONTypeCodeArray {
+		single, ok := jsonValue2Expr(jsonArray) // '1' -> []expr{1}
+		if ok {
+			return []expression.Expression{single}, true
+		}
+		return nil, false
+	}
+	var exprs []expression.Expression
+	for i := 0; i < jsonArray.GetElemCount(); i++ { // '[1, 2, 3]' -> []expr{1, 2, 3}
+		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i))
+		if !ok {
+			return nil, false
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs, true
+}
+
+func jsonValue2Expr(v types.BinaryJSON) (expression.Expression, bool) {
+	if v.TypeCode != types.JSONTypeCodeInt64 {
+		// only support INT now
+		// TODO: support more types
+		return nil, false
+	}
+	val := v.GetInt64()
+	return &expression.Constant{
+		Value:   types.NewDatum(val),
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}, true
+}
+
+func unwrapJSONCast(expr expression.Expression) (expression.Expression, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return nil, false
+	}
+	if sf == nil || sf.FuncName.L != ast.Cast || sf.GetType().EvalType() != types.ETJson {
+		return nil, false
+	}
+	return sf.GetArgs()[0], true
 }
