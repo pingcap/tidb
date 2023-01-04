@@ -460,8 +460,9 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 }
 
 type limitExtractor struct {
-	cacheable      bool // For safety considerations, check if limit count less than 10000
-	offsetAndCount []int64
+	cacheable         bool // For safety considerations, check if limit count less than 10000
+	offsetAndCount    []int64
+	unCacheableReason string
 }
 
 // Enter implements Visitor interface.
@@ -470,16 +471,33 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 	case *ast.Limit:
 		if node.Count != nil {
 			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-				countNum := count.GetInt64()
-				checker.offsetAndCount = append(checker.offsetAndCount, countNum)
-				if countNum > 10000 {
+				// currently, we just support INT type parameters, eg: set @a = 123
+				typeExpected, val := checkLimitParamType(count)
+				if typeExpected {
+					if val > 10000 {
+						checker.cacheable = false
+						checker.unCacheableReason = "limit count more than 10000"
+						return in, true
+					} else {
+						checker.offsetAndCount = append(checker.offsetAndCount, val)
+					}
+				} else {
 					checker.cacheable = false
+					checker.unCacheableReason = "limit count type un-cacheable"
+					return in, true
 				}
 			}
 		}
 		if node.Offset != nil {
 			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-				checker.offsetAndCount = append(checker.offsetAndCount, offset.GetInt64())
+				typeExpected, val := checkLimitParamType(offset)
+				if typeExpected {
+					checker.offsetAndCount = append(checker.offsetAndCount, val)
+				} else {
+					checker.cacheable = false
+					checker.unCacheableReason = "limit offset type un-cacheable"
+					return in, true
+				}
 			}
 		}
 	}
@@ -502,7 +520,16 @@ func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) []int64 {
 	}
 	node.Accept(&checker)
 	if sctx != nil && !checker.cacheable {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: limit count more than 10000"))
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
 	}
 	return checker.offsetAndCount
+}
+
+func checkLimitParamType(node *driver.ParamMarkerExpr) (bool, int64) {
+	val := node.GetValue()
+	switch v := val.(type) {
+	case int64:
+		return true, v
+	}
+	return false, -1
 }
