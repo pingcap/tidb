@@ -752,8 +752,7 @@ func canUseIngest(w *worker) bool {
 func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 	sess := session.NewSession(ctx)
 	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
-	sql := fmt.Sprintf(
-		template, model.ActionAddIndex, model.ActionAddPrimaryKey)
+	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
 	rows, err := sess.Execute(context.Background(), sql, "check-pitr")
 	if err != nil {
 		logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
