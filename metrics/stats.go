@@ -150,4 +150,25 @@ var (
 		Name:      "stats_healthy",
 		Help:      "Gauge of stats healthy",
 	}, []string{LblType})
+
+	HistoricalStatsCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tidb",
+		Subsystem: "statistics",
+		Name:      "historical_stats",
+		Help:      "counter of the historical stats operation",
+	}, []string{LblType, LblResult})
+
+	PlanReplayerTaskCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tidb",
+		Subsystem: "plan_replayer",
+		Name:      "task",
+		Help:      "counter of plan replayer captured task",
+	}, []string{LblType, LblResult})
+
+	PlanReplayerRegisterTaskGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "plan_replayer",
+		Name:      "register_task",
+		Help:      "gauge of plan replayer registered task",
+	})
 )

@@ -520,7 +520,6 @@ type Prepared struct {
 	StmtType      string
 	Params        []ParamMarkerExpr
 	SchemaVersion int64
-	UseCache      bool
 	CachedPlan    interface{}
 	CachedNames   interface{}
 }
@@ -3768,7 +3767,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index":
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "keep_order", "no_keep_order":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {

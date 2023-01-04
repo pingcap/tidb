@@ -21,10 +21,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	dbsession "github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
@@ -35,10 +39,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestParallelLockNewJob(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	sessionFactory := func() session.Session {
+func sessionFactory(t *testing.T, store kv.Storage) func() session.Session {
+	return func() session.Session {
 		dbSession, err := dbsession.CreateSession4Test(store)
 		require.NoError(t, err)
 		se := session.NewSession(dbSession, dbSession, nil)
@@ -50,6 +52,12 @@ func TestParallelLockNewJob(t *testing.T) {
 
 		return se
 	}
+}
+
+func TestParallelLockNewJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	sessionFactory := sessionFactory(t, store)
 
 	storedTTLJobRunInterval := variable.TTLJobRunInterval.Load()
 	variable.TTLJobRunInterval.Store(0)
@@ -95,4 +103,80 @@ func TestParallelLockNewJob(t *testing.T) {
 		require.Equal(t, uint64(1), successCounter.Load())
 		successJob.Finish(se, time.Now())
 	}
+}
+
+func TestFinishJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+
+	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
+
+	tk.MustExec("insert into mysql.tidb_ttl_table_status(table_id) values (2)")
+
+	// finish with error
+	m := ttlworker.NewJobManager("test-id", nil, store)
+	se := sessionFactory()
+	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now())
+	require.NoError(t, err)
+	job.SetScanErr(errors.New(`"'an error message contains both single and double quote'"`))
+	job.Finish(se, time.Now())
+
+	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 {\"total_rows\":0,\"success_rows\":0,\"error_rows\":0,\"total_scan_task\":1,\"scheduled_scan_task\":0,\"finished_scan_task\":0,\"scan_task_err\":\"\\\"'an error message contains both single and double quote'\\\"\"}"))
+}
+
+func TestTTLAutoAnalyze(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-info-schema-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-status-table-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/resize-workers-interval", fmt.Sprintf("return(%d)", time.Second))
+	originAutoAnalyzeMinCnt := handle.AutoAnalyzeMinCnt
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, created_at datetime) ttl = `created_at` + interval 1 day")
+
+	// insert ten rows, the 2,3,4,6,9,10 of them are expired
+	for i := 1; i <= 10; i++ {
+		t := time.Now()
+		if i%2 == 0 || i%3 == 0 {
+			t = t.Add(-time.Hour * 48)
+		}
+
+		tk.MustExec("insert into t values(?, ?)", i, t.Format(time.RFC3339))
+	}
+	// TODO: use a better way to pause and restart ttl worker after analyze the table to make it more stable
+	// but as the ttl worker takes several seconds to start, it's not too serious.
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show stats_meta").Rows()
+	require.Equal(t, rows[0][4], "0")
+	require.Equal(t, rows[0][5], "10")
+
+	retryTime := 15
+	retryInterval := time.Second * 2
+	deleted := false
+	for retryTime >= 0 {
+		retryTime--
+		time.Sleep(retryInterval)
+
+		rows := tk.MustQuery("select count(*) from t").Rows()
+		count := rows[0][0].(string)
+		if count == "3" {
+			deleted = true
+			break
+		}
+	}
+	require.True(t, deleted, "ttl should remove expired rows")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.True(t, h.HandleAutoAnalyze(is))
 }

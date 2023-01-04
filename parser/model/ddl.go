@@ -316,10 +316,17 @@ type MultiSchemaInfo struct {
 	AddIndexes    []CIStr `json:"-"`
 	DropIndexes   []CIStr `json:"-"`
 	AlterIndexes  []CIStr `json:"-"`
-	ForeignKeys   []CIStr `json:"-"`
+
+	AddForeignKeys []AddForeignKeyInfo `json:"-"`
 
 	RelativeColumns []CIStr `json:"-"`
 	PositionColumns []CIStr `json:"-"`
+}
+
+// AddForeignKeyInfo contains foreign key information.
+type AddForeignKeyInfo struct {
+	Name CIStr
+	Cols []CIStr
 }
 
 // NewMultiSchemaInfo new a MultiSchemaInfo.
@@ -934,6 +941,8 @@ type SchemaDiff struct {
 	OldTableID int64 `json:"old_table_id"`
 	// OldSchemaID is the schema ID before rename table, only used by rename table DDL.
 	OldSchemaID int64 `json:"old_schema_id"`
+	// RegenerateSchemaMap means whether to rebuild the schema map when applying to the schema diff.
+	RegenerateSchemaMap bool `json:"regenerate_schema_map"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }

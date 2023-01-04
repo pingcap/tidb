@@ -64,17 +64,23 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
-func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
+// paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
+// paramStmt is the Node of paramSQL.
+func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, paramSQL string, paramStmt ast.StmtNode) (*PlanCacheStmt, Plan, int, error) {
+	if v := ctx.Value("____GeneratePlanCacheStmtWithASTErr"); v != nil { // for testing
+		return nil, nil, 0, errors.New("____GeneratePlanCacheStmtWithASTErr")
+	}
+
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
-	stmt.Accept(&extractor)
+	paramStmt.Accept(&extractor)
 
 	// DDL Statements can not accept parameters
-	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
+	if _, ok := paramStmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
 		return nil, nil, 0, ErrPrepareDDL
 	}
 
-	switch stmt.(type) {
+	switch paramStmt.(type) {
 	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
 		return nil, nil, 0, ErrUnsupportedPs
 	}
@@ -86,7 +92,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	ret := &PreprocessorReturn{}
-	err := Preprocess(ctx, sctx, stmt, InPrepare, WithPreprocessorReturn(ret))
+	err := Preprocess(ctx, sctx, paramStmt, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -103,8 +109,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	prepared := &ast.Prepared{
-		Stmt:          stmt,
-		StmtType:      ast.GetStmtLabel(stmt),
+		Stmt:          paramStmt,
+		StmtType:      ast.GetStmtLabel(paramStmt),
 		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
@@ -113,16 +119,18 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	var (
 		normalizedSQL4PC, digest4PC string
 		selectStmtNode              ast.StmtNode
+		cacheable                   bool
+		reason                      string
 	)
 	if !vars.EnablePreparedPlanCache {
-		prepared.UseCache = false
+		cacheable = false
+		reason = "plan cache is disabled"
 	} else {
-		cacheable, reason := CacheableWithCtx(sctx, stmt, ret.InfoSchema)
-		prepared.UseCache = cacheable
+		cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
 		}
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(stmt, vars.CurrentDB)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
 			digest4PC = ""
@@ -138,7 +146,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	var p Plan
 	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, &hint.BlockHintProcessor{})
-	p, err = destBuilder.Build(ctx, stmt)
+	p, err = destBuilder.Build(ctx, paramStmt)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -146,7 +154,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
-		StmtText:            stmt.Text(),
+		StmtText:            paramSQL,
 		VisitInfos:          destBuilder.GetVisitInfo(),
 		NormalizedSQL:       normalizedSQL,
 		SQLDigest:           digest,
@@ -154,6 +162,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		NormalizedSQL4PC:    normalizedSQL4PC,
 		SQLDigest4PC:        digest4PC,
+		StmtCacheable:       cacheable,
+		UncacheableReason:   reason,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -399,11 +409,18 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
-	PreparedAst         *ast.Prepared
-	StmtDB              string // which DB the statement will be processed over
-	VisitInfos          []visitInfo
-	ColumnInfos         interface{}
-	Executor            interface{}
+	PreparedAst *ast.Prepared
+	StmtDB      string // which DB the statement will be processed over
+	VisitInfos  []visitInfo
+	ColumnInfos interface{}
+	// Executor is only used for point get scene.
+	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
+	Executor interface{}
+
+	StmtCacheable     bool   // Whether this stmt is cacheable.
+	UncacheableReason string // Why this stmt is uncacheable.
+
 	NormalizedSQL       string
 	NormalizedPlan      string
 	SQLDigest           *parser.Digest
