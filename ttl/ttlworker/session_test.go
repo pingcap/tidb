@@ -51,6 +51,7 @@ func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitSecond),
 			Enable:           true,
+			JobInterval:      int64(time.Hour),
 		},
 		State: model.StatePublic,
 	}

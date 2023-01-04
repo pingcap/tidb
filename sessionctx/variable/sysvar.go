@@ -2199,20 +2199,6 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope: ScopeGlobal, Name: TiDBTTLJobRunInterval, Value: DefTiDBTTLJobRunInterval, Type: TypeDuration, MinValue: int64(10 * time.Minute), MaxValue: uint64(8760 * time.Hour), SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			interval, err := time.ParseDuration(s)
-			if err != nil {
-				return err
-			}
-			TTLJobRunInterval.Store(interval)
-			return nil
-		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-			interval := TTLJobRunInterval.Load()
-
-			return interval.String(), nil
-		},
-	},
-	{
 		Scope: ScopeGlobal, Name: TiDBTTLJobScheduleWindowStartTime, Value: DefTiDBTTLJobScheduleWindowStartTime, Type: TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			startTime, err := time.ParseInLocation(FullDayTimeFormat, s, time.UTC)
 			if err != nil {

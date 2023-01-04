@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -26,14 +27,18 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 	falseValue := false
 	trueValue := true
 
+	dailyValue := int64(time.Hour * 24)
+
 	cases := []struct {
-		options   []*ast.TableOption
-		ttlInfo   *model.TTLInfo
-		ttlEnable *bool
-		err       error
+		options            []*ast.TableOption
+		ttlInfo            *model.TTLInfo
+		ttlEnable          *bool
+		ttlCronJobSchedule *int64
+		err                error
 	}{
 		{
 			[]*ast.TableOption{},
+			nil,
 			nil,
 			nil,
 			nil,
@@ -52,7 +57,9 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
+				JobInterval:      int64(time.Hour),
 			},
+			nil,
 			nil,
 			nil,
 		},
@@ -74,8 +81,10 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           false,
+				JobInterval:      int64(time.Hour),
 			},
 			&falseValue,
+			nil,
 			nil,
 		},
 		{
@@ -100,17 +109,44 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
+				JobInterval:      int64(time.Hour),
 			},
 			&trueValue,
+			nil,
+			nil,
+		},
+		{
+			[]*ast.TableOption{
+				{
+					Tp:            ast.TableOptionTTL,
+					ColumnName:    &ast.ColumnName{Name: model.NewCIStr("test_column")},
+					Value:         ast.NewValueExpr(5, "", ""),
+					TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
+				},
+				{
+					Tp:       ast.TableOptionTTLJobInterval,
+					StrValue: "24h",
+				},
+			},
+			&model.TTLInfo{
+				ColumnName:       model.NewCIStr("test_column"),
+				IntervalExprStr:  "5",
+				IntervalTimeUnit: int(ast.TimeUnitYear),
+				Enable:           true,
+				JobInterval:      int64(time.Hour * 24),
+			},
+			nil,
+			&dailyValue,
 			nil,
 		},
 	}
 
 	for _, c := range cases {
-		ttlInfo, ttlEnable, err := getTTLInfoInOptions(c.options)
+		ttlInfo, ttlEnable, ttlCronJobSchedule, err := getTTLInfoInOptions(c.options)
 
 		assert.Equal(t, c.ttlInfo, ttlInfo)
 		assert.Equal(t, c.ttlEnable, ttlEnable)
+		assert.Equal(t, c.ttlCronJobSchedule, ttlCronJobSchedule)
 		assert.Equal(t, c.err, err)
 	}
 }

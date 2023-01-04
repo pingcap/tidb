@@ -17,6 +17,7 @@ package ddl
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -50,8 +51,9 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 	// at least one for them is not nil
 	var ttlInfo *model.TTLInfo
 	var ttlInfoEnable *bool
+	var ttlInfoJobInterval *int64
 
-	if err := job.DecodeArgs(&ttlInfo, &ttlInfoEnable); err != nil {
+	if err := job.DecodeArgs(&ttlInfo, &ttlInfoEnable, &ttlInfoJobInterval); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -66,14 +68,24 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 		if ttlInfoEnable == nil && tblInfo.TTLInfo != nil {
 			ttlInfo.Enable = tblInfo.TTLInfo.Enable
 		}
+		if ttlInfoJobInterval == nil && tblInfo.TTLInfo != nil {
+			ttlInfo.JobInterval = tblInfo.TTLInfo.JobInterval
+		}
 		tblInfo.TTLInfo = ttlInfo
 	}
 	if ttlInfoEnable != nil {
 		if tblInfo.TTLInfo == nil {
-			return ver, errors.Trace(dbterror.ErrSetTTLEnableForNonTTLTable)
+			return ver, errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_ENABLE"))
 		}
 
 		tblInfo.TTLInfo.Enable = *ttlInfoEnable
+	}
+	if ttlInfoJobInterval != nil {
+		if tblInfo.TTLInfo == nil {
+			return ver, errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_JOB_INTERVAL"))
+		}
+
+		tblInfo.TTLInfo.JobInterval = *ttlInfoJobInterval
 	}
 
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
@@ -151,9 +163,10 @@ func checkDropColumnWithTTLConfig(tblInfo *model.TableInfo, colName string) erro
 }
 
 // getTTLInfoInOptions returns the aggregated ttlInfo, the ttlEnable, or an error.
-// if TTL or TTL_ENABLE is not set in the config, the corresponding return value will be nil.
-// if both of them are set, the `ttlInfo.Enable` will be equal with `ttlEnable`.
-func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, ttlEnable *bool, err error) {
+// if TTL, TTL_ENABLE or TTL_JOB_INTERVAL is not set in the config, the corresponding return value will be nil.
+// if both of TTL and TTL_ENABLE are set, the `ttlInfo.Enable` will be equal with `ttlEnable`.
+// if both of TTL and TTL_JOB_INTERVAL are set, the `ttlInfo.JobInterval` will be equal with `ttlCronJobSchedule`.
+func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *int64, err error) {
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionTTL:
@@ -162,7 +175,7 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 			restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 			err := op.Value.Restore(restoreCtx)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 
 			intervalExpr := sb.String()
@@ -171,14 +184,28 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
+				JobInterval:      int64(time.Hour),
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue
+		case ast.TableOptionTTLJobInterval:
+			schedule, err := time.ParseDuration(op.StrValue)
+			if err != nil {
+				// this branch is actually unreachable, as the value has been validated in parser
+				return nil, nil, nil, err
+			}
+			scheduleInteger := int64(schedule)
+			ttlCronJobSchedule = &scheduleInteger
 		}
 	}
 
-	if ttlInfo != nil && ttlEnable != nil {
-		ttlInfo.Enable = *ttlEnable
+	if ttlInfo != nil {
+		if ttlEnable != nil {
+			ttlInfo.Enable = *ttlEnable
+		}
+		if ttlCronJobSchedule != nil {
+			ttlInfo.JobInterval = *ttlCronJobSchedule
+		}
 	}
-	return ttlInfo, ttlEnable, nil
+	return ttlInfo, ttlEnable, ttlCronJobSchedule, nil
 }

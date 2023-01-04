@@ -881,8 +881,6 @@ const (
 	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
 	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
 	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
-	// TiDBTTLJobRunInterval represents the schedule interval between two jobs for one TTL table
-	TiDBTTLJobRunInterval = "tidb_ttl_job_run_interval"
 	// TiDBTTLJobScheduleWindowStartTime is used to restrict the start time of the time window of scheduling the ttl jobs.
 	TiDBTTLJobScheduleWindowStartTime = "tidb_ttl_job_schedule_window_start_time"
 	// TiDBTTLJobScheduleWindowEndTime is used to restrict the end time of the time window of scheduling the ttl jobs.
@@ -1152,7 +1150,6 @@ const (
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
 	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
-	DefTiDBTTLJobRunInterval                         = "1h0m0s"
 	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
@@ -1223,7 +1220,6 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
-	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
 	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
 	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
 	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)

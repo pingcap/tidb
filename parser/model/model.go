@@ -1760,6 +1760,8 @@ type TTLInfo struct {
 	// `IntervalTimeUnit` is actually ast.TimeUnitType. Use `int` to avoid cycle dependency
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
+	// JobInterval is the interval between two TTL scan jobs. It can be casted to/from the `time.Duration`
+	JobInterval int64 `json:"job_interval"`
 }
 
 // Clone clones TTLInfo
