@@ -417,15 +417,15 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-func (dc *ddlCtx) setDDLLabelForTopSQL(job *model.Job) {
+func (dc *ddlCtx) setDDLLabelForTopSQL(jobID int64, jobQuery string) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
-	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
 		ctx = NewJobContext()
-		dc.jobCtx.jobCtxMap[job.ID] = ctx
+		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
-	ctx.setDDLLabelForTopSQL(job)
+	ctx.setDDLLabelForTopSQL(jobQuery)
 }
 
 func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
@@ -439,10 +439,10 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
 	ctx.setDDLLabelForDiagnosis(job)
 }
 
-func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(job *model.Job) tikvrpc.ResourceGroupTagger {
+func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) tikvrpc.ResourceGroupTagger {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
-	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
 		return nil
 	}
@@ -455,19 +455,19 @@ func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	delete(dc.jobCtx.jobCtxMap, job.ID)
 }
 
-func (dc *ddlCtx) jobContext(job *model.Job) *JobContext {
+func (dc *ddlCtx) jobContext(jobID int64) *JobContext {
 	dc.jobCtx.RLock()
 	defer dc.jobCtx.RUnlock()
-	if jobContext, exists := dc.jobCtx.jobCtxMap[job.ID]; exists {
+	if jobContext, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
 		return jobContext
 	}
 	return NewJobContext()
 }
 
-func (dc *ddlCtx) getReorgCtx(job *model.Job) *reorgCtx {
+func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()
-	return dc.reorgCtx.reorgCtxMap[job.ID]
+	return dc.reorgCtx.reorgCtxMap[jobID]
 }
 
 func (dc *ddlCtx) newReorgCtx(r *reorgInfo) *reorgCtx {
@@ -492,7 +492,7 @@ func (dc *ddlCtx) removeReorgCtx(job *model.Job) {
 }
 
 func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
-	rc := dc.getReorgCtx(job)
+	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
 		return
 	}
