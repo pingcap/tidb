@@ -458,6 +458,9 @@ func (b *castJSONAsArrayFunctionSig) Clone() builtinFunc {
 	return newSig
 }
 
+// fakeSctx is used to ignore the sql mode, `cast as array` should always return error if any.
+var fakeSctx = &stmtctx.StatementContext{InInsertStmt: true}
+
 func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
@@ -474,20 +477,8 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJS
 	if f == nil {
 		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAS-ing JSON to the target type")
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	originalOverflowAsWarning := sc.OverflowAsWarning
-	originIgnoreTruncate := sc.IgnoreTruncate
-	originTruncateAsWarning := sc.TruncateAsWarning
-	sc.OverflowAsWarning = false
-	sc.IgnoreTruncate = false
-	sc.TruncateAsWarning = false
-	defer func() {
-		sc.OverflowAsWarning = originalOverflowAsWarning
-		sc.IgnoreTruncate = originIgnoreTruncate
-		sc.TruncateAsWarning = originTruncateAsWarning
-	}()
 	for i := 0; i < val.GetElemCount(); i++ {
-		item, err := f(sc, val.ArrayGetElem(i), ft)
+		item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
 		if err != nil {
 			return types.BinaryJSON{}, false, err
 		}
