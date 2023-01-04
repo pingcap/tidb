@@ -68,6 +68,7 @@ func (w *HistoricalStatsWorker) DumpHistoricalStats(tableID int64, statsHandle *
 		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
 	}
 	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo, tableID, isPartition); err != nil {
+		generateHistoricalStatsFailedCounter.Inc()
 		return errors.Errorf("record table %s.%s's historical stats failed, err:%v", dbInfo.Name.O, tblInfo.Name.O, err)
 	}
 	generateHistoricalStatsSuccessCounter.Inc()
