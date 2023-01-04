@@ -450,13 +450,13 @@ func (parser *CSVParser) readQuotedField() error {
 	for {
 		prevPos := parser.pos
 		content, terminator, err := parser.readUntil(&parser.quoteByteSet)
-		err = parser.replaceEOF(err, errUnterminatedQuotedField)
 		if err != nil {
-			if errors.Cause(err) == errUnterminatedQuotedField {
+			if errors.Cause(err) == io.EOF {
 				// return the position of quote to the caller.
 				// because we return an error here, the parser won't
 				// use the `pos` again, so it's safe to modify it here.
 				parser.pos = prevPos - 1
+				err = parser.replaceEOF(err, errUnterminatedQuotedField)
 			}
 			parser.Logger.Error("err content", zap.ByteString("content", content))
 			return err
