@@ -426,14 +426,18 @@ type JobMeta struct {
 
 // BackfillMeta is meta info of the backfill job.
 type BackfillMeta struct {
-	EndInclude bool   `json:"end_include"`
-	ErrMsg     string `json:"err_msg"`
+	PhysicalTableID int64  `json:"physical_table_id"`
+	IsUnique        bool   `json:"is_unique"`
+	EndInclude      bool   `json:"end_include"`
+	ErrMsg          string `json:"err_msg"`
 
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
-	*JobMeta      `json:"job_meta"`
+	ReorgTp       ReorgType                        `json:"reorg_tp"`
+
+	*JobMeta `json:"job_meta"`
 }
 
 // Encode encodes BackfillMeta with json format.

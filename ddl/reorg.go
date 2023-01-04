@@ -196,7 +196,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 	}
 
-	rc := w.getReorgCtx(job)
+	rc := w.getReorgCtx(job.ID)
 	if rc == nil {
 		// This job is cancelling, we should return ErrCancelledDDLJob directly.
 		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
@@ -289,7 +289,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 }
 
 func (w *worker) mergeWarningsIntoJob(job *model.Job) {
-	rc := w.getReorgCtx(job)
+	rc := w.getReorgCtx(job.ID)
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	partWarnings := rc.mu.warnings
@@ -352,13 +352,13 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (dc *ddlCtx) isReorgRunnable(job *model.Job) error {
+func (dc *ddlCtx) isReorgRunnable(jobID int64) error {
 	if isChanClosed(dc.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	if dc.getReorgCtx(job).isReorgCanceled() {
+	if dc.getReorgCtx(jobID).isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
 	}

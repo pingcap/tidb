@@ -372,6 +372,7 @@ go_test(
         "//sessionctx/binloginfo",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
+        "//sessionctx/variable/featuretag/distributereorg",
         "//sessiontxn",
         "//sessiontxn/staleread",
         "//statistics",
