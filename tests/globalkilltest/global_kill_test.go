@@ -44,7 +44,7 @@ var (
 	tidbBinaryPath = flag.String("s", "bin/globalkilltest_tidb-server", "tidb server binary path")
 	pdBinaryPath   = flag.String("p", "bin/pd-server", "pd server binary path")
 	tikvBinaryPath = flag.String("k", "bin/tikv-server", "tikv server binary path")
-	tidbStartPort  = flag.Int("tidb_start_port", 5000, "first tidb server listening port")
+	tidbStartPort  = flag.Int("tidb_start_port", 6000, "first tidb server listening port")
 	tidbStatusPort = flag.Int("tidb_status_port", 8000, "first tidb server status port")
 
 	pdClientPath = flag.String("pd", "127.0.0.1:2379", "pd client path")
@@ -338,26 +338,38 @@ func (s *GlobalKillSuite) killByCtrlC(t *testing.T, port int, sleepTime int) tim
 		"-e", fmt.Sprintf("SELECT SLEEP(%d);", sleepTime))
 	log.Info("run mysql cli", zap.Any("cli", cli))
 
-	ch := make(chan sleepResult)
+	startCh := make(chan error)
+	resultCh := make(chan sleepResult)
 	go func() {
+		time.Sleep(time.Second)
 		startTS := time.Now()
-		err := cli.Run()
+		err := cli.Start()
+		startCh <- err
 		if err != nil {
-			ch <- sleepResult{err: errors.Trace(err)}
+			return
+		}
+		log.Info("start wait")
+		err = cli.Wait()
+		log.Info("finish wait")
+		if err != nil {
+			resultCh <- sleepResult{err: errors.Trace(err)}
 			return
 		}
 
 		elapsed := time.Since(startTS)
 		log.Info("mysql cli takes", zap.Duration("elapsed", elapsed))
-		ch <- sleepResult{elapsed: elapsed}
+		resultCh <- sleepResult{elapsed: elapsed}
 	}()
 
-	time.Sleep(waitToStartup)               // wait before mysql cli running.
+	startErr := <-startCh // wait before mysql cli running.
+	require.NoError(t, startErr)
+	log.Info("send signal")
 	err := cli.Process.Signal(os.Interrupt) // send "CTRL-C".
+	log.Info("send signal done")
 	require.NoError(t, err)
 
-	r := <-ch
-	require.NoError(t, err)
+	r := <-resultCh
+	require.NoError(t, r.err)
 	return r.elapsed
 }
 
@@ -423,7 +435,7 @@ func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sq
 	require.NoError(t, err)
 
 	r := <-ch
-	require.NoError(t, err)
+	require.NoError(t, r.err)
 	return r.elapsed
 }
 
