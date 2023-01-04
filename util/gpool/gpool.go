@@ -64,6 +64,7 @@ func NewBasePool() BasePool {
 	}
 }
 
+// SetName is to set name.
 func (p *BasePool) SetName(name string) {
 	p.name = name
 }
