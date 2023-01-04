@@ -84,7 +84,6 @@ go_library(
         "//util/printer",
         "//util/replayer",
         "//util/sqlexec",
-        "//util/syncutil",
         "//util/sys/linux",
         "//util/timeutil",
         "//util/tls",
