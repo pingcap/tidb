@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 )
@@ -28,31 +29,37 @@ func TestMultiValuedIndexOnlineDDL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	for _, v := range []int{0, 1} {
-		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_enable_fast_reorg=%d", v))
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (pk int primary key, a json)")
-		tk.MustExec("insert into t values (1, '[1,2,3]')")
-		tk.MustExec("insert into t values (2, '[2,3,4]')")
-		tk.MustExec("insert into t values (3, '[3,4,5]')")
-		tk.MustExec("insert into t values (4, '[4,5,6]')")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk int primary key, a json)")
+	tk.MustExec("insert into t values (1, '[1,2,3]')")
+	tk.MustExec("insert into t values (2, '[2,3,4]')")
+	tk.MustExec("insert into t values (3, '[3,4,5]')")
+	tk.MustExec("insert into t values (4, '[4,5,6]')")
 
-		internalTK := testkit.NewTestKit(t, store)
-		internalTK.MustExec("use test")
+	internalTK := testkit.NewTestKit(t, store)
+	internalTK.MustExec("use test")
 
-		hook := &ddl.TestDDLCallback{Do: dom}
-		n := 5
-		hook.OnJobRunBeforeExported = func(job *model.Job) {
-			internalTK.MustExec(fmt.Sprintf("insert into t values (%d, '[%d, %d, %d]')", n, n, n+1, n+2))
-			internalTK.MustExec(fmt.Sprintf("delete from t where pk = %d", n-4))
-			internalTK.MustExec(fmt.Sprintf("update t set a = '[%d, %d, %d]' where pk = %d", n-3, n-2, n+100, n-3))
-			n++
-		}
-		o := dom.DDL().GetHook()
-		dom.DDL().SetHook(hook)
-
-		tk.MustExec("alter table t add index idx((cast(a as signed array)))")
-		tk.MustExec("admin check table t")
-		dom.DDL().SetHook(o)
+	hook := &ddl.TestDDLCallback{Do: dom}
+	n := 5
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		internalTK.MustExec(fmt.Sprintf("insert into t values (%d, '[%d, %d, %d]')", n, n, n+1, n+2))
+		internalTK.MustExec(fmt.Sprintf("delete from t where pk = %d", n-4))
+		internalTK.MustExec(fmt.Sprintf("update t set a = '[%d, %d, %d]' where pk = %d", n-3, n-2, n+100, n-3))
+		n++
 	}
+	o := dom.DDL().GetHook()
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("alter table t add index idx((cast(a as signed array)))")
+	tk.MustExec("admin check table t")
+	dom.DDL().SetHook(o)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (pk int primary key, a json);")
+	tk.MustExec("insert into t values (1, '[1,2,3]');")
+	tk.MustExec("insert into t values (2, '[2,3,4]');")
+	tk.MustExec("insert into t values (3, '[3,4,5]');")
+	tk.MustExec("insert into t values (4, '[-4,5,6]');")
+	tk.MustGetErrCode("alter table t add unique index idx((cast(a as signed array)));", errno.ErrDupEntry)
+	tk.MustGetErrMsg("alter table t add index idx((cast(a as unsigned array)));", "[ddl:8202]Cannot decode index value, because [types:1690]constant -4 overflows bigint")
 }
