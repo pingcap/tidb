@@ -137,6 +137,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	}
 	leaseGrantTime := oracle.GetTimeFromTS(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
+	logutil.BgLogger().Error("schemaValidator update", zap.Any("leaseGrantTime", leaseGrantTime), zap.Any("leaseExpire", leaseExpire))
 	s.latestSchemaExpire = leaseExpire
 
 	// Update the schema deltaItem information.
@@ -266,6 +267,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 	// Schema unchanged, maybe success or the schema validator is unavailable.
 	t := oracle.GetTimeFromTS(txnTS)
 	if t.After(s.latestSchemaExpire) {
+		logutil.BgLogger().Error("schema is outdated", zap.Time("latestSchemaExpire", s.latestSchemaExpire), zap.Time("txnTS", t))
 		return nil, ResultUnknown
 	}
 	return nil, ResultSucc
