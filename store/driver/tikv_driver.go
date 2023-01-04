@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -164,7 +163,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		pdClient *tikv.CodecPDClient
 	)
 
-	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+	if keyspaceName == "" {
 		logutil.BgLogger().Info("using API V1.")
 		pdClient = tikv.NewCodecPDClient(tikv.ModeTxn, pdCli)
 	} else {
@@ -174,7 +173,8 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 			return nil, errors.Trace(err)
 		}
 		// If there's setting keyspace-name, then skipped GC worker logic.
-		// It need a group of special tidb nodes to execute GC worker logic.
+		// It needs a group of special tidb nodes to execute GC worker logic.
+		// TODO: remove this restriction while merged keyspace GC worker logic.
 		disableGC = true
 	}
 

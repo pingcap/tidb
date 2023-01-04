@@ -952,13 +952,7 @@ func (do *Domain) Init(
 				return errors.Trace(err)
 			}
 
-			// If keyspace has been set in KvStorage
-			if keyspace.IsKvStorageKeyspaceSet(do.store) {
-				keyspacePrefix := do.store.GetCodec().GetKeyspace()
-				keyspaceID := keyspace.GetID(keyspacePrefix)
-				etcdPathPrefix := keyspace.GetKeyspacePathPrefix(keyspaceID)
-				etcd.SetEtcdCliByNamespace(cli, etcdPathPrefix)
-			}
+			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
 
 			do.etcdClient = cli
 		}
