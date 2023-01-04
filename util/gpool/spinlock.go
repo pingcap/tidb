@@ -12,9 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !featuretag
+package gpool
 
-package concurrencyddl
+import (
+	"runtime"
+	"sync"
+	"sync/atomic"
+)
 
-// TiDBEnableConcurrentDDL is a feature tag
-const TiDBEnableConcurrentDDL bool = true
+type spinLock uint32
+
+const maxBackoff = 16
+
+func (sl *spinLock) Lock() {
+	backoff := 1
+	for !atomic.CompareAndSwapUint32((*uint32)(sl), 0, 1) {
+		// Leverage the exponential backoff algorithm, see https://en.wikipedia.org/wiki/Exponential_backoff.
+		for i := 0; i < backoff; i++ {
+			runtime.Gosched()
+		}
+		if backoff < maxBackoff {
+			backoff <<= 1
+		}
+	}
+}
+
+func (sl *spinLock) Unlock() {
+	atomic.StoreUint32((*uint32)(sl), 0)
+}
+
+// NewSpinLock instantiates a spin-lock.
+func NewSpinLock() sync.Locker {
+	return new(spinLock)
+}

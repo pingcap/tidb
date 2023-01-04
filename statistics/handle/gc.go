@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -153,14 +155,32 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	sql := "delete from mysql.stats_meta_history where NOW() - create_time >= %?"
-	_, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+	sql := "select count(*) from mysql.stats_meta_history where NOW() - create_time >= %?"
+	rs, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
 		return err
 	}
-	sql = "delete from mysql.stats_history where NOW() - create_time >= %? "
-	_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-	return err
+	if rs == nil {
+		return nil
+	}
+	var rows []chunk.Row
+	defer terror.Call(rs.Close)
+	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
+		return errors.Trace(err)
+	}
+	count := rows[0].GetInt64(0)
+	if count > 0 {
+		sql = "delete from mysql.stats_meta_history where NOW() - create_time >= %?"
+		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+		if err != nil {
+			return err
+		}
+		sql = "delete from mysql.stats_history where NOW() - create_time >= %? "
+		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+		logutil.BgLogger().Info("clear outdated historical stats")
+		return err
+	}
+	return nil
 }
 
 func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {

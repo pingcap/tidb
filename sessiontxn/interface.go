@@ -160,8 +160,10 @@ type TxnManager interface {
 	// GetReadReplicaScope returns the read replica scope
 	GetReadReplicaScope() string
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
+	// Calling this method will activate the txn implicitly if current read is not stale/historical read
 	GetStmtReadTS() (uint64, error)
 	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
+	// Calling this method will activate the txn implicitly if current read is not stale/historical read
 	GetStmtForUpdateTS() (uint64, error)
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
