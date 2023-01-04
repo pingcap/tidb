@@ -105,7 +105,7 @@ func TestResourceGroup(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
 
-	tk.MustContainErrMsg("create resource group x RRU_PER_SEC=1000, CPU='8000m';", "Only one of RUMode and NativeMode can be set")
+	tk.MustContainErrMsg("create resource group x RRU_PER_SEC=1000, CPU='8000m';", "only one of RUMode and NativeMode can be set")
 	// TODO: privilege check & constraint syntax check.
 }
 

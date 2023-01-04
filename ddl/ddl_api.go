@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -7595,13 +7596,8 @@ func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResour
 			return err
 		}
 	}
-
-	switch {
-	case stmt.IfNotExists:
-		break
-	default:
-		_, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName)
-		if ok {
+	if !stmt.IfNotExists {
+		if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
 			return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 		}
 	}
@@ -7610,9 +7606,11 @@ func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResour
 		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
 	}
 
-	logutil.BgLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
+	if err := d.checkResourceGroupValidation(groupInfo); err != nil {
+		return err
+	}
 
-	// TODO: valid the group information.
+	logutil.BgLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
 	groupIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return err
@@ -7627,6 +7625,11 @@ func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResour
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
+	return err
+}
+
+func (d *ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) error {
+	_, err := resourcegroup.NewGroupFromOptions(groupInfo.Name.L, groupInfo.ResourceGroupSettings)
 	return err
 }
 
@@ -7681,9 +7684,11 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if newGroupInfo.Name.L == defaultResourceGroupName {
-		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
+
+	if err := d.checkResourceGroupValidation(newGroupInfo); err != nil {
+		return err
 	}
+
 	logutil.BgLogger().Debug("alter resource group", zap.String("name", groupName.L), zap.Stringer("new resource group settings", newGroupInfo.ResourceGroupSettings))
 
 	job := &model.Job{

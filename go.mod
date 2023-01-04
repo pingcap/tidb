@@ -260,3 +260,5 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
+
+replace github.com/pingcap/kvproto => github.com/nolouch/kvproto v0.0.0-20230104082729-8d6d1eb8b955

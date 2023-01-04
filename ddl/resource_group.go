@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -35,6 +36,14 @@ func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	}
 	groupInfo.State = model.StateNone
 
+	// check if resource group value is valid and convert to proto format.
+	protoGroup, err := resourcegroup.NewGroupFromOptions(groupInfo.Name.L, groupInfo.ResourceGroupSettings)
+	if err != nil {
+		logutil.BgLogger().Warn("convert to resource group failed", zap.Error(err))
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	switch groupInfo.State {
 	case model.StateNone:
 		// none -> public
@@ -43,21 +52,12 @@ func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaID = groupInfo.ID
-		protoGroup, err := infosync.ConvertToProtoResourceGroup(groupInfo)
-		if err != nil {
-			logutil.BgLogger().Warn("convert to resource group failed", zap.Error(err))
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-
 		err = infosync.CreateResourceGroup(context.TODO(), protoGroup)
 		if err != nil {
 			logutil.BgLogger().Warn("create resource group failed", zap.Error(err))
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-
+		job.SchemaID = groupInfo.ID
 		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -76,6 +76,13 @@ func onAlterResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	// check if resource group value is valid and convert to proto format.
+	protoGroup, err := resourcegroup.NewGroupFromOptions(alterGroupInfo.Name.L, alterGroupInfo.ResourceGroupSettings)
+	if err != nil {
+		logutil.BgLogger().Warn("convert to resource group failed", zap.Error(err))
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 
 	oldGroup, err := checkResourceGroupExist(t, job, alterGroupInfo.ID)
 	if err != nil {
@@ -88,13 +95,6 @@ func onAlterResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 	// TODO: check the group validation
 	err = t.UpdateResourceGroup(&newGroup)
 	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	protoGroup, err := infosync.ConvertToProtoResourceGroup(&newGroup)
-	if err != nil {
-		logutil.BgLogger().Warn("convert to resource group failed", zap.Error(err))
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -133,33 +133,8 @@ func onDropResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 	// TODO: check the resource group not in use.
 	switch groupInfo.State {
 	case model.StatePublic:
-		// public -> write only
-		groupInfo.State = model.StateWriteOnly
-		err = t.UpdateResourceGroup(groupInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		ver, err = updateSchemaVersion(d, t, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateWriteOnly
-	case model.StateWriteOnly:
-		// write only -> delete only
-		groupInfo.State = model.StateDeleteOnly
-		err = t.UpdateResourceGroup(groupInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		ver, err = updateSchemaVersion(d, t, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		// Update the job state when all affairs done.
-		job.SchemaState = model.StateDeleteOnly
-	case model.StateDeleteOnly:
-		// delete only -> absent
+		// public -> none
+		// resource group not influence the correctness of the data, so we can directly remove it.
 		groupInfo.State = model.StateNone
 		err = t.DropResourceGroup(groupInfo.ID)
 		if err != nil {
@@ -173,7 +148,7 @@ func onDropResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Finish this job. By now resource group don't consider the binlog sync.
+		// Finish this job.
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, nil)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("resource_group", groupInfo.State)

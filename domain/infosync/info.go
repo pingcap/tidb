@@ -244,7 +244,7 @@ func initResourceGroupManager(etcdCli *clientv3.Client) ResourceGroupManager {
 	if etcdCli == nil {
 		return &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
 	}
-	return &ExternalResourceGroupManager{etcdCli: etcdCli}
+	return NewResourceManager(etcdCli)
 }
 
 func initTiFlashReplicaManager(etcdCli *clientv3.Client) TiFlashReplicaManager {
