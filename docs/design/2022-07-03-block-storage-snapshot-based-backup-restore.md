@@ -285,7 +285,7 @@ For each Raft Group, we process the meta and data of the Region through BR Regio
 
 
 1. In the restore phase,  put TiKV in the recovery mode, and TiKV reports all peer lists to BR.
-2. For each raft group, find the peer with the largest log index in the Region, and force it to be the leader. For other peers to be silent, start the raft state machine.
+2. For each raft group, find the peer with most reliable log in the Region, and force it to be the leader. For other peers to be silent, start the raft state machine. leader selection refer to [BR Restore](#br-restore)
 3. Wait for all peers in the Region until applied index == last index, and then set the correct raft status to exit data RegionRecover recovery.
 * Region data
 
