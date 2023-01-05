@@ -2881,8 +2881,8 @@ def go_deps():
         name = "com_github_pingcap_badger",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/badger",
-        sum = "h1:QB16qn8wx5X4SRn3/5axrjPMNS3WRt87+5Bfrnmt6IA=",
-        version = "v1.5.1-0.20221229114011-ddffaa0fff7a",
+        sum = "h1:AEcvKyVM8CUII3bYzgz8haFXtGiqcrtXW1csu/5UELY=",
+        version = "v1.5.1-0.20230103063557-828f39b09b6d",
     )
     go_repository(
         name = "com_github_pingcap_check",
