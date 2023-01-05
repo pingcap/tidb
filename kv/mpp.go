@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 )
 
+// MppVersion indicates the mpp-version used to build mpp plan
 type MppVersion int64
 
 const (
@@ -44,6 +45,7 @@ const (
 	MppVersionUnspecified MppVersion = -1
 )
 
+// ToInt64 transforms MppVersion to int64``
 func (v MppVersion) ToInt64() int64 {
 	return int64(v)
 }

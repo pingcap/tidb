@@ -440,7 +440,7 @@ func doRequest(ctx context.Context, apiName string, addrs []string, route, metho
 	return nil, err
 }
 
-func RemoveVAndHash(v string) string {
+func removeVAndHash(v string) string {
 	if v == "" {
 		return v
 	}
@@ -465,12 +465,16 @@ func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
 			time.Sleep(time.Millisecond * 50)
 		}
 
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		for _, s := range stores {
 			// empty version means the store is a mock store. Don't require tiflash version either.
 			if s.Version == "" || engine.IsTiFlash(s) {
 				continue
 			}
-			ver, err := semver.NewVersion(RemoveVAndHash(s.Version))
+			ver, err := semver.NewVersion(removeVAndHash(s.Version))
 			if err != nil {
 				return errors.Trace(errors.Annotate(err, "invalid TiKV version"))
 			}

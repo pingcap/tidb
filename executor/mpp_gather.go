@@ -19,8 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-
-	// "github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"

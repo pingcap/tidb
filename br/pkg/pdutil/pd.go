@@ -248,7 +248,6 @@ func NewPdController(
 			}
 		}
 		processedAddrs = append(processedAddrs, addr)
-
 		versionBytes, failure = pdRequest(ctx, addr, clusterVersionPrefix, cli, http.MethodGet, nil)
 		if failure == nil {
 			break

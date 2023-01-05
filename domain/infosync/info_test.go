@@ -26,10 +26,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/util"
