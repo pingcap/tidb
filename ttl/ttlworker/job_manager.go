@@ -353,6 +353,24 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		// and keep the job in memory, it could start the left task in the next window.
 		return
 	}
+	if !variable.EnableTTLJob.Load() {
+		if len(m.runningJobs) > 0 {
+			ctx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
+
+			for _, job := range m.runningJobs {
+				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id), zap.String("statistics", job.statistics.String()))
+				m.removeJob(job)
+				err := job.Cancel(ctx, se)
+				if err != nil {
+					logutil.Logger(m.ctx).Warn("fail to cancel job", zap.Error(err))
+				}
+				job.finish(se, se.Now())
+			}
+
+			cancel()
+		}
+		return
+	}
 
 	idleScanWorkers := m.idleScanWorkers()
 	if len(idleScanWorkers) == 0 {
