@@ -261,7 +261,6 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 
 	var tables []*cache.PhysicalTable
 	if tblInfo.Partition == nil {
-		tables = make([]*cache.PhysicalTable, 0)
 		ttlTable, err := cache.NewPhysicalTable(model.NewCIStr(cmd.DBName), tblInfo, model.NewCIStr(""))
 		if err != nil {
 			responseErr(err)
