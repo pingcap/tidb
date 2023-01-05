@@ -2462,7 +2462,7 @@ func (do *Domain) serverIDKeeper() {
 // StartTTLJobManager creates and starts the ttl job manager
 func (do *Domain) StartTTLJobManager() {
 	do.wg.Run(func() {
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store)
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.GetEtcdClient())
 		do.ttlJobManager = ttlJobManager
 		ttlJobManager.Start()
 
