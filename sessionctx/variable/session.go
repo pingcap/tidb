@@ -1042,8 +1042,8 @@ type SessionVars struct {
 	// MppVersion indicates the mpp-version used to build mpp plan, if mpp-version is unspecified, use the latest version.
 	MppVersion kv.MppVersion
 
-	// MppExchangeCompressMethod is used to select data compression method in mpp exchange operator
-	MppExchangeCompressMethod kv.ExchangeCompressMethod
+	// MppExchangeCompressionMode is used to select data compression method in mpp exchange operator
+	MppExchangeCompressionMode kv.ExchangeCompressionMode
 
 	// ExplainShowMppFeature indicates whether to show mpp feature in explain result
 	ExplainShowMppFeature bool
@@ -1691,7 +1691,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
-		MppExchangeCompressMethod:     kv.DefaultExchangeCompressMethod,
+		MppExchangeCompressionMode:    kv.DefaultExchangeCompressionMode,
 		MppVersion:                    kv.MppVersionUnspecified,
 		ExplainShowMppFeature:         DefExplainShowMppFeature,
 	}

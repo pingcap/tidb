@@ -45,7 +45,7 @@ const (
 	MppVersionUnspecified MppVersion = -1
 )
 
-// ToInt64 transforms MppVersion to int64``
+// ToInt64 transforms MppVersion to int64“
 func (v MppVersion) ToInt64() int64 {
 	return int64(v)
 }
@@ -159,56 +159,56 @@ type MPPBuildTasksRequest struct {
 	PartitionIDAndRanges []PartitionIDAndRanges
 }
 
-// ExchangeCompressMethod means the compress method used in exchange operator
-type ExchangeCompressMethod int
+// ExchangeCompressionMode means the compress method used in exchange operator
+type ExchangeCompressionMode int
 
 const (
-	// ExchangeCompressMethodNONE indicates no compression
-	ExchangeCompressMethodNONE ExchangeCompressMethod = iota
-	// ExchangeCompressMethodFast indicates fast compression/decompression speed, compression ratio is lower than HC mode
-	ExchangeCompressMethodFast
-	// ExchangeCompressMethodHC indicates high compression (HC) ratio mode
-	ExchangeCompressMethodHC
-	// ExchangeCompressMethodUnspecified means unspecified compress method, let TiDB choose one
-	ExchangeCompressMethodUnspecified
+	// ExchangeCompressionModeNONE indicates no compression
+	ExchangeCompressionModeNONE ExchangeCompressionMode = iota
+	// ExchangeCompressionModeFast indicates fast compression/decompression speed, compression ratio is lower than HC mode
+	ExchangeCompressionModeFast
+	// ExchangeCompressionModeHC indicates high compression (HC) ratio mode
+	ExchangeCompressionModeHC
+	// ExchangeCompressionModeUnspecified means unspecified compress method, let TiDB choose one
+	ExchangeCompressionModeUnspecified
 
-	// DefaultExchangeCompressMethod means default compress method
-	DefaultExchangeCompressMethod ExchangeCompressMethod = ExchangeCompressMethodUnspecified
+	// DefaultExchangeCompressionMode means default compress method
+	DefaultExchangeCompressionMode ExchangeCompressionMode = ExchangeCompressionModeUnspecified
 
-	exchangeCompressMethodUnspecifiedName string = "UNSPECIFIED"
+	exchangeCompressionModeUnspecifiedName string = "UNSPECIFIED"
 )
 
-// Name returns the name of ExchangeCompressMethod
-func (t ExchangeCompressMethod) Name() string {
-	if t == ExchangeCompressMethodUnspecified {
-		return exchangeCompressMethodUnspecifiedName
+// Name returns the name of ExchangeCompressionMode
+func (t ExchangeCompressionMode) Name() string {
+	if t == ExchangeCompressionModeUnspecified {
+		return exchangeCompressionModeUnspecifiedName
 	}
-	return t.ToMppCompressMethod().String()
+	return t.ToMppCompressionMode().String()
 }
 
-// ToExchangeCompressMethod returns the ExchangeCompressMethod from name
-func ToExchangeCompressMethod(name string) (ExchangeCompressMethod, bool) {
-	if name == exchangeCompressMethodUnspecifiedName {
-		return ExchangeCompressMethodUnspecified, true
+// ToExchangeCompressionMode returns the ExchangeCompressionMode from name
+func ToExchangeCompressionMode(name string) (ExchangeCompressionMode, bool) {
+	if name == exchangeCompressionModeUnspecifiedName {
+		return ExchangeCompressionModeUnspecified, true
 	}
-	value, ok := mpp.CompressMethod_value[name]
+	value, ok := mpp.CompressionMode_value[name]
 	if ok {
-		return ExchangeCompressMethod(value), true
+		return ExchangeCompressionMode(value), true
 	}
-	return DefaultExchangeCompressMethod, false
+	return DefaultExchangeCompressionMode, false
 }
 
-// ToMppCompressMethod returns mpp.CompressMethod from kv.ExchangeCompressMethod
-func (t ExchangeCompressMethod) ToMppCompressMethod() mpp.CompressMethod {
+// ToMppCompressionMode returns mpp.CompressionMode from kv.ExchangeCompressionMode
+func (t ExchangeCompressionMode) ToMppCompressionMode() mpp.CompressionMode {
 	switch t {
-	case ExchangeCompressMethodNONE:
-		return mpp.CompressMethod_NONE
-	case ExchangeCompressMethodFast:
-		return mpp.CompressMethod_FAST
-	case ExchangeCompressMethodHC:
-		return mpp.CompressMethod_HIGH_COMPRESSION
+	case ExchangeCompressionModeNONE:
+		return mpp.CompressionMode_NONE
+	case ExchangeCompressionModeFast:
+		return mpp.CompressionMode_FAST
+	case ExchangeCompressionModeHC:
+		return mpp.CompressionMode_HIGH_COMPRESSION
 	}
 
 	// Use `FAST` as the defualt method
-	return mpp.CompressMethod_FAST
+	return mpp.CompressionMode_FAST
 }

@@ -2216,7 +2216,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		// only use compress when exhancge tyoe is `Hash`
 		if sender.ExchangeType == tipb.ExchangeType_Hash {
 			sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{
-				Compress: ctx.GetSessionVars().MppExchangeCompressMethod.ToMppCompressMethod(),
+				Compress: ctx.GetSessionVars().MppExchangeCompressionMode.ToMppCompressionMode(),
 			}
 		}
 	}

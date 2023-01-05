@@ -2181,12 +2181,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompress, Type: TypeStr, Value: kv.DefaultExchangeCompressMethod.Name(),
+	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompress, Type: TypeStr, Value: kv.DefaultExchangeCompressionMode.Name(),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			_, ok := kv.ToExchangeCompressMethod(strings.ToUpper(normalizedValue))
+			_, ok := kv.ToExchangeCompressionMode(strings.ToUpper(normalizedValue))
 			if !ok {
 				var msg string
-				for m := kv.ExchangeCompressMethodNONE; m <= kv.ExchangeCompressMethodUnspecified; m += 1 {
+				for m := kv.ExchangeCompressionModeNONE; m <= kv.ExchangeCompressionModeUnspecified; m += 1 {
 					if m == 0 {
 						msg = m.Name()
 					} else {
@@ -2201,7 +2201,7 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 		SetSession: func(s *SessionVars, val string) error {
-			s.MppExchangeCompressMethod, _ = kv.ToExchangeCompressMethod(strings.ToUpper(val))
+			s.MppExchangeCompressionMode, _ = kv.ToExchangeCompressionMode(strings.ToUpper(val))
 			return nil
 		},
 	},
