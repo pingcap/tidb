@@ -52,6 +52,11 @@ func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }
 
+func (t *mockTxn) LockKeysFunc(_ context.Context, _ *LockCtx, f func(), _ ...Key) error {
+	f()
+	return nil
+}
+
 func (t *mockTxn) SetOption(opt int, val interface{}) {
 	t.opts[opt] = val
 }
