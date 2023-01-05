@@ -2736,8 +2736,8 @@ def go_deps():
         name = "com_github_onsi_ginkgo",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/onsi/ginkgo",
-        sum = "h1:M76yO2HkZASFjXL0HSoZJ1AYEmQxNJmY41Jx1zNUq1Y=",
-        version = "v1.13.0",
+        sum = "h1:8xi0RTUf59SOSfEtZMvwTvXYMzG4gV23XVHOZiXNtnE=",
+        version = "v1.16.5",
     )
     go_repository(
         name = "com_github_onsi_ginkgo_v2",
@@ -2750,8 +2750,8 @@ def go_deps():
         name = "com_github_onsi_gomega",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/onsi/gomega",
-        sum = "h1:o0+MgICZLuZ7xjH7Vx6zS/zcu93/BEp1VwkIW1mEXCE=",
-        version = "v1.10.1",
+        sum = "h1:M1GfJqGRrBrrGGsbxzV5dqM2U2ApXefZCQpkukxYRLE=",
+        version = "v1.18.1",
     )
     go_repository(
         name = "com_github_openpeedeep_depguard",
@@ -3527,8 +3527,8 @@ def go_deps():
         name = "com_github_tiancaiamao_gp",
         build_file_proto_mode = "disable",
         importpath = "github.com/tiancaiamao/gp",
-        sum = "h1:4RNtqw1/tW67qP9fFgfQpTVd7DrfkaAWu4vsC18QmBo=",
-        version = "v0.0.0-20221221095600-1a473d1f9b4b",
+        sum = "h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=",
+        version = "v0.0.0-20221230034425-4025bc8a4d4a",
     )
 
     go_repository(
