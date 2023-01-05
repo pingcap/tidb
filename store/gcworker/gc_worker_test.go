@@ -1817,7 +1817,7 @@ func TestGCWithPendingTxn(t *testing.T) {
 	// Lock the key.
 	err = txn.Set(k1, v1)
 	require.NoError(t, err)
-	err = txn.LockKeys(ctx, lockCtx, nil, k1)
+	err = txn.LockKeys(ctx, lockCtx, k1)
 	require.NoError(t, err)
 
 	// Prepare to run gc with txn's startTS as the safepoint ts.
@@ -1885,7 +1885,7 @@ func TestGCWithPendingTxn2(t *testing.T) {
 
 	err = txn.Set(k1, v1)
 	require.NoError(t, err)
-	err = txn.LockKeys(ctx, lockCtx, nil, k1)
+	err = txn.LockKeys(ctx, lockCtx, k1)
 	require.NoError(t, err)
 
 	// lock the key2
@@ -1899,7 +1899,7 @@ func TestGCWithPendingTxn2(t *testing.T) {
 
 	err = txn2.Set(k2, v2)
 	require.NoError(t, err)
-	err = txn2.LockKeys(ctx, lockCtx, nil, k2)
+	err = txn2.LockKeys(ctx, lockCtx, k2)
 	require.NoError(t, err)
 
 	// Trigger the tick let the gc job start.
@@ -1962,7 +1962,7 @@ func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 
 	err = txn.Set(k1, v1)
 	require.NoError(t, err)
-	err = txn.LockKeys(ctx, lockCtx, nil, k1)
+	err = txn.LockKeys(ctx, lockCtx, k1)
 	require.NoError(t, err)
 
 	// Trigger the tick let the gc job start.
