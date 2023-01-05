@@ -136,7 +136,7 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 
 			// Lock the corresponding row keys so that it doesn't modify the index KVs
 			// that are changing by a pessimistic transaction.
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), nil, idxRecord.rowKey)
+			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.rowKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
