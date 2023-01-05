@@ -221,7 +221,7 @@ require (
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/tiancaiamao/gp v0.0.0-20221221095600-1a473d1f9b4b // indirect
+	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a // indirect
 	github.com/tklauser/go-sysconf v0.3.10 // indirect
 	github.com/tklauser/numcpus v0.4.0 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 // indirect
@@ -261,4 +261,4 @@ replace (
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
 
-replace github.com/tikv/client-go/v2 v2.0.4-0.20221226080148-018c59dbd837 => github.com/hawkingrei/client-go/v2 5391a9bdc39dadfbab0f65f8a8491f367fb176ae
+replace github.com/tikv/client-go/v2 v2.0.4-0.20221226080148-018c59dbd837 => github.com/hawkingrei/client-go/v2 v2.0.0-alpha.0.20230105123653-5391a9bdc39d
