@@ -990,7 +990,7 @@ func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 		UpperBound: upperBound,
 	}
 
-	iter := e.db.NewIter(opt)
+	iter := e.newKVIter(context.Background(), opt)
 	//nolint: errcheck
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
