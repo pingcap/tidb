@@ -2234,7 +2234,7 @@ var defaultSysVars = []*SysVar{
 			return kv.FmtMppVersion(s.MppVersion), nil
 		},
 	},
-	{Scope: ScopeSession, Name: ExplainShowMppFeature, Value: BoolToOnOff(DefExplainShowMppFeature), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: ExplainShowMppFeature, Value: BoolToOnOff(DefExplainShowMppFeature), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.ExplainShowMppFeature = TiDBOptOn(val)
 		return nil
 	}},
