@@ -137,6 +137,31 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
+func TestIngestMVIndexOnPartitionTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (pk int primary key, a json) partition by hash(pk) partitions 32;")
+	var sb strings.Builder
+	sb.WriteString("insert into t values ")
+	for i := 0; i < 100; i++ {
+		sb.WriteString(fmt.Sprintf("(%d, '[%d, %d, %d]')", i, i+1, i+2, i+3))
+		if i != 99 {
+			sb.WriteString(",")
+		}
+	}
+	tk.MustExec(sb.String())
+	tk.MustExec("alter table t add index idx((cast(a as signed array)));")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
 func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

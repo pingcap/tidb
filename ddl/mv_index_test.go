@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
@@ -30,21 +31,26 @@ func TestMultiValuedIndexOnlineDDL(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (pk int primary key, a json)")
-	tk.MustExec("insert into t values (1, '[1,2,3]')")
-	tk.MustExec("insert into t values (2, '[2,3,4]')")
-	tk.MustExec("insert into t values (3, '[3,4,5]')")
-	tk.MustExec("insert into t values (4, '[4,5,6]')")
+	tk.MustExec("create table t (pk int primary key, a json) partition by hash(pk) partitions 32;")
+	var sb strings.Builder
+	sb.WriteString("insert into t values ")
+	for i := 0; i < 100; i++ {
+		sb.WriteString(fmt.Sprintf("(%d, '[%d, %d, %d]')", i, i+1, i+2, i+3))
+		if i != 99 {
+			sb.WriteString(",")
+		}
+	}
+	tk.MustExec(sb.String())
 
 	internalTK := testkit.NewTestKit(t, store)
 	internalTK.MustExec("use test")
 
 	hook := &ddl.TestDDLCallback{Do: dom}
-	n := 5
+	n := 100
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		internalTK.MustExec(fmt.Sprintf("insert into t values (%d, '[%d, %d, %d]')", n, n, n+1, n+2))
 		internalTK.MustExec(fmt.Sprintf("delete from t where pk = %d", n-4))
-		internalTK.MustExec(fmt.Sprintf("update t set a = '[%d, %d, %d]' where pk = %d", n-3, n-2, n+100, n-3))
+		internalTK.MustExec(fmt.Sprintf("update t set a = '[%d, %d, %d]' where pk = %d", n-3, n-2, n+1000, n-3))
 		n++
 	}
 	o := dom.DDL().GetHook()
