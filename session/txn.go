@@ -445,7 +445,7 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 		txn.mu.TxnInfo.BlockStartTime.Valid = false
 		txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
 	}
-	return txn.Transaction.LockKeysFunc(ctx, lockCtx, lockFunc, keys...)
+	return txn.Transaction.LockKeys(ctx, lockCtx, lockFunc, keys...)
 }
 
 func (txn *LazyTxn) reset() {
