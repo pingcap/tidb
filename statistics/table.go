@@ -789,6 +789,9 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context, filters []
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
 		selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		if err != nil {
+			return false, 0, err
+		}
 		var bucketRepeatTotalCnt, bucketRepeatSelectedCnt, lowerBoundMatchCnt int64
 		for i := range hist.Buckets {
 			bucketRepeatTotalCnt += hist.Buckets[i].Repeat
