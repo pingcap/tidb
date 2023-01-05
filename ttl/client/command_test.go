@@ -131,7 +131,7 @@ func TestCommandClient(t *testing.T) {
 
 		// wait send goroutine exit
 		select {
-		case _ = <-resCh:
+		case <-resCh:
 		case <-ctx.Done():
 			require.FailNow(t, ctx.Err().Error())
 		}
