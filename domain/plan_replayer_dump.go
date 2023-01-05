@@ -451,11 +451,11 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 		if err != nil {
 			return errors.AddStack(err)
 		}
-		fmt.Fprintf(statsMemFw, "%s\n", "[INDEX]")
+		fmt.Fprintf(statsMemFw, "[INDEX]\n")
 		for _, indice := range tblStats.Indices {
 			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", indice.Info.Name.String(), indice.StatusToString()))
 		}
-		fmt.Fprintf(statsMemFw, "%s\n", "[COLUMN]")
+		fmt.Fprintf(statsMemFw, "[COLUMN]\n")
 		for _, col := range tblStats.Columns {
 			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", col.Info.Name.String(), col.StatusToString()))
 		}
