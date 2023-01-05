@@ -15,6 +15,10 @@
 package resourcemanager
 
 import (
+	"time"
+
+	"github.com/pingcap/tidb/resourcemanager/scheduler"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpu"
 )
@@ -24,24 +28,55 @@ var GlobalResourceManager = NewResourceManger()
 
 // ResourceManager is a resource manager
 type ResourceManager struct {
+	poolMap     *util.ShardPoolMap
+	scheduler   []scheduler.Scheduler
 	cpuObserver *cpu.Observer
+	exitCh      chan struct{}
 	wg          tidbutil.WaitGroupWrapper
 }
 
 // NewResourceManger is to create a new resource manager
 func NewResourceManger() *ResourceManager {
+	sc := make([]scheduler.Scheduler, 0, 1)
+	sc = append(sc, scheduler.NewCPUScheduler())
 	return &ResourceManager{
 		cpuObserver: cpu.NewCPUObserver(),
+		exitCh:      make(chan struct{}),
+		poolMap:     util.NewShardPoolMap(),
+		scheduler:   sc,
 	}
 }
 
 // Start is to start resource manager
 func (r *ResourceManager) Start() {
 	r.wg.Run(r.cpuObserver.Start)
+	r.wg.Run(func() {
+		tick := time.NewTicker(100 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				r.schedule()
+			case <-r.exitCh:
+				return
+			}
+		}
+	})
 }
 
 // Stop is to stop resource manager
 func (r *ResourceManager) Stop() {
 	r.cpuObserver.Stop()
+	close(r.exitCh)
 	r.wg.Wait()
+}
+
+// Register is to register pool into resource manager
+func (r *ResourceManager) Register(pool util.GorotinuePool, name string, component util.Component) error {
+	p := util.PoolContainer{Pool: pool, Component: component}
+	return r.registerPool(name, &p)
+}
+
+func (r *ResourceManager) registerPool(name string, pool *util.PoolContainer) error {
+	return r.poolMap.Add(name, pool)
 }
