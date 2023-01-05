@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/logutil"
@@ -281,5 +282,63 @@ func TestIssue37066(t *testing.T) {
 		} else {
 			require.Equal(t, res1, "["+res2+"]")
 		}
+	}
+}
+
+func TestWarningsInSlowQuery(t *testing.T) {
+	// Prepare the slow log
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, f.Close())
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+	}()
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, d int, e int, f int, g int, h set('11', '22', '33')," +
+		"primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result string
+	}
+	slowQuerySuiteData.LoadTestCases(t, &input, &output)
+	for i, test := range input {
+		comment := fmt.Sprintf("case:%v sql:%s", i, test)
+		if len(test) < 6 || test[:6] != "select" {
+			tk.MustExec(test)
+		} else {
+			tk.MustQuery(test)
+		}
+		res := testdata.ConvertRowsToStrings(
+			tk.MustQuery("select warnings from information_schema.slow_query " +
+				`where query = "` + test + `;" ` +
+				"order by time desc limit 1").Rows(),
+		)
+		require.Lenf(t, res, 1, comment)
+
+		testdata.OnRecord(func() {
+			output[i].SQL = test
+			output[i].Result = res[0]
+		})
+		require.Equal(t, output[i].Result, res[0])
 	}
 }
