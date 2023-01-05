@@ -867,7 +867,7 @@ func TestSetAssertion(t *testing.T) {
 
 	k7 := []byte("k7")
 	lockCtx := kv2.NewLockCtx(txn.StartTS(), 2000, time.Now())
-	err = txn.LockKeys(context.Background(), lockCtx, k7)
+	err = txn.LockKeys(context.Background(), lockCtx, nil, k7)
 	require.NoError(t, err)
 	mustHaveAssertion(k7, kv.SetAssertNone)
 

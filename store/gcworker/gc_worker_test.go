@@ -1817,7 +1817,7 @@ func TestGCWithPendingTxn(t *testing.T) {
 	// Lock the key.
 	err = txn.Set(k1, v1)
 	require.NoError(t, err)
-	err = txn.LockKeys(ctx, lockCtx, k1)
+	err = txn.LockKeys(ctx, lockCtx, nil, k1)
 	require.NoError(t, err)
 
 	// Prepare to run gc with txn's startTS as the safepoint ts.
@@ -1885,7 +1885,7 @@ func TestGCWithPendingTxn2(t *testing.T) {
 
 	err = txn.Set(k1, v1)
 	require.NoError(t, err)
-	err = txn.LockKeys(ctx, lockCtx, k1)
+	err = txn.LockKeys(ctx, lockCtx, nil, k1)
 	require.NoError(t, err)
 
 	// lock the key2

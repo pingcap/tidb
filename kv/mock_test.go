@@ -37,7 +37,7 @@ func TestInterface(t *testing.T) {
 	assert.Nil(t, err)
 	assert.NotNil(t, transaction)
 
-	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
+	err = transaction.LockKeys(context.Background(), new(LockCtx), nil，Key("lock"))
 	assert.Nil(t, err)
 
 	transaction.SetOption(23, struct{}{})

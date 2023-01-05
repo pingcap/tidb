@@ -1297,7 +1297,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	keys = filterLockTableKeys(sessVars.StmtCtx, keys)
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
-	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
+	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, nil, keys...)
 	if lockKeyStats != nil {
 		sctx.MergeLockKeysExecDetails(lockKeyStats)
 	}
