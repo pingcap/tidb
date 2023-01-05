@@ -90,12 +90,12 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
 	case string:
-		upperX := strings.ToUpper(x)
-		if upperX == strings.ToUpper(ast.CurrentTimestamp) || upperX == strings.ToUpper(ast.CurrentDate) {
+		lowerX := strings.ToLower(x)
+		if lowerX == ast.CurrentTimestamp || lowerX == ast.CurrentDate {
 			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
 				return d, err
 			}
-		} else if upperX == types.ZeroDatetimeStr {
+		} else if lowerX == types.ZeroDatetimeStr {
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
 			terror.Log(err)
 		} else {
