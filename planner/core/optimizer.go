@@ -905,7 +905,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 		probChild := child1
 		joinKeys := x.LeftJoinKeys
 		if x.InnerChildIdx != 0 {
-			// Child0 is build side.
+			// Child1 is build side.
 			buildChild = child1
 			joinKeys = x.RightJoinKeys
 			probChild = child0
@@ -919,7 +919,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		}
-		// don't apply fine grained shuffle for prob side
+		// don't apply fine grained shuffle for probe side
 		helper.clear()
 		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalExchangeSender:
