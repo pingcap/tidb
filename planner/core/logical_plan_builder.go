@@ -4673,7 +4673,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if i < len(columns) {
 			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
 				var err error
+				originVal := b.allowBuildCastArray
+				b.allowBuildCastArray = true
 				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr, ds, nil, true)
+				b.allowBuildCastArray = originVal
 				if err != nil {
 					return nil, err
 				}
@@ -5736,7 +5739,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				}
 			}
 
+			o := b.allowBuildCastArray
+			b.allowBuildCastArray = true
 			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess(assign))
+			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err
 			}

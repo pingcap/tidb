@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package writetest
 
 import (
 	"context"
@@ -590,6 +590,25 @@ commit;`
 	tk.MustExec("create table tp (id int) partition by range (id) (partition p0 values less than (1), partition p1 values less than(2))")
 	tk.MustExec("insert ignore into tp values (1), (3)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1526 Table has no partition for value 3"))
+}
+
+func TestIssue38950(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	var cfg kv.InjectionConfig
+	tk := testkit.NewTestKit(t, kv.NewInjectedStore(store, &cfg))
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t; create table t (id smallint auto_increment primary key);")
+	tk.MustExec("alter table t add column c1 int default 1;")
+	tk.MustExec("insert ignore into t(id) values (194626268);")
+	require.Empty(t, tk.Session().LastMessage())
+
+	tk.MustQuery("select * from t").Check(testkit.Rows("32767 1"))
+
+	tk.MustExec("insert ignore into t(id) values ('*') on duplicate key update c1 = 2;")
+	require.Equal(t, int64(2), int64(tk.Session().AffectedRows()))
+	require.Empty(t, tk.Session().LastMessage())
+
+	tk.MustQuery("select * from t").Check(testkit.Rows("32767 2"))
 }
 
 func TestInsertOnDup(t *testing.T) {

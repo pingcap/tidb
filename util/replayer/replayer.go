@@ -33,13 +33,13 @@ type PlanReplayerTaskKey struct {
 }
 
 // GeneratePlanReplayerFile generates plan replayer file
-func GeneratePlanReplayerFile() (*os.File, string, error) {
+func GeneratePlanReplayerFile(isCapture bool) (*os.File, string, error) {
 	path := GetPlanReplayerDirName()
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	fileName, err := generatePlanReplayerFileName()
+	fileName, err := generatePlanReplayerFileName(isCapture)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
@@ -50,7 +50,7 @@ func GeneratePlanReplayerFile() (*os.File, string, error) {
 	return zf, fileName, err
 }
 
-func generatePlanReplayerFileName() (string, error) {
+func generatePlanReplayerFileName(isCapture bool) (string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	b := make([]byte, 16)
@@ -60,6 +60,9 @@ func generatePlanReplayerFileName() (string, error) {
 		return "", err
 	}
 	key := base64.URLEncoding.EncodeToString(b)
+	if isCapture {
+		return fmt.Sprintf("capture_replayer_%v_%v.zip", key, time), nil
+	}
 	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil
 }
 
