@@ -17,6 +17,8 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -266,9 +269,9 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// Test some backfill jobs, add backfill jobs to the table.
 	cnt := 2
 	bjTestCases := make([]*ddl.BackfillJob, 0, cnt*3)
-	bJobs1 := makeAddIdxBackfillJobs(1, 2, jobID1, eleID1, cnt, "alter table add index idx(a)")
-	bJobs2 := makeAddIdxBackfillJobs(1, 2, jobID2, eleID2, cnt, "alter table add index idx(b)")
-	bJobs3 := makeAddIdxBackfillJobs(1, 2, jobID2, eleID3, cnt, "alter table add index idx(c)")
+	bJobs1 := makeAddIdxBackfillJobs(1, 2, jobID1, eleID1, cnt, "alter table t add index idx(a)")
+	bJobs2 := makeAddIdxBackfillJobs(1, 2, jobID2, eleID2, cnt, "alter table t add index idx(b)")
+	bJobs3 := makeAddIdxBackfillJobs(1, 2, jobID2, eleID3, cnt, "alter table t add index idx(c)")
 	bjTestCases = append(bjTestCases, bJobs1...)
 	bjTestCases = append(bjTestCases, bJobs2...)
 	bjTestCases = append(bjTestCases, bJobs3...)
@@ -539,4 +542,94 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 3      jobID1     eleID1    JobStateCancelling
 	// 6      jobID1     eleID1    JobStateNone
 	// 7      jobID1     eleID1    JobStateNone
+}
+
+func TestGetTasks(t *testing.T) {
+	// TODO: update the variable of `enableDistReorg`
+	isDistReorg := variable.DDLEnableDistributeReorg.Load()
+	variable.DDLEnableDistributeReorg.Store(false)
+	defer func() { variable.DDLEnableDistributeReorg.Store(isDistReorg) }()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := ddl.NewSession(tk.Session())
+	d := dom.DDL()
+
+	jobID1 := int64(1)
+	eleID1 := int64(11)
+	uuid := d.GetID()
+	cnt := 3
+	instanceLease := ddl.InstanceLease
+	bJobsTestCases := makeAddIdxBackfillJobs(1, 2, jobID1, eleID1, cnt, "alter table t add index idx(a)")
+	err := ddl.AddBackfillJobs(se, bJobsTestCases)
+	require.NoError(t, err)
+
+	var wg util.WaitGroupWrapper
+	// Mock GetAndMarkBackfillJobsForOneEle gets a writing conflict error.
+	// Step 1: se1 begins txn1.
+	// Step 2: se2 begins txn2.
+	// Step 3: execute txn1 and txn2, then txn1 or txn2 returns a writing conflict error.
+	var err1 error
+	ch := make(chan struct{}, 1)
+	wg.Run(func() {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(1)`))
+		ch <- struct{}{}
+		var bJobs []*ddl.BackfillJob
+		bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, instanceLease)
+		require.Len(t, bJobs, 1)
+	})
+	<-ch
+	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh")) }()
+	wg.Run(func() {
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		se1 := ddl.NewSession(tk1.Session())
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(2)`))
+		var bJobs1 []*ddl.BackfillJob
+		bJobs1, err1 = ddl.GetAndMarkBackfillJobsForOneEle(se1, 1, jobID1, uuid, instanceLease)
+		require.Len(t, bJobs1, 1)
+	})
+	wg.Wait()
+	if err == nil {
+		require.NotNil(t, err1)
+		require.True(t, strings.Contains(err1.Error(), "[kv:9007]Write conflict"))
+	} else {
+		require.Nil(t, err1)
+		require.True(t, strings.Contains(err.Error(), "[kv:9007]Write conflict"))
+	}
+
+	// get tbl
+	tk.MustExec("create table t(a int, b int)")
+	var tableID int64
+	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t' and table_schema='test';")
+	tableIDi, err := strconv.Atoi(rs.Rows()[0][0].(string))
+	require.Nil(t, err)
+	tableID = int64(tableIDi)
+	tbl := testGetTable(t, dom, tableID)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(0)`))
+	// Mock GetAndMarkBackfillJobsForOneEle gets a writing conflict error, but getTasks is successful.
+	// Step 1: se1 begins txn1.
+	// Step 2: se2 begins txn2.
+	// Step 3: execute txn1 and txn2, then txn1 or txn2 returns a writing conflict error.
+	// Step 4: se2 begin txn3.
+	// Step 5: getTasks(txn3) executes successfully.
+	wg.Run(func() {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(1)`))
+		ch <- struct{}{}
+		bJobs, err := ddl.GetTasks(ddl.GetDDLCtx(d), se, tbl, jobID1, 1)
+		require.Nil(t, err)
+		require.Len(t, bJobs, 1)
+	})
+	<-ch
+	wg.Run(func() {
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		se1 := ddl.NewSession(tk1.Session())
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(2)`))
+		bJobs1, err1 := ddl.GetTasks(ddl.GetDDLCtx(d), se1, tbl, jobID1, 1)
+		require.Nil(t, err1)
+		require.Len(t, bJobs1, 1)
+	})
+	wg.Wait()
 }

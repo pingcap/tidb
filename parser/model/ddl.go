@@ -418,7 +418,9 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 type JobMeta struct {
 	SchemaID int64 `json:"schema_id"`
 	TableID  int64 `json:"table_id"`
-	// Query string of the ddl job.
+	// Type is the DDL job's type.
+	Type ActionType `json:"job_type"`
+	// Query is the DDL job's SQL string.
 	Query string `json:"query"`
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`

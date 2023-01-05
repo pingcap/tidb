@@ -266,7 +266,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 
-	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job))
+	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job.Type))
 	s := sctx.(sqlexec.SQLExecutor)
 	switch job.Type {
 	case model.ActionDropSchema:

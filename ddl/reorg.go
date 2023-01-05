@@ -277,8 +277,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		err := updateDDLReorgStartHandle(rh.s, job, currentElement, doneKey)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
 			zap.Duration("wait time", waitTimeout),
-			zap.ByteString("element type", currentElement.TypeKey),
-			zap.Int64("element ID", currentElement.ID),
+			zap.Stringer("element", currentElement),
 			zap.Int64("total added row count", rowCount),
 			zap.String("done key", hex.EncodeToString(doneKey)),
 			zap.Error(err))

@@ -37,36 +37,38 @@ func TestDDLWorkerPool(t *testing.T) {
 func TestBackfillWorkerPool(t *testing.T) {
 	f := func() func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
-			wk := newBackfillWorker(context.Background(), 1, nil)
+			wk := newBackfillWorker(context.Background(), nil)
 			return wk, nil
 		}
 	}
-	pool := newBackfillWorkerPool(pools.NewResourcePool(f(), 1, 2, 0))
-	bwp, err := pool.get()
+	pool := newBackfillContextPool(pools.NewResourcePool(f(), 1, 2, 0))
+	bc, err := pool.get()
 	require.NoError(t, err)
-	require.Equal(t, 1, bwp.id)
+	require.NotNil(t, bc)
+	require.Nil(t, bc.backfiller)
 	// test it to reach the capacity
-	bwp1, err := pool.get()
+	bc1, err := pool.get()
 	require.NoError(t, err)
-	require.Nil(t, bwp1)
+	require.Nil(t, bc1)
 
 	// test setCapacity
 	err = pool.setCapacity(2)
 	require.NoError(t, err)
-	bwp1, err = pool.get()
+	bc1, err = pool.get()
 	require.NoError(t, err)
-	require.Equal(t, 1, bwp1.id)
-	pool.put(bwp)
-	pool.put(bwp1)
+	require.NotNil(t, bc)
+	require.Nil(t, bc.backfiller)
+	pool.put(bc)
+	pool.put(bc1)
 
 	// test close
 	pool.close()
 	pool.close()
 	require.Equal(t, true, pool.exit.Load())
-	pool.put(bwp1)
+	pool.put(bc1)
 
-	bwp, err = pool.get()
+	bc, err = pool.get()
 	require.Error(t, err)
 	require.Equal(t, "backfill worker pool is closed", err.Error())
-	require.Nil(t, bwp)
+	require.Nil(t, bc)
 }

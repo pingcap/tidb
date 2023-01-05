@@ -610,6 +610,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 		logutil.BgLogger().Info("[ddl] run add index job", zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
+		initializeTrace(job.ID)
 	}
 	originalState := indexInfo.State
 	switch indexInfo.State {
@@ -655,6 +656,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
+		defer injectSpan(job.ID, "write-reorg")()
 		// reorganization -> public
 		tbl, err := getTable(d.store, schemaID, tblInfo)
 		if err != nil {
@@ -686,6 +688,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.Args = []interface{}{indexInfo.ID, false /*if exists*/, getPartitionIDs(tbl.Meta())}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		details := collectTrace(job.ID)
+		logutil.BgLogger().Info("[ddl] &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&--------------------------  finish add index job", zap.String("job", job.String()),
+			zap.String("time details", details))
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
@@ -796,7 +801,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 	return true, ver, err
 }
 
-func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+func doReorgWorkForCreateIndexCopy(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	bfProcess := pickBackfillType(w, job)
 	if !bfProcess.NeedMergeProcess() {
@@ -874,6 +879,60 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return true, ver, err
+	default:
+		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", indexInfo.BackfillState)
+	}
+}
+
+func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	bfProcess := pickBackfillType(w, job)
+	if !bfProcess.NeedMergeProcess() {
+		return runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+	}
+	switch indexInfo.BackfillState {
+	case model.BackfillStateRunning:
+		logutil.BgLogger().Info("[ddl] index backfill state running",
+			zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
+			zap.Bool("ingest mode", bfProcess == model.ReorgTypeLitMerge),
+			zap.String("index", indexInfo.Name.O))
+		switch bfProcess {
+		case model.ReorgTypeLitMerge:
+			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+			if err != nil {
+				// TODO:
+				err = tryFallbackToTxnMerge(job, err)
+				return false, ver, errors.Trace(err)
+			}
+			if !done {
+				return false, ver, nil
+			}
+		case model.ReorgTypeTxnMerge:
+			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+			if err != nil || !done {
+				return false, ver, errors.Trace(err)
+			}
+		}
+		indexInfo.BackfillState = model.BackfillStateReadyToMerge
+		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+		return false, ver, errors.Trace(err)
+	case model.BackfillStateReadyToMerge:
+		logutil.BgLogger().Info("[ddl] index backfill state ready to merge", zap.Int64("job ID", job.ID),
+			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
+		indexInfo.BackfillState = model.BackfillStateMerging
+		if bfProcess == model.ReorgTypeLitMerge {
+			ingest.LitBackCtxMgr.Unregister(job.ID)
+		}
+		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
+		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+		return false, ver, errors.Trace(err)
+	case model.BackfillStateMerging:
+		done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, true)
+		if !done {
+			return false, ver, err
+		}
+		indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
+		return true, ver, nil
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", indexInfo.BackfillState)
 	}
@@ -1219,7 +1278,7 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-func newAddIndexWorker(decodeColMap map[int64]decoder.Column, id int, t table.PhysicalTable, bfCtx *backfillCtx, jc *JobContext, jobID, eleID int64, eleTypeKey []byte) (*addIndexWorker, error) {
+func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTable, bfCtx *backfillCtx, jc *JobContext, jobID, eleID int64, eleTypeKey []byte) (*addIndexWorker, error) {
 	if !bytes.Equal(eleTypeKey, meta.IndexElementKey) {
 		logutil.BgLogger().Error("Element type for addIndexWorker incorrect", zap.String("jobQuery", jc.cacheSQL),
 			zap.Int64("job ID", jobID), zap.ByteString("element type", eleTypeKey), zap.Int64("element ID", eleID))
@@ -1239,7 +1298,7 @@ func newAddIndexWorker(decodeColMap map[int64]decoder.Column, id int, t table.Ph
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		lwCtx, err = ei.NewWriterCtx(id)
+		lwCtx, err = ei.NewWriterCtx(bfCtx.id)
 		if err != nil {
 			return nil, err
 		}
@@ -1323,6 +1382,21 @@ func (w *baseIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
+func newBaseIndexWorkerContext(d *ddl, sess *session, schemaName model.CIStr, tbl table.Table, workerCnt int, bfJob *BackfillJob, jobCtx *JobContext) (*backfillWorkerContext, error) {
+	//nolint:forcetypeassert
+	phyTbl := tbl.(table.PhysicalTable)
+	return newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.Meta.ReorgTp,
+		func(bfCtx *backfillCtx) (backfiller, error) {
+			decodeColMap, err := makeupDecodeColMap(sess, schemaName, phyTbl)
+			if err != nil {
+				logutil.BgLogger().Debug("[ddl] make up decode col map failed", zap.Error(err))
+				return nil, errors.Trace(err)
+			}
+			bf, err1 := newAddIndexWorker(decodeColMap, phyTbl, bfCtx, jobCtx, bfJob.JobID, bfJob.EleID, bfJob.EleKey)
+			return bf, err1
+		})
+}
+
 // mockNotOwnerErrOnce uses to make sure `notOwnerErr` only mock error once.
 var mockNotOwnerErrOnce uint32
 
@@ -1381,7 +1455,7 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		lastHandle := w.idxRecords[len(w.idxRecords)-1].handle
-		recordKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), lastHandle)
+		recordKey := tablecodec.EncodeRecordKey(taskRange.physicalTable.RecordPrefix(), lastHandle)
 		return recordKey.Next()
 	}
 	if taskRange.endInclude {
@@ -1457,7 +1531,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 		taskDone = true
 	}
 
-	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
+	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Stringer("worker", w), zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.idxRecords, w.getNextKey(taskRange, taskDone), taskDone, errors.Trace(err)
 }
@@ -1578,6 +1652,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	jobID := handleRange.getJobID()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, handleRange.priority)
@@ -1761,8 +1836,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo",
 		zap.Int64("jobID", reorg.Job.ID),
-		zap.ByteString("elementType", reorg.currElement.TypeKey),
-		zap.Int64("elementID", reorg.currElement.ID),
+		zap.Stringer("element", reorg.currElement),
 		zap.Int64("partitionTableID", pid),
 		zap.String("startKey", hex.EncodeToString(reorg.StartKey)),
 		zap.String("endKey", hex.EncodeToString(reorg.EndKey)), zap.Error(err))
@@ -1820,7 +1894,7 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-func newCleanUpIndexWorker(sessCtx sessionctx.Context, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
+func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
@@ -1830,7 +1904,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, t table.PhysicalTable, de
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillCtx:   newBackfillCtx(reorgInfo.d, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
+			backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
 			indexes:       indexes,
 			rowDecoder:    rowDecoder,
 			defaultVals:   make([]types.Datum, len(t.WritableCols())),
@@ -1951,6 +2025,49 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 		zap.Int64("partition table ID", pid), zap.String("start key", hex.EncodeToString(start)),
 		zap.String("end key", hex.EncodeToString(end)), zap.Error(err))
 	return false, errors.Trace(err)
+}
+
+func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, jobCtx *JobContext) {
+	// TODO: Consider redo it.
+	bc, ok := ingest.LitBackCtxMgr.Load(bfJob.JobID)
+	if ok && bc.Done() {
+		logutil.BgLogger().Warn("[ddl] lightning loaded")
+		return
+	}
+	var err error
+	logutil.BgLogger().Warn(fmt.Sprintf("------------------------------------ bf:%#v", bfJob))
+	bc, err = ingest.LitBackCtxMgr.Register(d.ctx, bfJob.Meta.IsUnique, bfJob.JobID, bfJob.Meta.SQLMode)
+	if err != nil {
+		// TODO: tryFallbackToTxnMerge
+		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
+		return
+	}
+
+	logutil.BgLogger().Warn("00 ******** load backfill job and run reorg jobs start", zap.Int64("job id", bfJob.JobID))
+	tbl, err := runBackfillJobs(d, sess, bfJob, jobCtx)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] runBackfillJobs error", zap.Error(err))
+		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
+		// TODO: tryFallbackToTxnMerge
+		return
+	}
+
+	finish := injectSpan(bfJob.JobID, "finish-import")
+	err = bc.FinishImport(bfJob.EleID, bfJob.Meta.IsUnique, tbl)
+	if err != nil {
+		if kv.ErrKeyExists.Equal(err) {
+			logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", bfJob.AbbrStr()), zap.Error(err))
+			// TODO: convertAddIdxJob2RollbackJob
+		} else {
+			logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
+			// TODO: tryFallbackToTxnMerge
+		}
+		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
+		return
+	}
+	ingest.LitBackCtxMgr.Unregister(bfJob.ID)
+	finish()
+	bc.SetDone()
 }
 
 // changingIndex is used to store the index that need to be changed during modifying column.
