@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
