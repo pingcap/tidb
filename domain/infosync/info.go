@@ -465,10 +465,6 @@ func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
 			time.Sleep(time.Millisecond * 50)
 		}
 
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		for _, s := range stores {
 			// empty version means the store is a mock store. Don't require tiflash version either.
 			if s.Version == "" || engine.IsTiFlash(s) {

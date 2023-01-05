@@ -52,12 +52,6 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
-type mppNodeMeta struct {
-	Address    string
-	Version    string
-	MppVersion kv.MppVersion
-}
-
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	resultTasks := make([]kv.MPPTaskMeta, 0)
 	for _, s := range c.store.GetRegionCache().GetTiFlashStores() {
