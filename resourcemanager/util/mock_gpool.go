@@ -73,7 +73,7 @@ func (*MockGPool) Release() {
 }
 
 // Tune is only for test
-func (*MockGPool) Tune(_ int) {
+func (*MockGPool) Tune(_ int, _ bool) {
 	panic("implement me")
 }
 
