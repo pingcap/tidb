@@ -175,6 +175,10 @@
     ]
   },
   {
+    "Name": "TestMVIndexSelection",
+    "Cases": []
+  },
+  {
     "Name": "TestIndexMergePathGeneration",
     "Cases": [
       "[]",

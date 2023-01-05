@@ -22,6 +22,14 @@
     ]
   },
   {
+    "name": "TestMVIndexSelection",
+    "cases": [
+      "select (j->'$.int') from t where (1 member of (j->'$.int')",
+      "select * from t where (1 member of (j->'$.int')",
+      "select * from t where (1 member of (j->'$.int') and a<10"
+    ]
+  },
+  {
     "name": "TestIndexMergePathGeneration",
     "cases": [
       "select * from t",
