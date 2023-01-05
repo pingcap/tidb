@@ -442,10 +442,36 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
+}
 
-	// error case
+func TestUnsupportedLimitCase(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
+
+	tk.MustExec("set @a = 0")
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: get a TableDual plan"))
+
+	tk.MustExec("set @a = 1.2")
+	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
+
+	tk.MustExec("set @a = 1.")
+	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
+
+	tk.MustExec("set @a = '0'")
+	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
+
+	tk.MustExec("set @a = '1'")
+	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
+
+	tk.MustExec("set @a = 1_2")
+	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
 }

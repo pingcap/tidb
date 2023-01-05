@@ -463,6 +463,7 @@ type limitExtractor struct {
 	cacheable         bool // For safety considerations, check if limit count less than 10000
 	offsetAndCount    []int64
 	unCacheableReason string
+	paramTypeErr      error
 }
 
 // Enter implements Visitor interface.
@@ -481,8 +482,7 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 					}
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
-					checker.cacheable = false
-					checker.unCacheableReason = "limit count type un-cacheable"
+					checker.paramTypeErr = errors.New("incorrect arguments to limit in plan cache")
 					return in, true
 				}
 			}
@@ -493,8 +493,7 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 				if typeExpected {
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
-					checker.cacheable = false
-					checker.unCacheableReason = "limit offset type un-cacheable"
+					checker.paramTypeErr = errors.New("incorrect arguments to limit in plan cache")
 					return in, true
 				}
 			}
@@ -509,19 +508,22 @@ func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) []int64 {
+func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]int64, error) {
 	if node == nil {
-		return []int64{}
+		return []int64{}, nil
 	}
 	checker := limitExtractor{
 		cacheable:      true,
 		offsetAndCount: []int64{},
 	}
 	node.Accept(&checker)
+	if checker.paramTypeErr != nil {
+		return []int64{}, checker.paramTypeErr
+	}
 	if sctx != nil && !checker.cacheable {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
 	}
-	return checker.offsetAndCount
+	return checker.offsetAndCount, nil
 }
 
 func checkLimitParamType(node *driver.ParamMarkerExpr) (bool, int64) {
