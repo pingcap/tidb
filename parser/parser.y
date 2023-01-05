@@ -655,6 +655,7 @@ import (
 	copyKwd               "COPY"
 	constraints           "CONSTRAINTS"
 	curTime               "CURTIME"
+	curDate               "CURDATE"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
 	dotType               "DOT"
@@ -1379,6 +1380,7 @@ import (
 	PrimaryOpt        "Optional primary keyword"
 	NowSym            "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP"
 	NowSymFunc        "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
+	CurdateSym        "CURDATE or CURRENT_DATE"
 	DefaultKwdOpt     "optional DEFAULT keyword"
 	DatabaseSym       "DATABASE or SCHEMA"
 	ExplainSym        "EXPLAIN or DESCRIBE or DESC"
@@ -3619,6 +3621,14 @@ NowSymOptionFraction:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: []ast.ExprNode{ast.NewValueExpr($3, parser.charset, parser.collation)}}
 	}
+|	CurdateSym '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_DATE")}
+	}
+|	"CURRENT_DATE"
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_DATE")}
+	}
 
 NextValueForSequence:
 	"NEXT" "VALUE" forKwd TableName
@@ -3656,6 +3666,10 @@ NowSym:
 	"CURRENT_TIMESTAMP"
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
+
+CurdateSym:
+	builtinCurDate
+|	"CURRENT_DATE"
 
 SignedLiteral:
 	Literal
@@ -6528,6 +6542,7 @@ NotKeywordToken:
 |	"CAST"
 |	"COPY"
 |	"CURTIME"
+|	"CURDATE"
 |	"DATE_ADD"
 |	"DATE_SUB"
 |	"DOT"
