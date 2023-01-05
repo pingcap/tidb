@@ -83,6 +83,7 @@ go_library(
         "//util/sem",
         "//util/sli",
         "//util/sqlexec",
+        "//util/syncutil",
         "//util/tableutil",
         "//util/timeutil",
         "//util/topsql",
