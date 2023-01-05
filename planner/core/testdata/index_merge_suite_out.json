@@ -176,7 +176,20 @@
   },
   {
     "Name": "TestMVIndexSelection",
-    "Cases": []
+    "Cases": [
+      {
+        "SQL": "select (j->'$.int') from t where (1 member of (j->'$.int')",
+        "Plan": null
+      },
+      {
+        "SQL": "",
+        "Plan": null
+      },
+      {
+        "SQL": "",
+        "Plan": null
+      }
+    ]
   },
   {
     "Name": "TestIndexMergePathGeneration",
