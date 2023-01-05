@@ -426,14 +426,18 @@ type JobMeta struct {
 
 // BackfillMeta is meta info of the backfill job.
 type BackfillMeta struct {
-	EndInclude bool   `json:"end_include"`
-	ErrMsg     string `json:"err_msg"`
+	PhysicalTableID int64  `json:"physical_table_id"`
+	IsUnique        bool   `json:"is_unique"`
+	EndInclude      bool   `json:"end_include"`
+	ErrMsg          string `json:"err_msg"`
 
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
-	*JobMeta      `json:"job_meta"`
+	ReorgTp       ReorgType                        `json:"reorg_tp"`
+
+	*JobMeta `json:"job_meta"`
 }
 
 // Encode encodes BackfillMeta with json format.
@@ -941,6 +945,8 @@ type SchemaDiff struct {
 	OldTableID int64 `json:"old_table_id"`
 	// OldSchemaID is the schema ID before rename table, only used by rename table DDL.
 	OldSchemaID int64 `json:"old_schema_id"`
+	// RegenerateSchemaMap means whether to rebuild the schema map when applying to the schema diff.
+	RegenerateSchemaMap bool `json:"regenerate_schema_map"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }

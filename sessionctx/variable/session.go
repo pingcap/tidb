@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -671,13 +672,6 @@ type SessionVars struct {
 		value string
 	}
 
-	// mppTaskIDAllocator is used to allocate mpp task id for a session.
-	mppTaskIDAllocator struct {
-		mu     sync.Mutex
-		lastTS uint64
-		taskID int64
-	}
-
 	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
 	Status uint16
 
@@ -1171,9 +1165,6 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData TemporaryTableData
 
-	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed. It maps store address(string) to fail time(time.Time).
-	MPPStoreLastFailTime *sync.Map
-
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
 
@@ -1454,20 +1445,6 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 	return sc
 }
 
-// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
-// startTs is different.
-func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
-	s.mppTaskIDAllocator.mu.Lock()
-	defer s.mppTaskIDAllocator.mu.Unlock()
-	if s.mppTaskIDAllocator.lastTS == startTS {
-		s.mppTaskIDAllocator.taskID++
-		return s.mppTaskIDAllocator.taskID
-	}
-	s.mppTaskIDAllocator.lastTS = startTS
-	s.mppTaskIDAllocator.taskID = 1
-	return 1
-}
-
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
 	return s.allowMPPExecution
@@ -1713,7 +1690,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
 		TMPTableSize:                  DefTiDBTmpTableMaxSize,
-		MPPStoreLastFailTime:          new(sync.Map),
 		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
 		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
@@ -2336,12 +2312,6 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	sessionStates.LastFoundRows = s.LastFoundRows
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
-	sessionStates.MPPStoreLastFailTime = make(map[string]time.Time, 0)
-	s.MPPStoreLastFailTime.Range(
-		func(key, value interface{}) bool {
-			sessionStates.MPPStoreLastFailTime[key.(string)] = value.(time.Time)
-			return true
-		})
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
 
@@ -2377,9 +2347,6 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	s.LastFoundRows = sessionStates.LastFoundRows
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
-	for k, v := range sessionStates.MPPStoreLastFailTime {
-		s.MPPStoreLastFailTime.Store(k, v)
-	}
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
 
@@ -2769,6 +2736,9 @@ const (
 	SlowLogBackoffDetail = "Backoff_Detail"
 	// SlowLogResultRows is the row count of the SQL result.
 	SlowLogResultRows = "Result_rows"
+	// SlowLogWarnings is the warnings generated during executing the statement.
+	// Note that some extra warnings would also be printed through slow log.
+	SlowLogWarnings = "Warnings"
 	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
 	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
@@ -2780,6 +2750,15 @@ const (
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
 // It's controlled by the global variable `tidb_generate_binary_plan`.
 var GenerateBinaryPlan atomic2.Bool
+
+// JSONSQLWarnForSlowLog helps to print the SQLWarn through the slow log in JSON format.
+type JSONSQLWarnForSlowLog struct {
+	Level   string
+	Message string
+	// IsExtra means this SQL Warn is expected to be recorded only under some conditions (like in EXPLAIN) and should
+	// haven't been recorded as a warning now, but we recorded it anyway to help diagnostics.
+	IsExtra bool `json:",omitempty"`
+}
 
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
@@ -2820,6 +2799,7 @@ type SlowQueryLogItems struct {
 	// table -> name -> status
 	StatsLoadStatus   map[string]map[string]string
 	IsSyncStatsFailed bool
+	Warnings          []JSONSQLWarnForSlowLog
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2985,6 +2965,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
+	if len(logItems.Warnings) > 0 {
+		buf.WriteString(SlowLogRowPrefixStr + SlowLogWarnings + SlowLogSpaceMarkStr)
+		jsonEncoder := json.NewEncoder(&buf)
+		jsonEncoder.SetEscapeHTML(false)
+		// Note that the Encode() will append a '\n' so we don't need to add another.
+		err := jsonEncoder.Encode(logItems.Warnings)
+		if err != nil {
+			buf.WriteString(err.Error())
+		}
+	}
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
 	writeSlowLogItem(&buf, SlowLogIsSyncStatsFailed, strconv.FormatBool(logItems.IsSyncStatsFailed))
