@@ -16,9 +16,9 @@ package ddl
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/assert"
 )
@@ -27,13 +27,11 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 	falseValue := false
 	trueValue := true
 
-	dailyValue := int64(time.Hour * 24)
-
 	cases := []struct {
 		options            []*ast.TableOption
 		ttlInfo            *model.TTLInfo
 		ttlEnable          *bool
-		ttlCronJobSchedule *int64
+		ttlCronJobSchedule *duration.Duration
 		err                error
 	}{
 		{
@@ -57,7 +55,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      int64(time.Hour),
+				JobInterval:      duration.Duration{Hour: 1},
 			},
 			nil,
 			nil,
@@ -81,7 +79,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           false,
-				JobInterval:      int64(time.Hour),
+				JobInterval:      duration.Duration{Hour: 1},
 			},
 			&falseValue,
 			nil,
@@ -109,7 +107,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      int64(time.Hour),
+				JobInterval:      duration.Duration{Hour: 1},
 			},
 			&trueValue,
 			nil,
@@ -133,10 +131,10 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      int64(time.Hour * 24),
+				JobInterval:      duration.Duration{Day: 1},
 			},
 			nil,
-			&dailyValue,
+			&duration.Duration{Day: 1},
 			nil,
 		},
 	}

@@ -522,7 +522,7 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 
 	startTime := tableStatus.LastJobStartTime
 
-	return startTime.Add(time.Duration(table.TTLInfo.JobInterval)).Before(now)
+	return startTime.Add(table.TTLInfo.JobInterval.GoDuration()).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new

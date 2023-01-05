@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -3430,7 +3431,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
 					var ttlEnable *bool
-					var ttlJobInterval *int64
+					var ttlJobInterval *duration.Duration
 
 					if ttlOptionsHandled {
 						continue
@@ -5409,7 +5410,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 // When `ttlInfo` is nil, and `ttlCronJobSchedule` is not, it will use the original `.TTLInfo` in the table info and modify the
 // `.JobInterval`. If the `.TTLInfo` in the table info is empty, this function will return an error.
 // When `ttlInfo` is not nil, it simply submits the job with the `ttlInfo` and ignore the `ttlEnable`.
-func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *int64) error {
+func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *duration.Duration) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {

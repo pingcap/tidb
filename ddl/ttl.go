@@ -17,13 +17,13 @@ package ddl
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -51,7 +51,7 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 	// at least one for them is not nil
 	var ttlInfo *model.TTLInfo
 	var ttlInfoEnable *bool
-	var ttlInfoJobInterval *int64
+	var ttlInfoJobInterval *duration.Duration
 
 	if err := job.DecodeArgs(&ttlInfo, &ttlInfoEnable, &ttlInfoJobInterval); err != nil {
 		job.State = model.JobStateCancelled
@@ -166,7 +166,7 @@ func checkDropColumnWithTTLConfig(tblInfo *model.TableInfo, colName string) erro
 // if TTL, TTL_ENABLE or TTL_JOB_INTERVAL is not set in the config, the corresponding return value will be nil.
 // if both of TTL and TTL_ENABLE are set, the `ttlInfo.Enable` will be equal with `ttlEnable`.
 // if both of TTL and TTL_JOB_INTERVAL are set, the `ttlInfo.JobInterval` will be equal with `ttlCronJobSchedule`.
-func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *int64, err error) {
+func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *duration.Duration, err error) {
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionTTL:
@@ -184,18 +184,17 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
-				JobInterval:      int64(time.Hour),
+				JobInterval:      duration.Duration{Hour: 1},
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue
 		case ast.TableOptionTTLJobInterval:
-			schedule, err := time.ParseDuration(op.StrValue)
+			schedule, err := duration.ParseDuration(op.StrValue)
 			if err != nil {
 				// this branch is actually unreachable, as the value has been validated in parser
 				return nil, nil, nil, err
 			}
-			scheduleInteger := int64(schedule)
-			ttlCronJobSchedule = &scheduleInteger
+			ttlCronJobSchedule = &schedule
 		}
 	}
 

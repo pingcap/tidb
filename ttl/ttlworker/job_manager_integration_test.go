@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
 	dbsession "github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -59,7 +60,7 @@ func TestParallelLockNewJob(t *testing.T) {
 
 	sessionFactory := sessionFactory(t, store)
 
-	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: int64(time.Hour)}}}
+	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: duration.Duration{Hour: 1}}}}
 	// simply lock a new job
 	m := ttlworker.NewJobManager("test-id", nil, store)
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable

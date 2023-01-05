@@ -27,7 +27,6 @@ package parser
 
 import (
 	"strings"
-	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/ast"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/parser/duration"
 )
 
 %}
@@ -11898,7 +11898,7 @@ TableOption:
 	}
 |	"TTL_JOB_INTERVAL" EqOpt stringLit
 	{
-		_, err := time.ParseDuration($3)
+		_, err := duration.ParseDuration($3)
 		if err != nil {
 			yylex.AppendError(yylex.Errorf("The TTL_JOB_INTERVAL option is not a valid duration: %s", err.Error()))
 			return 1
