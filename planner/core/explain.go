@@ -811,7 +811,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 	}
 	if p.ctx.GetSessionVars().ExplainShowMppFeature {
 		if p.ExchangeSenderMeta != nil {
-			fmt.Fprintf(buffer, ", Compress: %s", p.ExchangeSenderMeta.Compress.String())
+			fmt.Fprintf(buffer, ", Compression: %s", p.ExchangeSenderMeta.Compress.String())
 		}
 	}
 	if len(p.Tasks) > 0 {

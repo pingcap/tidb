@@ -8154,7 +8154,7 @@ func TestMppVersion(t *testing.T) {
 			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
 			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
 			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
-			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compress: FAST"},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compression: FAST"},
 			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
 			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
@@ -8194,7 +8194,7 @@ func TestMppVersion(t *testing.T) {
 			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
 			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
 			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
-			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compress: HIGH_COMPRESSION"},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compression: HIGH_COMPRESSION"},
 			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
 			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
