@@ -135,6 +135,9 @@ func (c *etcdClient) sendCmd(ctx context.Context, cmdType string, obj interface{
 		CmdType:   cmdType,
 		Data:      data,
 	})
+	if err != nil {
+		return reqID, err
+	}
 
 	lease, err := c.etcdCli.Grant(ctx, ttlCmdKeyLeaseSeconds)
 	if err != nil {
