@@ -2092,6 +2092,9 @@ func TestSetMppVersionVariable(t *testing.T) {
 		tk.MustExec("SET GLOBAL mpp_version = -1")
 		tk.MustQuery("select @@global.mpp_version").Check(testkit.Rows("-1"))
 	}
+
+	// default 0
+	tk.MustQuery("select @@session.explain_mpp_feature").Check(testkit.Rows("0"))
 }
 
 func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
