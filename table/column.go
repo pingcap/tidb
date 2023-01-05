@@ -538,7 +538,9 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		return getColDefaultValueFromNil(ctx, col)
 	}
 
-	if col.GetType() != mysql.TypeTimestamp && col.GetType() != mysql.TypeDatetime {
+	switch col.GetType() {
+	case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDatetime:
+	default:
 		value, err := CastValue(ctx, types.NewDatum(defaultVal), col, false, false)
 		if err != nil {
 			return types.Datum{}, err
