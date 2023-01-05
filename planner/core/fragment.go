@@ -84,11 +84,11 @@ type mppTaskGenerator struct {
 	is         infoschema.InfoSchema
 	frags      []*Fragment
 	cache      map[int]tasksAndFrags
-	MppVersion int64
+	MppVersion kv.MppVersion
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema, mppVersion int64) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema, mppVersion kv.MppVersion) ([]*Fragment, error) {
 	g := &mppTaskGenerator{
 		ctx:        ctx,
 		startTS:    startTs,
@@ -100,10 +100,10 @@ func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *Physic
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
-	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)), zap.Int64("mpp-version", e.MppVersion))
+	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)), zap.Int64("mpp-version", e.MppVersion.ToInt64()))
 	tidbTask := &kv.MPPTask{
-		StartTs: e.startTS,
-		ID:      -1,
+		StartTs:    e.startTS,
+		ID:         -1,
 		MppVersion: e.MppVersion,
 	}
 	_, frags, err := e.generateMPPTasksForExchangeSender(s)
@@ -135,10 +135,10 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 		_, ok := addressMap[addr]
 		if !ok {
 			mppTask := &kv.MPPTask{
-				Meta:    &mppAddr{addr: addr},
-				ID:      e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS),
-				StartTs: e.startTS,
-				TableID: -1,
+				Meta:       &mppAddr{addr: addr},
+				ID:         e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS),
+				StartTs:    e.startTS,
+				TableID:    -1,
 				MppVersion: e.MppVersion,
 			}
 			newTasks = append(newTasks, mppTask)

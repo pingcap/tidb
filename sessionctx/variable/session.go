@@ -1039,9 +1039,14 @@ type SessionVars struct {
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
 
-	MppVersion int64
+	// MppVersion indicates the mpp-version used to build mpp plan, if mpp-version is unspecified, use the latest version.
+	MppVersion kv.MppVersion
 
+	// MppExchangeCompressMethod is used to select data compression method in mpp exchange operator
 	MppExchangeCompressMethod kv.ExchangeCompressMethod
+
+	// ExplainShowMppFeature indicates whether to show mpp feature in explain result
+	ExplainShowMppFeature bool
 
 	PlannerSelectBlockAsName []ast.HintTable
 
@@ -1688,6 +1693,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		MppExchangeCompressMethod:     kv.DefaultExchangeCompressMethod,
 		MppVersion:                    kv.MppVersionUnspecified,
+		ExplainShowMppFeature:         DefExplainShowMppFeature,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

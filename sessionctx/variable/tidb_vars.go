@@ -257,8 +257,8 @@ const (
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
 
-	MppExchangeCompress = "mpp_exchange_compress"
-	MppVersion          = "mpp_version"
+	// ExplainShowMppFeature indicates whether to show mpp feature in explain result
+	ExplainShowMppFeature = "explain_mpp_feature"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -788,6 +788,12 @@ const (
 
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
+
+	// MppExchangeCompress indicates the data compression method in mpp exchange operator
+	MppExchangeCompress = "mpp_exchange_compress"
+
+	// MppVersion indicates the mpp-version used to build mpp plan
+	MppVersion = "mpp_version"
 )
 
 // TiDB vars that have only global scope
@@ -1141,6 +1147,7 @@ const (
 	DefPasswordReuseHistory                          = 0
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
+	DefExplainShowMppFeature                         = false
 )
 
 // Process global variables.

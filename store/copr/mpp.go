@@ -16,34 +16,27 @@ package copr
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/Masterminds/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -62,87 +55,7 @@ func (c *batchCopTask) GetAddress() string {
 type mppNodeMeta struct {
 	Address    string
 	Version    string
-	MppVersion int64
-}
-
-// GetClusterMinMppVersion get the min/max mpp-version from TiFlash stores in cluster
-func (c *MPPClient) GetClusterMinMppVersion(ctx context.Context) (int64, error) {
-	var nodes []*mppNodeMeta
-
-	// if use PD to get all stores info
-	{
-		pdClient := c.store.store.GetPDClient()
-		stores, err := pdClient.GetAllStores(context.Background(), pd.WithExcludeTombstone())
-		if err != nil {
-			return 0, err
-		}
-		for _, store := range stores {
-			nodes = append(nodes, &mppNodeMeta{
-				Address: store.Address,
-				Version: store.Version,
-			})
-			// empty version means the store is a mock store. Don't require tiflash version either.
-			if store.Version == "" || engine.IsTiFlash(store) {
-				continue
-			}
-			ver, err := semver.NewVersion(infosync.RemoveVAndHash(store.Version))
-			if err != nil {
-				return 0, fmt.Errorf("invalid release version %s", store.Version)
-			}
-			
-		}
-	}
-
-	// decide the mpp version of tiflash stores
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	minMppVersion := int64(math.MaxInt64)
-	maxMppVersion := int64(math.MinInt64)
-	availableCnt := 0
-	timeout := 2 * time.Second
-
-	wg.Add(len(tiflashStores))
-	logutil.BgLogger().Info("start to detect available mpp stores", zap.Int("total store count", len(tiflashStores)))
-	defer func() {
-		var mppInfo string
-		if availableCnt != 0 {
-			mppInfo = fmt.Sprintf("min-mpp-version %d, max-mpp-version %d", minMppVersion, maxMppVersion)
-		}
-		logutil.BgLogger().Info("finish detecting mpp stores", zap.Int("available store count", availableCnt), zap.String("mpp info", mppInfo))
-	}()
-
-	for i := range tiflashStores {
-		go func(idx int) {
-			defer wg.Done()
-
-			s := tiflashStores[idx]
-			resp, err := c.store.GetTiKVClient().SendRequest(ctx, s.GetAddress(), &tikvrpc.Request{
-				Type:    tikvrpc.CmdMPPAlive,
-				StoreTp: tikvrpc.TiFlash,
-				Req:     &mpp.IsAliveRequest{},
-				Context: kvrpcpb.Context{},
-			}, timeout)
-
-			if err != nil {
-				return
-			}
-
-			mppVersion := resp.Resp.(*mpp.IsAliveResponse).MppVersion
-
-			func() {
-				mu.Lock()
-				defer mu.Unlock()
-
-				minMppVersion = mathutil.Min(minMppVersion, mppVersion)
-				maxMppVersion = mathutil.Max(maxMppVersion, mppVersion)
-				availableCnt += 1
-			}()
-		}(i)
-	}
-	wg.Wait()
-
-	return minMppVersion, maxMppVersion, availableCnt
+	MppVersion kv.MppVersion
 }
 
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
@@ -238,7 +151,7 @@ type mppIterator struct {
 
 	startTs uint64
 
-	mppVersion int64
+	mppVersion kv.MppVersion
 
 	respChan chan *mppResponse
 
@@ -315,7 +228,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	}
 
 	// meta for current task.
-	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, TaskId: req.ID, Address: req.Meta.GetAddress(), MppVersion: req.MppVersion}
+	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, TaskId: req.ID, Address: req.Meta.GetAddress(), MppVersion: req.MppVersion.ToInt64()}
 
 	mppReq := &mpp.DispatchTaskRequest{
 		Meta:        taskMeta,
@@ -430,7 +343,7 @@ func (m *mppIterator) cancelMppTasks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	killReq := &mpp.CancelTaskRequest{
-		Meta: &mpp.TaskMeta{StartTs: m.startTs, MppVersion: m.mppVersion},
+		Meta: &mpp.TaskMeta{StartTs: m.startTs, MppVersion: m.mppVersion.ToInt64()},
 	}
 
 	disaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
@@ -454,9 +367,9 @@ func (m *mppIterator) cancelMppTasks() {
 		storeAddr := addr
 		wg.Run(func() {
 			_, err := m.store.GetTiKVClient().SendRequest(context.Background(), storeAddr, wrappedReq, tikv.ReadTimeoutShort)
-			logutil.BgLogger().Debug("cancel task", zap.Uint64("query id ", m.startTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", m.mppVersion))
+			logutil.BgLogger().Debug("cancel task", zap.Uint64("query id ", m.startTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", m.mppVersion.ToInt64()))
 			if err != nil {
-				logutil.BgLogger().Error("cancel task error", zap.Error(err), zap.Uint64("query id", m.startTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", m.mppVersion))
+				logutil.BgLogger().Error("cancel task error", zap.Error(err), zap.Uint64("query id", m.startTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", m.mppVersion.ToInt64()))
 				if disaggregatedTiFlash {
 					m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
 				}
@@ -471,7 +384,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
 			StartTs:    req.StartTs,
-			MppVersion: req.MppVersion,
+			MppVersion: req.MppVersion.ToInt64(),
 			TaskId:     -1,
 		},
 	}
@@ -555,7 +468,7 @@ func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDa
 		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", req.StartTs),
 			zap.String("storeAddr", req.Meta.GetAddress()),
-			zap.Int64("mpp-version", req.MppVersion),
+			zap.Int64("mpp-version", req.MppVersion.ToInt64()),
 			zap.Error(err))
 		return err
 	}
@@ -626,7 +539,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppVersion int64) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppVersion kv.MppVersion) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{

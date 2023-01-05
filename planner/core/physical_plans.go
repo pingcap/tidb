@@ -177,10 +177,10 @@ func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 }
 
 // GetMppVersion return mpp-version.
-func (p *PhysicalTableReader) GetMppVersion() int64 {
+func (p *PhysicalTableReader) GetMppVersion() kv.MppVersion {
 	if p.ReadReqType == MPP {
 		tp, ok := p.tablePlan.(*PhysicalExchangeSender)
-		// assert ok is always true
+		// assert ok is always true when typs is mpp
 		if ok {
 			return tp.MppVersion
 		}
@@ -1517,7 +1517,7 @@ type PhysicalExchangeSender struct {
 	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks              []*kv.MPPTask
-	MppVersion         int64
+	MppVersion         kv.MppVersion
 	ExchangeSenderMeta *mpp.ExchangeSenderMeta
 }
 

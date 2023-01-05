@@ -47,7 +47,7 @@ type MPPGather struct {
 	is           infoschema.InfoSchema
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
-	MppVersion   int64
+	MppVersion   kv.MppVersion
 	// ExchangeSenderMeta *mpp.ExchangeSenderMeta
 
 	mppReqs []*kv.MPPDispatchRequest
@@ -85,7 +85,7 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
 			zap.Int64("ID", mppTask.ID), zap.String("address", mppTask.Meta.GetAddress()),
 			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
-			zap.Int64("mpp-version", mppTask.MppVersion),
+			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
 			zap.String("exchange-compress-method", (pf.ExchangeSender.ExchangeSenderMeta.GetCompress().String())),
 		)
 		req := &kv.MPPDispatchRequest{

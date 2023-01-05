@@ -20,14 +20,14 @@ import (
 	"sync"
 	"time"
 
-	atomicutil "go.uber.org/atomic"
-
 	"github.com/pingcap/kvproto/pkg/mpp"
 )
 
+type MppVersion int64
+
 const (
 	// MppVersionV0 supports TiFlash version [~, ~]
-	MppVersionV0 int64 = iota
+	MppVersionV0 MppVersion = iota
 
 	// MppVersionV1 supports TiFlash version [v6.6.x, ~]
 	MppVersionV1
@@ -37,25 +37,29 @@ const (
 
 	mppVersionMax
 
-	// MaxMppVersion means the latest version used in MPP tasks
-	MaxMppVersion int64 = mppVersionMax - 1
+	// NewestMppVersion means the latest version used in MPP tasks
+	NewestMppVersion MppVersion = mppVersionMax - 1
 
 	// MppVersionUnspecified means the illegal version
-	MppVersionUnspecified int64 = -1
-
-	
+	MppVersionUnspecified MppVersion = -1
 )
 
-// TiDBMppVersion means the max MppVersion can be used in mpp plan
-var TiDBMppVersion = atomicutil.NewInt64(MppVersionV0)
+func (v MppVersion) ToInt64() int64 {
+	return int64(v)
+}
 
-var mppVersionFeatures = map[int64]string{
+// GetTiDBMppVersion returns the mpp-version can be used in mpp plan
+func GetTiDBMppVersion() MppVersion {
+	return NewestMppVersion
+}
+
+var mppVersionFeatures = map[MppVersion]string{
 	MppVersionV0: "none",
 	MppVersionV1: "exchange data compression",
 }
 
 // GetMppVersionFeatures return the features for mpp-version
-func GetMppVersionFeatures(mppVersion int64) string {
+func GetMppVersionFeatures(mppVersion MppVersion) string {
 	val, ok := mppVersionFeatures[mppVersion]
 	if ok {
 		return val
@@ -63,28 +67,17 @@ func GetMppVersionFeatures(mppVersion int64) string {
 	return ""
 }
 
-var mppVersionDefaultClusterVersion = map[int64]string{
-	MppVersionV1: "6.7.0",
-}
-
-// Default cluster version to use MppVersionV*
-// If TiFlash support MppVersionV* in version A.B.C, set default required cluster version to >= A.(B+1).0
-
-// GetMppVersionDefaultClusterVersion return the minimal cluster version to use mpp-version
-func GetMppVersionDefaultClusterVersion(mppVersion int64) string {
-	val, ok := mppVersionDefaultClusterVersion[mppVersion]
-	if ok {
-		return val
-	}
-	return ""
-}
-
 // FmtMppVersion return
-func FmtMppVersion(v int64) string {
+func FmtMppVersion(v MppVersion) string {
+	var version string
 	if v == MppVersionUnspecified {
-		return fmt.Sprintf("unspecified(use %d)", TiDBMppVersion.Load())
+		v = GetTiDBMppVersion()
+		version = fmt.Sprintf("unspecified(use %d)", v)
+	} else {
+		version = fmt.Sprintf("%d", v)
 	}
-	return fmt.Sprintf("%d", v)
+
+	return fmt.Sprintf("`%s` features `%s`", version, GetMppVersionFeatures(v))
 }
 
 // MPPTaskMeta means the meta info such as location of a mpp task.
@@ -99,7 +92,7 @@ type MPPTask struct {
 	ID         int64       // mppTaskID
 	StartTs    uint64      //
 	TableID    int64       // physical table id
-	MppVersion int64       // mpp version
+	MppVersion MppVersion  // mpp version
 
 	PartitionTableIDs []int64
 }
@@ -109,7 +102,7 @@ func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	meta := &mpp.TaskMeta{
 		StartTs:    t.StartTs,
 		TaskId:     t.ID,
-		MppVersion: t.MppVersion,
+		MppVersion: t.MppVersion.ToInt64(),
 	}
 	if t.ID != -1 {
 		meta.Address = t.Meta.GetAddress()
@@ -142,7 +135,7 @@ type MPPDispatchRequest struct {
 	StartTs            uint64
 	ID                 int64 // identify a single task
 	State              MppTaskStates
-	MppVersion         int64                   // mpp version
+	MppVersion         MppVersion              // mpp version
 	ExchangeSenderMeta *mpp.ExchangeSenderMeta // exchange sender info, compress method
 }
 
@@ -152,9 +145,7 @@ type MPPClient interface {
 	// TODO:: This interface will be refined after we support more executors.
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppVersion int64) Response
-
-	GetClusterMinMppVersion(ctx context.Context) []*MppNodeMeta
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppVersion MppVersion) Response
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
@@ -170,12 +161,12 @@ type MPPBuildTasksRequest struct {
 type ExchangeCompressMethod int
 
 const (
-	// ExchangeCompressMethodNONE means no compression
+	// ExchangeCompressMethodNONE indicates no compression
 	ExchangeCompressMethodNONE ExchangeCompressMethod = iota
-	// ExchangeCompressMethodLZ4 means compress method LZ4
-	ExchangeCompressMethodLZ4
-	// ExchangeCompressMethodZSTD means compress method ZSTD
-	ExchangeCompressMethodZSTD
+	// ExchangeCompressMethodFast indicates fast compression/decompression speed, compression ratio is lower than HC mode
+	ExchangeCompressMethodFast
+	// ExchangeCompressMethodHC indicates high compression (HC) ratio mode
+	ExchangeCompressMethodHC
 	// ExchangeCompressMethodUnspecified means unspecified compress method, let TiDB choose one
 	ExchangeCompressMethodUnspecified
 
@@ -210,12 +201,12 @@ func (t ExchangeCompressMethod) ToMppCompressMethod() mpp.CompressMethod {
 	switch t {
 	case ExchangeCompressMethodNONE:
 		return mpp.CompressMethod_NONE
-	case ExchangeCompressMethodLZ4:
-		return mpp.CompressMethod_LZ4
-	case ExchangeCompressMethodZSTD:
-		return mpp.CompressMethod_ZSTD
+	case ExchangeCompressMethodFast:
+		return mpp.CompressMethod_FAST
+	case ExchangeCompressMethodHC:
+		return mpp.CompressMethod_HIGH_COMPRESSION
 	}
 
-	// TODO: use LZ4 as the defualt method
-	return mpp.CompressMethod_NONE
+	// Use `FAST` as the defualt method
+	return mpp.CompressMethod_FAST
 }

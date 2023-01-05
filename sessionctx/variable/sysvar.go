@@ -2205,18 +2205,18 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, Value: strconv.FormatInt(kv.MppVersionUnspecified, 10),
+	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, Value: strconv.FormatInt((kv.MppVersionUnspecified.ToInt64()), 10),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			version, err := strconv.ParseInt(normalizedValue, 10, 64)
 			if err != nil {
 				return normalizedValue, err
 			}
-			if version >= kv.MppVersionUnspecified && version <= kv.MaxMppVersion {
+			if kv.MppVersion(version) >= kv.MppVersionUnspecified && kv.MppVersion(version) <= kv.NewestMppVersion {
 				return normalizedValue, nil
 			}
 			errMsg := fmt.Sprintf("incorrect value: `%s`. `%s` options: `%d` unspecified(recommended)",
 				originalValue, MppVersion, kv.MppVersionUnspecified)
-			for i := kv.MppVersionV0; i <= kv.MaxMppVersion; i += 1 {
+			for i := kv.MppVersionV0; i <= kv.NewestMppVersion; i += 1 {
 				errMsg = fmt.Sprintf("%s, `%d` features `%s`", errMsg, i, kv.GetMppVersionFeatures(i))
 			}
 
@@ -2227,13 +2227,17 @@ var defaultSysVars = []*SysVar{
 			if err != nil {
 				return err
 			}
-			s.MppVersion = version
+			s.MppVersion = kv.MppVersion(version)
 			return nil
 		},
 		GetSession: func(s *SessionVars) (string, error) {
 			return kv.FmtMppVersion(s.MppVersion), nil
 		},
 	},
+	{Scope: ScopeSession, Name: ExplainShowMppFeature, Value: BoolToOnOff(DefExplainShowMppFeature), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.ExplainShowMppFeature = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
