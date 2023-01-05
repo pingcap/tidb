@@ -216,3 +216,30 @@ func TestGCOutdatedHistoryStats(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'",
 		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 }
+
+func TestPartitionTableHistoricalStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (a int, b int, index idx(b))
+PARTITION BY RANGE ( a ) (
+PARTITION p0 VALUES LESS THAN (6)
+)`)
+	tk.MustExec("delete from mysql.stats_history")
+
+	tk.MustExec("analyze table test.t")
+	// dump historical stats
+	h := dom.StatsHandle()
+	hsWorker := dom.GetHistoricalStatsWorker()
+
+	// assert global table and partition table be dumped
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	err := hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	tblID = hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	tk.MustQuery("select count(*) from mysql.stats_history").Check(testkit.Rows("2"))
+}
