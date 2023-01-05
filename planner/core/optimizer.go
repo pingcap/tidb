@@ -894,6 +894,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 		helper.plans = append(helper.plans, &x.basePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashAgg:
+		// Todo: allow hash aggregation's output still benefits from fine grained shuffle
 		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*basePhysicalPlan{}}
 		aggHelper.plans = append(aggHelper.plans, &x.basePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
