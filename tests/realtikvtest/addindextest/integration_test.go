@@ -150,7 +150,7 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 	sb.WriteString("insert into t values ")
 	for i := 0; i < 10240; i++ {
 		sb.WriteString(fmt.Sprintf("(%d, '[%d, %d, %d]')", i, i+1, i+2, i+3))
-		if i != 99 {
+		if i != 10240-1 {
 			sb.WriteString(",")
 		}
 	}
