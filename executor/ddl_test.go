@@ -558,6 +558,17 @@ func TestAlterTableAddColumn(t *testing.T) {
 	tk.MustExec("create sequence alter_seq")
 	err = tk.ExecToErr("alter table alter_seq add column c int")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	tk.MustExec("alter table alter_test add column c4 date default current_date")
+	now = time.Now().Format(types.DateFormat)
+	r, err = tk.Exec("select c4 from alter_test")
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(context.Background(), req)
+	require.NoError(t, err)
+	row = req.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.GreaterOrEqual(t, now, row.GetTime(0).String())
+	require.Nil(t, r.Close())
 	tk.MustExec("drop sequence alter_seq")
 }
 
