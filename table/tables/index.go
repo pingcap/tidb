@@ -574,7 +574,7 @@ func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *mode
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         col.ID,
 			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col).ArrayType(),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
 	return colInfo
@@ -585,7 +585,7 @@ func BuildFieldTypesForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.Tab
 	tps := make([]*types.FieldType, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
 		col := tblInfo.Columns[idxCol.Offset]
-		tps = append(tps, rowcodec.FieldTypeFromModelColumn(col).ArrayType())
+		tps = append(tps, rowcodec.FieldTypeFromModelColumn(col))
 	}
 	return tps
 }
@@ -600,7 +600,7 @@ func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *
 			col := tblInfo.Columns[idxCol.Offset]
 			colInfo = append(colInfo, rowcodec.ColInfo{
 				ID: col.ID,
-				Ft: rowcodec.FieldTypeFromModelColumn(col).ArrayType(),
+				Ft: rowcodec.FieldTypeFromModelColumn(col),
 			})
 		}
 	}
