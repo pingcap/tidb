@@ -19,14 +19,14 @@ import (
 )
 
 var (
-	// ErrInvalidResourceGroupRUSettings is from group.go.
+	// ErrInvalidGroupSettings is from group.go.
 	ErrInvalidGroupSettings = errors.New("invalid group settings")
 	// ErrTooLongResourceGroupName is from group.go.
 	ErrTooLongResourceGroupName = errors.New("resource group name too long")
 	// ErrInvalidResourceGroupFormat is from group.go.
 	ErrInvalidResourceGroupFormat = errors.New("group settings with invalid format")
 	// ErrInvalidResourceGroupDuplicatedMode is from group.go.
-	ErrInvalidResourceGroupDuplicatedMode = errors.New("only one of RUMode and NativeMode can be set")
+	ErrInvalidResourceGroupDuplicatedMode = errors.New("cannot set RU mode and Raw mode options at the same time")
 	// ErrUnknownResourceGroupMode is from group.go.
 	ErrUnknownResourceGroupMode = errors.New("unknown resource group mode")
 )

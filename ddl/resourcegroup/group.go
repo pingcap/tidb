@@ -78,7 +78,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 			return nil, errors.Annotate(ErrInvalidResourceGroupFormat, err.Error())
 		}
 
-		group.Mode = rmpb.GroupMode_NativeMode
+		group.Mode = rmpb.GroupMode_RawMode
 		group.ResourceSettings = &rmpb.GroupResourceSettings{
 			Cpu: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{

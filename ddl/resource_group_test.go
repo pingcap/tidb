@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
@@ -105,7 +106,7 @@ func TestResourceGroup(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
 
-	tk.MustContainErrMsg("create resource group x RRU_PER_SEC=1000, CPU='8000m';", "only one of RUMode and NativeMode can be set")
+	tk.MustContainErrMsg("create resource group x RRU_PER_SEC=1000, CPU='8000m';", resourcegroup.ErrInvalidResourceGroupDuplicatedMode.Error())
 	// TODO: privilege check & constraint syntax check.
 }
 
