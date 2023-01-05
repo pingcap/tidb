@@ -301,6 +301,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if oldTbInfoID > 0 && orReplace {
 			err = t.DropTableOrView(schemaID, oldTbInfoID)
 			if err != nil {
+				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
 			err = t.GetAutoIDAccessors(schemaID, oldTbInfoID).Del()
