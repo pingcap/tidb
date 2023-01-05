@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -42,29 +44,50 @@ func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ e
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = checkAddForeignKeyValidInOwner(d, t, job, job.SchemaName, tblInfo, &fkInfo, fkCheck)
-	if err != nil {
-		return ver, err
+	if job.IsRollingback() {
+		return dropForeignKey(d, t, job, tblInfo, fkInfo.Name)
 	}
-	fkInfo.ID = allocateFKIndexID(tblInfo)
-	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
-
-	originalState := fkInfo.State
-	switch fkInfo.State {
+	switch job.SchemaState {
 	case model.StateNone:
-		// We just support record the foreign key, so we just make it public.
-		// none -> public
-		fkInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != fkInfo.State)
+		err = checkAddForeignKeyValidInOwner(d, t, job.SchemaName, tblInfo, &fkInfo, fkCheck)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		fkInfo.State = model.StateWriteOnly
+		fkInfo.ID = allocateFKIndexID(tblInfo)
+		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
+		return ver, nil
+	case model.StateWriteOnly:
+		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, &fkInfo, fkCheck)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, err
+		}
+		tblInfo.ForeignKeys[len(tblInfo.ForeignKeys)-1].State = model.StateWriteReorganization
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteReorganization
+	case model.StateWriteReorganization:
+		tblInfo.ForeignKeys[len(tblInfo.ForeignKeys)-1].State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
+		job.SchemaState = model.StatePublic
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		return ver, nil
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStack("foreign key", fkInfo.State)
 	}
+	return ver, nil
 }
 
 func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -74,29 +97,27 @@ func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		return ver, errors.Trace(err)
 	}
 
-	var (
-		fkName model.CIStr
-		found  bool
-		fkInfo model.FKInfo
-	)
+	var fkName model.CIStr
 	err = job.DecodeArgs(&fkName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	return dropForeignKey(d, t, job, tblInfo, fkName)
+}
 
+func dropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fkName model.CIStr) (ver int64, err error) {
+	var fkInfo *model.FKInfo
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.Name.L == fkName.L {
-			found = true
-			fkInfo = *fk
+			fkInfo = fk
+			break
 		}
 	}
-
-	if !found {
+	if fkInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrForeignKeyNotExists.GenWithStackByArgs(fkName)
 	}
-
 	nfks := tblInfo.ForeignKeys[:0]
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.Name.L != fkName.L {
@@ -104,24 +125,18 @@ func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		}
 	}
 	tblInfo.ForeignKeys = nfks
-
-	originalState := fkInfo.State
-	switch fkInfo.State {
-	case model.StatePublic:
-		// We just support record the foreign key, so we just make it none.
-		// public -> none
-		fkInfo.State = model.StateNone
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != fkInfo.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		job.SchemaState = fkInfo.State
-		return ver, nil
-	default:
-		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("foreign key", fkInfo.State)
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
+	// Finish this job.
+	if job.IsRollingback() {
+		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+	} else {
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	}
+	job.SchemaState = model.StateNone
+	return ver, err
 }
 
 func allocateFKIndexID(tblInfo *model.TableInfo) int64 {
@@ -248,6 +263,12 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 	if referTblInfo.TempTableType != model.TempTableNone || tblInfo.TempTableType != model.TempTableNone {
 		return infoschema.ErrCannotAddForeign
 	}
+	if referTblInfo.TTLInfo != nil {
+		return dbterror.ErrUnsupportedTTLReferencedByFK
+	}
+	if referTblInfo.GetPartitionInfo() != nil || tblInfo.GetPartitionInfo() != nil {
+		return infoschema.ErrForeignKeyOnPartitioned
+	}
 
 	// check refer columns in parent table.
 	for i := range fkInfo.RefCols {
@@ -273,7 +294,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 		}
 	}
 	// check refer columns should have index.
-	if model.FindIndexByColumns(referTblInfo, fkInfo.RefCols...) == nil {
+	if model.FindIndexByColumns(referTblInfo, referTblInfo.Indices, fkInfo.RefCols...) == nil {
 		return infoschema.ErrForeignKeyNoIndexInParent.GenWithStackByArgs(fkInfo.Name, fkInfo.RefTable)
 	}
 	return nil
@@ -616,21 +637,10 @@ func checkAddForeignKeyValid(is infoschema.InfoSchema, schema string, tbInfo *mo
 	if err != nil {
 		return err
 	}
-	if len(fk.Cols) == 1 && tbInfo.PKIsHandle {
-		pkCol := tbInfo.GetPkColInfo()
-		if pkCol != nil && pkCol.Name.L == fk.Cols[0].L {
-			return nil
-		}
-	}
-	// check foreign key columns should have index.
-	// TODO(crazycs520): we can remove this check after TiDB support auto create index if needed when add foreign key.
-	if model.FindIndexByColumns(tbInfo, fk.Cols...) == nil {
-		return errors.Errorf("Failed to add the foreign key constraint. Missing index for '%s' foreign key columns in the table '%s'", fk.Name, tbInfo.Name)
-	}
 	return nil
 }
 
-func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
+func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, schema string, tbInfo *model.TableInfo, fk *model.FKInfo, fkCheck bool) error {
 	err := checkFKDupName(tbInfo, fk.Name)
 	if err != nil {
 		return err
@@ -644,7 +654,76 @@ func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, sch
 	}
 	err = checkAddForeignKeyValid(is, schema, tbInfo, fk, fkCheck)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		return errors.Trace(err)
 	}
-	return errors.Trace(err)
+	// check foreign key columns should have index.
+	if len(fk.Cols) == 1 && tbInfo.PKIsHandle {
+		pkCol := tbInfo.GetPkColInfo()
+		if pkCol != nil && pkCol.Name.L == fk.Cols[0].L {
+			return nil
+		}
+	}
+	if model.FindIndexByColumns(tbInfo, tbInfo.Indices, fk.Cols...) == nil {
+		return errors.Errorf("Failed to add the foreign key constraint. Missing index for '%s' foreign key columns in the table '%s'", fk.Name, tbInfo.Name)
+	}
+	return nil
+}
+
+func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKInfo, fkCheck bool) error {
+	if !fkCheck {
+		return nil
+	}
+	sctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	originValue := sctx.GetSessionVars().OptimizerEnableNAAJ
+	sctx.GetSessionVars().OptimizerEnableNAAJ = true
+	defer func() {
+		sctx.GetSessionVars().OptimizerEnableNAAJ = originValue
+		w.sessPool.put(sctx)
+	}()
+
+	var buf strings.Builder
+	buf.WriteString("select 1 from %n.%n where ")
+	paramsList := make([]interface{}, 0, 4+len(fkInfo.Cols)*2)
+	paramsList = append(paramsList, schema, table)
+	for i, col := range fkInfo.Cols {
+		if i == 0 {
+			buf.WriteString("%n is not null")
+			paramsList = append(paramsList, col.L)
+		} else {
+			buf.WriteString(" and %n is not null")
+			paramsList = append(paramsList, col.L)
+		}
+	}
+	buf.WriteString(" and (")
+	for i, col := range fkInfo.Cols {
+		if i == 0 {
+			buf.WriteString("%n")
+		} else {
+			buf.WriteString(",%n")
+		}
+		paramsList = append(paramsList, col.L)
+	}
+	buf.WriteString(") not in (select ")
+	for i, col := range fkInfo.RefCols {
+		if i == 0 {
+			buf.WriteString("%n")
+		} else {
+			buf.WriteString(",%n")
+		}
+		paramsList = append(paramsList, col.L)
+	}
+	buf.WriteString(" from %n.%n ) limit 1")
+	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, buf.String(), paramsList...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rowCount := len(rows)
+	if rowCount != 0 {
+		return dbterror.ErrNoReferencedRow2.GenWithStackByArgs(fkInfo.String(schema, table))
+	}
+	return nil
 }

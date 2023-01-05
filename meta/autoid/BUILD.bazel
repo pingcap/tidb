@@ -4,12 +4,14 @@ go_library(
     name = "autoid",
     srcs = [
         "autoid.go",
+        "autoid_service.go",
         "errors.go",
         "memid.go",
     ],
     importpath = "github.com/pingcap/tidb/meta/autoid",
     visibility = ["//visibility:public"],
     deps = [
+        "//config",
         "//errno",
         "//kv",
         "//meta",
@@ -24,8 +26,12 @@ go_library(
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/autoid",
         "@com_github_tikv_client_go_v2//txnkv/txnsnapshot",
         "@com_github_tikv_client_go_v2//util",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -15,6 +15,8 @@
 package mydump_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"os"
@@ -989,4 +991,98 @@ func TestMaxScanFilesOption(t *testing.T) {
 	require.Equal(t, 1, len(dbMeta.Tables))
 	tbl = dbMeta.Tables[0]
 	require.Equal(t, maxScanFilesCount-2, len(tbl.DataFiles))
+}
+
+func TestExternalDataRoutes(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
+	s.touch(t, "test_1-schema-create.sql")
+	s.touch(t, "test_1.t1-schema.sql")
+	s.touch(t, "test_1.t1.sql")
+	s.touch(t, "test_2-schema-create.sql")
+	s.touch(t, "test_2.t2-schema.sql")
+	s.touch(t, "test_2.t2.sql")
+	s.touch(t, "test_3-schema-create.sql")
+	s.touch(t, "test_3.t1-schema.sql")
+	s.touch(t, "test_3.t1.sql")
+	s.touch(t, "test_3.t3-schema.sql")
+	s.touch(t, "test_3.t3.sql")
+
+	s.cfg.Mydumper.SourceID = "mysql-01"
+	s.cfg.Routes = []*router.TableRule{
+		{
+			TableExtractor: &router.TableExtractor{
+				TargetColumn: "c_table",
+				TableRegexp:  "t(.*)",
+			},
+			SchemaExtractor: &router.SchemaExtractor{
+				TargetColumn: "c_schema",
+				SchemaRegexp: "test_(.*)",
+			},
+			SourceExtractor: &router.SourceExtractor{
+				TargetColumn: "c_source",
+				SourceRegexp: "mysql-(.*)",
+			},
+			SchemaPattern: "test_*",
+			TablePattern:  "t*",
+			TargetSchema:  "test",
+			TargetTable:   "t",
+		},
+	}
+
+	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+
+	require.NoError(t, err)
+	var database *md.MDDatabaseMeta
+	for _, db := range mdl.GetDatabases() {
+		if db.Name == "test" {
+			require.Nil(t, database)
+			database = db
+		}
+	}
+	require.NotNil(t, database)
+	require.Len(t, database.Tables, 1)
+	require.Len(t, database.Tables[0].DataFiles, 4)
+	expectExtendCols := []string{"c_table", "c_schema", "c_source"}
+	expectedExtendVals := [][]string{
+		{"1", "1", "01"},
+		{"2", "2", "01"},
+		{"1", "3", "01"},
+		{"3", "3", "01"},
+	}
+	for i, fileInfo := range database.Tables[0].DataFiles {
+		require.Equal(t, expectExtendCols, fileInfo.FileMeta.ExtendData.Columns)
+		require.Equal(t, expectedExtendVals[i], fileInfo.FileMeta.ExtendData.Values)
+	}
+}
+
+func TestSampleFileCompressRatio(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+	store, err := storage.NewLocalStorage(s.sourceDir)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	byteArray := make([]byte, 0, 4096)
+	bf := bytes.NewBuffer(byteArray)
+	compressWriter := gzip.NewWriter(bf)
+	csvData := []byte("aaaa\n")
+	for i := 0; i < 1000; i++ {
+		_, err = compressWriter.Write(csvData)
+		require.NoError(t, err)
+	}
+	err = compressWriter.Flush()
+	require.NoError(t, err)
+
+	fileName := "test_1.t1.csv.gz"
+	err = store.WriteFile(ctx, fileName, bf.Bytes())
+	require.NoError(t, err)
+
+	ratio, err := md.SampleFileCompressRatio(ctx, md.SourceFileMeta{
+		Path:        fileName,
+		Compression: md.CompressionGZ,
+	}, store)
+	require.NoError(t, err)
+	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
 }

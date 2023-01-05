@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -264,7 +265,7 @@ func TestTableRange(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -453,7 +454,7 @@ create table t(
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -814,7 +815,7 @@ func TestColumnRange(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -827,7 +828,7 @@ func TestColumnRange(t *testing.T) {
 			}
 			col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 			require.NotNil(t, col)
-			conds = ranger.ExtractAccessConditionsForColumn(conds, col)
+			conds = ranger.ExtractAccessConditionsForColumn(sctx, conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
 			result, _, _, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length, 0)
 			require.NoError(t, err)
@@ -865,6 +866,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx(b,c,d))")
 	testKit.MustExec("insert into t values(1,1,1,1,2),(2,1,2,1,0)")
@@ -890,6 +892,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_cost_model_version=2")
 	testKit.MustExec("drop table if exists t0")
 	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
 	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
@@ -1196,7 +1199,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -1264,7 +1267,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -1673,7 +1676,7 @@ create table t(
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -1914,7 +1917,7 @@ func TestTableShardIndex(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
 			ret := &plannercore.PreprocessorReturn{}
-			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 			require.NoError(t, err)
 			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
@@ -1942,7 +1945,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err)
@@ -1960,7 +1963,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err)
@@ -2105,7 +2108,7 @@ func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *p
 	require.NoError(t, err)
 	require.Len(t, stmts, 1)
 	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+	err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 	require.NoError(t, err)
 	p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 	require.NoError(t, err)
@@ -2446,4 +2449,119 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	require.Equal(t, "[[-inf,+inf]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[]", fmt.Sprintf("%v", access))
 	require.Equal(t, "[in(test.t.b, 10, 20, 30)]", fmt.Sprintf("%v", remained))
+}
+
+func TestPrefixIndexRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`
+create table t(
+	a varchar(50),
+	b varchar(50),
+	c text(50),
+	d varbinary(50),
+	index idx_a(a(2)),
+	index idx_ab(a(2), b(2)),
+	index idx_c(c(2)),
+	index idx_d(d(2))
+)`)
+	tk.MustExec("set tidb_opt_prefix_index_single_scan = 1")
+
+	tests := []struct {
+		indexPos    int
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
+	}{
+		{
+			indexPos:    0,
+			exprStr:     "a is null",
+			accessConds: "[isnull(test.t.a)]",
+			filterConds: "[]",
+			resultStr:   "[[NULL,NULL]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a is not null",
+			accessConds: "[not(isnull(test.t.a))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'a' and b is null",
+			accessConds: "[eq(test.t.a, a) isnull(test.t.b)]",
+			filterConds: "[eq(test.t.a, a)]",
+			resultStr:   "[[\"a\" NULL,\"a\" NULL]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'a' and b is not null",
+			accessConds: "[eq(test.t.a, a) not(isnull(test.t.b))]",
+			filterConds: "[eq(test.t.a, a)]",
+			resultStr:   "[[\"a\" -inf,\"a\" +inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "c is null",
+			accessConds: "[isnull(test.t.c)]",
+			filterConds: "[]",
+			resultStr:   "[[NULL,NULL]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "c is not null",
+			accessConds: "[not(isnull(test.t.c))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "d is null",
+			accessConds: "[isnull(test.t.d)]",
+			filterConds: "[]",
+			resultStr:   "[[NULL,NULL]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "d is not null",
+			accessConds: "[not(isnull(test.t.d))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+	}
+
+	collate.SetNewCollationEnabledForTest(true)
+	defer func() { collate.SetNewCollationEnabledForTest(false) }()
+	ctx := context.Background()
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
+		sctx := tk.Session()
+		stmts, err := session.Parse(sctx, sql)
+		require.NoError(t, err, fmt.Sprintf("error %v, for expr %s", err, tt.exprStr))
+		require.Len(t, stmts, 1)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		require.NoError(t, err, fmt.Sprintf("error %v, for resolve name, expr %s", err, tt.exprStr))
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		require.NoError(t, err, fmt.Sprintf("error %v, for build plan, expr %s", err, tt.exprStr))
+		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+		require.NotNil(t, selection, fmt.Sprintf("expr:%v", tt.exprStr))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
+		}
+		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		require.NotNil(t, cols)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
+		require.NoError(t, err)
+		require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds), fmt.Sprintf("wrong access conditions for expr: %s", tt.exprStr))
+		require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds), fmt.Sprintf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
+		require.Equal(t, tt.resultStr, got, fmt.Sprintf("different for expr %s", tt.exprStr))
+	}
 }

@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 -- @@character_set_results = 'gbk', TiDB transforms row value into GBK charset.
 drop table if exists t;
 set names utf8mb4;

@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,21 +43,21 @@ const (
 	ScopeInstance ScopeFlag = 1 << 2
 
 	// TypeStr is the default
-	TypeStr TypeFlag = 0
+	TypeStr TypeFlag = iota
 	// TypeBool for boolean
-	TypeBool TypeFlag = 1
+	TypeBool
 	// TypeInt for integer
-	TypeInt TypeFlag = 2
+	TypeInt
 	// TypeEnum for Enum
-	TypeEnum TypeFlag = 3
+	TypeEnum
 	// TypeFloat for Double
-	TypeFloat TypeFlag = 4
+	TypeFloat
 	// TypeUnsigned for Unsigned integer
-	TypeUnsigned TypeFlag = 5
+	TypeUnsigned
 	// TypeTime for time of day (a TiDB extension)
-	TypeTime TypeFlag = 6
+	TypeTime
 	// TypeDuration for a golang duration (a TiDB extension)
-	TypeDuration TypeFlag = 7
+	TypeDuration
 
 	// On is the canonical string for ON
 	On = "ON"
@@ -84,7 +85,25 @@ const (
 // Global config name list.
 const (
 	GlobalConfigEnableTopSQL = "enable_resource_metering"
+	GlobalConfigSourceID     = "source_id"
 )
+
+func (s ScopeFlag) String() string {
+	var scopes []string
+	if s == ScopeNone {
+		return "NONE"
+	}
+	if s&ScopeSession != 0 {
+		scopes = append(scopes, "SESSION")
+	}
+	if s&ScopeGlobal != 0 {
+		scopes = append(scopes, "GLOBAL")
+	}
+	if s&ScopeInstance != 0 {
+		scopes = append(scopes, "INSTANCE")
+	}
+	return strings.Join(scopes, ",")
+}
 
 // SysVar is for system variable.
 // All the fields of SysVar should be READ ONLY after created.
@@ -119,7 +138,7 @@ type SysVar struct {
 	// and will be called on all variables in builtinGlobalVariable, regardless of their scope.
 	SetSession func(*SessionVars, string) error
 	// SetGlobal is called after validation
-	SetGlobal func(*SessionVars, string) error
+	SetGlobal func(context.Context, *SessionVars, string) error
 	// IsHintUpdatable indicate whether it's updatable via SET_VAR() hint (optional)
 	IsHintUpdatable bool
 	// Deprecated: Hidden previously meant that the variable still responds to SET but doesn't show up in SHOW VARIABLES
@@ -132,7 +151,7 @@ type SysVar struct {
 	// It can be used by instance-scoped variables to overwrite the previously expected value.
 	GetSession func(*SessionVars) (string, error)
 	// GetGlobal is a getter function for global scope.
-	GetGlobal func(*SessionVars) (string, error)
+	GetGlobal func(context.Context, *SessionVars) (string, error)
 	// GetStateValue gets the value for session states, which is used for migrating sessions.
 	// We need a function to override GetSession sometimes, because GetSession may not return the real value.
 	GetStateValue func(*SessionVars) (string, bool, error)
@@ -146,13 +165,15 @@ type SysVar struct {
 	// If the global variable has the global config name,
 	// it should store the global config into PD(etcd) too when set global variable.
 	GlobalConfigName string
+	// RequireDynamicPrivileges is a function to return a dynamic privilege list to check the set sysvar privilege
+	RequireDynamicPrivileges func(isGlobal bool, sem bool) []string
 }
 
 // GetGlobalFromHook calls the GetSession func if it exists.
-func (sv *SysVar) GetGlobalFromHook(s *SessionVars) (string, error) {
+func (sv *SysVar) GetGlobalFromHook(ctx context.Context, s *SessionVars) (string, error) {
 	// Call the Getter if there is one defined.
 	if sv.GetGlobal != nil {
-		val, err := sv.GetGlobal(s)
+		val, err := sv.GetGlobal(ctx, s)
 		if err != nil {
 			return val, err
 		}
@@ -223,9 +244,9 @@ func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 }
 
 // SetGlobalFromHook calls the SetGlobal func if it exists.
-func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string, skipAliases bool) error {
+func (sv *SysVar) SetGlobalFromHook(ctx context.Context, s *SessionVars, val string, skipAliases bool) error {
 	if sv.SetGlobal != nil {
-		return sv.SetGlobal(s, val)
+		return sv.SetGlobal(ctx, s, val)
 	}
 
 	// Call the SetGlobalSysVarOnly function on all the aliases for this sysVar
@@ -235,7 +256,7 @@ func (sv *SysVar) SetGlobalFromHook(s *SessionVars, val string, skipAliases bool
 
 	if !skipAliases && sv.Aliases != nil {
 		for _, aliasName := range sv.Aliases {
-			if err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(aliasName, val); err != nil {
+			if err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(ctx, aliasName, val, true); err != nil {
 				return err
 			}
 		}
@@ -362,6 +383,10 @@ func (sv *SysVar) checkTimeSystemVar(value string, vars *SessionVars) (string, e
 	if err != nil {
 		return "", err
 	}
+	// Add a modern date to it, as the timezone shift can differ across the history
+	// For example, the Asia/Shanghai refers to +08:05 before 1900
+	now := time.Now()
+	t = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
 	return t.Format(FullDayTimeFormat), nil
 }
 
@@ -530,7 +555,7 @@ func (sv *SysVar) SkipInit() bool {
 func (sv *SysVar) SkipSysvarCache() bool {
 	switch sv.Name {
 	case TiDBGCEnable, TiDBGCRunInterval, TiDBGCLifetime,
-		TiDBGCConcurrency, TiDBGCScanLockMode:
+		TiDBGCConcurrency, TiDBGCScanLockMode, TiDBExternalTS:
 		return true
 	}
 	return false
@@ -604,9 +629,9 @@ type GlobalVarAccessor interface {
 	// GetGlobalSysVar gets the global system variable value for name.
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
-	SetGlobalSysVar(name string, value string) error
+	SetGlobalSysVar(ctx context.Context, name string, value string) error
 	// SetGlobalSysVarOnly sets the global system variable without calling the validation function or updating aliases.
-	SetGlobalSysVarOnly(name string, value string) error
+	SetGlobalSysVarOnly(ctx context.Context, name string, value string, updateLocal bool) error
 	// GetTiDBTableValue gets a value from mysql.tidb for the key 'name'
 	GetTiDBTableValue(name string) (string, error)
 	// SetTiDBTableValue sets a value+comment for the mysql.tidb key 'name'

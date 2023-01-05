@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
@@ -255,7 +256,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	se := &session{
 		store:       store,
-		sessionVars: variable.NewSessionVars(),
+		sessionVars: variable.NewSessionVars(nil),
 	}
 	se.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(se, domain.NewMockDomain())
@@ -276,7 +277,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 			initTblColIdxID(oldTblMeta)
 			// Indices[0] does not exist at the start.
 			oldTblMeta.Indices = oldTblMeta.Indices[1:]
-			oldTbInfo, err := table.TableFromMeta(nil, oldTblMeta)
+			oldTbInfo, err := table.TableFromMeta(autoid.NewAllocators(false), oldTblMeta)
 			require.NoError(t, err)
 			oldTblMeta.Indices[0].State = startState
 			oldTblMeta.Indices[2].State = endState
@@ -296,7 +297,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 			// The last index "c_d_e_str_prefix is dropped.
 			newTblMeta.Indices = newTblMeta.Indices[:len(newTblMeta.Indices)-1]
 			newTblMeta.Indices[0].Unique = false
-			newTblInfo, err := table.TableFromMeta(nil, newTblMeta)
+			newTblInfo, err := table.TableFromMeta(autoid.NewAllocators(false), newTblMeta)
 			require.NoError(t, err)
 			newTblMeta.Indices[0].State = endState
 			// Indices[1] is newly created.

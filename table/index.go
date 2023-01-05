@@ -73,6 +73,8 @@ func WithCtx(ctx context.Context) CreateIdxOptFunc {
 type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
+	// TableMeta returns TableInfo
+	TableMeta() *model.TableInfo
 	// Create supports insert into statement.
 	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.

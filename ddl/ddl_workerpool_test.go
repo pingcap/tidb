@@ -15,17 +15,17 @@
 package ddl
 
 import (
+	"context"
 	"testing"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDDLWorkerPool(t *testing.T) {
 	f := func() func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
-			wk := newWorker(nil, addIdxWorker, nil, nil, nil, true)
+			wk := newWorker(nil, addIdxWorker, nil, nil, nil)
 			return wk, nil
 		}
 	}
@@ -35,10 +35,9 @@ func TestDDLWorkerPool(t *testing.T) {
 }
 
 func TestBackfillWorkerPool(t *testing.T) {
-	reorgInfo := &reorgInfo{Job: &model.Job{ID: 1}}
 	f := func() func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
-			wk := newBackfillWorker(nil, 1, nil, reorgInfo, typeAddIndexWorker)
+			wk := newBackfillWorker(context.Background(), 1, nil)
 			return wk, nil
 		}
 	}

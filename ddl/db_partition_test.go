@@ -383,7 +383,14 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 ) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, errno.ErrTooManyPartitions)
 
 	tk.MustExec("CREATE TABLE t_linear (a int, b varchar(128)) PARTITION BY LINEAR HASH(a) PARTITIONS 4")
-	tk.MustGetErrCode("select * from t_linear partition (p0)", errno.ErrPartitionClauseOnNonpartitioned)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 LINEAR HASH is not supported, using non-linear HASH instead"))
+	tk.MustQuery(`show create table t_linear`).Check(testkit.Rows("" +
+		"t_linear CREATE TABLE `t_linear` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(128) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 4"))
+	tk.MustQuery("select * from t_linear partition (p0)").Check(testkit.Rows())
 
 	tk.MustExec(`CREATE TABLE t_sub (a int, b varchar(128)) PARTITION BY RANGE( a ) SUBPARTITION BY HASH( a )
                                    SUBPARTITIONS 2 (
@@ -1402,7 +1409,7 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	tk.MustExec(`alter table t drop partition p1`)
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "5", "<nil>"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil>", "1", "5"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2240,14 +2247,6 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
-			// foreign key test
-			// Partition table doesn't support to add foreign keys in mysql
-			"create table pt9 (id int not null primary key auto_increment,t_id int not null) partition by hash(id) partitions 1;",
-			"create table nt9 (id int not null primary key auto_increment, t_id int not null,foreign key fk_id (t_id) references pt5(id));",
-			"alter table pt9 exchange partition p0 with table nt9;",
-			dbterror.ErrPartitionExchangeForeignKey,
-		},
-		{
 			// Generated column (virtual)
 			"create table pt10 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) virtual) partition by hash(id) partitions 1;",
 			"create table nt10 (id int not null, lname varchar(30), fname varchar(100));",
@@ -2456,7 +2455,7 @@ func TestExchangePartitionHook(t *testing.T) {
 			tkCancel.MustGetErrCode("insert into nt values (5)", errno.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	hook.OnJobUpdatedExported = hookFunc
+	hook.OnJobUpdatedExported.Store(&hookFunc)
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
@@ -3743,11 +3742,12 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 		}
 	}
 	var errCount int32
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
 			atomic.AddInt32(&errCount, 1)
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	done1 := make(chan error, 1)
 	go backgroundExec(store, "alter table test.t truncate partition p0;", done1)
 	done2 := make(chan error, 1)
@@ -4060,7 +4060,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	tk.MustQuery("select count(*) from ipt").Check(testkit.Rows("27"))
 
-	tk.MustExec("create table idpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
+	tk.MustExec("create table idpt (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
 	tk.MustQuery("SHOW CREATE TABLE idpt").Check(testkit.Rows(
 		"idpt CREATE TABLE `idpt` (\n" +
 			"  `id` date NOT NULL,\n" +
@@ -4086,7 +4086,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	// if using a month with 31 days.
 	// But managing partitions with the day-part of 29, 30 or 31 will be troublesome, since once the FIRST is not 31
 	// both the ALTER TABLE t FIRST PARTITION and MERGE FIRST PARTITION will have issues
-	tk.MustExec("create table t (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
+	tk.MustExec("create table t (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `id` date NOT NULL,\n" +
@@ -4526,4 +4526,58 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "p3" VALUES LESS THAN ('''''',''''''),` + "\n" +
 		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n','\\''\t\n'),` + "\n" +
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
+}
+
+func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "modColPartRename"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int, b char) partition by range (a) (partition p0 values less than (10))`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a char, b char) partition by range columns (a) (partition p0 values less than ('z'))`)
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b char) partition by list (a) (partition p0 values in (10))`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a char, b char) partition by list columns (a) (partition p0 values in ('z'))`)
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b char) partition by hash (a) partitions 3`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+}
+
+func TestDropPartitionKeyColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database DropPartitionKeyColumn")
+	defer tk.MustExec("drop database DropPartitionKeyColumn")
+	tk.MustExec("use DropPartitionKeyColumn")
+
+	tk.MustExec("create table t1 (a tinyint, b char) partition by range (a) ( partition p0 values less than (10) )")
+	err := tk.ExecToErr("alter table t1 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t1 drop column b")
+
+	tk.MustExec("create table t2 (a tinyint, b char) partition by range (a-1) ( partition p0 values less than (10) )")
+	err = tk.ExecToErr("alter table t2 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t2 drop column b")
+
+	tk.MustExec("create table t3 (a tinyint, b char) partition by hash(a) partitions 4;")
+	err = tk.ExecToErr("alter table t3 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t3 drop column b")
+
+	tk.MustExec("create table t4 (a char, b char) partition by list columns (a) ( partition p0 values in ('0'),  partition p1 values in ('a'), partition p2 values in ('b'));")
+	err = tk.ExecToErr("alter table t4 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t4 drop column b")
 }

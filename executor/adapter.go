@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
@@ -57,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -191,12 +194,14 @@ func (a *recordSet) OnFetchReturned() {
 
 // TelemetryInfo records some telemetry information during execution.
 type TelemetryInfo struct {
-	UseNonRecursive      bool
-	UseRecursive         bool
-	UseMultiSchemaChange bool
-	UesExchangePartition bool
-	PartitionTelemetry   *PartitionTelemetryInfo
-	AccountLockTelemetry *AccountLockTelemetryInfo
+	UseNonRecursive       bool
+	UseRecursive          bool
+	UseMultiSchemaChange  bool
+	UesExchangePartition  bool
+	UseFlashbackToCluster bool
+	PartitionTelemetry    *PartitionTelemetryInfo
+	AccountLockTelemetry  *AccountLockTelemetryInfo
+	UseIndexMerge         bool
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
@@ -214,6 +219,7 @@ type PartitionTelemetryInfo struct {
 	UseCreateIntervalPartition       bool
 	UseAddIntervalPartition          bool
 	UseDropIntervalPartition         bool
+	UseCompactTablePartition         bool
 }
 
 // AccountLockTelemetryInfo records account lock/unlock information during execution
@@ -292,8 +298,12 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 
+	var pointExecutor *PointGetExecutor
+	useMaxTS := startTs == math.MaxUint64
+
 	// try to reuse point get executor
-	if a.PsStmt.Executor != nil {
+	// We should only use the cached the executor when the startTS is MaxUint64
+	if a.PsStmt.Executor != nil && useMaxTS {
 		exec, ok := a.PsStmt.Executor.(*PointGetExecutor)
 		if !ok {
 			logutil.Logger(ctx).Error("invalid executor type, not PointGetExecutor for point get path")
@@ -303,17 +313,21 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
 			exec.Init(pointGetPlan)
 			a.PsStmt.Executor = exec
+			pointExecutor = exec
 		}
 	}
-	if a.PsStmt.Executor == nil {
+
+	if pointExecutor == nil {
 		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
-		newExecutor := b.build(a.Plan)
+		pointExecutor = b.build(a.Plan).(*PointGetExecutor)
 		if b.err != nil {
 			return nil, b.err
 		}
-		a.PsStmt.Executor = newExecutor
+
+		if useMaxTS {
+			a.PsStmt.Executor = pointExecutor
+		}
 	}
-	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
 
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
@@ -363,7 +377,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	if err := plannercore.Preprocess(ctx, a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
 
@@ -466,8 +480,20 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if !ok {
 			oriIso = "REPEATABLE-READ"
 		}
-		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1"))
-		sctx.GetSessionVars().SetDistSQLScanConcurrency(1)
+		autoConcurrency, err1 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBAutoBuildStatsConcurrency)
+		terror.Log(err1)
+		if err1 == nil {
+			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, autoConcurrency))
+		}
+		sVal, err2 := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBSysProcScanConcurrency)
+		terror.Log(err2)
+		if err2 == nil {
+			concurrency, err3 := strconv.ParseInt(sVal, 10, 64)
+			terror.Log(err3)
+			if err3 == nil {
+				sctx.GetSessionVars().SetDistSQLScanConcurrency(int(concurrency))
+			}
+		}
 		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
@@ -479,7 +505,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	if sctx.GetSessionVars().StmtCtx.HasMemQuotaHint {
-		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
+		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
 	e, err := a.buildExecutor()
@@ -509,10 +535,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
 			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 		}
+		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
+		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
+			maxExecutionTime = 0
+		}
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 	}
 
 	failpoint.Inject("mockDelayInnerSessionExecute", func() {
@@ -535,11 +565,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
+	a.prepareFKCascadeContext(e)
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
-		if err != nil {
-			return result, err
-		}
-		err = a.handleForeignKeyTrigger(ctx, e)
 		return result, err
 	}
 
@@ -559,7 +586,32 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) error {
+func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e Executor) error {
+	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
+	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
+		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
+		// change first.
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
+		a.Ctx.StmtCommit()
+	}
+	err := a.handleForeignKeyTrigger(ctx, e, 1)
+	if err != nil {
+		err1 := a.handleFKTriggerError(stmtCtx)
+		if err1 != nil {
+			return errors.Errorf("handle foreign key trigger error failed, err: %v, original_err: %v", err1, err)
+		}
+		return err
+	}
+	if stmtCtx.ForeignKeyTriggerCtx.SavepointName != "" {
+		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(stmtCtx.ForeignKeyTriggerCtx.SavepointName)
+	}
+	return nil
+}
+
+var maxForeignKeyCascadeDepth = 15
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, depth int) error {
 	exec, ok := e.(WithForeignKeyTrigger)
 	if !ok {
 		return nil
@@ -571,6 +623,118 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor) erro
 			return err
 		}
 	}
+	fkCascades := exec.GetFKCascades()
+	for _, fkCascade := range fkCascades {
+		err := a.handleForeignKeyCascade(ctx, fkCascade, depth)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// handleForeignKeyCascade uses to execute foreign key cascade behaviour, the progress is:
+//  1. Build delete/update executor for foreign key on delete/update behaviour.
+//     a. Construct delete/update AST. We used to try generated SQL string first and then parse the SQL to get AST,
+//     but we need convert Datum to string, there may be some risks here, since assert_eq(datum_a, parse(datum_a.toString())) may be broken.
+//     so we chose to construct AST directly.
+//     b. Build plan by the delete/update AST.
+//     c. Build executor by the delete/update plan.
+//  2. Execute the delete/update executor.
+//  3. Close the executor.
+//  4. `StmtCommit` to commit the kv change to transaction mem-buffer.
+//  5. If the foreign key cascade behaviour has more fk value need to be cascaded, go to step 1.
+func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeExec, depth int) error {
+	if a.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		fkc.stats = &FKCascadeRuntimeStats{}
+		defer a.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.plan.ID(), fkc.stats)
+	}
+	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
+		return nil
+	}
+	if depth > maxForeignKeyCascadeDepth {
+		return ErrForeignKeyCascadeDepthExceeded.GenWithStackByArgs(maxForeignKeyCascadeDepth)
+	}
+	a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = true
+	defer func() {
+		a.Ctx.GetSessionVars().StmtCtx.InHandleForeignKeyTrigger = false
+	}()
+	if fkc.stats != nil {
+		start := time.Now()
+		defer func() {
+			fkc.stats.Total += time.Since(start)
+		}()
+	}
+	for {
+		e, err := fkc.buildExecutor(ctx)
+		if err != nil || e == nil {
+			return err
+		}
+		if err := e.Open(ctx); err != nil {
+			terror.Call(e.Close)
+			return err
+		}
+		err = Next(ctx, e, newFirstChunk(e))
+		if err != nil {
+			return err
+		}
+		err = e.Close()
+		if err != nil {
+			return err
+		}
+		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
+		// then the later fk cascade executors can see the mem-buffer changes.
+		a.Ctx.StmtCommit()
+		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
+// cascade behaviour and this ExecStmt is in transaction.
+func (a *ExecStmt) prepareFKCascadeContext(e Executor) {
+	exec, ok := e.(WithForeignKeyTrigger)
+	if !ok || !exec.HasFKCascades() {
+		return
+	}
+	sessVar := a.Ctx.GetSessionVars()
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades = true
+	if !sessVar.InTxn() {
+		return
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
+		return
+	}
+	// Record a txn savepoint if ExecStmt in transaction, the savepoint is use to do rollback when handle foreign key
+	// cascade failed.
+	savepointName := "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
+	memDBCheckpoint := txn.GetMemDBCheckpoint()
+	sessVar.TxnCtx.AddSavepoint(savepointName, memDBCheckpoint)
+	sessVar.StmtCtx.ForeignKeyTriggerCtx.SavepointName = savepointName
+}
+
+func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
+	if sc.ForeignKeyTriggerCtx.SavepointName == "" {
+		return nil
+	}
+	txn, err := a.Ctx.Txn(false)
+	if err != nil || !txn.Valid() {
+		return err
+	}
+	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
+	if savepointRecord == nil {
+		// Normally should never run into here, but just in case, rollback the transaction.
+		err = txn.Rollback()
+		if err != nil {
+			return err
+		}
+		return errors.Errorf("foreign key cascade savepoint '%s' not found, transaction is rollback, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
+	}
+	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
+	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
 	return nil
 }
 
@@ -580,7 +744,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
 		// done in the `defer` function. If the rs is not nil, the detachment will be done in
 		// `rs.Close` in `handleStmt`
-		if sc != nil && rs == nil {
+		if handled && sc != nil && rs == nil {
 			if sc.MemTracker != nil {
 				sc.MemTracker.Detach()
 			}
@@ -604,7 +768,8 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	if toCheck.Schema().Len() == 0 {
 		handled = !isExplainAnalyze
 		if isPessimistic {
-			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
+			err := a.handlePessimisticDML(ctx, toCheck)
+			return handled, nil, err
 		}
 		r, err := a.handleNoDelayExecutor(ctx, toCheck)
 		return handled, r, err
@@ -711,7 +876,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	}()
 	var rows []chunk.Row
 	var err error
-	req := newFirstChunk(e)
+	req := tryNewCacheChunk(e)
 	for {
 		err = a.next(ctx, e, req)
 		if err != nil {
@@ -758,10 +923,11 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		}
 	}
 
-	err = a.next(ctx, e, newFirstChunk(e))
+	err = a.next(ctx, e, tryNewCacheChunk(e))
 	if err != nil {
 		return nil, err
 	}
+	err = a.handleStmtForeignKeyTrigger(ctx, e)
 	return nil, err
 }
 
@@ -1201,6 +1367,18 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 // 4. update the `PrevStmt` in session variable.
 // 5. reset `DurationParse` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults bool) {
+	se := a.Ctx
+	if !se.GetSessionVars().InRestrictedSQL && se.GetSessionVars().IsPlanReplayerCaptureEnabled() {
+		stmtNode := a.GetStmtNode()
+		if se.GetSessionVars().EnablePlanReplayedContinuesCapture {
+			if checkPlanReplayerContinuesCaptureValidStmt(stmtNode) {
+				checkPlanReplayerContinuesCapture(se, stmtNode, txnTS)
+			}
+		} else {
+			checkPlanReplayerCaptureTask(se, stmtNode, txnTS)
+		}
+	}
+
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
@@ -1215,9 +1393,12 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
 		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
 	}
-	if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys > 0 && sessVars.StmtCtx.AffectedRows() > 0 {
-		// Only record the read keys in write statement which affect row more than 0.
-		a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(execDetail.ScanDetail.ProcessedKeys)
+	if execDetail.ScanDetail != nil && sessVars.StmtCtx.AffectedRows() > 0 {
+		processedKeys := atomic.LoadInt64(&execDetail.ScanDetail.ProcessedKeys)
+		if processedKeys > 0 {
+			// Only record the read keys in write statement which affect row more than 0.
+			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+		}
 	}
 	succ := err == nil
 	if a.Plan != nil {
@@ -1249,6 +1430,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars.DurationParse = 0
 	// Clean the stale read flag when statement execution finish
 	sessVars.StmtCtx.IsStaleness = false
+	// Clean the MPP query info
+	sessVars.StmtCtx.MPPQueryInfo.QueryID.Store(0)
+	sessVars.StmtCtx.MPPQueryInfo.QueryTS.Store(0)
+	sessVars.StmtCtx.MPPQueryInfo.AllocatedMPPTaskID.Store(0)
 
 	if sessVars.StmtCtx.ReadFromTableCache {
 		metrics.ReadFromTableCacheCounter.Inc()
@@ -1321,8 +1506,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfoFromFlatPlan(flat)
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(stmtCtx)
 
 	binaryPlan := ""
@@ -1380,7 +1565,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
-	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
+	if _, ok := a.StmtNode.(*ast.CommitStmt); ok && sessVars.PrevStmt != nil {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
 	}
 	slowLog := sessVars.SlowLogFormat(slowItems)
@@ -1495,6 +1680,11 @@ func getPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
 	return normalized, planDigest
 }
 
+// GetEncodedPlan returned same as getEncodedPlan
+func GetEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
+	return getEncodedPlan(stmtCtx, genHint)
+}
+
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
 func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
 	var hintSet bool
@@ -1592,8 +1782,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
-	memMax := stmtCtx.MemTracker.MaxConsumed()
-	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	memMax := sessVars.MemTracker.MaxConsumed()
+	diskMax := sessVars.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
@@ -1776,4 +1966,87 @@ func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.
 		r[tableName][itemName] = status
 	}
 	return r
+}
+
+// only allow select/delete/update/insert/execute stmt captured by continues capture
+func checkPlanReplayerContinuesCaptureValidStmt(stmtNode ast.StmtNode) bool {
+	switch stmtNode.(type) {
+	case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.ExecuteStmt:
+		return true
+	default:
+		return false
+	}
+}
+
+func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
+	dom := domain.GetDomain(sctx)
+	if dom == nil {
+		return
+	}
+	handle := dom.GetPlanReplayerHandle()
+	if handle == nil {
+		return
+	}
+	tasks := handle.GetTasks()
+	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	key := replayer.PlanReplayerTaskKey{
+		SQLDigest:  sqlDigest.String(),
+		PlanDigest: planDigest.String(),
+	}
+	for _, task := range tasks {
+		if task.SQLDigest == sqlDigest.String() {
+			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
+				sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, false)
+				return
+			}
+		}
+	}
+}
+
+func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
+	dom := domain.GetDomain(sctx)
+	if dom == nil {
+		return
+	}
+	handle := dom.GetPlanReplayerHandle()
+	if handle == nil {
+		return
+	}
+	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	key := replayer.PlanReplayerTaskKey{
+		SQLDigest:  sqlDigest.String(),
+		PlanDigest: planDigest.String(),
+	}
+	existed := sctx.GetSessionVars().CheckPlanReplayerFinishedTaskKey(key)
+	if existed {
+		return
+	}
+	sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, true)
+	sctx.GetSessionVars().AddPlanReplayerFinishedTaskKey(key)
+}
+
+func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode,
+	startTS uint64, isContinuesCapture bool) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	dumpTask := &domain.PlanReplayerDumpTask{
+		PlanReplayerTaskKey: key,
+		StartTS:             startTS,
+		EncodePlan:          GetEncodedPlan,
+		TblStats:            stmtCtx.TableStats,
+		SessionBindings:     handle.GetAllBindRecord(),
+		SessionVars:         sctx.GetSessionVars(),
+		ExecStmts:           []ast.StmtNode{stmtNode},
+		Analyze:             false,
+		IsCapture:           true,
+		IsContinuesCapture:  isContinuesCapture,
+	}
+	if _, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		nsql, _ := sctx.GetSessionVars().StmtCtx.SQLDigest()
+		dumpTask.InExecute = true
+		dumpTask.NormalizedSQL = nsql
+	}
+	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }

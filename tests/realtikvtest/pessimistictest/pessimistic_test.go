@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -1850,6 +1851,7 @@ func TestPessimisticTxnWithDDLAddDropColumn(t *testing.T) {
 
 	// tk2 starts a pessimistic transaction and make some changes on table t1.
 	// tk executes some ddl statements add/drop column on table t1.
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t1 set c2 = c1 * 10")
@@ -1880,6 +1882,7 @@ func TestPessimisticTxnWithDDLChangeColumn(t *testing.T) {
 	tk.MustExec("insert t1 values (1, 77, 'a'), (2, 88, 'b')")
 
 	// Extend column field length is acceptable.
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t1 set c2 = c1 * 10")
@@ -2153,6 +2156,7 @@ func TestAmendTxnVariable(t *testing.T) {
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
 	tk3.MustExec("begin pessimistic")
 	tk3.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values(4, 4, 4)")
@@ -2173,6 +2177,7 @@ func TestAmendTxnVariable(t *testing.T) {
 	tk4.MustExec("insert into t1 values(5, 5, 5, 5)")
 	tk2.MustExec("alter table t1 drop column new_col")
 	require.Error(t, tk4.ExecToErr("commit"))
+	tk4.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk4.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk4.MustExec("begin pessimistic")
 	tk4.MustExec("insert into t1 values(5, 5, 5)")
@@ -2303,6 +2308,7 @@ func TestAsyncCommitWithSchemaChange(t *testing.T) {
 	tk.MustExec("insert into tk values(1, 1, 1)")
 	tk2 := createAsyncCommitTestKit(t, store)
 	tk3 := createAsyncCommitTestKit(t, store)
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
@@ -2377,6 +2383,7 @@ func Test1PCWithSchemaChange(t *testing.T) {
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values (1, 1)")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
@@ -2424,6 +2431,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	tk2.MustExec("drop table if exists t1")
@@ -2546,6 +2554,7 @@ func TestAmendWithColumnTypeChange(t *testing.T) {
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	tk2.MustExec("drop table if exists t")
@@ -2563,6 +2572,7 @@ func TestIssue21498(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 
 	for _, partition := range []bool{false, true} {
@@ -2732,6 +2742,7 @@ func TestPlanCacheSchemaChange(t *testing.T) {
 	tk.MustExec("create table t (id int primary key, v int, unique index iv (v), vv int)")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (4, 4, 4)")
 
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 
@@ -2804,6 +2815,66 @@ func TestAsyncCommitCalTSFail(t *testing.T) {
 	tk2.MustExec("begin pessimistic")
 	tk2.MustExec("update tk set c2 = c2 + 1")
 	tk2.MustExec("commit")
+}
+
+func TestAsyncCommitAndForeignKey(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := createAsyncCommitTestKit(t, store)
+	tk.MustExec("drop table if exists t_parent, t_child")
+	tk.MustExec("create table t_parent (id int primary key)")
+	tk.MustExec("create table t_child (id int primary key, pid int, foreign key (pid) references t_parent(id) on delete cascade on update cascade)")
+	tk.MustExec("insert into t_parent values (1),(2),(3),(4)")
+	tk.MustExec("insert into t_child values (1,1),(2,2),(3,3)")
+	tk.MustExec("set tidb_enable_1pc = true")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("delete from t_parent where id in (1,4)")
+	tk.MustExec("update t_parent set id=22 where id=2")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t_parent order by id").Check(testkit.Rows("3", "22"))
+	tk.MustQuery("select * from t_child order by id").Check(testkit.Rows("2 22", "3 3"))
+}
+
+func TestTransactionIsolationAndForeignKey(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("The test only support test with tikv.")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int primary key)")
+	tk.MustExec("create table t2 (id int primary key, pid int, foreign key (pid) references t1(id) on delete cascade on update cascade)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t2 values (1,1)")
+	tk.MustGetDBError("insert into t2 values (2,2)", plannercore.ErrNoReferencedRow2)
+	tk2.MustExec("insert into t1 values (2)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2"))
+	tk.MustExec("insert into t2 values (2,2)")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2.MustExec("delete from t1 where id=2")
+	}()
+	time.Sleep(time.Millisecond * 10)
+	tk.MustExec("commit")
+	wg.Wait()
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1"))
+	tk2.MustExec("delete from t1 where id=1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
 }
 
 func TestChangeLockToPut(t *testing.T) {
@@ -2899,6 +2970,7 @@ func TestAmendForIndexChange(t *testing.T) {
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
 	tk.Session().GetSessionVars().EnableAsyncCommit = false
 	tk.Session().GetSessionVars().Enable1PC = false
@@ -2974,6 +3046,7 @@ func TestAmendForColumnChange(t *testing.T) {
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk2.MustExec("use test")
 
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF;")
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
 	tk2.MustExec("drop table if exists t1")
 
@@ -3039,6 +3112,12 @@ func TestAmendForColumnChange(t *testing.T) {
 		}
 
 		// Start a pessimistic transaction for partition table, the amend should fail.
+		if i == 5 {
+			// alter table t_part modify column c_int bigint(20) default 100
+			// Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions
+			// Skip this case
+			continue
+		}
 		tk.MustExec("begin pessimistic")
 		tk.MustExec(`insert into t_part values(5, "555", "2000-01-05", "2020-01-05", "5.5", "555.555", 5.5)`)
 		tk2.MustExec(colChangeFunc(true, i))
@@ -3056,13 +3135,21 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (i int)")
+	tk.MustExec("create table t (i int primary key)")
 	tk.MustExec("insert into t values (1)")
 	tk.MustExec("set autocommit = on")
 
 	rows := tk.MustQuery("explain update t set i = -i").Rows()
 	explain := fmt.Sprintf("%v", rows[1])
 	require.NotRegexp(t, ".*SelectLock.*", explain)
+	rows = tk.MustQuery("explain update t set i = -i where i = -1").Rows()
+	explain = fmt.Sprintf("%v", rows[1])
+	require.Regexp(t, ".*handle:-1.*", explain)
+	require.NotRegexp(t, ".*handle:-1, lock.*", explain)
+	rows = tk.MustQuery("explain update t set i = -i where i in (-1, 1)").Rows()
+	explain = fmt.Sprintf("%v", rows[1])
+	require.Regexp(t, ".*handle:\\[-1 1\\].*", explain)
+	require.NotRegexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
 
 	originCfg := config.GetGlobalConfig()
 	defer config.StoreGlobalConfig(originCfg)
@@ -3073,6 +3160,12 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 	rows = tk.MustQuery("explain update t set i = -i").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
 	require.Regexp(t, ".*SelectLock.*", explain)
+	rows = tk.MustQuery("explain update t set i = -i where i = -1").Rows()
+	explain = fmt.Sprintf("%v", rows[1])
+	require.Regexp(t, ".*handle:-1, lock.*", explain)
+	rows = tk.MustQuery("explain update t set i = -i where i in (-1, 1)").Rows()
+	explain = fmt.Sprintf("%v", rows[1])
+	require.Regexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
 }
 
 func TestPessimisticLockOnPartition(t *testing.T) {
@@ -3245,7 +3338,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("insert into t4 values (1, 2), (2, 2)")
 	tk.MustQuery("select * from t4 order by id").Check(testkit.Rows("1 2", "2 2"))
 	err = tk.ExecToErr("delete from t4 where id = 1")
-	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 't4.PRIMARY'")
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t4")
 	tk.MustQuery("select * from t4 order by id").Check(testkit.Rows("1 1"))
@@ -3266,7 +3359,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t5 values (2, 1)")
 	err = tk.ExecToErr("delete from t5")
-	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 'i1'")
+	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness check is enabled and an error occurred: [kv:1062]Duplicate entry '1' for key 't5.i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 
 	// case: update unique key, but conflict exists before the txn
@@ -3275,7 +3368,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t5 set uk = 3 where id = 1")
 	err = tk.ExecToErr("commit")
-	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 't5.i1'")
 	tk.MustExec("admin check table t5")
 
 	// case: update unique key, but conflict with concurrent write
@@ -3294,7 +3387,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t5 values (3, 1) on duplicate key update uk = 3")
 	err = tk.ExecToErr("commit")
-	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 't5.i1'")
 	tk.MustExec("admin check table t5")
 
 	// case: insert on duplicate update unique key, but conflict with concurrent write
@@ -3352,7 +3445,7 @@ func TestLazyUniquenessCheckWithStatementRetry(t *testing.T) {
 	tk2.MustExec("insert into t5 values (2, 3)")
 	err := tk.ExecToErr("update t5 set id = 10 where uk = 3") // write conflict -> unset PresumeKNE -> retry
 	require.ErrorContains(t, err, "transaction aborted because lazy uniqueness")
-	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 't5.i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 	tk.MustExec("admin check table t5")
 
@@ -3363,7 +3456,7 @@ func TestLazyUniquenessCheckWithStatementRetry(t *testing.T) {
 	tk.MustExec("insert into t5 values (3, 3)") // skip handle=3, uk=3
 	tk2.MustExec("insert into t5 values (2, 3)")
 	err = tk.ExecToErr("update t5 set id = id + 10") // write conflict -> unset PresumeKNE -> retry
-	require.ErrorContains(t, err, "Duplicate entry '3' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '3' for key 't5.i1'")
 	require.False(t, tk.Session().GetSessionVars().InTxn())
 	tk.MustExec("admin check table t5")
 }
@@ -3548,7 +3641,7 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	tk.MustExec("insert into t2 values (2, 1), (3, 3)")
 	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1", "3 3"))
 	err := tk.ExecToErr("commit")
-	require.ErrorContains(t, err, "Duplicate entry '1' for key 'i1'")
+	require.ErrorContains(t, err, "Duplicate entry '1' for key 't2.i1'")
 	tk.MustQuery("select * from t2 use index(primary)").Check(testkit.Rows("1 1"))
 	tk.MustExec("admin check table t2")
 

@@ -94,7 +94,7 @@ go_test(
     ],
     embed = [":local"],
     flaky = True,
-    shard_count = 20,
+    shard_count = 40,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/backend",
@@ -103,6 +103,7 @@ go_test(
         "//br/pkg/lightning/glue",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/mydump",
+        "//br/pkg/lightning/worker",
         "//br/pkg/membuf",
         "//br/pkg/mock",
         "//br/pkg/pdutil",

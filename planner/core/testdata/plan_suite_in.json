@@ -1,5 +1,74 @@
 [
   {
+    "name": "TestMPPHints",
+    "cases": [
+      "select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      // READ_FROM_STORAGE hint
+      "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      // Join hint
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_build(t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), hash_join_probe(t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "select /*+ read_from_storage(tiflash[t1, t2]), broadcast_join(t1, t2), INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+
+      // AGG hint
+      "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), hash_agg() */ a, sum(b) from t group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), stream_agg() */ a, sum(b) from t group by a, c",
+
+      // Index hint
+      "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), use_index(t, idx_a) */ a, sum(b) from t where a > 1 group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), ignore_index(t, idx_a) */ a, sum(b) from t where a > 1 group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), force_index(t, idx_b) */ a, sum(b) from t where b < 2 group by a, c",
+      "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), index_merge(t, idx_b, idx_a) */ a, sum(b) from t where b < 2 or a > 2 group by a, c",
+
+      // Join Order hint
+      "select /*+ read_from_storage(tiflash[t1, t2, t3]), shuffle_join(t1, t2, t3), straight_join() */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
+      "select /*+ read_from_storage(tiflash[t1, t2, t3]), shuffle_join(t1, t2, t3), leading(t3, t1) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
+      "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), straight_join() */ * from t t2, t t1, t t3 where t1.a=t2.a and t2.b=t3.b",
+      "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), leading(t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b=t3.b",
+
+      // View Hint
+      "select /*+ qb_name(qb, v), MPP_1PHASE_AGG(@qb) */ * from v",
+      "select /*+ qb_name(qb, v), MPP_2PHASE_AGG(@qb) */ * from v",
+      "select /*+ qb_name(qb, v1), shuffle_join(t1@qb, t2@qb) */ * from v1",
+      "select /*+ qb_name(qb, v1), broadcast_join(t1@qb, t2@qb) */ * from v1",
+
+      // Subquery hint
+      "SELECT /*+ shuffle_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE */ 1 FROM t t1 WHERE t1.b = t.b);",
+      "SELECT /*+ broadcast_join(t) */ * FROM t WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE */ 1 FROM t t1 WHERE t1.b = t.b);",
+      "select * from t t1 where t1.a < (select /*+ MPP_1PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
+      "select * from t t1 where t1.a < (select /*+ MPP_2PHASE_AGG() */ sum(t2.a) from t t2 where t2.b = t1.b);",
+
+      // CTE
+      "WITH CTE AS (SELECT /*+ MPP_1PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MPP_2PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ shuffle_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MERGE(), MPP_1PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MERGE(), MPP_2PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MERGE(), shuffle_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "WITH CTE AS (SELECT /*+ MERGE(), broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;"
+    ]
+  },
+  {
     "name": "TestHintScope",
     "cases": [
       // join hints
@@ -359,7 +428,7 @@
     ]
   },
   {
-   "name": "TestRefine",
+    "name": "TestRefine",
     "cases": [
       "select a from t where c is not null",
       "select a from t where c >= 4",
@@ -576,7 +645,7 @@
     "name": "TestCTEMergeHint",
     "cases": [
       "with cte as (select /*+ MERGE() */ * from tc where tc.a < 60) select * from cte where cte.a <18",
-      "with cte as (select * from tc where tc.a < 60) select * from cte where cte.a <18",
+      "with cte as (select * from tc where tc.a < 60) select * from cte c1, cte c2 where c1.a <18",
       "with cte as (select /*+ MERGE() */ * from v) select * from cte",
       "WITH cte1 AS (SELECT /*+ MERGE() */ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
       "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ MERGE() */ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
@@ -609,12 +678,31 @@
       "with recursive cte2(c1) as (with cte1 as (select * from t) select a c1 from cte1 union select c1+1 c1 from cte2 where c1 < 100) select * from cte2; -- non-recursive 'cte1' inside recursive 'cte2'",
       "with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1'",
       "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
-      "with cte as (select * from t) select * from cte; -- cannot be inlined",
+      "with cte as (select * from t) select * from cte; -- inlined by single consumer",
       "with cte as (select /*+ MERGE() */ * from t) select * from cte; -- inline, merge hint override session variable",
       "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1; -- Recursive CTE can not be inlined",
       "with cte1 as (with cte2 as (select * from t) select * from cte2) select * from cte1; -- non-recursive 'cte2' definition inside another non-recursive 'cte1'",
       "with recursive cte2(c1) as (with cte1 as (select * from t) select a c1 from cte1 union select c1+1 c1 from cte2 where c1 < 100) select * from cte2; -- non-recursive 'cte1' inside recursive 'cte2'",
       "with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1'"
+    ]
+  },
+  {
+    "name": "TestSingleConsumerCTE",
+    "cases": [
+      "with cte as (select 1) select * from cte; -- inline cte",
+      "with cte1 as (select 1), cte2 as (select 2) select * from cte1 union select * from cte2; -- inline cte1, cte2",
+      "with cte as (select 1) select * from cte union select * from cte; -- cannot be inlined",
+      "with cte as (with cte as (select 1) select * from cte) select * from cte; -- inline nested cte",
+      "with cte as (with cte as (select 1) select * from cte) select * from cte a, cte b; -- inline inner cte, cannot be inlined outer cte",
+      "with cte1 as (select 1), cte2 as (with cte3 as (select * from cte1) select * from cte3) select * from cte1, cte2; -- inline cte2, cte3, cannot be inlined cte1",
+      "with cte1 as (select 1), cte2 as (with cte3 as (select * from cte1) select * from cte3) select * from cte2; -- inline cte1, cte2, cte3",
+      "with cte1 as (select 1), cte2 as (select * from cte1) select * from cte2 a, cte2 b; -- inline cte1, cannot be inlined cte2",
+      "with recursive cte(a) as (select 1 union select a from cte) select * from cte; -- recursive cte cannot be inlined",
+      "with x as (select * from (select a from t for update) s) select * from x where a = 1;",
+      "set tidb_opt_force_inline_cte=1; -- enable force inline CTE",
+      "with cte as (select 1) select * from cte union select * from cte; -- force inline cte while multi-consumer",
+      "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
+      "with cte as (select 1) select /*+ MERGE() */ * from cte union select * from cte; -- firstly inline cte, secondly cannot be inlined"
     ]
   },
   {
@@ -789,7 +877,7 @@
   {
     "name": "TestIssue28316",
     "cases": [
-        "select * from t where t.a < 3 and t.a < 3"
+      "select * from t where t.a < 3 and t.a < 3"
     ]
   },
   {
@@ -1065,6 +1153,38 @@
       "SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ semi_join_rewrite() */ 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select /*+ no_decorrelate() */ max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select /*+ no_decorrelate() */ max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100",
       "SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ no_decorrelate() */ 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select /*+ no_decorrelate() */ max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select /*+ no_decorrelate() */ max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100"
 
+    ]
+  },
+  {
+    "name": "TestCountStarForTikv",
+    "cases": [
+      "select count(*) from t",
+      "select count(1), count(3.1415), count(0), count(null) from t -- shouldn't be rewritten",
+      "select count(*) from t where a=1",
+      "select count(*) from t_pick_row_id",
+      "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- shouldn't be rewritten",
+      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten",
+      "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten",
+      "select count(distinct 1) from t -- shouldn't be rewritten",
+      "select count(1), count(a), count(b) from t -- shouldn't be rewritten",
+      "select a, count(*) from t group by a -- shouldn't be rewritten",
+      "select sum(a) from t -- sum shouldn't be rewritten"
+    ]
+  },
+  {
+    "name": "TestCountStarForTiFlash",
+    "cases": [
+      "select count(*) from t",
+      "select count(1), count(3.1415), count(0), count(null) from t -- every count but count(null) can be rewritten",
+      "select count(*) from t where a=1",
+      "select count(*) from t_pick_row_id",
+      "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
+      "select * from t out where out.a > (select count(*) from t inn where inn.a = out.b) -- shouldn't be rewritten for correlated sub query",
+      "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
+      "select count(distinct 1) from t -- shouldn't be rewritten",
+      "select count(1), count(a), count(b) from t -- keep count(1)",
+      "select a, count(*) from t group by a -- shouldn't be rewritten",
+      "select sum(a) from t -- sum shouldn't be rewritten"
     ]
   }
 ]
