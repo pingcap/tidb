@@ -66,7 +66,7 @@ require (
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
-	github.com/pingcap/badger v1.5.1-0.20221229114011-ddffaa0fff7a
+	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
@@ -80,6 +80,7 @@ require (
 	github.com/prometheus/client_model v0.3.0
 	github.com/prometheus/common v0.39.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
+	github.com/sasha-s/go-deadlock v0.0.0-20161201235124-341000892f3d
 	github.com/shirou/gopsutil/v3 v3.22.9
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
@@ -203,6 +204,7 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
+	github.com/petermattis/goid v0.0.0-20170504144140-0ded85884ba5 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712 // indirect
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect

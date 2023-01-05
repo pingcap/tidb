@@ -17,6 +17,7 @@ package ttlworker_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -128,8 +129,12 @@ func TestFinishJob(t *testing.T) {
 
 func TestTTLAutoAnalyze(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-info-schema-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/update-info-schema-cache-interval")
 	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-status-table-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/update-status-table-cache-interval")
 	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/resize-workers-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/resize-workers-interval")
+
 	originAutoAnalyzeMinCnt := handle.AutoAnalyzeMinCnt
 	handle.AutoAnalyzeMinCnt = 0
 	defer func() {
@@ -179,4 +184,57 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
 	require.True(t, h.HandleAutoAnalyze(is))
+}
+
+func TestTTLJobDisable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-info-schema-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/update-info-schema-cache-interval")
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-status-table-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/update-status-table-cache-interval")
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/resize-workers-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/resize-workers-interval")
+
+	originAutoAnalyzeMinCnt := handle.AutoAnalyzeMinCnt
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, created_at datetime) ttl = `created_at` + interval 1 day")
+
+	// insert ten rows, the 2,3,4,6,9,10 of them are expired
+	for i := 1; i <= 10; i++ {
+		t := time.Now()
+		if i%2 == 0 || i%3 == 0 {
+			t = t.Add(-time.Hour * 48)
+		}
+
+		tk.MustExec("insert into t values(?, ?)", i, t.Format(time.RFC3339))
+	}
+	// turn off the `tidb_ttl_job_enable`
+	tk.MustExec("set global tidb_ttl_job_enable = 'OFF'")
+	defer tk.MustExec("set global tidb_ttl_job_enable = 'ON'")
+
+	retryTime := 15
+	retryInterval := time.Second * 2
+	deleted := false
+	for retryTime >= 0 {
+		retryTime--
+		time.Sleep(retryInterval)
+
+		rows := tk.MustQuery("select count(*) from t").Rows()
+		count, err := strconv.Atoi(rows[0][0].(string))
+		require.NoError(t, err)
+		if count < 10 {
+			deleted = true
+			break
+		}
+
+		require.Len(t, dom.TTLJobManager().RunningJobs(), 0)
+	}
+	require.False(t, deleted)
 }
