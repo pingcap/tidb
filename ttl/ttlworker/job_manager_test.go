@@ -148,6 +148,11 @@ func (m *JobManager) LockNewJob(ctx context.Context, se session.Session, table *
 	return m.lockNewJob(ctx, se, table, now)
 }
 
+// RunningJobs returns the running jobs inside ttl job manager
+func (m *JobManager) RunningJobs() []*TTLJob {
+	return m.runningJobs
+}
+
 func (j *ttlJob) Finish(se session.Session, now time.Time) {
 	j.finish(se, now)
 }
