@@ -56,7 +56,6 @@ func GetTiDBMppVersion() MppVersion {
 }
 
 var mppVersionFeatures = map[MppVersion]string{
-	MppVersionV0: "none",
 	MppVersionV1: "exchange data compression",
 }
 
@@ -66,7 +65,7 @@ func GetMppVersionFeatures(mppVersion MppVersion) string {
 	if ok {
 		return val
 	}
-	return ""
+	return "none"
 }
 
 // FmtMppVersion return
@@ -79,7 +78,7 @@ func FmtMppVersion(v MppVersion) string {
 		version = fmt.Sprintf("%d", v)
 	}
 
-	return fmt.Sprintf("`%s` features `%s`", version, GetMppVersionFeatures(v))
+	return fmt.Sprintf("%s, features `%s`", version, GetMppVersionFeatures(v))
 }
 
 // MPPTaskMeta means the meta info such as location of a mpp task.

@@ -17,6 +17,7 @@ package kv
 import (
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,4 +30,44 @@ func TestVersion(t *testing.T) {
 	assert.True(t, gt > 0)
 	assert.True(t, eq == 0)
 	assert.True(t, MinVersion.Cmp(MaxVersion) < 0)
+}
+
+func TestMppVersion(t *testing.T) {
+	assert.Equal(t, int64(1), GetTiDBMppVersion().ToInt64())
+	assert.Equal(t, "none", GetMppVersionFeatures(MppVersionUnspecified))
+	assert.Equal(t, "none", GetMppVersionFeatures(MppVersionV0))
+	assert.Equal(t, "exchange data compression", GetMppVersionFeatures(MppVersionV1))
+	assert.Equal(t, "unspecified(use 1), features `exchange data compression`", FmtMppVersion(MppVersionUnspecified))
+	assert.Equal(t, "0, features `none`", FmtMppVersion(MppVersionV0))
+	assert.Equal(t, "1, features `exchange data compression`", FmtMppVersion(MppVersionV1))
+}
+
+func TestExchangeCompressionMode(t *testing.T) {
+	assert.Equal(t, "UNSPECIFIED", ExchangeCompressionModeUnspecified.Name())
+	{
+		a, ok := ToExchangeCompressionMode("UNSPECIFIED")
+		assert.Equal(t, a, ExchangeCompressionModeUnspecified)
+		assert.True(t, ok)
+	}
+	assert.Equal(t, "NONE", ExchangeCompressionModeNONE.Name())
+	{
+		a, ok := ToExchangeCompressionMode("NONE")
+		assert.Equal(t, a, ExchangeCompressionModeNONE)
+		assert.True(t, ok)
+	}
+	assert.Equal(t, "FAST", ExchangeCompressionModeFast.Name())
+	{
+		a, ok := ToExchangeCompressionMode("FAST")
+		assert.Equal(t, a, ExchangeCompressionModeFast)
+		assert.True(t, ok)
+	}
+	assert.Equal(t, "HIGH_COMPRESSION", ExchangeCompressionModeHC.Name())
+	{
+		a, ok := ToExchangeCompressionMode("HIGH_COMPRESSION")
+		assert.Equal(t, a, ExchangeCompressionModeHC)
+		assert.True(t, ok)
+	}
+	// default `FAST`
+	assert.Equal(t, mpp.CompressionMode_FAST, ExchangeCompressionModeUnspecified.ToMppCompressionMode())
+
 }

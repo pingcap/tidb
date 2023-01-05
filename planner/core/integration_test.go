@@ -8125,7 +8125,7 @@ func TestMppVersion(t *testing.T) {
 		}
 	}
 
-	// test default behavior
+	// test default behavior: no mpp-version info in explain result
 	{
 		rows := [][]interface{}{
 			{"TableReader_41", "root", "data:ExchangeSender_40"},
@@ -8142,6 +8142,8 @@ func TestMppVersion(t *testing.T) {
 		res.CheckAt([]int{0, 2, 4}, rows)
 	}
 
+	tk.MustExec("set @@explain_mpp_feature = on")
+	// explain show mpp features
 	{
 		tk.MustExec("set @@mpp_version = 1")
 		tk.MustExec("set @@mpp_exchange_compress = UNSPECIFIED")
@@ -8152,7 +8154,7 @@ func TestMppVersion(t *testing.T) {
 			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
 			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
 			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
-			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compress: NONE"},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compress: FAST"},
 			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
 			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
@@ -8161,12 +8163,13 @@ func TestMppVersion(t *testing.T) {
 		res.CheckAt([]int{0, 2, 4}, rows)
 	}
 
+	// mpp-version 0 can NOT enable data compression in exchange operator
 	{
 		tk.MustExec("set @@mpp_version = 0")
 		tk.MustExec("set @@mpp_exchange_compress = FAST")
 
 		rows := [][]interface{}{
-			{"TableReader_41", "root", "data:ExchangeSender_40"},
+			{"TableReader_41", "root", "MppVersion: 0, data:ExchangeSender_40"},
 			{"└─ExchangeSender_40", "mpp[tiflash]", "ExchangeType: PassThrough"},
 			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
 			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
@@ -8180,9 +8183,10 @@ func TestMppVersion(t *testing.T) {
 		res.CheckAt([]int{0, 2, 4}, rows)
 	}
 
+	// use HC mode 
 	{
 		tk.MustExec("set @@mpp_version = 1")
-		tk.MustExec("set @@mpp_exchange_compress = Zstd")
+		tk.MustExec("set @@mpp_exchange_compress = high_compression")
 
 		rows := [][]interface{}{
 			{"TableReader_41", "root", "MppVersion: 1, data:ExchangeSender_40"},
@@ -8190,7 +8194,7 @@ func TestMppVersion(t *testing.T) {
 			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
 			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
 			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
-			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compress: ZSTD"},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compress: HIGH_COMPRESSION"},
 			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
 			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
