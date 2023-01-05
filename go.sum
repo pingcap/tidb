@@ -526,8 +526,8 @@ github.com/hashicorp/logutils v1.0.0/go.mod h1:QIAnNjmIWmVIIkWDTG1z5v++HQmx9WQRO
 github.com/hashicorp/mdns v1.0.0/go.mod h1:tL+uN++7HEJ6SQLQ2/p+z2pH24WQKWjBPkE0mNTz8vQ=
 github.com/hashicorp/memberlist v0.1.3/go.mod h1:ajVTdAv/9Im8oMAAj5G31PhhMCZJV2pPBoIllUwCN7I=
 github.com/hashicorp/serf v0.8.2/go.mod h1:6hOLApaqBFA1NXqRQAsxw9QxuDEvNxSQRwA/JwenrHc=
-github.com/hawkingrei/client-go/v2 v2.0.0-alpha.0.20230105123653-5391a9bdc39d h1:ob+Y2kQLK6NKSXDmV3tFQZqjzhCezupYA3Ikl9RG3RY=
-github.com/hawkingrei/client-go/v2 v2.0.0-alpha.0.20230105123653-5391a9bdc39d/go.mod h1:v52O5zDtv2BBus4lm5yrSQhxGW4Z4RaXWfg0U1Kuyqo=
+github.com/hawkingrei/client-go/v2 v2.0.0-alpha.0.20230105172115-4614fce49c5b h1:XXLIX3B+u+qOI+We4hT7e7QeEooCOfOG6vKQBrRuGAI=
+github.com/hawkingrei/client-go/v2 v2.0.0-alpha.0.20230105172115-4614fce49c5b/go.mod h1:v52O5zDtv2BBus4lm5yrSQhxGW4Z4RaXWfg0U1Kuyqo=
 github.com/hexops/gotextdiff v1.0.3 h1:gitA9+qJrrTCsiCl7+kh75nPqQt1cx4ZkudSTLoUqJM=
 github.com/hexops/gotextdiff v1.0.3/go.mod h1:pSWU5MAI3yDq+fZBTazCSJysOMbxWL1BSow5/V2vxeg=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=

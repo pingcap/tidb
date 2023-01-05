@@ -48,7 +48,11 @@ func (t *mockTxn) String() string {
 	return ""
 }
 
-func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, fn func(), _ ...Key) error {
+func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
+	return nil
+}
+
+func (t *mockTxn) LockKeysFunc(_ context.Context, _ *LockCtx, fn func(), _ ...Key) error {
 	if fn != nil {
 		fn()
 	}

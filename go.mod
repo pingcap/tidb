@@ -261,4 +261,4 @@ replace (
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
 
-replace github.com/tikv/client-go/v2 v2.0.4-0.20221226080148-018c59dbd837 => github.com/hawkingrei/client-go/v2 v2.0.0-alpha.0.20230105123653-5391a9bdc39d
+replace github.com/tikv/client-go/v2 v2.0.4-0.20221226080148-018c59dbd837 => github.com/hawkingrei/client-go/v2 v2.0.0-alpha.0.20230105172115-4614fce49c5b

@@ -70,9 +70,15 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	txn.idxNameCache[id] = info
 }
 
-func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
+func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
-	err := txn.KVTxn.LockKeys(ctx, lockCtx, fn, keys...)
+	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
+	return txn.extractKeyErr(err)
+}
+
+func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
+	keys := toTiKVKeys(keysInput)
+	err := txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
 	return txn.extractKeyErr(err)
 }
 

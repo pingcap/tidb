@@ -427,7 +427,12 @@ func (txn *LazyTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
 }
 
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
-func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keys ...kv.Key) error {
+func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
+	return txn.LockKeysFunc(ctx, lockCtx, nil, keys...)
+}
+
+// LockKeysFunc Wrap the inner transaction's `LockKeys` to record the status
+func (txn *LazyTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keys ...kv.Key) error {
 	failpoint.Inject("beforeLockKeys", func() {})
 	t := time.Now()
 
@@ -448,7 +453,7 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, fn func()
 		txn.mu.TxnInfo.BlockStartTime.Valid = false
 		txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
 	}
-	return txn.Transaction.LockKeys(ctx, lockCtx, lockFunc, keys...)
+	return txn.Transaction.LockKeysFunc(ctx, lockCtx, lockFunc, keys...)
 }
 
 func (txn *LazyTxn) reset() {
