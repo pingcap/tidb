@@ -178,16 +178,33 @@
     "Name": "TestMVIndexSelection",
     "Cases": [
       {
-        "SQL": "select (j->'$.int') from t where (1 member of (j->'$.int')",
-        "Plan": null
+        "SQL": "select (j->'$.int') from t where (1 member of (j->'$.int'))",
+        "Plan": [
+          "Projection 8000.00 root  json_extract(test.t.j, $.int)->Column#5",
+          "└─Selection 8000.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j, \"$.int\"))",
+          "  └─IndexMerge 10.00 root  type: union",
+          "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       },
       {
-        "SQL": "",
-        "Plan": null
+        "SQL": "select * from t where (1 member of (j->'$.int'))",
+        "Plan": [
+          "Selection 8000.00 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j, \"$.int\"))",
+          "└─IndexMerge 10.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       },
       {
-        "SQL": "",
-        "Plan": null
+        "SQL": "select * from t where (1 member of (j->'$.int')) and a<10",
+        "Plan": [
+          "Selection 2658.67 root  json_memberof(cast(1, json BINARY), json_extract(test.t.j, \"$.int\"))",
+          "└─IndexMerge 3.32 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 3.32 cop[tikv]  lt(test.t.a, 10)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
