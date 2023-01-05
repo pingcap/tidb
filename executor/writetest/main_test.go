@@ -12,34 +12,49 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package concurrentddltest
+package writetest
 
 import (
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/tikv/client-go/v2/tikv"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-
+	autoid.SetStep(5000)
 	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowThreshold = 30000 // 30s
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
 	})
-
-	ddl.SetWaitTimeWhenErrorOccurred(time.Microsecond)
+	tikv.EnableFailpoints()
 
 	opts := []goleak.Option{
+		goleak.Cleanup(func(_ int) {
+			view.Stop()
+		}),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func fillData(tk *testkit.TestKit, table string) {
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
+
+	// insert data
+	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
+	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
 }

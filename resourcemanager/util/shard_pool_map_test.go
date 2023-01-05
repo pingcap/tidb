@@ -12,9 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build featuretag
+package util
 
-package concurrencyddl
+import (
+	"strconv"
+	"sync/atomic"
+	"testing"
 
-// TiDBEnableConcurrentDDL is a feature tag
-const TiDBEnableConcurrentDDL bool = false
+	"github.com/stretchr/testify/require"
+)
+
+func TestShardPoolMap(t *testing.T) {
+	rc := 10
+	pm := NewShardPoolMap()
+	for i := 0; i < rc; i++ {
+		id := strconv.FormatInt(int64(i), 10)
+		require.NoError(t, pm.Add(id, &PoolContainer{Pool: NewMockGPool(id), Component: DDL}))
+	}
+	require.Error(t, pm.Add("1", &PoolContainer{Pool: NewMockGPool("1"), Component: DDL}))
+	var cnt atomic.Int32
+	pm.Iter(func(pool *PoolContainer) {
+		cnt.Add(1)
+	})
+	require.Equal(t, rc, int(cnt.Load()))
+}
