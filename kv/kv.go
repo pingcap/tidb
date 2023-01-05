@@ -222,6 +222,10 @@ type Transaction interface {
 	// LockKeys tries to lock the entries with the keys in KV store.
 	// Will block until all keys are locked successfully or an error occurs.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
+	// LockKeysFunc tries to lock the entries with the keys in KV store.
+	// Will block until all keys are locked successfully or an error occurs.
+	// function is used after the lock is acquired.
+	LockKeysFunc(ctx context.Context, lockCtx *LockCtx, f func(), keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt int, val interface{})

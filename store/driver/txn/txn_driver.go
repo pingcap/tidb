@@ -76,6 +76,12 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	return txn.extractKeyErr(err)
 }
 
+func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, f func(), keysInput ...kv.Key) error {
+	err := txn.LockKeys(ctx, lockCtx, keysInput...)
+	f()
+	return err
+}
+
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	err := txn.KVTxn.Commit(ctx)
 	return txn.extractKeyErr(err)

@@ -433,16 +433,19 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 
 	var originState txninfo.TxnRunningState
 	txn.mu.Lock()
-	defer txn.mu.Unlock()
 	originState = txn.mu.TxnInfo.State
 	txn.updateState(txninfo.TxnLockAcquiring)
 	txn.mu.TxnInfo.BlockStartTime.Valid = true
 	txn.mu.TxnInfo.BlockStartTime.Time = t
-	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
-	txn.updateState(originState)
-	txn.mu.TxnInfo.BlockStartTime.Valid = false
-	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	return err
+	txn.mu.Unlock()
+	lockFunc := func() {
+		txn.mu.Lock()
+		defer txn.mu.Unlock()
+		txn.updateState(originState)
+		txn.mu.TxnInfo.BlockStartTime.Valid = false
+		txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
+	}
+	return txn.Transaction.LockKeysFunc(ctx, lockCtx, lockFunc, keys...)
 }
 
 func (txn *LazyTxn) reset() {
