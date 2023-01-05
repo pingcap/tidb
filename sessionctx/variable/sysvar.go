@@ -2181,7 +2181,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompress, Type: TypeStr, Value: kv.DefaultExchangeCompressionMode.Name(),
+	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompressionMode, Type: TypeStr, Value: kv.DefaultExchangeCompressionMode.Name(),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			_, ok := kv.ToExchangeCompressionMode(strings.ToUpper(normalizedValue))
 			if !ok {
@@ -2195,7 +2195,7 @@ var defaultSysVars = []*SysVar{
 				}
 				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
 					originalValue,
-					MppExchangeCompress, msg)
+					MppExchangeCompressionMode, msg)
 				return normalizedValue, err
 			}
 			return normalizedValue, nil
@@ -2214,7 +2214,7 @@ var defaultSysVars = []*SysVar{
 			if kv.MppVersion(version) >= kv.MppVersionUnspecified && kv.MppVersion(version) <= kv.NewestMppVersion {
 				return normalizedValue, nil
 			}
-			errMsg := fmt.Sprintf("incorrect value: `%s`. `%s` options: `%d` unspecified(recommended)",
+			errMsg := fmt.Sprintf("incorrect value: `%s`. %s options: `%d` unspecified(recommended)",
 				originalValue, MppVersion, kv.MppVersionUnspecified)
 			for i := kv.MppVersionV0; i <= kv.NewestMppVersion; i += 1 {
 				errMsg = fmt.Sprintf("%s, `%d` features `%s`", errMsg, i, kv.GetMppVersionFeatures(i))

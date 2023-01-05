@@ -8146,7 +8146,7 @@ func TestMppVersion(t *testing.T) {
 	// explain show mpp features
 	{
 		tk.MustExec("set @@mpp_version = 1")
-		tk.MustExec("set @@mpp_exchange_compress = UNSPECIFIED")
+		tk.MustExec("set @@mpp_exchange_compression_mode = UNSPECIFIED")
 
 		rows := [][]interface{}{
 			{"TableReader_41", "root", "MppVersion: 1, data:ExchangeSender_40"},
@@ -8166,7 +8166,7 @@ func TestMppVersion(t *testing.T) {
 	// mpp-version 0 can NOT enable data compression in exchange operator
 	{
 		tk.MustExec("set @@mpp_version = 0")
-		tk.MustExec("set @@mpp_exchange_compress = FAST")
+		tk.MustExec("set @@mpp_exchange_compression_mode = FAST")
 
 		rows := [][]interface{}{
 			{"TableReader_41", "root", "MppVersion: 0, data:ExchangeSender_40"},
@@ -8183,10 +8183,10 @@ func TestMppVersion(t *testing.T) {
 		res.CheckAt([]int{0, 2, 4}, rows)
 	}
 
-	// use HC mode 
+	// use HC mode
 	{
 		tk.MustExec("set @@mpp_version = 1")
-		tk.MustExec("set @@mpp_exchange_compress = high_compression")
+		tk.MustExec("set @@mpp_exchange_compression_mode = high_compression")
 
 		rows := [][]interface{}{
 			{"TableReader_41", "root", "MppVersion: 1, data:ExchangeSender_40"},
