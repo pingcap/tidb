@@ -820,7 +820,7 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context, filters []
 	c.AppendNull(0)
 	selected = selected[:0]
 	selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
-	if err != nil || len(selected) != 1 && !selected[0] {
+	if err != nil || len(selected) != 1 || !selected[0] {
 		nullSel = 0
 	} else {
 		nullSel = float64(nullCnt) / totalCnt
