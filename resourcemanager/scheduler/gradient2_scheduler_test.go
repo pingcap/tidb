@@ -23,6 +23,8 @@ import (
 )
 
 func TestGradient2Scheduler(t *testing.T) {
+	old := minCPUSchedulerInterval.Swap(200 * time.Millisecond)
+	defer minCPUSchedulerInterval.Store(old)
 	scheduler := NewGradient2Scheduler()
 	pool := util.NewMockGPool("TestGradient2Scheduler")
 	rms := NewMockResourceManage()
