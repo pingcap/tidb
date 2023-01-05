@@ -8125,6 +8125,7 @@ func TestMppVersion(t *testing.T) {
 		}
 	}
 
+	// test default behavior
 	{
 		rows := [][]interface{}{
 			{"TableReader_41", "root", "data:ExchangeSender_40"},
@@ -8162,7 +8163,7 @@ func TestMppVersion(t *testing.T) {
 
 	{
 		tk.MustExec("set @@mpp_version = 0")
-		tk.MustExec("set @@mpp_exchange_compress = LZ4")
+		tk.MustExec("set @@mpp_exchange_compress = FAST")
 
 		rows := [][]interface{}{
 			{"TableReader_41", "root", "data:ExchangeSender_40"},
