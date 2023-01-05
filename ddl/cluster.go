@@ -48,7 +48,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var pdScheduleKey = []string{
@@ -172,6 +171,20 @@ func isFlashbackSupportedDDLAction(action model.ActionType) bool {
 	}
 }
 
+func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string) error {
+	if schemaID <= 0 {
+		return nil
+	}
+	DBInfo, err := t.GetDatabase(schemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if filter.IsSystemSchema(DBInfo.Name.L) {
+		return errors.Errorf("Detected modified system table during [%s, now), can't do flashback", flashbackTSString)
+	}
+	return nil
+}
+
 func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
 		return err
@@ -237,8 +250,15 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if diff != nil && !isFlashbackSupportedDDLAction(diff.Type) {
+		if diff == nil {
+			continue
+		}
+		if !isFlashbackSupportedDDLAction(diff.Type) {
 			return errors.Errorf("Detected unsupported DDL job type(%s) during [%s, now), can't do flashback", diff.Type.String(), flashbackTSString)
+		}
+		err = checkSystemSchemaID(t, diff.SchemaID, flashbackTSString)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 
@@ -260,79 +280,93 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	return nil
 }
 
-type flashbackID struct {
-	id       int64
-	excluded bool
-}
-
-func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []flashbackID) []flashbackID {
-	var excluded bool
+func needAddToSlice(schema string, tableName string) bool {
 	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") && tableName != "gc_delete_range" {
-		excluded = true
+		return false
 	}
-	flashbackIDs = append(flashbackIDs, flashbackID{
-		id:       tableID,
-		excluded: excluded,
-	})
-	return flashbackIDs
+	return true
 }
 
-// GetFlashbackKeyRanges make keyRanges efficiently for flashback cluster when many tables in cluster,
-// The time complexity is O(nlogn).
-func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
-	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
-
-	// The semantic of keyRanges(output).
-	var keyRanges []kv.KeyRange
-
-	var flashbackIDs []flashbackID
+func getFlashbackTableIDs(schemas []*model.DBInfo) []int64 {
+	var tableIDs []int64
 	for _, db := range schemas {
 		for _, table := range db.Tables {
 			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
 				continue
 			}
-			flashbackIDs = addToSlice(db.Name.L, table.Name.L, table.ID, flashbackIDs)
-			if table.Partition != nil {
-				for _, partition := range table.Partition.Definitions {
-					flashbackIDs = addToSlice(db.Name.L, table.Name.L, partition.ID, flashbackIDs)
-				}
+			if needAddToSlice(db.Name.L, table.Name.L) {
+				tableIDs = append(tableIDs, table.ID)
+				tableIDs = append(tableIDs, getPartitionIDs(table)...)
 			}
 		}
 	}
+	return tableIDs
+}
 
-	slices.SortFunc(flashbackIDs, func(a, b flashbackID) bool {
-		return a.id < b.id
-	})
+// GetFlashbackKeyRanges get keyRanges for flashback cluster.
+// It contains all current table key ranges, history table key ranges at flashbackTS and meta data key ranges.
+// The returned KeyRanges will order by startKey.
+// The time complexity is O(nlogn).
+func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
 
-	lastExcludeIdx := -1
-	for i, id := range flashbackIDs {
-		if id.excluded {
-			// Found a range [lastExcludeIdx, i) needs to be added.
-			if i > lastExcludeIdx+1 {
-				keyRanges = append(keyRanges, kv.KeyRange{
-					StartKey: tablecodec.EncodeTablePrefix(flashbackIDs[lastExcludeIdx+1].id),
-					EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[i-1].id + 1),
-				})
-			}
-			lastExcludeIdx = i
+	// The semantic of keyRanges(output).
+	var keyRanges []kv.KeyRange
+
+	// get current table IDs.
+	currentSchemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
+	currentTableIDs := getFlashbackTableIDs(currentSchemas)
+
+	// get snapshot table IDs.
+	flashbackSnapshotMeta := meta.NewSnapshotMeta(sess.GetStore().GetSnapshot(kv.NewVersion(flashbackTS)))
+	snapshotSchemas, err := flashbackSnapshotMeta.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, schema := range snapshotSchemas {
+		schema.Tables, err = flashbackSnapshotMeta.ListTables(schema.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
+	snapshotTableIDs := getFlashbackTableIDs(snapshotSchemas)
 
-	// The last part needs to be added.
-	if lastExcludeIdx < len(flashbackIDs)-1 {
+	tableIDs := make(map[int64]struct{})
+	for _, id := range currentTableIDs {
+		tableIDs[id] = struct{}{}
+	}
+	for _, id := range snapshotTableIDs {
+		tableIDs[id] = struct{}{}
+	}
+
+	// The table data key ranges.
+	for tableID := range tableIDs {
 		keyRanges = append(keyRanges, kv.KeyRange{
-			StartKey: tablecodec.EncodeTablePrefix(flashbackIDs[lastExcludeIdx+1].id),
-			EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[len(flashbackIDs)-1].id + 1),
+			StartKey: tablecodec.EncodeTablePrefix(tableID),
+			EndKey:   tablecodec.EncodeTablePrefix(tableID + 1),
 		})
 	}
 
+	schemaIDs := make(map[int64]struct{})
+	for _, schema := range currentSchemas {
+		if !filter.IsSystemSchema(schema.Name.L) {
+			schemaIDs[schema.ID] = struct{}{}
+		}
+	}
+	for _, schema := range snapshotSchemas {
+		if !filter.IsSystemSchema(schema.Name.L) {
+			schemaIDs[schema.ID] = struct{}{}
+		}
+	}
+
 	// The meta data key ranges.
-	metaStartKey := tablecodec.EncodeMetaKey(meta.DBkey(0), meta.TableKey(0))
-	metaEndKey := tablecodec.EncodeMetaKey(meta.DBkey(math.MaxInt64), meta.TableKey(math.MaxInt64))
-	keyRanges = append(keyRanges, kv.KeyRange{
-		StartKey: metaStartKey,
-		EndKey:   metaEndKey,
-	})
+	for schemaID := range schemaIDs {
+		metaStartKey := tablecodec.EncodeMetaKey(meta.DBkey(schemaID), meta.TableKey(0))
+		metaEndKey := tablecodec.EncodeMetaKey(meta.DBkey(schemaID), meta.TableKey(math.MaxInt64))
+		keyRanges = append(keyRanges, kv.KeyRange{
+			StartKey: metaStartKey,
+			EndKey:   metaEndKey,
+		})
+	}
 
 	return keyRanges, nil
 }
@@ -641,7 +675,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StateWriteReorganization
 			return updateSchemaVersion(d, t, job)
 		}
-		keyRanges, err := GetFlashbackKeyRanges(sess)
+		keyRanges, err := GetFlashbackKeyRanges(sess, flashbackTS)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -678,7 +712,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
-		keyRanges, err := GetFlashbackKeyRanges(sess)
+		keyRanges, err := GetFlashbackKeyRanges(sess, flashbackTS)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

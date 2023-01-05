@@ -40,18 +40,29 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 
-	kvRanges, err := ddl.GetFlashbackKeyRanges(se)
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	startTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
-	// The results are 8 key ranges
-	// 0: (stats_meta,stats_histograms,stats_buckets, gc_delete_range)
-	// 1: (stats_feedback)
-	// 2: (stats_top_n)
-	// 3: (stats_extended)
-	// 4: (stats_fm_sketch)
-	// 5: (stats_history, stats_meta_history)
-	// 6: (stats_table_locked)
-	// 7: meta Ranges
-	require.Len(t, kvRanges, 8)
+
+	kvRanges, err := ddl.GetFlashbackKeyRanges(se, startTS)
+	require.NoError(t, err)
+	// The results are 12 key ranges
+	// 0: `stats_meta` table
+	// 1: `stats_histograms` table
+	// 2: `stats_buckets` table
+	// 3: `gc_delete_range` table
+	// 4: `stats_feedback` table
+	// 5: `stats_top_n` table
+	// 6: `stats_extended` table
+	// 7: `stats_fm_sketch` table
+	// 8: `stats_history` table
+	// 9: `stats_meta_history` table
+	// 10: `stats_table_locked` table
+	// 11: `test` schema
+	require.Len(t, kvRanges, 12)
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE employees (" +
@@ -63,28 +74,46 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 		"    PARTITION p2 VALUES LESS THAN (16)," +
 		"    PARTITION p3 VALUES LESS THAN (21)" +
 		");")
-	tk.MustExec("truncate table mysql.analyze_jobs")
 
-	// truncate all `stats_` and `gc_delete_range` tables, make table ID consecutive.
-	tk.MustExec("truncate table mysql.stats_meta")
-	tk.MustExec("truncate table mysql.stats_histograms")
-	tk.MustExec("truncate table mysql.stats_buckets")
-	tk.MustExec("truncate table mysql.stats_feedback")
-	tk.MustExec("truncate table mysql.stats_top_n")
-	tk.MustExec("truncate table mysql.stats_extended")
-	tk.MustExec("truncate table mysql.stats_fm_sketch")
-	tk.MustExec("truncate table mysql.stats_history")
-	tk.MustExec("truncate table mysql.stats_meta_history")
-	tk.MustExec("truncate table mysql.stats_table_locked")
-	tk.MustExec("truncate table mysql.gc_delete_range")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se, startTS)
 	require.NoError(t, err)
-	require.Len(t, kvRanges, 3)
+	// 12 previous key ranges and 1 table with 4 partitions
+	require.Len(t, kvRanges, 12+1+4)
 
+	// truncate `employees` table, add more 5 key ranges.
+	ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	time.Sleep(10 * time.Millisecond)
 	tk.MustExec("truncate table test.employees")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se, ts)
 	require.NoError(t, err)
-	require.Len(t, kvRanges, 2)
+	require.Len(t, kvRanges, 12+1+4+5)
+
+	kvRanges, err = ddl.GetFlashbackKeyRanges(se, startTS)
+	require.NoError(t, err)
+	require.Len(t, kvRanges, 12+1+4)
+
+	/*
+		ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+		// ts is after truncate table operate, so only 4 ranges.
+		kvRanges, err = ddl.GetFlashbackKeyRanges(context.Background(), se, ts)
+		require.NoError(t, err)
+		require.Len(t, kvRanges, 4)
+
+		tk.MustExec("truncate table test.employees")
+		ts, err = store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+
+		// ts is after truncate table opreate, so only 3 ranges.
+		kvRanges, err = ddl.GetFlashbackKeyRanges(context.Background(), se, ts)
+		require.NoError(t, err)
+		require.Len(t, kvRanges, 3)
+		// startTS is before truncate table opreate, so need process dropped tables key ranges.
+		// 3 current exists table key ranges, 11 truncate system table ranges, 4 partitions.
+		kvRanges, err = ddl.GetFlashbackKeyRanges(context.Background(), se, startTS)
+		require.NoError(t, err)
+		require.Len(t, kvRanges, 3+11+4)
+	*/
 }
 
 func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
