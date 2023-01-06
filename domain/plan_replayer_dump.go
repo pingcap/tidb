@@ -169,6 +169,10 @@ var (
  |   |-stats1.json
  |   |-stats2.json
  |   |-....
+ |-statsMem
+ |   |-stats1.txt
+ |   |-stats2.txt
+ |   |-....
  |-config.toml
  |-table_tiflash_replica.txt
  |-variables.toml
@@ -280,6 +284,10 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		if err = dumpStats(zw, pairs, do); err != nil {
 			return err
 		}
+	}
+
+	if err = dumpStatsMemStatus(zw, pairs, do); err != nil {
+		return err
 	}
 
 	// Dump variables
@@ -419,6 +427,37 @@ func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
 		_, err := fmt.Fprintf(zf, "%s;%s", table.DBName, table.TableName)
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain) error {
+	statsHandle := do.StatsHandle()
+	is := do.InfoSchema()
+	for pair := range pairs {
+		if pair.IsView {
+			continue
+		}
+		tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+		if err != nil {
+			return err
+		}
+		tblStats := statsHandle.GetTableStats(tbl.Meta())
+		if tblStats == nil {
+			continue
+		}
+		statsMemFw, err := zw.Create(fmt.Sprintf("statsMem/%v.%v.txt", pair.DBName, pair.TableName))
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		fmt.Fprintf(statsMemFw, "[INDEX]\n")
+		for _, indice := range tblStats.Indices {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", indice.Info.Name.String(), indice.StatusToString()))
+		}
+		fmt.Fprintf(statsMemFw, "[COLUMN]\n")
+		for _, col := range tblStats.Columns {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", col.Info.Name.String(), col.StatusToString()))
 		}
 	}
 	return nil

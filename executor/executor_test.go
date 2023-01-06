@@ -89,6 +89,7 @@ func checkFileName(s string) bool {
 		"global_bindings.sql",
 		"sql/sql0.sql",
 		"explain/sql0.txt",
+		"statsMem/test.t_dump_single.txt",
 		"sql_meta.toml",
 	}
 	for _, f := range files {
