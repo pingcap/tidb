@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !featuretag
+//go:build deadlock
 
-package concurrencyddl
+package syncutil
 
-// TiDBEnableConcurrentDDL is a feature tag
-const TiDBEnableConcurrentDDL bool = true
+import (
+	"time"
+
+	deadlock "github.com/sasha-s/go-deadlock"
+)
+
+// EnableDeadlock is a flag to enable deadlock detection.
+const EnableDeadlock = true
+
+func init() {
+	deadlock.Opts.DeadlockTimeout = 20 * time.Second
+}
+
+// A Mutex is a mutual exclusion lock.
+type Mutex struct {
+	deadlock.Mutex
+}
+
+// An RWMutex is a reader/writer mutual exclusion lock.
+type RWMutex struct {
+	deadlock.RWMutex
+}
