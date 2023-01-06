@@ -33,6 +33,7 @@ var prepareMergeSuiteData testdata.TestData
 var aggMergeSuiteData testdata.TestData
 var executorSuiteData testdata.TestData
 var pointGetSuiteData testdata.TestData
+var slowQuerySuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
@@ -40,10 +41,12 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "executor_suite")
 	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	testDataMap.LoadTestSuiteData("testdata", "point_get_suite")
+	testDataMap.LoadTestSuiteData("testdata", "slow_query_suite")
 	aggMergeSuiteData = testDataMap["agg_suite"]
 	executorSuiteData = testDataMap["executor_suite"]
 	prepareMergeSuiteData = testDataMap["prepare_suite"]
 	pointGetSuiteData = testDataMap["point_get_suite"]
+	slowQuerySuiteData = testDataMap["slow_query_suite"]
 
 	autoid.SetStep(5000)
 	config.UpdateGlobal(func(conf *config.Config) {
