@@ -933,8 +933,6 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 				for _, p := range helper.plans {
 					p.TiFlashFineGrainedShuffleStreamCount = streamCount
 				}
-				// Disable compress for now.
-				x.ExchangeSenderMeta = nil
 			case hashAgg:
 				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 1200) // 1200: performance test result
 				if applyFlag {
@@ -955,7 +953,10 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 						p.TiFlashFineGrainedShuffleStreamCount = streamCount
 					}
 				}
-
+			}
+			if x.TiFlashFineGrainedShuffleStreamCount > 0 {
+				// Disable compression
+				x.ExchangeSenderMeta = nil
 			}
 		}
 		// exchange sender will break the data partition.
