@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
 	dbsession "github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -60,15 +60,11 @@ func TestParallelLockNewJob(t *testing.T) {
 
 	sessionFactory := sessionFactory(t, store)
 
-	storedTTLJobRunInterval := variable.TTLJobRunInterval.Load()
-	variable.TTLJobRunInterval.Store(0)
-	defer func() {
-		variable.TTLJobRunInterval.Store(storedTTLJobRunInterval)
-	}()
-
-	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
+	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: duration.Duration{Hour: 1}}}}
 	// simply lock a new job
 	m := ttlworker.NewJobManager("test-id", nil, store)
+	m.InfoSchemaCache().Tables[testTable.ID] = testTable
+
 	se := sessionFactory()
 	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now())
 	require.NoError(t, err)
@@ -77,9 +73,12 @@ func TestParallelLockNewJob(t *testing.T) {
 	// lock one table in parallel, only one of them should lock successfully
 	testTimes := 100
 	concurrency := 5
+	now := time.Now()
 	for i := 0; i < testTimes; i++ {
 		successCounter := atomic.NewUint64(0)
 		successJob := &ttlworker.TTLJob{}
+
+		now = now.Add(time.Hour * 48)
 
 		wg := sync.WaitGroup{}
 		for j := 0; j < concurrency; j++ {
@@ -87,9 +86,10 @@ func TestParallelLockNewJob(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				m := ttlworker.NewJobManager(jobManagerID, nil, store)
+				m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 				se := sessionFactory()
-				job, err := m.LockNewJob(context.Background(), se, testTable, time.Now())
+				job, err := m.LockNewJob(context.Background(), se, testTable, now)
 				if err == nil {
 					successCounter.Add(1)
 					successJob = job
@@ -118,6 +118,7 @@ func TestFinishJob(t *testing.T) {
 
 	// finish with error
 	m := ttlworker.NewJobManager("test-id", nil, store)
+	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 	se := sessionFactory()
 	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now())
 	require.NoError(t, err)

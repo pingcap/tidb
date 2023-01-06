@@ -985,3 +985,39 @@ func TestIssue39080(t *testing.T) {
 		"  UNIQUE KEY `authorIdx` (`authorId`)\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
+
+func TestWriteDataWriteOnlyMode(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (`col1` bigint(20) DEFAULT 1,`col2` float,UNIQUE KEY `key1` (`col1`))")
+
+	originalCallback := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originalCallback)
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		tk2.MustExec("insert ignore into t values (1, 2)")
+		tk2.MustExec("insert ignore into t values (2, 2)")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t change column `col1` `col1` varchar(20)")
+
+	hook = &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		tk2.MustExec("insert ignore into t values (1)")
+		tk2.MustExec("insert ignore into t values (2)")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t drop column `col1`")
+	dom.DDL().SetHook(originalCallback)
+}
