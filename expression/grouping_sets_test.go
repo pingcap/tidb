@@ -15,11 +15,11 @@
 package expression
 
 import (
+	"testing"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"testing"
-
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
