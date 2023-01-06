@@ -4914,6 +4914,64 @@ func TestMppJoinExchangeColumnPrune(t *testing.T) {
 	}
 }
 
+func TestMppFineGrainedJoinAndAgg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int NOT NULL, c4 int NOT NULL, c5 int)")
+	tk.MustExec("create table tt (b1 int)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table tt")
+
+	instances := []string{
+		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
+		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
+	}
+	fpName := "github.com/pingcap/tidb/infoschema/mockStoreServerInfo"
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	require.NoError(t, failpoint.Enable(fpName, fpExpr))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+	fpName2 := "github.com/pingcap/tidb/planner/core/mockTiFlashStreamCountUsingMinLogicalCores"
+	require.NoError(t, failpoint.Enable(fpName2, `return("8")`))
+	defer func() { require.NoError(t, failpoint.Disable(fpName2)) }()
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" || tblInfo.Name.L == "tt" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_allow_mpp=1;")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func TestMppAggTopNWithJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -7483,6 +7541,39 @@ func TestRegexpSubstrPushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select regexp_substr(expr, pattern, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
 }
 
+func TestRegexpReplacePushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec("create table test.t (expr varchar(30), pattern varchar(30), repl varchar(30), pos int, occur int, match_type varchar(30));")
+	tk.MustExec("insert into test.t values ('123', '12.', '233', 1, 1, ''), ('aBb', 'bb', 'bc', 1, 1, 'i'), ('ab\nabc', '^abc$', 'd', 1, 1, 'm');")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "regexp_replace(test.t.expr, test.t.pattern, test.t.repl, 1, 1, test.t.match_type)->Column#8"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select regexp_replace(expr, pattern, repl, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
 func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -7518,6 +7609,39 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestUnhexPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(20));")
+	tk.MustExec("insert into t values(6162, '7469666C617368');")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "unhex(cast(test.t.a, var_string(20)))->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select unhex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+
+	rows = [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "unhex(test.t.b)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select unhex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
 }
 
 func TestPartitionTableFallBackStatic(t *testing.T) {
@@ -7792,8 +7916,6 @@ func TestPlanCacheForTableRangeFallback(t *testing.T) {
 	tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50")
 	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-		"Warning 1105 skip plan-cache: in-list is too long",
-		"Warning 1105 skip plan-cache: in-list is too long",
 		"Warning 1105 skip plan-cache: in-list is too long"))
 	tk.MustExec("execute stmt using @a, @b, @c, @d, @e")
 	// The plan with range fallback is not cached.
@@ -7842,7 +7964,6 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	tk.MustExec("set @a='aa', @b='bb', @c='cc', @d='dd', @e='ee', @f='ff', @g='gg', @h='hh', @i='ii', @j='jj'")
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1330 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-		"Warning 1105 skip plan-cache: in-list is too long",
 		"Warning 1105 skip plan-cache: in-list is too long"))
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e, @f, @g, @h, @i, @j")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -8000,10 +8121,6 @@ func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
 	tk.MustExec("set @a='a', @b='b', @c='c', @d='d', @e='e'")
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Memory capacity of 1275 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen",
-		"Warning 1105 skip plan-cache: in-list is too long",
-		"Warning 1105 skip plan-cache: in-list is too long",
-		"Warning 1105 skip plan-cache: in-list is too long",
-		"Warning 1105 skip plan-cache: in-list is too long",
 		"Warning 1105 skip plan-cache: in-list is too long"))
 	tk.MustExec("execute stmt2 using @a, @b, @c, @d, @e")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))

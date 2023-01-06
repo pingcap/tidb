@@ -183,7 +183,7 @@ In TiDB, operators in the partitioned table will be translated to UnionAll in th
 
 ## Compatibility
 
-MySQL does not support global index, which means this feature may cause some compatibility issues. We add an option  `enable_global_index` in `config.Config`  to control it. The default value of this option is `false`, so TiDB will keep consistent with MySQL, unless the user open global index feature manually.
+MySQL does not support global index, which means this feature may cause some compatibility issues. We add an option  `enable-global-index` in `config.Config`  to control it. The default value of this option is `false`, so TiDB will keep consistent with MySQL, unless the user open global index feature manually.
 
 ## Implementation
 

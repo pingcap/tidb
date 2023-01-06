@@ -316,10 +316,17 @@ type MultiSchemaInfo struct {
 	AddIndexes    []CIStr `json:"-"`
 	DropIndexes   []CIStr `json:"-"`
 	AlterIndexes  []CIStr `json:"-"`
-	ForeignKeys   []CIStr `json:"-"`
+
+	AddForeignKeys []AddForeignKeyInfo `json:"-"`
 
 	RelativeColumns []CIStr `json:"-"`
 	PositionColumns []CIStr `json:"-"`
+}
+
+// AddForeignKeyInfo contains foreign key information.
+type AddForeignKeyInfo struct {
+	Name CIStr
+	Cols []CIStr
 }
 
 // NewMultiSchemaInfo new a MultiSchemaInfo.
@@ -405,6 +412,44 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
+}
+
+// JobMeta is meta info of Job.
+type JobMeta struct {
+	SchemaID int64 `json:"schema_id"`
+	TableID  int64 `json:"table_id"`
+	// Query string of the ddl job.
+	Query string `json:"query"`
+	// Priority is only used to set the operation priority of adding indices.
+	Priority int `json:"priority"`
+}
+
+// BackfillMeta is meta info of the backfill job.
+type BackfillMeta struct {
+	PhysicalTableID int64  `json:"physical_table_id"`
+	IsUnique        bool   `json:"is_unique"`
+	EndInclude      bool   `json:"end_include"`
+	ErrMsg          string `json:"err_msg"`
+
+	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
+	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
+	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location      *TimeZoneLocation                `json:"location"`
+	ReorgTp       ReorgType                        `json:"reorg_tp"`
+
+	*JobMeta `json:"job_meta"`
+}
+
+// Encode encodes BackfillMeta with json format.
+func (bm *BackfillMeta) Encode() ([]byte, error) {
+	b, err := json.Marshal(bm)
+	return b, errors.Trace(err)
+}
+
+// Decode decodes BackfillMeta from the json buffer.
+func (bm *BackfillMeta) Decode(b []byte) error {
+	err := json.Unmarshal(b, bm)
+	return errors.Trace(err)
 }
 
 // Job is for a DDL operation.
@@ -900,6 +945,8 @@ type SchemaDiff struct {
 	OldTableID int64 `json:"old_table_id"`
 	// OldSchemaID is the schema ID before rename table, only used by rename table DDL.
 	OldSchemaID int64 `json:"old_schema_id"`
+	// RegenerateSchemaMap means whether to rebuild the schema map when applying to the schema diff.
+	RegenerateSchemaMap bool `json:"regenerate_schema_map"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }

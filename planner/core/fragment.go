@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -81,6 +82,7 @@ type tasksAndFrags struct {
 type mppTaskGenerator struct {
 	ctx        sessionctx.Context
 	startTS    uint64
+	mppQueryID kv.MPPQueryID
 	is         infoschema.InfoSchema
 	frags      []*Fragment
 	cache      map[int]tasksAndFrags
@@ -88,10 +90,11 @@ type mppTaskGenerator struct {
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema, mppVersion kv.MppVersion) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema, mppVersion kv.MppVersion) ([]*Fragment, error) {
 	g := &mppTaskGenerator{
 		ctx:        ctx,
 		startTS:    startTs,
+		mppQueryID: mppQueryID,
 		is:         is,
 		cache:      make(map[int]tasksAndFrags),
 		MppVersion: mppVersion,
@@ -99,10 +102,24 @@ func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *Physic
 	return g.generateMPPTasks(sender)
 }
 
+// AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id when the query finished.
+func AllocMPPTaskID(ctx sessionctx.Context) int64 {
+	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
+	return mppQueryInfo.AllocatedMPPTaskID.Add(1)
+}
+
+var mppQueryID uint64 = 1
+
+// AllocMPPQueryID allocates local query id for mpp queries.
+func AllocMPPQueryID() uint64 {
+	return atomic.AddUint64(&mppQueryID, 1)
+}
+
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
 	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)), zap.Int64("mpp-version", e.MppVersion.ToInt64()))
 	tidbTask := &kv.MPPTask{
 		StartTs:    e.startTS,
+		MppQueryID: e.mppQueryID,
 		ID:         -1,
 		MppVersion: e.MppVersion,
 	}
@@ -136,7 +153,8 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 		if !ok {
 			mppTask := &kv.MPPTask{
 				Meta:       &mppAddr{addr: addr},
-				ID:         e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS),
+				ID:         AllocMPPTaskID(e.ctx),
+				MppQueryID: e.mppQueryID,
 				StartTs:    e.startTS,
 				TableID:    -1,
 				MppVersion: e.MppVersion,
@@ -382,14 +400,19 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
 		ttl = 30 * time.Second
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		task := &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: ts.Table.ID, PartitionTableIDs: allPartitionsIDs, MppVersion: e.MppVersion}
+		task := &kv.MPPTask{Meta: meta,
+			ID:                AllocMPPTaskID(e.ctx),
+			StartTs:           e.startTS,
+			MppQueryID:        e.mppQueryID,
+			TableID:           ts.Table.ID,
+			PartitionTableIDs: allPartitionsIDs, MppVersion: e.MppVersion}
 		tasks = append(tasks, task)
 	}
 	return tasks, nil
