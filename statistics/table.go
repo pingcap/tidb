@@ -807,7 +807,7 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context, filters []
 			}
 		}
 		var lowerBoundsRatio, upperBoundsRatio, lowerBoundsSel, upperBoundsSel float64
-		upperBoundsRatio = mathutil.Min(float64(bucketRepeatSelectedCnt)/histTotalCnt, 1)
+		upperBoundsRatio = mathutil.Min(float64(bucketRepeatTotalCnt)/histTotalCnt, 1)
 		lowerBoundsRatio = 1 - upperBoundsRatio
 		if bucketRepeatTotalCnt > 0 {
 			upperBoundsSel = float64(bucketRepeatSelectedCnt) / float64(bucketRepeatTotalCnt)
