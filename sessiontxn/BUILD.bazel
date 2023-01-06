@@ -27,6 +27,8 @@ go_test(
         "txn_rc_tso_optimize_test.go",
     ],
     flaky = True,
+    race = "on",
+    shard_count = 2,
     deps = [
         ":sessiontxn",
         "//domain",
