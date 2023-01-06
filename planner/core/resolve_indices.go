@@ -88,12 +88,12 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 		if err != nil {
 			return err
 		}
-		p.LeftJoinKeys[i] = expression.ExtractColumn(lArg)
+		p.LeftJoinKeys[i] = expression.ExtractColumnsFromExpression(lArg)[0]
 		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
 		if err != nil {
 			return err
 		}
-		p.RightJoinKeys[i] = expression.ExtractColumn(rArg)
+		p.RightJoinKeys[i] = expression.ExtractColumnsFromExpression(rArg)[0]
 		p.EqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, fun := range p.NAEqualConditions {
