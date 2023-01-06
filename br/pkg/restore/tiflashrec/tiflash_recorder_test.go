@@ -199,4 +199,3 @@ func TestGenResetSql(t *testing.T) {
 		"ALTER TABLE `test`.`fruits` SET TIFLASH REPLICA 1",
 	})
 }
-
