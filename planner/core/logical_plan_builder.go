@@ -2093,11 +2093,8 @@ func getUintFromLimitNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNu
 // eg: set @a = 1;
 func checkParamTypeExpected(param *driver.ParamMarkerExpr) bool {
 	val := param.GetValue()
-	switch v := val.(type) {
-	case int64:
-		if v >= 0 {
-			return true
-		}
+	if valInt64, ok := val.(int64); ok && valInt64 >= 0 {
+		return true
 	}
 	return false
 }
