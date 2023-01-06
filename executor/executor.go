@@ -595,7 +595,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			req.AppendInt64(0, job.ID)
 			req.AppendString(1, schemaName)
 			req.AppendString(2, tableName)
-			req.AppendString(3, subJob.Type.String()+" /* subjob */")
+			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob))
 			req.AppendString(4, subJob.SchemaState.String())
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
@@ -615,6 +615,16 @@ func showAddIdxReorgTp(job *model.Job) string {
 			if len(tp) > 0 {
 				return " /* " + tp + " */"
 			}
+		}
+	}
+	return ""
+}
+
+func showAddIdxReorgTpInSubJob(subJob *model.SubJob) string {
+	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
+		tp := subJob.ReorgTp.String()
+		if len(tp) > 0 {
+			return " /* " + tp + " */"
 		}
 	}
 	return ""
