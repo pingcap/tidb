@@ -385,6 +385,9 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 			builder.WriteString(", ")
 		}
 	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		builder.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
 	return builder.String()
 }
 
@@ -542,6 +545,9 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	if len(p.OtherConditions) > 0 {
 		buffer.WriteString(", other cond:")
 		buffer.Write(sortedExplainExpressionList(p.OtherConditions))
+	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
 	}
 	return buffer.String()
 }

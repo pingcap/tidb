@@ -961,6 +961,13 @@
     ]
   },
   {
+    "name": "TestMppFineGrainedJoinAndAgg",
+    "cases": [
+      "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)",
+      "desc format = 'brief' select count(*) from tt group by b1"
+    ]
+  },
+  {
     "name": "TestPushDownAggForMPP",
     "cases": [
       "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
