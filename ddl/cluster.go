@@ -68,6 +68,7 @@ const (
 	startTSOffset
 	commitTSOffset
 	ttlJobEnableOffSet
+	keyRangesOffset
 )
 
 func closePDSchedule() error {
@@ -176,7 +177,7 @@ func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string)
 		return nil
 	}
 	DBInfo, err := t.GetDatabase(schemaID)
-	if err != nil {
+	if err != nil || DBInfo == nil {
 		return errors.Trace(err)
 	}
 	if filter.IsSystemSchema(DBInfo.Name.L) {
@@ -256,7 +257,7 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 		if !isFlashbackSupportedDDLAction(diff.Type) {
 			return errors.Errorf("Detected unsupported DDL job type(%s) during [%s, now), can't do flashback", diff.Type.String(), flashbackTSString)
 		}
-		err = checkSystemSchemaID(t, diff.SchemaID, flashbackTSString)
+		err = checkSystemSchemaID(flashbackSnapshotMeta, diff.SchemaID, flashbackTSString)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -308,7 +309,6 @@ func getFlashbackTableIDs(schemas []*model.DBInfo) []int64 {
 // The returned KeyRanges will order by startKey.
 // The time complexity is O(nlogn).
 func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
-
 	// The semantic of keyRanges(output).
 	var keyRanges []kv.KeyRange
 
@@ -367,6 +367,12 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 			EndKey:   metaEndKey,
 		})
 	}
+
+	startKey := tablecodec.EncodeMetaKeyPrefix([]byte("DBs"))
+	keyRanges = append(keyRanges, kv.KeyRange{
+		StartKey: startKey,
+		EndKey:   startKey.PrefixNext(),
+	})
 
 	return keyRanges, nil
 }
@@ -605,7 +611,8 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	var pdScheduleValue map[string]interface{}
 	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue); err != nil {
+	var keyRanges []kv.KeyRange
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue, &keyRanges); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -666,6 +673,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		job.Args[startTSOffset] = startTS
+		keyRanges, err = GetFlashbackKeyRanges(sess, flashbackTS)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.Args[keyRangesOffset] = keyRanges
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	// Stage 3, get key ranges and get locks.
@@ -674,10 +686,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		if inFlashbackTest {
 			job.SchemaState = model.StateWriteReorganization
 			return updateSchemaVersion(d, t, job)
-		}
-		keyRanges, err := GetFlashbackKeyRanges(sess, flashbackTS)
-		if err != nil {
-			return ver, errors.Trace(err)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
 		splitRegionsByKeyRanges(d, keyRanges)
@@ -711,10 +719,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.State = model.JobStateDone
 			job.SchemaState = model.StatePublic
 			return ver, nil
-		}
-		keyRanges, err := GetFlashbackKeyRanges(sess, flashbackTS)
-		if err != nil {
-			return ver, errors.Trace(err)
 		}
 
 		for _, r := range keyRanges {
