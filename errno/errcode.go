@@ -1040,7 +1040,7 @@ const (
 	ErrLazyUniquenessCheckFailure          = 8147
 	ErrUnsupportedColumnInTTLConfig        = 8148
 	ErrTTLColumnCannotDrop                 = 8149
-	ErrSetTTLEnableForNonTTLTable          = 8150
+	ErrSetTTLOptionForNonTTLTable          = 8150
 	ErrTempTableNotAllowedWithTTL          = 8151
 	ErrUnsupportedTTLReferencedByFK        = 8152
 
