@@ -926,12 +926,17 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, schemaVersion int64) (*Builder, error) {
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
 	// build the policies.
 	for _, policy := range policies {
 		info.setPolicy(policy)
+	}
+
+	// build the groups.
+	for _, group := range resourceGroups {
+		info.setResourceGroup(group)
 	}
 
 	// Maintain foreign key reference information.

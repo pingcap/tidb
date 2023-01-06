@@ -949,6 +949,29 @@ func (m *Meta) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 	return policy, errors.Trace(err)
 }
 
+// ListResourceGroups shows all resource groups.
+func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
+	res, err := m.txn.HGetAll(mResourceGroups)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	groups := make([]*model.ResourceGroupInfo, 0, len(res))
+	for _, r := range res {
+		value, err := detachMagicByte(r.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		group := &model.ResourceGroupInfo{}
+		err = json.Unmarshal(value, group)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
 // GetResourceGroup gets the database value with ID.
 func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error) {
 	groupKey := m.resourceGroupKey(groupID)
