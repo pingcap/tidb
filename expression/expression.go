@@ -186,6 +186,22 @@ type Expression interface {
 	MemoryUsage() int64
 }
 
+// ExtractColumn gets the column from expression.
+func ExtractColumn(expr Expression) *Column {
+	switch expr.(type) {
+	case *Column:
+		return expr.(*Column)
+	case *ScalarFunction:
+		args := expr.(*ScalarFunction).GetArgs()
+		if len(args) > 1 {
+			panic("should never happen")
+		}
+		return ExtractColumn(args[0])
+	default:
+		panic("should never happen")
+	}
+}
+
 // CNFExprs stands for a CNF expression.
 type CNFExprs []Expression
 
