@@ -92,6 +92,9 @@ func (r *TiFlashRecorder) GenerateResetAlterTableDDLs(info infoschema.InfoSchema
 			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
 			return
 		}
+		// Currently, we didn't backup tiflash cluster volume during volume snapshot backup,
+		// But the table has replica info after volume restoration.
+		// We should reset it to 0, then set it back. otherwise, it will return error when alter tiflash replica.
 		altTableSpec, err := alterTableSpecOf(replica, true)
 		if err != nil {
 			log.Warn("Failed to generate the alter table spec", logutil.ShortError(err), zap.Any("replica", replica))
