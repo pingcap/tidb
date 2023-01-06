@@ -7525,6 +7525,41 @@
     ]
   },
   {
+    "Name": "TestMppFineGrainedJoinAndAgg",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)",
+        "Plan": [
+          "TableReader 7992.00 root  data:ExchangeSender",
+          "└─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, equal:[eq(test.tt.b1, test.t.c3)], stream_count: 8",
+          "    ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  stream_count: 8",
+          "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c3, collate: binary], stream_count: 8",
+          "    │   └─Projection 8000.00 mpp[tiflash]  test.t.c3",
+          "    │     └─Selection 8000.00 mpp[tiflash]  lt(test.t.c1, test.t.c2)",
+          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.b1, collate: binary]",
+          "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.b1))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) from tt group by b1",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#3",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:sum(Column#7)->Column#3, stream_count: 8",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.b1, collate: binary], stream_count: 8",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:count(1)->Column#7",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:tt keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestPushDownAggForMPP",
     "Cases": [
       {
