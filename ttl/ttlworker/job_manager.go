@@ -485,7 +485,7 @@ tblLoop:
 		}
 
 		status := m.tableStatusCache.Tables[table.ID]
-		ok := m.couldTrySchedule(status, now)
+		ok := m.couldTrySchedule(status, table, now)
 		if ok {
 			tables = append(tables, table)
 		}
@@ -495,30 +495,34 @@ tblLoop:
 }
 
 // couldTrySchedule returns whether a table should be tried to run TTL
-func (m *JobManager) couldTrySchedule(table *cache.TableStatus, now time.Time) bool {
-	if table == nil {
+func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cache.PhysicalTable, now time.Time) bool {
+	if tableStatus == nil {
 		// if the table status hasn't been created, return true
 		return true
 	}
-	if table.CurrentJobOwnerID != "" {
+	if table == nil {
+		// if the table is not recorded in info schema, return false
+		return false
+	}
+	if tableStatus.CurrentJobOwnerID != "" {
 		// see whether it's heart beat time is expired
-		hbTime := table.CurrentJobOwnerHBTime
+		hbTime := tableStatus.CurrentJobOwnerHBTime
 		// a more concrete value is `2 * max(updateTTLTableStatusCacheInterval, jobManagerLoopTickerInterval)`, but the
 		// `updateTTLTableStatusCacheInterval` is greater than `jobManagerLoopTickerInterval` in most cases.
 		if hbTime.Add(2 * getUpdateTTLTableStatusCacheInterval()).Before(now) {
-			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.TableID), zap.Time("hbTime", hbTime), zap.Time("now", now))
+			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.ID), zap.Time("hbTime", hbTime), zap.Time("now", now))
 			return true
 		}
 		return false
 	}
 
-	if table.LastJobFinishTime.IsZero() {
+	if tableStatus.LastJobStartTime.IsZero() {
 		return true
 	}
 
-	finishTime := table.LastJobFinishTime
+	startTime := tableStatus.LastJobStartTime
 
-	return finishTime.Add(variable.TTLJobRunInterval.Load()).Before(now)
+	return startTime.Add(table.TTLInfo.JobInterval.GoDuration()).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
@@ -553,7 +557,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		if err != nil {
 			return err
 		}
-		if !m.couldTrySchedule(tableStatus, now) {
+		if !m.couldTrySchedule(tableStatus, m.infoSchemaCache.Tables[tableStatus.TableID], now) {
 			return errors.New("couldn't schedule ttl job")
 		}
 

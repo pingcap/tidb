@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -3031,7 +3032,7 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
-	var handledTTLOrTTLEnable bool
+	var ttlOptionsHandled bool
 
 	for _, op := range options {
 		switch op.Tp {
@@ -3069,23 +3070,28 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(op.StrValue),
 			}
-		case ast.TableOptionTTL, ast.TableOptionTTLEnable:
-			if handledTTLOrTTLEnable {
+		case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
+			if ttlOptionsHandled {
 				continue
 			}
 
-			ttlInfo, ttlEnable, err := getTTLInfoInOptions(options)
+			ttlInfo, ttlEnable, ttlJobInterval, err := getTTLInfoInOptions(options)
 			if err != nil {
 				return err
 			}
 			// It's impossible that `ttlInfo` and `ttlEnable` are all nil, because we have met this option.
 			// After exclude the situation `ttlInfo == nil && ttlEnable != nil`, we could say `ttlInfo != nil`
-			if ttlInfo == nil && ttlEnable != nil {
-				return errors.Trace(dbterror.ErrSetTTLEnableForNonTTLTable)
+			if ttlInfo == nil {
+				if ttlEnable != nil {
+					return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_ENABLE"))
+				}
+				if ttlJobInterval != nil {
+					return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_JOB_INTERVAL"))
+				}
 			}
 
 			tbInfo.TTLInfo = ttlInfo
-			handledTTLOrTTLEnable = true
+			ttlOptionsHandled = true
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -3285,7 +3291,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	}
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
-		var handledTTLOrTTLEnable bool
+		var ttlOptionsHandled bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			err = d.AddColumn(sctx, ident, spec)
@@ -3422,20 +3428,21 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 						Name: model.NewCIStr(opt.StrValue),
 					}
 				case ast.TableOptionEngine:
-				case ast.TableOptionTTL, ast.TableOptionTTLEnable:
+				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
 					var ttlEnable *bool
+					var ttlJobInterval *duration.Duration
 
-					if handledTTLOrTTLEnable {
+					if ttlOptionsHandled {
 						continue
 					}
-					ttlInfo, ttlEnable, err = getTTLInfoInOptions(spec.Options)
+					ttlInfo, ttlEnable, ttlJobInterval, err = getTTLInfoInOptions(spec.Options)
 					if err != nil {
 						return err
 					}
-					err = d.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable)
+					err = d.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable, ttlJobInterval)
 
-					handledTTLOrTTLEnable = true
+					ttlOptionsHandled = true
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -5397,11 +5404,13 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 }
 
 // AlterTableTTLInfoOrEnable submit ddl job to change table info according to the ttlInfo, or ttlEnable
-// at least one of the `ttlInfo` or `ttlEnable` should be not nil.
+// at least one of the `ttlInfo`, `ttlEnable` or `ttlCronJobSchedule` should be not nil.
 // When `ttlInfo` is nil, and `ttlEnable` is not, it will use the original `.TTLInfo` in the table info and modify the
 // `.Enable`. If the `.TTLInfo` in the table info is empty, this function will return an error.
+// When `ttlInfo` is nil, and `ttlCronJobSchedule` is not, it will use the original `.TTLInfo` in the table info and modify the
+// `.JobInterval`. If the `.TTLInfo` in the table info is empty, this function will return an error.
 // When `ttlInfo` is not nil, it simply submits the job with the `ttlInfo` and ignore the `ttlEnable`.
-func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool) error {
+func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident, ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *duration.Duration) error {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -5424,29 +5433,25 @@ func (d *ddl) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.Ident,
 		if err != nil {
 			return err
 		}
-		job = &model.Job{
-			SchemaID:   schema.ID,
-			TableID:    tableID,
-			SchemaName: schema.Name.L,
-			TableName:  tableName,
-			Type:       model.ActionAlterTTLInfo,
-			BinlogInfo: &model.HistoryInfo{},
-			Args:       []interface{}{ttlInfo, ttlEnable},
-		}
 	} else {
 		if tblInfo.TTLInfo == nil {
-			return errors.Trace(dbterror.ErrSetTTLEnableForNonTTLTable)
+			if ttlEnable != nil {
+				return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_ENABLE"))
+			}
+			if ttlCronJobSchedule != nil {
+				return errors.Trace(dbterror.ErrSetTTLOptionForNonTTLTable.FastGenByArgs("TTL_JOB_INTERVAL"))
+			}
 		}
+	}
 
-		job = &model.Job{
-			SchemaID:   schema.ID,
-			TableID:    tableID,
-			SchemaName: schema.Name.L,
-			TableName:  tableName,
-			Type:       model.ActionAlterTTLInfo,
-			BinlogInfo: &model.HistoryInfo{},
-			Args:       []interface{}{ttlInfo, ttlEnable},
-		}
+	job = &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tableID,
+		SchemaName: schema.Name.L,
+		TableName:  tableName,
+		Type:       model.ActionAlterTTLInfo,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{ttlInfo, ttlEnable, ttlCronJobSchedule},
 	}
 
 	err = d.DoDDLJob(ctx, job)

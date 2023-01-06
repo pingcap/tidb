@@ -55,6 +55,7 @@ go_test(
         "//infoschema",
         "//kv",
         "//parser/ast",
+        "//parser/duration",
         "//parser/model",
         "//parser/mysql",
         "//session",

@@ -1223,7 +1223,7 @@ Cannot drop column '%-.192s': needed in TTL config
 
 ["ddl:8150"]
 error = '''
-Cannot set TTL_ENABLE on a table without TTL config
+Cannot set %s on a table without TTL config
 '''
 
 ["ddl:8151"]

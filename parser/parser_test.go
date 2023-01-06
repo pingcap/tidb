@@ -7111,6 +7111,7 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR"},
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
 		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
+		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF' TTL_JOB_INTERVAL='8h'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '8h'"},
 		{"create table t (created_at datetime) /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON'"},
 
 		// alter table with various temporal interval
@@ -7118,7 +7119,9 @@ func TestTTLTableOption(t *testing.T) {
 		{"alter table t TTL_ENABLE = 'ON'", true, "ALTER TABLE `t` TTL_ENABLE = 'ON'"},
 		{"alter table t TTL_ENABLE = 'OFF'", true, "ALTER TABLE `t` TTL_ENABLE = 'OFF'"},
 		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF'", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 MONTH TTL_ENABLE = 'OFF'"},
+		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF' TTL_JOB_INTERVAL '1h'", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 MONTH TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1h'"},
 		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON'"},
+		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON' TTL_JOB_INTERVAL='8h'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON' TTL_JOB_INTERVAL = '8h'"},
 
 		// alter table to remove ttl settings
 		{"alter table t remove ttl", true, "ALTER TABLE `t` REMOVE TTL"},
@@ -7127,6 +7130,10 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL_ENABLE = 'test_case'", false, ""},
 		{"create table t (created_at datetime) /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
 		{"alter table t /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
+
+		// validate invalid TTL_JOB_INTERVAL settings
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '@monthly'", false, ""},
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '10hourxx'", false, ""},
 	}
 
 	RunTest(t, table, false)
