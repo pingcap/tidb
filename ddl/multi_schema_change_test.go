@@ -719,8 +719,8 @@ func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, c int, index (a), index(b), index(c));")
 	tk.MustExec("insert into t values (1, 2, 3);")
-	tk.MustExec("alter table t add index aa(a), drop index a, add index cc(c), drop index b, drop index c, add index bb(b);")
-	tk.MustQuery("select * from t use index(aa, bb, cc);").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("alter table t add index xa(a), drop index a, add index xc(c), drop index b, drop index c, add index xb(b);")
+	tk.MustQuery("select * from t use index(xa, xb, xc);").Check(testkit.Rows("1 2 3"))
 	tk.MustGetErrCode("select * from t use index(a);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index(b);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index(c);", errno.ErrKeyDoesNotExist)
@@ -1208,6 +1208,17 @@ func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
 	dom.DDL().SetHook(originHook)
 }
 
+func TestMultiSchemaChangeAddIndexChangeColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t (a SMALLINT DEFAULT '30219', b TIME NULL DEFAULT '02:45:06', PRIMARY KEY (a));")
+	tk.MustExec("ALTER TABLE t ADD unique INDEX idx4 (b), change column a e MEDIUMINT DEFAULT '5280454' FIRST;")
+	tk.MustExec("insert ignore into t (e) values (5586359),(501788),(-5961048),(220083),(-4917129),(-7267211),(7750448);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("5586359 02:45:06"))
+	tk.MustExec("admin check table t;")
+}
+
 func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1263,7 +1274,7 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 		return
 	}
 	c.triggered = true
-	errs, err := ddl.CancelJobs(c.s, c.store, []int64{job.ID})
+	errs, err := ddl.CancelJobs(c.s, []int64{job.ID})
 	if errs[0] != nil {
 		c.cancelErr = errs[0]
 		return

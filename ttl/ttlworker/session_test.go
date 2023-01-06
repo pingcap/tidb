@@ -24,6 +24,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -51,6 +52,7 @@ func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitSecond),
 			Enable:           true,
+			JobInterval:      duration.Duration{Hour: 1},
 		},
 		State: model.StatePublic,
 	}
@@ -154,6 +156,10 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 	}
 }
 
+func (s *mockSession) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+	return s.sessionInfoSchema
+}
+
 func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
 	require.False(s.t, s.closed)
 	return s.sessionInfoSchema
@@ -175,7 +181,7 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interf
 	}
 
 	if s.executeSQL != nil {
-		return s.executeSQL(ctx, sql, args)
+		return s.executeSQL(ctx, sql, args...)
 	}
 	return s.rows, s.execErr
 }
@@ -193,6 +199,14 @@ func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
 
 func (s *mockSession) Close() {
 	s.closed = true
+}
+
+func (s *mockSession) Now() time.Time {
+	tz := s.sessionVars.TimeZone
+	if tz != nil {
+		tz = time.UTC
+	}
+	return time.Now().In(tz)
 }
 
 func TestExecuteSQLWithCheck(t *testing.T) {

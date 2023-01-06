@@ -1969,7 +1969,8 @@
           "  └─TableRangeScan_8 3333.33 923531.15 cop[tikv] table:t range:(1,+inf], keep order:false, stats:pseudo"
         ],
         "Warnings": [
-          "Note 1105 [t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+          "Note 1105 [t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}",
+          "Note 1105 [t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}"
         ]
       },
       {
@@ -2014,7 +2015,8 @@
           "  └─TableRowIDScan_12(Probe) 10.00 2770.59 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
-          "Note 1105 [t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+          "Note 1105 [t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}",
+          "Note 1105 [t,f_g,g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}"
         ]
       },
       {
@@ -2026,6 +2028,7 @@
           "└─TableRowIDScan_13(Probe) 10.00 2770.59 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
+          "Note 1105 [t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}",
           "Note 1105 [t,c_d_e] remain after pruning paths for t given Prop{SortItems: [{test.t.c asc} {test.t.e asc}], TaskTp: rootTask}"
         ]
       }
@@ -6226,9 +6229,9 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), shuffle_join(t1@qb, t@qb) */ * from v12;",
         "Plan": [
-          "Projection 12500.00 root  test.t.a, test.t.b",
-          "└─TableReader 12500.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader 12500.00 root  data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.t.a, test.t.b",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary]",
@@ -7517,6 +7520,41 @@
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.b1, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.b1))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMppFineGrainedJoinAndAgg",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)",
+        "Plan": [
+          "TableReader 7992.00 root  data:ExchangeSender",
+          "└─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, equal:[eq(test.tt.b1, test.t.c3)], stream_count: 8",
+          "    ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  stream_count: 8",
+          "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c3, collate: binary], stream_count: 8",
+          "    │   └─Projection 8000.00 mpp[tiflash]  test.t.c3",
+          "    │     └─Selection 8000.00 mpp[tiflash]  lt(test.t.c1, test.t.c2)",
+          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.b1, collate: binary]",
+          "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.b1))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) from tt group by b1",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#3",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:sum(Column#7)->Column#3, stream_count: 8",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.b1, collate: binary], stream_count: 8",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:count(1)->Column#7",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:tt keep order:false, stats:pseudo"
         ]
       }
     ]

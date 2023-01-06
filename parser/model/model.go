@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -381,8 +382,8 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
-func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
-	for _, index := range tbInfo.Indices {
+func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...CIStr) *IndexInfo {
+	for _, index := range indices {
 		if IsIndexPrefixCovered(tbInfo, index, cols...) {
 			return index
 		}
@@ -1419,6 +1420,7 @@ type IndexInfo struct {
 	Primary       bool           `json:"is_primary"`   // Whether the index is primary key.
 	Invisible     bool           `json:"is_invisible"` // Whether the index is invisible.
 	Global        bool           `json:"is_global"`    // Whether the index is global.
+	MVIndex       bool           `json:"mv_index"`     // Whether the index is multivalued index.
 }
 
 // Clone clones IndexInfo.
@@ -1759,6 +1761,8 @@ type TTLInfo struct {
 	// `IntervalTimeUnit` is actually ast.TimeUnitType. Use `int` to avoid cycle dependency
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
+	// JobInterval is the interval between two TTL scan jobs.
+	JobInterval duration.Duration `json:"job_interval"`
 }
 
 // Clone clones TTLInfo

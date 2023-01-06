@@ -59,17 +59,13 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 			worker.errCh <- errors.Trace(ErrQueryInterrupted)
 			return
 		}
-		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot)
+		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot, handle.StatsMetaHistorySourceAnalyze)
 		if err != nil {
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(worker.sctx, results.Job, err)
 			worker.errCh <- err
 		} else {
 			finishJobWithLog(worker.sctx, results.Job, nil)
-			// Dump stats to historical storage.
-			if err := recordHistoricalStats(worker.sctx, results.TableID.TableID); err != nil {
-				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
-			}
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if err != nil {
