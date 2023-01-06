@@ -466,19 +466,15 @@ func TestUnsupportedLimitCase(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key(a))")
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
-	
+
 	tk.MustExec("set @a = 1.2")
-	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
-
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 	tk.MustExec("set @a = 1.")
-	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
-
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 	tk.MustExec("set @a = '0'")
-	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
-
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 	tk.MustExec("set @a = '1'")
-	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
-
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 	tk.MustExec("set @a = 1_2")
-	tk.MustGetErrMsg("execute stmt using @a", "incorrect arguments to limit in plan cache")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 }
