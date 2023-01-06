@@ -2168,6 +2168,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.ClearStmtVars()
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
+<<<<<<< HEAD
+=======
+	vars.DurationWaitTS = 0
+	vars.CurrInsertBatchExtraCols = nil
+	vars.CurrInsertValues = chunk.Row{}
+>>>>>>> f600fc694f (executor: reset the related session vars for both INSERT and REPLACE (#40354))
 	return
 }
 
