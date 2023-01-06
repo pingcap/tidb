@@ -592,9 +592,6 @@ const (
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
-	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
-	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
-
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
@@ -1028,7 +1025,6 @@ const (
 	DefTiDBShardAllocateStep                       = math.MaxInt64
 	DefTiDBEnableTelemetry                         = true
 	DefTiDBEnableParallelApply                     = false
-	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
 	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
