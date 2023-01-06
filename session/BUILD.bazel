@@ -65,6 +65,7 @@ go_library(
         "//table/temptable",
         "//tablecodec",
         "//telemetry",
+        "//ttl/ttlworker",
         "//types",
         "//types/parser_driver",
         "//util",
@@ -82,6 +83,7 @@ go_library(
         "//util/sem",
         "//util/sli",
         "//util/sqlexec",
+        "//util/syncutil",
         "//util/tableutil",
         "//util/timeutil",
         "//util/topsql",
@@ -127,6 +129,7 @@ go_test(
     race = "on",
     shard_count = 50,
     deps = [
+        "//autoid_service",
         "//bindinfo",
         "//config",
         "//ddl",

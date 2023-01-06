@@ -2016,6 +2016,10 @@ func (d *Datum) ToMysqlJSON() (j BinaryJSON, err error) {
 		in = d.GetBinaryLiteral().ToString()
 	case KindNull:
 		in = nil
+	case KindMysqlTime:
+		in = d.GetMysqlTime()
+	case KindMysqlDuration:
+		in = d.GetMysqlDuration()
 	default:
 		in, err = d.ToString()
 	}

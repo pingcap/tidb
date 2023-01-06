@@ -12,9 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !featuretag
+package spmc
 
-package concurrencyddl
+import (
+	"testing"
 
-// TiDBEnableConcurrentDDL is a feature tag
-const TiDBEnableConcurrentDDL bool = true
+	"github.com/pingcap/tidb/testkit/testsetup"
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	goleak.VerifyTestMain(m)
+}
