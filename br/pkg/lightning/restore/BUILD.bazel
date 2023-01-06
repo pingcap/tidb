@@ -28,6 +28,7 @@ go_library(
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/errormanager",
         "//br/pkg/lightning/glue",
+        "//br/pkg/lightning/importer",
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/mydump",

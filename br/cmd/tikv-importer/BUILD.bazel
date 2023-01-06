@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "tikv-importer_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/br/cmd/tikv-importer",
+    visibility = ["//visibility:private"],
+    deps = ["//br/pkg/lightning/importer"],
+)
+
+go_binary(
+    name = "tikv-importer",
+    embed = [":tikv-importer_lib"],
+    visibility = ["//visibility:public"],
+)

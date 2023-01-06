@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "kv",
+    srcs = [
+        "kv.go",
+        "misc.go",
+        "properties.go",
+        "sstable.go",
+        "stream.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/lightning/importer/kv",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tablecodec",
+        "@com_github_cockroachdb_pebble//sstable",
+    ],
+)

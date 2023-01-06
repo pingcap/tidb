@@ -42,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer"
+	ikv "github.com/pingcap/tidb/br/pkg/lightning/importer/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -1547,6 +1549,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 }
 
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
+	return nil
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1859,13 +1862,42 @@ func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
 	return filepath.Join(storeDir, engineUUID.String()+".sst")
 }
 
-func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
-	e, ok := local.engines.Load(engineUUID)
-	if !ok {
-		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
+func (local *local) LocalWriter(ctx context.Context, _ *backend.LocalWriterConfig, _ uuid.UUID) (backend.EngineWriter, error) {
+	importCli, err := importer.NewClient("http://127.0.0.1:8287")
+	if err != nil {
+		return nil, err
 	}
-	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
+	w, err := importCli.NewWriter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &importWriter{w: w}, nil
+}
+
+type importWriter struct {
+	w ikv.Writer
+}
+
+func (iw *importWriter) AppendRows(_ context.Context, _ string, _ []string, rows kv.Rows) error {
+	kvs := kv.KvPairsFromRows(rows)
+	if len(kvs) == 0 {
+		return nil
+	}
+
+	for _, kvPair := range kvs {
+		if err := iw.w.Write(kvPair.Key, kvPair.Val); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (iw *importWriter) IsSynced() bool {
+	return true
+}
+
+func (iw *importWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+	return nil, iw.w.Close()
 }
 
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {

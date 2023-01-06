@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -1821,6 +1822,18 @@ func (tr *TableRestore) restoreTable(
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+
+	importCli, err := importer.NewClient("http://127.0.0.1:8287")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	tr.logger.Info("compacting")
+	compactErr := importCli.Compact(ctx)
+	tr.logger.Info("compacted", zap.Error(compactErr))
+
+	tr.logger.Info("importing")
+	importErr := importCli.Import(ctx, nil, nil)
+	tr.logger.Info("imported", zap.Error(importErr))
 
 	err = metaMgr.UpdateTableStatus(ctx, metaStatusRestoreFinished)
 	if err != nil {

@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "importer",
+    srcs = [
+        "client.go",
+        "ingest.go",
+        "server.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/lightning/importer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/lightning/importer/kv",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//:client",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_x_sync//errgroup",
+        "@org_golang_x_sync//singleflight",
+    ],
+)
