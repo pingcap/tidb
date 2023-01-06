@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"runtime/trace"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -64,7 +64,7 @@ type LazyTxn struct {
 	// The data in this session would be query by other sessions, so Mutex is necessary.
 	// Since read is rare, the reader can copy-on-read to get a data snapshot.
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		txninfo.TxnInfo
 	}
 
