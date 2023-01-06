@@ -102,7 +102,7 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if s.p.Instance != "" {
 		nodeAddrs.Insert(s.p.Instance)
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
+	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
 	if s.p.Instance != "" && len(serversInfo) == 0 {
 		return errors.Errorf("instance %v is not found in this cluster", s.p.Instance)
 	}
