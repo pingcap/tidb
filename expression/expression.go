@@ -188,11 +188,11 @@ type Expression interface {
 
 // ExtractColumn gets the column from expression.
 func ExtractColumn(expr Expression) *Column {
-	switch expr.(type) {
+	switch e := expr.(type) {
 	case *Column:
-		return expr.(*Column)
+		return e
 	case *ScalarFunction:
-		args := expr.(*ScalarFunction).GetArgs()
+		args := e.GetArgs()
 		if len(args) > 1 {
 			panic("should never happen")
 		}
