@@ -648,7 +648,7 @@ func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expre
 		return nil, false
 	}
 	if jsonArray.TypeCode != types.JSONTypeCodeArray {
-		single, ok := jsonValue2Expr(sctx, jsonArray, targetType) // '1' -> []expr{1}
+		single, ok := jsonValue2Expr(jsonArray, targetType) // '1' -> []expr{1}
 		if ok {
 			return []expression.Expression{single}, true
 		}
@@ -656,7 +656,7 @@ func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expre
 	}
 	var exprs []expression.Expression
 	for i := 0; i < jsonArray.GetElemCount(); i++ { // '[1, 2, 3]' -> []expr{1, 2, 3}
-		expr, ok := jsonValue2Expr(sctx, jsonArray.ArrayGetElem(i), targetType)
+		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i), targetType)
 		if !ok {
 			return nil, false
 		}
@@ -665,12 +665,8 @@ func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expre
 	return exprs, true
 }
 
-func jsonValue2Expr(sctx sessionctx.Context, v types.BinaryJSON, targetType *types.FieldType) (expression.Expression, bool) {
-	convertFunc := expression.ConvertJSON2Tp(targetType.EvalType())
-	if convertFunc == nil {
-		return nil, false
-	}
-	datum, err := convertFunc(sctx.GetSessionVars().StmtCtx, v, targetType)
+func jsonValue2Expr(v types.BinaryJSON, targetType *types.FieldType) (expression.Expression, bool) {
+	datum, err := expression.ConvertJSON2Tp(v, targetType)
 	if err != nil {
 		return nil, false
 	}
