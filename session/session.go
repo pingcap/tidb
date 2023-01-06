@@ -683,13 +683,6 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
-	if sessVars.EnableAmendPessimisticTxn {
-		if !variable.EnableFastReorg.Load() {
-			s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
-		} else {
-			logutil.BgLogger().Warn("@@tidb_enable_amend_pessimistic_txn takes no effect when @@tidb_ddl_enable_fast_reorg is true")
-		}
-	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
