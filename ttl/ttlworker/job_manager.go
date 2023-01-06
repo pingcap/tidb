@@ -16,7 +16,6 @@ package ttlworker
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -31,22 +30,30 @@ import (
 	"go.uber.org/zap"
 )
 
-const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%d, %d)"
-const setTableStatusOwnerTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_id = UUID(), current_job_owner_id = '%s',current_job_start_time = '%s',current_job_status = 'waiting',current_job_status_update_time = '%s',current_job_ttl_expire = '%s',current_job_owner_hb_time = '%s' WHERE table_id = %d"
-const updateHeartBeatTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_hb_time = '%s' WHERE table_id = %d AND current_job_owner_id = '%s'"
+const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%?, %?)"
+const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
+	SET current_job_id = UUID(),
+		current_job_owner_id = %?,
+		current_job_start_time = %?,
+		current_job_status = 'waiting',
+		current_job_status_update_time = %?,
+		current_job_ttl_expire = %?,
+		current_job_owner_hb_time = %?
+	WHERE table_id = %?`
+const updateHeartBeatTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_hb_time = %? WHERE table_id = %? AND current_job_owner_id = %?"
 
 const timeFormat = "2006-01-02 15:04:05"
 
-func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) string {
-	return fmt.Sprintf(insertNewTableIntoStatusTemplate, tableID, parentTableID)
+func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []interface{}) {
+	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}
 }
 
-func setTableStatusOwnerSQL(tableID int64, now time.Time, currentJobTTLExpire time.Time, id string) string {
-	return fmt.Sprintf(setTableStatusOwnerTemplate, id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID)
+func setTableStatusOwnerSQL(tableID int64, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
+	return setTableStatusOwnerTemplate, []interface{}{id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
 }
 
-func updateHeartBeatSQL(tableID int64, now time.Time, id string) string {
-	return fmt.Sprintf(updateHeartBeatTemplate, now.Format(timeFormat), tableID, id)
+func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []interface{}) {
+	return updateHeartBeatTemplate, []interface{}{now.Format(timeFormat), tableID, id}
 }
 
 // JobManager schedules and manages the ttl jobs on this instance
@@ -95,8 +102,8 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage) (manager *
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "manager")
 
-	manager.infoSchemaCache = cache.NewInfoSchemaCache(updateInfoSchemaCacheInterval)
-	manager.tableStatusCache = cache.NewTableStatusCache(updateTTLTableStatusCacheInterval)
+	manager.infoSchemaCache = cache.NewInfoSchemaCache(getUpdateInfoSchemaCacheInterval())
+	manager.tableStatusCache = cache.NewTableStatusCache(getUpdateTTLTableStatusCacheInterval())
 
 	return
 }
@@ -118,7 +125,7 @@ func (m *JobManager) jobLoop() error {
 	updateScanTaskStateTicker := time.Tick(jobManagerLoopTickerInterval)
 	infoSchemaCacheUpdateTicker := time.Tick(m.infoSchemaCache.GetInterval())
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
-	resizeWorkersTicker := time.Tick(resizeWorkersInterval)
+	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
 	for {
 		m.reportMetrics()
 		now := se.Now()
@@ -346,6 +353,24 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		// and keep the job in memory, it could start the left task in the next window.
 		return
 	}
+	if !variable.EnableTTLJob.Load() {
+		if len(m.runningJobs) > 0 {
+			ctx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
+
+			for _, job := range m.runningJobs {
+				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id), zap.String("statistics", job.statistics.String()))
+				m.removeJob(job)
+				err := job.Cancel(ctx, se)
+				if err != nil {
+					logutil.Logger(m.ctx).Warn("fail to cancel job", zap.Error(err))
+				}
+				job.finish(se, se.Now())
+			}
+
+			cancel()
+		}
+		return
+	}
 
 	idleScanWorkers := m.idleScanWorkers()
 	if len(idleScanWorkers) == 0 {
@@ -480,7 +505,7 @@ func (m *JobManager) couldTrySchedule(table *cache.TableStatus, now time.Time) b
 		hbTime := table.CurrentJobOwnerHBTime
 		// a more concrete value is `2 * max(updateTTLTableStatusCacheInterval, jobManagerLoopTickerInterval)`, but the
 		// `updateTTLTableStatusCacheInterval` is greater than `jobManagerLoopTickerInterval` in most cases.
-		if hbTime.Add(2 * updateTTLTableStatusCacheInterval).Before(now) {
+		if hbTime.Add(2 * getUpdateTTLTableStatusCacheInterval()).Before(now) {
 			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.TableID), zap.Time("hbTime", hbTime), zap.Time("now", now))
 			return true
 		}
@@ -503,19 +528,22 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 	var expireTime time.Time
 
 	err := se.RunInTxn(ctx, func() error {
-		rows, err := se.ExecuteSQL(ctx, cache.SelectFromTTLTableStatusWithID(table.ID))
+		sql, args := cache.SelectFromTTLTableStatusWithID(table.ID)
+		rows, err := se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 		if len(rows) == 0 {
 			// cannot find the row, insert the status row
-			_, err = se.ExecuteSQL(ctx, insertNewTableIntoStatusSQL(table.ID, table.TableInfo.ID))
+			sql, args := insertNewTableIntoStatusSQL(table.ID, table.TableInfo.ID)
+			_, err = se.ExecuteSQL(ctx, sql, args...)
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "execute sql: %s", sql)
 			}
-			rows, err = se.ExecuteSQL(ctx, cache.SelectFromTTLTableStatusWithID(table.ID))
+			sql, args = cache.SelectFromTTLTableStatusWithID(table.ID)
+			rows, err = se.ExecuteSQL(ctx, sql, args...)
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "execute sql: %s", sql)
 			}
 			if len(rows) == 0 {
 				return errors.New("table status row still doesn't exist after insertion")
@@ -534,9 +562,9 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return err
 		}
 
-		_, err = se.ExecuteSQL(ctx, setTableStatusOwnerSQL(table.ID, now, expireTime, m.id))
-
-		return err
+		sql, args = setTableStatusOwnerSQL(table.ID, now, expireTime, m.id)
+		_, err = se.ExecuteSQL(ctx, sql, args...)
+		return errors.Wrapf(err, "execute sql: %s", sql)
 	})
 	if err != nil {
 		return nil, err
@@ -599,9 +627,10 @@ func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *ca
 func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session) error {
 	now := se.Now()
 	for _, job := range m.localJobs() {
-		_, err := se.ExecuteSQL(ctx, updateHeartBeatSQL(job.tbl.ID, now, m.id))
+		sql, args := updateHeartBeatSQL(job.tbl.ID, now, m.id)
+		_, err := se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 		// also updates some internal state for this job
 		err = job.updateState(ctx, se)

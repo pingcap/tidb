@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	osuser "os/user"
 	"runtime/debug"
 	"strconv"
@@ -526,6 +527,7 @@ func bootstrap(s Session) {
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
 			doDMLWorks(s)
+			runBootstrapSQLFile = true
 			logutil.BgLogger().Info("bootstrap successful",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -735,6 +737,8 @@ const (
 	version108 = 108
 	// version109 add column source to mysql.stats_meta_history
 	version109 = 109
+	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
+	version110 = 110
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -743,6 +747,9 @@ var currentBootstrapVersion int64 = version109
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
+
+// whether to run the sql file in bootstrap.
+var runBootstrapSQLFile = false
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -853,6 +860,7 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+		upgradeToVer110,
 	}
 )
 
@@ -952,11 +960,6 @@ func upgrade(s Session) {
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
-
-	if err == nil && ver <= version92 {
-		logutil.BgLogger().Info("start migrate DDLs")
-		err = domain.GetDomain(s).DDL().MoveJobFromQueue2Table(true)
-	}
 
 	if err != nil {
 		sleepTime := 1 * time.Second
@@ -2201,6 +2204,15 @@ func upgradeToVer109(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
 }
 
+// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2307,6 +2319,38 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
+}
+
+// doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
+// It is useful for setting the initial value of GLOBAL variables.
+func doBootstrapSQLFile(s Session) {
+	sqlFile := config.GetGlobalConfig().InitializeSQLFile
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	if sqlFile == "" {
+		return
+	}
+	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
+	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
+	if err != nil {
+		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
+	}
+	stmts, err := s.Parse(ctx, string(b))
+	if err != nil {
+		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
+	}
+	for _, stmt := range stmts {
+		rs, err := s.ExecuteStmt(ctx, stmt)
+		if err != nil {
+			logutil.BgLogger().Warn("InitializeSQLFile error", zap.Error(err))
+		}
+		if rs != nil {
+			// I don't believe we need to drain the result-set in bootstrap mode
+			// but if required we can do this here in future.
+			if err := rs.Close(); err != nil {
+				logutil.BgLogger().Fatal("unable to close result", zap.Error(err))
+			}
+		}
+	}
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -666,6 +667,28 @@ func TestCreateTableWithForeignKeyError(t *testing.T) {
 			},
 			create: "create table t2 (id int key, constraint fk foreign key (id) references t1(name5678901234567890123456789012345678901234567890123456789012345));",
 			err:    "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
+		},
+		// Test foreign key with temporary table
+		{
+			refer:  "create temporary table t1 (id int key);",
+			create: "create table t2 (id int key, constraint fk foreign key (id) references t1(id));",
+			err:    "[schema:1824]Failed to open the referenced table 't1'",
+		},
+		{
+			refer:  "create table t1 (id int key);",
+			create: "create temporary table t2 (id int key, constraint fk foreign key (id) references t1(id));",
+			err:    "[schema:1215]Cannot add foreign key constraint",
+		},
+		// Test foreign key with partition table
+		{
+			refer:  "create table t1 (id int key) partition by hash(id) partitions 3;",
+			create: "create table t2 (id int key, constraint fk foreign key (id) references t1(id));",
+			err:    "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
+		},
+		{
+			refer:  "create table t1 (id int key);",
+			create: "create table t2 (id int key, constraint fk foreign key (id) references t1(id)) partition by hash(id) partitions 3;",
+			err:    "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
 		},
 	}
 	for _, ca := range cases {
@@ -1415,6 +1438,40 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 			alter: "alter  table t2 add constraint name5678901234567890123456789012345678901234567890123456789012345 foreign key (b) references t1(id)",
 			err:   "[ddl:1059]Identifier name 'name5678901234567890123456789012345678901234567890123456789012345' is too long",
 		},
+		// Test foreign key with temporary table.
+		{
+			prepares: []string{
+				"create temporary table t1 (id int key);",
+				"create table t2 (a int, b int unique);",
+			},
+			alter: "alter  table t2 add constraint fk foreign key (b) references t1(id)",
+			err:   "[schema:1824]Failed to open the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key);",
+				"create temporary table t2 (a int, b int unique);",
+			},
+			alter: "alter  table t2 add constraint fk foreign key (b) references t1(id)",
+			err:   "[ddl:8200]TiDB doesn't support ALTER TABLE for local temporary table",
+		},
+		// Test foreign key with partition table
+		{
+			prepares: []string{
+				"create table t1 (id int key) partition by hash(id) partitions 3;",
+				"create table t2 (id int key);",
+			},
+			alter: "alter  table t2 add constraint fk foreign key (id) references t1(id)",
+			err:   "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key);",
+				"create table t2 (id int key) partition by hash(id) partitions 3;;",
+			},
+			alter: "alter  table t2 add constraint fk foreign key (id) references t1(id)",
+			err:   "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
+		},
 	}
 	for i, ca := range cases {
 		tk.MustExec("drop table if exists t2")
@@ -1607,4 +1664,149 @@ func TestAddForeignKeyInBigTable(t *testing.T) {
 	start := time.Now()
 	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
 	require.Less(t, time.Since(start), time.Minute)
+}
+
+func TestForeignKeyWithCacheTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	// Test foreign key refer cache table.
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
+	tk.MustExec("alter table t1 cache;")
+	tk.MustExec("create table t2 (b int);")
+	tk.MustExec("alter  table t2 add constraint fk foreign key (b) references t1(id) on delete cascade on update cascade")
+	tk.MustExec("insert into t2 values (1),(2),(3),(4)")
+	tk.MustGetDBError("insert into t2 values (5)", plannercore.ErrNoReferencedRow2)
+	tk.MustExec("update t1 set id = id+10 where id=1")
+	tk.MustExec("delete from t1 where id<10")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("11"))
+	tk.MustExec("alter table t1 nocache;")
+	tk.MustExec("drop table t1,t2;")
+
+	// Test add foreign key on cache table.
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (b int);")
+	tk.MustExec("alter  table t2 add constraint fk foreign key (b) references t1(id) on delete cascade on update cascade")
+	tk.MustExec("alter table t2 cache;")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
+	tk.MustExec("insert into t2 values (1),(2),(3),(4)")
+	tk.MustGetDBError("insert into t2 values (5)", plannercore.ErrNoReferencedRow2)
+	tk.MustExec("update t1 set id = id+10 where id=1")
+	tk.MustExec("delete from t1 where id<10")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("11"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("11"))
+	tk.MustExec("alter table t2 nocache;")
+	tk.MustExec("drop table t1,t2;")
+}
+
+func TestForeignKeyAndConcurrentDDL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1;")
+	tk.MustExec("use test")
+	// Test foreign key refer cache table.
+	tk.MustExec("create table t1 (a int, b int, c int, index(a), index(b), index(c));")
+	tk.MustExec("create table t2 (a int, b int, c int, index(a), index(b), index(c));")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@foreign_key_checks=1;")
+	tk2.MustExec("use test")
+	passCases := []struct {
+		prepare []string
+		ddl1    string
+		ddl2    string
+	}{
+		{
+			ddl1: "alter  table t2 add constraint fk_1 foreign key (a) references t1(a)",
+			ddl2: "alter  table t2 add constraint fk_2 foreign key (b) references t1(b)",
+		},
+		{
+			ddl1: "alter table t2 drop foreign key fk_1",
+			ddl2: "alter table t2 drop foreign key fk_2",
+		},
+		{
+			prepare: []string{
+				"alter  table t2 drop index a",
+			},
+			ddl1: "alter  table t2 add index(a)",
+			ddl2: "alter  table t2 add constraint fk_1 foreign key (a) references t1(a)",
+		},
+		{
+			ddl1: "alter  table t2 drop index c",
+			ddl2: "alter  table t2 add constraint fk_2 foreign key (b) references t1(b)",
+		},
+	}
+	for _, ca := range passCases {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			tk.MustExec(ca.ddl1)
+		}()
+		go func() {
+			defer wg.Done()
+			tk2.MustExec(ca.ddl2)
+		}()
+		wg.Wait()
+	}
+	errorCases := []struct {
+		prepare []string
+		ddl1    string
+		err1    string
+		ddl2    string
+		err2    string
+	}{
+		{
+			ddl1: "alter  table t2 add constraint fk foreign key (a) references t1(a)",
+			err1: "[ddl:1826]Duplicate foreign key constraint name 'fk'",
+			ddl2: "alter  table t2 add constraint fk foreign key (b) references t1(b)",
+			err2: "[ddl:1826]Duplicate foreign key constraint name 'fk'",
+		},
+		{
+			prepare: []string{
+				"alter  table t2 add constraint fk_1 foreign key (a) references t1(a)",
+			},
+			ddl1: "alter table t2 drop foreign key fk_1",
+			err1: "[schema:1091]Can't DROP 'fk_1'; check that column/key exists",
+			ddl2: "alter table t2 drop foreign key fk_1",
+			err2: "[schema:1091]Can't DROP 'fk_1'; check that column/key exists",
+		},
+		{
+			ddl1: "alter table t2 drop index a",
+			err1: "[ddl:1553]Cannot drop index 'a': needed in a foreign key constraint",
+			ddl2: "alter  table t2 add constraint fk_1 foreign key (a) references t1(a)",
+			err2: "[ddl:-1]Failed to add the foreign key constraint. Missing index for 'fk_1' foreign key columns in the table 't2'",
+		},
+	}
+	tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (a int, b int, c int, index(a), index(b), index(c));")
+	tk.MustExec("create table t2 (a int, b int, c int, index(a), index(b), index(c));")
+	for i, ca := range errorCases {
+		for _, sql := range ca.prepare {
+			tk.MustExec(sql)
+		}
+		var wg sync.WaitGroup
+		var err1, err2 error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			err1 = tk.ExecToErr(ca.ddl1)
+		}()
+		go func() {
+			defer wg.Done()
+			err2 = tk2.ExecToErr(ca.ddl2)
+		}()
+		wg.Wait()
+		if (err1 == nil && err2 == nil) || (err1 != nil && err2 != nil) {
+			require.Failf(t, "both ddl1 and ddl2 execute success, but expect 1 error", fmt.Sprintf("idx: %v, err1: %v, err2: %v", i, err1, err2))
+		}
+		if err1 != nil {
+			require.Equal(t, ca.err1, err1.Error())
+		}
+		if err2 != nil {
+			require.Equal(t, ca.err2, err2.Error())
+		}
+	}
 }
