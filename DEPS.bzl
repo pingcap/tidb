@@ -3516,11 +3516,27 @@ def go_deps():
         version = "v0.0.0-20181126055449-889f96f722a2",
     )
     go_repository(
+<<<<<<< HEAD
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
         sum = "h1:/glZOHs/K2pkCioDVae+aThUHFYRYQkEgY4NUTgfh+s=",
         version = "v2.0.3",
+=======
+        name = "com_github_tiancaiamao_gp",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/tiancaiamao/gp",
+        sum = "h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=",
+        version = "v0.0.0-20221230034425-4025bc8a4d4a",
+    )
+
+    go_repository(
+        name = "com_github_tikv_client_go_v2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/tikv/client-go/v2",
+        sum = "h1:cPtMXTExqjzk8L40qhrgB/mXiBXKP5LRU0vwjtI2Xxo=",
+        version = "v2.0.4",
+>>>>>>> a9d8bfe6ae (session: fix data race in the LazyTxn.LockKeys (#40350))
     )
     go_repository(
         name = "com_github_tikv_pd_client",
