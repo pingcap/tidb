@@ -4325,7 +4325,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
 		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder == plannercore.KeepOrderBetweenRequest).
+		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).

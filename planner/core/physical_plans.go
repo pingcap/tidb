@@ -820,7 +820,7 @@ type PhysicalTableScan struct {
 	// works on the whole partition table, and `isPartition` is not used.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
-	KeepOrder KeepOrderTypeForTableReader
+	KeepOrder bool
 	Desc      bool
 
 	isChildOfIndexLookUp bool

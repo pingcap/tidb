@@ -103,7 +103,7 @@ type TableReaderExecutor struct {
 	memTracker       *memory.Tracker
 	selectResultHook // for testing
 
-	keepOrder plannercore.KeepOrderTypeForTableReader
+	keepOrder bool
 	desc      bool
 	paging    bool
 	storeType kv.StoreType
@@ -184,7 +184,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
-	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder != plannercore.NoOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
+	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
@@ -343,7 +343,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetDAGRequest(e.dagPB).
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder == plannercore.KeepOrderBetweenRequest).
+			SetKeepOrder(e.keepOrder).
 			SetTxnScope(e.txnScope).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -384,7 +384,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder == plannercore.KeepOrderBetweenRequest).
+		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -432,7 +432,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder == plannercore.KeepOrderBetweenRequest).
+		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).

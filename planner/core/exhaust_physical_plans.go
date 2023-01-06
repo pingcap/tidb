@@ -983,10 +983,6 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
 		return nil
 	}
-	var keepOrderStatus = NoOrder
-	if keepOrder {
-		keepOrderStatus = KeepOrderBetweenRequest
-	}
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -995,7 +991,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		filterCondition: ds.pushedDownConds,
 		Ranges:          ranges,
 		rangeInfo:       rangeInfo,
-		KeepOrder:       keepOrderStatus,
+		KeepOrder:       keepOrder,
 		Desc:            desc,
 		physicalTableID: ds.physicalTableID,
 		isPartition:     ds.isPartition,
@@ -1029,7 +1025,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		tablePlan:         ts,
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
-		keepOrder:         ts.KeepOrder == KeepOrderBetweenRequest,
+		keepOrder:         ts.KeepOrder,
 	}
 	copTask.partitionInfo = PartitionInfo{
 		PruningConds:   ds.allConds,
