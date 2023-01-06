@@ -221,7 +221,6 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	// Will block until all keys are locked successfully or an error occurs.
-	// fn is called before LockKeys unlocks the keys.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
 	// LockKeysFunc tries to lock the entries with the keys in KV store.
 	// Will block until all keys are locked successfully or an error occurs.
