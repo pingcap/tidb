@@ -342,8 +342,6 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 				err = io.EOF
 			}
 			parser.pos += int64(len(buf))
-			// set buf to parser.buf in order to print err log
-			parser.buf = buf
 			return buf, 0, errors.Trace(err)
 		}
 		index := IndexAnyByte(parser.buf, chars)
@@ -457,6 +455,8 @@ func (parser *CSVParser) readQuotedField() error {
 				// because we return an error here, the parser won't
 				// use the `pos` again, so it's safe to modify it here.
 				parser.pos = prevPos - 1
+				// set buf to parser.buf in order to print err log
+				parser.buf = content
 				err = parser.replaceEOF(err, errUnterminatedQuotedField)
 			}
 			return err
