@@ -245,6 +245,7 @@ type DupKVStream interface {
 
 // LocalDupKVStream implements the interface of DupKVStream.
 // It collects duplicate key-value pairs from a pebble.DB.
+//
 //goland:noinspection GoNameStartsWithPackageName
 type LocalDupKVStream struct {
 	iter Iter
