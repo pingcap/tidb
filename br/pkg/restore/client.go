@@ -1134,6 +1134,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]
 	}
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
+	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
 	return NewLogFilesIterWithSplitHelper(iter, rules, client, splitSize, splitKeys), nil
 }

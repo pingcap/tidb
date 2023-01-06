@@ -5,6 +5,7 @@ package utils
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -154,7 +155,17 @@ func getSplitKeys(ctx sqlexec.RestrictedSQLExecutor) int64 {
 	}
 
 	d := rows[0].GetDatum(3, &fields[3].Column.FieldType)
-	return d.GetInt64()
+	splitKeysStr, err := d.ToString()
+	if err != nil {
+		log.Warn("failed to get split keys, use default value", logutil.ShortError(err))
+		return defaultSplitKeys
+	}
+	splitKeys, err := strconv.ParseInt(splitKeysStr, 10, 64)
+	if err != nil {
+		log.Warn("failed to get split keys, use default value", logutil.ShortError(err))
+		return defaultSplitKeys
+	}
+	return splitKeys
 }
 
 func GetGcRatio(ctx sqlexec.RestrictedSQLExecutor) (string, error) {
