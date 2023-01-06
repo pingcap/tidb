@@ -2098,7 +2098,6 @@ func checkParamTypeExpected(param *driver.ParamMarkerExpr) bool {
 		if v >= 0 {
 			return true
 		}
-		return false
 	}
 	return false
 }
