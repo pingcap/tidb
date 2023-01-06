@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"runtime/trace"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -65,7 +65,7 @@ type LazyTxn struct {
 	// The data in this session would be query by other sessions, so Mutex is necessary.
 	// Since read is rare, the reader can copy-on-read to get a data snapshot.
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		txninfo.TxnInfo
 	}
 }
@@ -378,6 +378,11 @@ func (txn *LazyTxn) Rollback() error {
 
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
+	return txn.LockKeysFunc(ctx, lockCtx, nil, keys...)
+}
+
+// LockKeysFunc Wrap the inner transaction's `LockKeys` to record the status
+func (txn *LazyTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keys ...kv.Key) error {
 	failpoint.Inject("beforeLockKeys", func() {})
 	t := time.Now()
 
@@ -388,6 +393,7 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	txn.mu.TxnInfo.BlockStartTime.Valid = true
 	txn.mu.TxnInfo.BlockStartTime.Time = t
 	txn.mu.Unlock()
+<<<<<<< HEAD
 
 	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
 
@@ -398,6 +404,19 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
 	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
 	return err
+=======
+	lockFunc := func() {
+		if fn != nil {
+			fn()
+		}
+		txn.mu.Lock()
+		defer txn.mu.Unlock()
+		txn.updateState(originState)
+		txn.mu.TxnInfo.BlockStartTime.Valid = false
+		txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
+	}
+	return txn.Transaction.LockKeysFunc(ctx, lockCtx, lockFunc, keys...)
+>>>>>>> a9d8bfe6ae (session: fix data race in the LazyTxn.LockKeys (#40350))
 }
 
 func (txn *LazyTxn) reset() {
