@@ -44,12 +44,13 @@ See the [Get Started](https://pingcap.github.io/tidb-dev-guide/get-started/intro
 
 You can join the following groups or channels to discuss or ask questions about TiDB, and to keep yourself informed of the latest TiDB updates:
 
+- Seek help when you use TiDB
+  - [TiDB Forum](https://ask.pingcap.com/)
+  - [Chinese TiDB Forum](https://asktug.com)
+  - Slack channels: [#everyone](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb) (English), [#tidb-japan](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb) (Japanese)
+  - [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb) (questions tagged with #tidb)
 - Discuss TiDB's implementation and design
   - [TiDB Internals forum](https://internals.tidb.io/)
-- Seek help when you use TiDB
-  - Slack channels: [#everyone](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb) (English), [#tidb-japan](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb) (Japanese)
-  - [TiDB User Group forum](https://asktug.com) (Chinese)
-  - [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb) (questions tagged with #tidb)
 - Get the latest TiDB news or updates
     - Follow [@PingCAP](https://twitter.com/PingCAP) on Twitter
     - Read the PingCAP [English Blog](https://www.pingcap.com/blog/?from=en) or [Chinese Blog](https://cn.pingcap.com/blog/)
