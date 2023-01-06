@@ -515,10 +515,6 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
 			continue // not a MVIndex path
 		}
-		if !ds.isSpecifiedInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
-			continue // for safety, only consider using MVIndex when there is a `use_index_merge` hint now.
-			// TODO: remove this limitation
-		}
 
 		// Step 1. Extract the underlying JSON column from MVIndex Info.
 		mvIndex := ds.possibleAccessPaths[idx].Index
@@ -635,6 +631,20 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 			}
 			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, filterIdx)
 			indexMergePath.IndexMergeIsIntersection = indexMergeIsIntersection
+
+			// Step 2.4. Update the estimated rows.
+			// TODO: use a naive estimation strategy here now for simplicity, make it more accurate.
+			minEstRows, maxEstRows := math.MaxFloat64, -1.0
+			for _, p := range indexMergePath.PartialIndexPaths {
+				minEstRows = math.Min(minEstRows, p.CountAfterAccess)
+				maxEstRows = math.Max(maxEstRows, p.CountAfterAccess)
+			}
+			if indexMergePath.IndexMergeIsIntersection {
+				indexMergePath.CountAfterAccess = minEstRows
+			} else {
+				indexMergePath.CountAfterAccess = maxEstRows
+			}
+
 			mvIndexPaths = append(mvIndexPaths, indexMergePath)
 		}
 	}

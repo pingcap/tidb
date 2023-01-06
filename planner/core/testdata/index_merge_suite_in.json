@@ -22,6 +22,20 @@
     ]
   },
   {
+    "name": "TestMVIndexSelection",
+    "cases": [
+      "select (j->'$.int') from t where (1 member of (j->'$.int'))",
+      "select * from t where (1 member of (j->'$.int'))",
+      "select * from t where (1 member of (j->'$.int')) and a<10",
+      "select (j->'$.int') from t where json_contains((j->'$.int'), '[1, 2, 3]')",
+      "select * from t where json_contains((j->'$.int'), '[1, 2, 3]')",
+      "select * from t where json_contains((j->'$.int'), '[1, 2, 3]') and a<10",
+      "select (j->'$.int') from t where json_overlaps((j->'$.int'), '[1, 2, 3]')",
+      "select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]')",
+      "select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]') and a<10"
+    ]
+  },
+  {
     "name": "TestIndexMergePathGeneration",
     "cases": [
       "select * from t",
