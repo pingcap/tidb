@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -109,6 +110,43 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 	testJoinKeyTypeConvert(t, bigIntType, unsignedBigIntType, decimalType, true, true)
 }
 
+func TestHandleFineGrainedShuffleNoDataCompression(t *testing.T) {
+	recv := &PhysicalExchangeReceiver{}
+	tableReader := &PhysicalTableReader{}
+	passSender := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_PassThrough,
+	}
+	hashSender := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+		ExchangeSenderMeta: &mpp.ExchangeSenderMeta{
+			Compression: mpp.CompressionMode_FAST,
+		},
+	}
+	tableScan := &PhysicalTableScan{}
+	sortItem := property.SortItem{
+		Col:  nil,
+		Desc: true,
+	}
+	partWindow := &PhysicalWindow{
+		// Meaningless sort item, just for test.
+		PartitionBy: []property.SortItem{sortItem},
+	}
+
+	// Window <- ExchangeReceiver <- ExchangeSender
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	partWindow.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
+
+	sctx := MockContext()
+	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = 8
+	handleFineGrainedShuffle(nil, sctx, tableReader)
+
+	require.True(t, hashSender.TiFlashFineGrainedShuffleStreamCount == 8)
+	require.True(t, hashSender.ExchangeSenderMeta == nil) // disable compression
+}
+
 // Test for core.handleFineGrainedShuffle()
 func TestHandleFineGrainedShuffle(t *testing.T) {
 	sortItem := property.SortItem{
@@ -131,6 +169,9 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	}
 	hashSender := &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
+		ExchangeSenderMeta: &mpp.ExchangeSenderMeta{
+			Compression: mpp.CompressionMode_FAST,
+		},
 	}
 	tableScan := &PhysicalTableScan{}
 	plans = append(plans, &partWindow.basePhysicalPlan)
