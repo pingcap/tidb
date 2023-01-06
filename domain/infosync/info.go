@@ -513,7 +513,7 @@ func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) 
 	return util2.InternalHTTPClient().Do(req)
 }
 
-// GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
+// GetAllRuleBundles is used to get all rule bundles from PD It is used to load full rules from PD while fullload infoschema.
 func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -581,6 +581,16 @@ func GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, er
 	}
 
 	return is.resourceGroupManager.GetResourceGroup(ctx, name)
+}
+
+// GetAllResourceGroups is used to get all resource groups from resource manager.
+func GetAllResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	return is.resourceGroupManager.GetAllResourceGroups(ctx)
 }
 
 // CreateResourceGroup is used to create one specific resource group to resource manager.

@@ -15,11 +15,13 @@
 package ddl_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResourceGroup(t *testing.T) {
+func TestResourceGroupBaisc(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -105,8 +107,10 @@ func TestResourceGroup(t *testing.T) {
 	tk.MustExec("drop resource group y")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
-
 	tk.MustContainErrMsg("create resource group x RRU_PER_SEC=1000, CPU='8000m';", resourcegroup.ErrInvalidResourceGroupDuplicatedMode.Error())
+	groups, err := infosync.GetAllResourceGroups(context.TODO())
+	require.Equal(t, 0, len(groups))
+	require.NoError(t, err)
 	// TODO: privilege check & constraint syntax check.
 }
 

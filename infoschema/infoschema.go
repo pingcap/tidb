@@ -61,6 +61,8 @@ type InfoSchema interface {
 	AllPlacementBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
+	// AllResourceGroups returns all resource groups
+	AllResourceGroups() []*model.ResourceGroupInfo
 	// HasTemporaryTable returns whether information schema has temporary table
 	HasTemporaryTable() bool
 	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
@@ -417,6 +419,17 @@ func (is *infoSchema) ResourceGroupByName(name model.CIStr) (*model.ResourceGrou
 	defer is.resourceGroupMutex.RUnlock()
 	t, r := is.resourceGroupMap[name.L]
 	return t, r
+}
+
+// AllResourceGroups returns all resource groups.
+func (is *infoSchema) AllResourceGroups() []*model.ResourceGroupInfo {
+	is.resourceGroupMutex.RLock()
+	defer is.resourceGroupMutex.RUnlock()
+	groups := make([]*model.ResourceGroupInfo, 0, len(is.resourceGroupMap))
+	for _, group := range is.resourceGroupMap {
+		groups = append(groups, group)
+	}
+	return groups
 }
 
 // AllPlacementPolicies returns all placement policies
