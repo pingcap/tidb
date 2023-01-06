@@ -150,6 +150,9 @@ func (bcp *backfillCtxPool) batchGet(cnt int) ([]*backfillWorker, error) {
 			return nil, errors.Trace(err)
 		}
 		if res == nil {
+			if len(workers) == 0 {
+				return nil, nil
+			}
 			return workers, nil
 		}
 		worker := res.(*backfillWorker)
@@ -157,19 +160,6 @@ func (bcp *backfillCtxPool) batchGet(cnt int) ([]*backfillWorker, error) {
 	}
 
 	return workers, nil
-}
-
-// batchPut returns workerPool to context resource pool.
-func (bcp *backfillCtxPool) batchPut(wks []*backfillWorker) {
-	if bcp.resPool == nil || bcp.exit.Load() {
-		return
-	}
-
-	// No need to protect bcp.resPool, even the bcp.resPool is closed, the ctx still need to
-	// put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
-	for _, wk := range wks {
-		bcp.resPool.Put(wk)
-	}
 }
 
 // put returns workerPool to context resource pool.

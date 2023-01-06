@@ -476,25 +476,64 @@ func (dc *ddlCtx) jobContext(jobID int64) *JobContext {
 	return NewJobContext()
 }
 
+func (dc *ddlCtx) removeBackfillCtxJobCtx(jobID int64) {
+	dc.backfillCtx.Lock()
+	delete(dc.backfillCtx.jobCtxMap, jobID)
+	dc.backfillCtx.Unlock()
+}
+
+func (dc *ddlCtx) backfillCtxJobIDs() []int64 {
+	dc.backfillCtx.Lock()
+	defer dc.backfillCtx.Unlock()
+
+	runningJobIDs := make([]int64, 0, len(dc.backfillCtx.jobCtxMap))
+	for id := range dc.backfillCtx.jobCtxMap {
+		runningJobIDs = append(runningJobIDs, id)
+	}
+	return runningJobIDs
+}
+
+func (dc *ddlCtx) setBackfillCtxJobContext(jobID int64, jobQuery string, jobType model.ActionType) (*JobContext, bool) {
+	dc.backfillCtx.Lock()
+	defer dc.backfillCtx.Unlock()
+
+	jobCtx, existent := dc.backfillCtx.jobCtxMap[jobID]
+	if !existent {
+		dc.setDDLLabelForTopSQL(jobID, jobQuery)
+		dc.setDDLSourceForDiagnosis(jobID, jobType)
+		jobCtx = dc.jobContext(jobID)
+		dc.backfillCtx.jobCtxMap[jobID] = jobCtx
+	}
+	return jobCtx, existent
+}
+
 func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()
 	return dc.reorgCtx.reorgCtxMap[jobID]
 }
 
-func (dc *ddlCtx) newReorgCtx(r *reorgInfo) *reorgCtx {
+func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
 	rc := &reorgCtx{}
 	rc.doneCh = make(chan error, 1)
 	// initial reorgCtx
-	rc.setRowCount(r.Job.GetRowCount())
-	rc.setNextKey(r.StartKey)
-	rc.setCurrentElement(r.currElement)
+	rc.setRowCount(rowCount)
+	rc.setNextKey(startKey)
+	rc.setCurrentElement(currElement)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
-	dc.reorgCtx.reorgCtxMap[r.Job.ID] = rc
+	dc.reorgCtx.reorgCtxMap[jobID] = rc
 	return rc
+}
+
+func (dc *ddlCtx) setReorgCtxForBackfill(bfJob *BackfillJob) {
+	rc := dc.getReorgCtx(bfJob.JobID)
+	if rc == nil {
+		ele := &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}
+		dc.newReorgCtx(bfJob.JobID, bfJob.StartKey, ele, bfJob.RowCount)
+	}
 }
 
 func (dc *ddlCtx) removeReorgCtx(job *model.Job) {

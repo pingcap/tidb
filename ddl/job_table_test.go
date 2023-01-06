@@ -255,6 +255,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	uuid := d.GetID()
 	eleKey := meta.IndexElementKey
 	instanceLease := ddl.InstanceLease
+
 	// test no backfill job
 	bJobs, err := ddl.GetBackfillJobsForOneEle(se, 1, []int64{jobID1, jobID2}, instanceLease)
 	require.NoError(t, err)
@@ -401,9 +402,9 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs1[0].State = model.JobStateRollingback
 	bJobs1[0].ID = 2
 	bJobs1[0].InstanceID = uuid
-	bJobs1[1].State = model.JobStateCancelling
+	bJobs1[1].State = model.JobStateCancelled
 	bJobs1[1].ID = 3
-	bJobs1[1].Meta.ErrMsg = "errMsg"
+	bJobs1[1].Meta.Error = dbterror.ErrCancelledDDLJob
 	err = ddl.AddBackfillJobs(se, bJobs1)
 	require.NoError(t, err)
 	// ID     jobID     eleID     state
@@ -415,20 +416,24 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID3    JobStateNone
 	// 1      jobID2     eleID3    JobStateNone
 	// 2      jobID1     eleID1    JobStateRollingback
-	// 3      jobID1     eleID1    JobStateCancelling
+	// 3      jobID1     eleID1    JobStateCancelled
 	bjob, err = ddl.GetMaxBackfillJob(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
 	require.Equal(t, bJobs1[1], bjob)
 	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
-	require.Len(t, bJobs, 2)
-	equalBackfillJob(t, bJobs1[0], bJobs[0], types.ZeroTime)
-	equalBackfillJob(t, bJobs1[1], bJobs[1], types.ZeroTime)
+	require.Len(t, bJobs, 1)
+	equalBackfillJob(t, bJobs1[1], bJobs[0], types.ZeroTime)
 	// test the BackfillJob's AbbrStr
 	require.Equal(t, fmt.Sprintf("ID:2, JobID:1, EleID:11, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
-	require.Equal(t, "ID:3, JobID:1, EleID:11, Type:add index, State:cancelling, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
+	require.Equal(t, "ID:3, JobID:1, EleID:11, Type:add index, State:cancelled, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
 	require.Equal(t, "ID:0, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[0].AbbrStr())
 	require.Equal(t, "ID:1, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[1].AbbrStr())
+	// test GetBackfillMetas
+	bfErr := ddl.GetBackfillErr(se, jobID1, eleID1, eleKey)
+	require.Error(t, bfErr, dbterror.ErrCancelledDDLJob)
+	bfErr = ddl.GetBackfillErr(se, jobID2, eleID2, eleKey)
+	require.NoError(t, bfErr)
 
 	bJobs1[0].State = model.JobStateNone
 	bJobs1[0].ID = 5

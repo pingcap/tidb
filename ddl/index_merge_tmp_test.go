@@ -16,7 +16,6 @@ package ddl_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -396,6 +395,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	callback := &ddl.TestDDLCallback{Do: dom}
 
 	runPessimisticTxn := false
+	doRollbackCh := make(chan struct{}, 1)
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -418,6 +418,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 			assert.NoError(t, err)
 			_, err = tk2.Exec("update t set a = 3 where id = 1;")
 			assert.NoError(t, err)
+			doRollbackCh <- struct{}{}
 		}
 	}
 	dom.DDL().SetHook(callback)
@@ -426,13 +427,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 		tk.MustExec("alter table t add index idx(a);")
 		afterCommit <- struct{}{}
 	}()
-	timer := time.NewTimer(300 * time.Millisecond)
-	select {
-	case <-timer.C:
-		break
-	case <-afterCommit:
-		require.Fail(t, "should be blocked by the pessimistic txn")
-	}
+	<-doRollbackCh
 	tk2.MustExec("rollback;")
 	<-afterCommit
 	dom.DDL().SetHook(originHook)

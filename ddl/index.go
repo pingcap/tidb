@@ -667,7 +667,13 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if job.MultiSchemaInfo != nil {
 			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, indexInfo)
 		} else {
-			done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+			// TODO: Support typeAddIndexMergeTmpWorker and partitionTable.
+			isDistReorg := variable.DDLEnableDistributeReorg.Load()
+			if isDistReorg {
+				done, ver, err = doReorgWorkForCreateIndexWithDistReorg(w, d, t, job, tbl, indexInfo)
+			} else {
+				done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+			}
 		}
 		if !done {
 			return ver, err
@@ -801,7 +807,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 	return true, ver, err
 }
 
-func doReorgWorkForCreateIndexCopy(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	bfProcess := pickBackfillType(w, job)
 	if !bfProcess.NeedMergeProcess() {
@@ -884,7 +890,7 @@ func doReorgWorkForCreateIndexCopy(w *worker, d *ddlCtx, t *meta.Meta, job *mode
 	}
 }
 
-func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+func doReorgWorkForCreateIndexWithDistReorg(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	bfProcess := pickBackfillType(w, job)
 	if !bfProcess.NeedMergeProcess() {
@@ -899,8 +905,9 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+			logutil.BgLogger().Warn("============================================ finish LitMerge",
+				zap.Bool("done", done), zap.Error(err))
 			if err != nil {
-				// TODO:
 				err = tryFallbackToTxnMerge(job, err)
 				return false, ver, errors.Trace(err)
 			}
@@ -909,6 +916,8 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 		case model.ReorgTypeTxnMerge:
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
+			logutil.BgLogger().Warn("============================================ finish TxnMerge",
+				zap.Bool("done", done), zap.Error(err))
 			if err != nil || !done {
 				return false, ver, errors.Trace(err)
 			}
@@ -959,6 +968,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			}, false)
 		return w.addTableIndex(tbl, reorgInfo)
 	})
+	logutil.BgLogger().Warn("============================================ run reorg job", zap.Error(err))
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -1382,14 +1392,15 @@ func (w *baseIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
-func newBaseIndexWorkerContext(d *ddl, sess *session, schemaName model.CIStr, tbl table.Table, workerCnt int, bfJob *BackfillJob, jobCtx *JobContext) (*backfillWorkerContext, error) {
+func newAddIndexWorkerContext(d *ddl, sess *session, schemaName model.CIStr, tbl table.Table, workerCnt int,
+	bfJob *BackfillJob, jobCtx *JobContext) (*backfillWorkerContext, error) {
 	//nolint:forcetypeassert
 	phyTbl := tbl.(table.PhysicalTable)
 	return newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.Meta.ReorgTp,
 		func(bfCtx *backfillCtx) (backfiller, error) {
 			decodeColMap, err := makeupDecodeColMap(sess, schemaName, phyTbl)
 			if err != nil {
-				logutil.BgLogger().Debug("[ddl] make up decode col map failed", zap.Error(err))
+				logutil.BgLogger().Info("[ddl] make up decode column map failed", zap.Error(err))
 				return nil, errors.Trace(err)
 			}
 			bf, err1 := newAddIndexWorker(decodeColMap, phyTbl, bfCtx, jobCtx, bfJob.JobID, bfJob.EleID, bfJob.EleKey)
@@ -1677,6 +1688,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		}
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
+		logutil.BgLogger().Info("OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO", zap.Bool("done", taskDone))
 
 		err = w.batchCheckUniqueKey(txn, idxRecords)
 		if err != nil {
@@ -1773,7 +1785,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 		phyTbl := t.(table.PhysicalTable)
 		// TODO: Support typeAddIndexMergeTmpWorker and partitionTable.
 		isDistReorg := variable.DDLEnableDistributeReorg.Load()
-		if isDistReorg && !reorgInfo.mergingTmpIdx {
+		if isDistReorg && !reorgInfo.mergingTmpIdx && reorgInfo.Job.Type == model.ActionAddIndex {
 			sCtx, err := w.sessPool.get()
 			if err != nil {
 				return errors.Trace(err)
@@ -2027,12 +2039,12 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, jobCtx *JobContext) {
+func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, jobCtx *JobContext) error {
 	// TODO: Consider redo it.
 	bc, ok := ingest.LitBackCtxMgr.Load(bfJob.JobID)
 	if ok && bc.Done() {
 		logutil.BgLogger().Warn("[ddl] lightning loaded")
-		return
+		return errors.New(ingest.LitErrGetBackendFail)
 	}
 	var err error
 	logutil.BgLogger().Warn(fmt.Sprintf("------------------------------------ bf:%#v", bfJob))
@@ -2040,7 +2052,7 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 	if err != nil {
 		// TODO: tryFallbackToTxnMerge
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
-		return
+		return err
 	}
 
 	logutil.BgLogger().Warn("00 ******** load backfill job and run reorg jobs start", zap.Int64("job id", bfJob.JobID))
@@ -2049,7 +2061,7 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs error", zap.Error(err))
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
 		// TODO: tryFallbackToTxnMerge
-		return
+		return err
 	}
 
 	finish := injectSpan(bfJob.JobID, "finish-import")
@@ -2063,11 +2075,12 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 			// TODO: tryFallbackToTxnMerge
 		}
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
-		return
+		return err
 	}
 	ingest.LitBackCtxMgr.Unregister(bfJob.ID)
 	finish()
 	bc.SetDone()
+	return nil
 }
 
 // changingIndex is used to store the index that need to be changed during modifying column.
