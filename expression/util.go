@@ -134,11 +134,11 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 	return
 }
 
-// ExtractColumnsFromExpressions is a more efficient version of ExtractColumnsFromExpression for batch operation.
+// ExtractColumnsFromExpressions is a more efficient version of ExtractColumns for batch operation.
 // filter can be nil, or a function to filter the result column.
 // It's often observed that the pattern of the caller like this:
 //
-// cols := ExtractColumnsFromExpression(...)
+// cols := ExtractColumns(...)
 //
 //	for _, col := range cols {
 //	    if xxx(col) {...}
