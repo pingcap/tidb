@@ -1072,8 +1072,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		if !propMatched {
 			return nil, false
 		}
-		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func for more details.
-		idxScan.KeepOrder = true
 		idxScan.Desc = isDesc
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
