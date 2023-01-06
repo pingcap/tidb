@@ -683,8 +683,7 @@ func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID
 	return false, -1
 }
 
-// GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN and NULL.
-// The data represented by the Histogram would use the defaultSelectivity parameter as the selectivity.
+// GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
 func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context, filters []expression.Expression) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
