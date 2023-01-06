@@ -86,7 +86,7 @@ type Index interface {
 	// Delete supports delete from statement.
 	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
 	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
-	GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, untouched bool) IndexIter
+	GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexIter
 	// Exist supports check index exists or not.
 	Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
 	// GenIndexKey generates an index key. If the index is a multi-valued index, use GenIndexKVIter instead.

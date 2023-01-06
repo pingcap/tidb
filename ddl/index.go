@@ -1521,7 +1521,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
 	cnt := 0
 	for i, record := range idxRecords {
-		iter := w.index.GenIndexKVIter(stmtCtx, record.vals, record.handle, idxRecords[i].rsData, false)
+		iter := w.index.GenIndexKVIter(stmtCtx, record.vals, record.handle, idxRecords[i].rsData)
 		for iter.Valid() {
 			var buf []byte
 			if cnt < len(w.idxKeyBufs) {
@@ -1650,7 +1650,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			} else { // The lightning environment is ready.
 				vars := w.sessCtx.GetSessionVars()
 				sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
-				iter := w.index.GenIndexKVIter(sCtx, idxRecord.vals, idxRecord.handle, idxRecord.rsData, false)
+				iter := w.index.GenIndexKVIter(sCtx, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
 				for iter.Valid() {
 					key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
 					if err != nil {

@@ -402,7 +402,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	return nil
 }
 
-func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, untouched bool) table.IndexIter {
+func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) table.IndexIter {
 	indexedValues := c.getIndexedValue(indexedValue)
 	return &indexGenerator{
 		c:                 c,
