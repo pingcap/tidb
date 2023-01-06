@@ -114,7 +114,7 @@ func extractDependentColumns(result []*Column, expr Expression) []*Column {
 	return result
 }
 
-// ExtractColumns extracts all columns from an expression.
+// ExtractColumnsFromExpression extracts all columns from an expression.
 func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 	result := make([]*Column, 0, 8)
@@ -134,11 +134,11 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 	return
 }
 
-// ExtractColumnsFromExpressions is a more efficient version of ExtractColumns for batch operation.
+// ExtractColumnsFromExpressions is a more efficient version of ExtractColumnsFromExpression for batch operation.
 // filter can be nil, or a function to filter the result column.
 // It's often observed that the pattern of the caller like this:
 //
-// cols := ExtractColumns(...)
+// cols := ExtractColumnsFromExpression(...)
 //
 //	for _, col := range cols {
 //	    if xxx(col) {...}
@@ -241,6 +241,13 @@ func extractColumnsAndCorColumns(result []*Column, expr Expression) []*Column {
 			result = extractColumnsAndCorColumns(result, arg)
 		}
 	}
+	return result
+}
+
+// ExtractColumnsFromExpression gets the columns from expression.
+func ExtractColumnsFromExpression(expr Expression) []*Column {
+	var result []*Column
+	result = extractColumnsAndCorColumns(result, expr)
 	return result
 }
 

@@ -178,22 +178,6 @@ type Expression interface {
 	HashCode(sc *stmtctx.StatementContext) []byte
 }
 
-// ExtractColumn gets the column from expression.
-func ExtractColumn(expr Expression) *Column {
-	switch e := expr.(type) {
-	case *Column:
-		return e
-	case *ScalarFunction:
-		args := e.GetArgs()
-		if len(args) > 1 {
-			panic("should never happen")
-		}
-		return ExtractColumn(args[0])
-	default:
-		panic("should never happen")
-	}
-}
-
 // CNFExprs stands for a CNF expression.
 type CNFExprs []Expression
 
