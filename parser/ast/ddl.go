@@ -2083,6 +2083,7 @@ const (
 	TableOptionEncryption
 	TableOptionTTL
 	TableOptionTTLEnable
+	TableOptionTTLJobInterval
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2439,6 +2440,13 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			} else {
 				ctx.WriteString("OFF")
 			}
+			return nil
+		})
+	case TableOptionTTLJobInterval:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("TTL_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
 			return nil
 		})
 	default:

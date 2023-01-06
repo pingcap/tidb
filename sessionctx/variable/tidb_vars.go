@@ -878,8 +878,6 @@ const (
 	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
 	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
 	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
-	// TiDBTTLJobRunInterval represents the schedule interval between two jobs for one TTL table
-	TiDBTTLJobRunInterval = "tidb_ttl_job_run_interval"
 	// TiDBTTLJobScheduleWindowStartTime is used to restrict the start time of the time window of scheduling the ttl jobs.
 	TiDBTTLJobScheduleWindowStartTime = "tidb_ttl_job_schedule_window_start_time"
 	// TiDBTTLJobScheduleWindowEndTime is used to restrict the end time of the time window of scheduling the ttl jobs.
@@ -1146,7 +1144,11 @@ const (
 	DefPasswordReuseHistory                          = 0
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
+<<<<<<< HEAD
 	DefTiDBTTLJobRunInterval                         = "1h0m0s"
+=======
+	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
+>>>>>>> b226dfcb05 (ttl: add `ttl_job_interval` attribute and remove `tidb_ttl_job_interval` variable (#40033))
 	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
@@ -1217,7 +1219,6 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
-	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
 	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
 	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
 	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
