@@ -680,10 +680,6 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 		model.ActionAlterTableAttributes,
 		model.ActionAlterTablePartitionAttributes:
 		return true
-	case model.ActionCreateResourceGroup,
-		model.ActionAlterResourceGroup,
-		model.ActionDropResourceGroup:
-		return true
 	default:
 		return false
 	}
