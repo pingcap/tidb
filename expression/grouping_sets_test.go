@@ -15,6 +15,9 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -76,6 +79,62 @@ func TestGroupSetsTargetOne(t *testing.T) {
 	// hasn't been pre-agg or something because current layout is <a>, we should keep all the
 	// complete rows until to the upper receiver, which means there is no agg/group operator before
 	// shuffler take place.
+}
+
+func TestGroupSetsTargetOneCompoundArgs(t *testing.T) {
+	defer view.Stop()
+	a := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	b := &Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	c := &Column{
+		UniqueID: 3,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	d := &Column{
+		UniqueID: 4,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	// grouping set: {a,b}, {c}
+	newGroupingSets := make(GroupingSets, 0, 3)
+	groupingExprs1 := []Expression{a, b}
+	groupingExprs2 := []Expression{c}
+	newGroupingSets = append(newGroupingSets, GroupingSet{groupingExprs1})
+	newGroupingSets = append(newGroupingSets, GroupingSet{groupingExprs2})
+
+	var normalAggArgs Expression
+	// mock normal agg count(1)
+	normalAggArgs = newLonglong(1)
+	offset := newGroupingSets.TargetOne([]Expression{normalAggArgs})
+	require.NotEqual(t, offset, -1)
+	require.Equal(t, offset, 0) // default
+
+	// mock normal agg count(d+1)
+	normalAggArgs = newFunction(ast.Plus, d, newLonglong(1))
+	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
+	require.NotEqual(t, offset, -1)
+	require.Equal(t, offset, 0) // default
+
+	// mock normal agg count(d+c)
+	normalAggArgs = newFunction(ast.Plus, d, c)
+	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
+	require.NotEqual(t, offset, -1)
+	require.Equal(t, offset, 1) // only {c} can supply d and c
+
+	// mock normal agg count(d+a)
+	normalAggArgs = newFunction(ast.Plus, d, a)
+	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
+	require.NotEqual(t, offset, -1)
+	require.Equal(t, offset, 0) // only {a,b} can supply d and a
+
+	// mock normal agg count(d+a+c)
+	normalAggArgs = newFunction(ast.Plus, d, newFunction(ast.Plus, a, c))
+	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
+	require.Equal(t, offset, -1) // couldn't find a group that supply d, a and c simultaneously.
 }
 
 func TestGroupingSetsMergeOneUnitTest(t *testing.T) {

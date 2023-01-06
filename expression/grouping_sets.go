@@ -136,8 +136,8 @@ func (gss GroupingSets) MergeOne(targetOne GroupingExprs) GroupingSets {
 	return gss
 }
 
-// TargetOne is used to find a valid group layout for normal agg.
-func (gss GroupingSets) TargetOne(targetOne GroupingExprs) int {
+// TargetOne is used to find a valid group layout for normal agg, note that: the args in normal agg are not necessary to be column.
+func (gss GroupingSets) TargetOne(normalAggArgs []Expression) int {
 	// it has three cases.
 	//	1: group sets {<a,b>}, {<c>} when the normal agg(d), agg(d) can only occur in the group of <a,b> or <c> after tuple split. (normal column are appended)
 	//  2: group sets {<a,b>}, {<c>} when the normal agg(c), agg(c) can only be found in group of <c>, since it will be filled with null in group of <a,b>
@@ -156,11 +156,26 @@ func (gss GroupingSets) TargetOne(targetOne GroupingExprs) int {
 	// Expand operator, and null value can also influence your non null-strict normal agg, although you don't want them to.
 	//
 	// here we only consider 1&2 since normal agg with multi col args is banned.
+	columnInNormalAggArgs := make([]*Column, 0, len(normalAggArgs))
+	for _, one := range normalAggArgs {
+		columnInNormalAggArgs = append(columnInNormalAggArgs, ExtractColumns(one)...)
+	}
+	if len(columnInNormalAggArgs) == 0 {
+		// no column in normal agg. eg: count(1), specify the default grouping set ID 0+1.
+		return 0
+	}
+	// for other normal agg args like: count(a), count(a+b), count(not(a is null)) and so on.
+	normalAggArgsIDSet := fd.NewFastIntSet()
+	for _, one := range columnInNormalAggArgs {
+		normalAggArgsIDSet.Insert(int(one.UniqueID))
+	}
+
+	// identify the suitable grouping set for normal agg.
 	allGroupingColIDs := gss.AllSetsColIDs()
 	for idx, groupingSet := range gss {
 		// diffCols are those columns being filled with null in the group row data of current grouping set.
 		diffCols := allGroupingColIDs.Difference(*groupingSet.allSetColIDs())
-		if diffCols.Intersects(*targetOne.IDSet()) {
+		if diffCols.Intersects(normalAggArgsIDSet) {
 			// normal agg's target arg columns are being filled with null value in this grouping set, continue next grouping set check.
 			continue
 		}
