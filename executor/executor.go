@@ -778,6 +778,10 @@ func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
 		}
 	}
 
+	if e.cursor < int(e.offset) {
+		e.cursor = int(e.offset)
+	}
+
 	return nil
 }
 
@@ -790,11 +794,9 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Ch
 	if int(e.limit) > len(e.jobs) {
 		return nil
 	}
-	if e.cursor < int(e.offset) {
-		e.cursor = int(e.offset)
-	}
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+		// i is make true to be >= int(e.offset)
 		if i < int(e.offset+e.limit) {
 			req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
 			req.AppendString(1, e.jobs[i].Query)
