@@ -12,11 +12,17 @@ import (
 )
 
 // Value is the value type of stored in the span tree.
-type Value = uint64
+type Value struct {
+	Size   uint64
+	Number int64
+}
 
 // join finds the upper bound of two values.
 func join(a, b Value) Value {
-	return a + b
+	return Value{
+		Size:   a.Size + b.Size,
+		Number: a.Number + b.Number,
+	}
 }
 
 // Span is the type of an adjacent sub key space.
@@ -39,7 +45,7 @@ func NewValued(startKey, endKey []byte, value Value) Valued {
 }
 
 func (v Valued) String() string {
-	return fmt.Sprintf("(%s, %.2f MB)", logutil.StringifyRange(v.Key), float64(v.Value)/1024/1024)
+	return fmt.Sprintf("(%s, %.2f MB, %d)", logutil.StringifyRange(v.Key), float64(v.Value.Size)/1024/1024, v.Value.Number)
 }
 
 func (v Valued) Less(other btree.Item) bool {
@@ -64,7 +70,7 @@ type SplitHelper struct {
 // NewSplitHelper creates a set of a subset of spans, with the full key space as initial status
 func NewSplitHelper() *SplitHelper {
 	t := btree.New(16)
-	t.ReplaceOrInsert(Valued{Value: 0, Key: Span{StartKey: []byte(""), EndKey: []byte("")}})
+	t.ReplaceOrInsert(Valued{Value: Value{Size: 0, Number: 0}, Key: Span{StartKey: []byte(""), EndKey: []byte("")}})
 	return &SplitHelper{inner: t}
 }
 
@@ -97,7 +103,10 @@ func (f *SplitHelper) mergeWithOverlap(val Valued, overlapped []Valued) {
 	// Assert All overlapped ranges are deleted.
 
 	// the new valued item's Value is equally dividedd into `len(overlapped)` shares
-	appendSize := val.Value / uint64(len(overlapped))
+	appendValue := Value{
+		Size:   val.Value.Size / uint64(len(overlapped)),
+		Number: val.Value.Number / int64(len(overlapped)),
+	}
 	var (
 		rightTrail *Valued
 		leftTrail  *Valued
@@ -109,10 +118,11 @@ func (f *SplitHelper) mergeWithOverlap(val Valued, overlapped []Valued) {
 		emitToCollected = func(rng Valued, standalone bool, split bool) {
 			merged := rng.Value
 			if split {
-				merged /= 2
+				merged.Size /= 2
+				merged.Number /= 2
 			}
 			if !standalone {
-				merged = join(appendSize, merged)
+				merged = join(appendValue, merged)
 			}
 			rng.Value = merged
 			f.inner.ReplaceOrInsert(rng)
@@ -142,7 +152,10 @@ func (f *SplitHelper) mergeWithOverlap(val Valued, overlapped []Valued) {
 			//                     a       b             c       d
 			// now the overlapped range should be divided into 3 equal parts
 			// so modify the value to the 2/3x to be compatible with function `emitToCollected`
-			val := rightTrail.Value * 2 / 3
+			val := Value{
+				Size:   rightTrail.Value.Size * 2 / 3,
+				Number: rightTrail.Value.Number * 2 / 3,
+			}
 			leftTrail.Value = val
 			overlapped[0].Value = val
 			rightTrail.Value = val

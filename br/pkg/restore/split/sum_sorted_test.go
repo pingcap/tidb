@@ -18,8 +18,11 @@ func v(s, e string, val split.Value) split.Valued {
 	}
 }
 
-func mb(b uint64) uint64 {
-	return b * 1024 * 1024
+func mb(b uint64) split.Value {
+	return split.Value{
+		Size:   b * 1024 * 1024,
+		Number: int64(b),
+	}
 }
 
 func TestSumSorted(t *testing.T) {

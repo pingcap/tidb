@@ -1240,7 +1240,10 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logFilesIterWithSplit := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules)
+	logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIterWithSplit, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)

@@ -756,9 +756,9 @@ func TestSplitPoint(t *testing.T) {
 	//          +-------------+----------+---------+
 	// region:  a             f          h         j
 	splitHelper := split.NewSplitHelper()
-	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: 100})
-	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: 200})
-	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "g"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: 300})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: split.Value{Size: 100, Number: 100}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: split.Value{Size: 200, Number: 200}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "g"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: split.Value{Size: 300, Number: 300}})
 	client := NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "f"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "f"), keyWithTablePrefix(tableID, "h"))
@@ -766,8 +766,9 @@ func TestSplitPoint(t *testing.T) {
 	client.AppendRegion(keyWithTablePrefix(tableID, "j"), keyWithTablePrefix(tableID+1, "a"))
 
 	iter := restore.NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := restore.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, ri *split.RegionInfo, v []split.Valued) error {
+	err := restore.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []split.Valued) error {
 		require.Equal(t, u, uint64(0))
+		require.Equal(t, o, int64(0))
 		require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))
 		require.Equal(t, ri.Region.EndKey, keyWithTablePrefix(tableID, "f"))
 		require.EqualValues(t, v[0].Key.StartKey, keyWithTablePrefix(tableID, "b"))
@@ -805,11 +806,11 @@ func TestSplitPoint2(t *testing.T) {
 	//          +---------------+--+.....+----+------------+---------+
 	// region:  a               g   >128      h            m         o
 	splitHelper := split.NewSplitHelper()
-	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: 100})
-	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: 200})
-	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "f"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: 300})
-	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "j"), EndKey: keyWithTablePrefix(oldTableID, "k")}, Value: 200})
-	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "l"), EndKey: keyWithTablePrefix(oldTableID, "n")}, Value: 200})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "b"), EndKey: keyWithTablePrefix(oldTableID, "c")}, Value: split.Value{Size: 100, Number: 100}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "d"), EndKey: keyWithTablePrefix(oldTableID, "e")}, Value: split.Value{Size: 200, Number: 200}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "f"), EndKey: keyWithTablePrefix(oldTableID, "i")}, Value: split.Value{Size: 300, Number: 300}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "j"), EndKey: keyWithTablePrefix(oldTableID, "k")}, Value: split.Value{Size: 200, Number: 200}})
+	splitHelper.Merge(split.Valued{Key: split.Span{StartKey: keyWithTablePrefix(oldTableID, "l"), EndKey: keyWithTablePrefix(oldTableID, "n")}, Value: split.Value{Size: 200, Number: 200}})
 	client := NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "g"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "g"), keyWithTablePrefix(tableID, getCharFromNumber("g", 0)))
@@ -823,9 +824,10 @@ func TestSplitPoint2(t *testing.T) {
 
 	firstSplit := true
 	iter := restore.NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := restore.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, ri *split.RegionInfo, v []split.Valued) error {
+	err := restore.SplitPoint(ctx, iter, client, func(ctx context.Context, rs *restore.RegionSplitter, u uint64, o int64, ri *split.RegionInfo, v []split.Valued) error {
 		if firstSplit {
 			require.Equal(t, u, uint64(0))
+			require.Equal(t, o, int64(0))
 			require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))
 			require.Equal(t, ri.Region.EndKey, keyWithTablePrefix(tableID, "g"))
 			require.EqualValues(t, v[0].Key.StartKey, keyWithTablePrefix(tableID, "b"))
@@ -834,18 +836,21 @@ func TestSplitPoint2(t *testing.T) {
 			require.EqualValues(t, v[1].Key.EndKey, keyWithTablePrefix(tableID, "e"))
 			require.EqualValues(t, v[2].Key.StartKey, keyWithTablePrefix(tableID, "f"))
 			require.EqualValues(t, v[2].Key.EndKey, keyWithTablePrefix(tableID, "g"))
-			require.Equal(t, v[2].Value, uint64(1))
+			require.Equal(t, v[2].Value.Size, uint64(1))
+			require.Equal(t, v[2].Value.Number, int64(1))
 			require.Equal(t, len(v), 3)
 			firstSplit = false
 		} else {
 			require.Equal(t, u, uint64(1))
+			require.Equal(t, o, int64(1))
 			require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "h"))
 			require.Equal(t, ri.Region.EndKey, keyWithTablePrefix(tableID, "m"))
 			require.EqualValues(t, v[0].Key.StartKey, keyWithTablePrefix(tableID, "j"))
 			require.EqualValues(t, v[0].Key.EndKey, keyWithTablePrefix(tableID, "k"))
 			require.EqualValues(t, v[1].Key.StartKey, keyWithTablePrefix(tableID, "l"))
 			require.EqualValues(t, v[1].Key.EndKey, keyWithTablePrefix(tableID, "m"))
-			require.Equal(t, v[1].Value, uint64(100))
+			require.Equal(t, v[1].Value.Size, uint64(100))
+			require.Equal(t, v[1].Value.Number, int64(100))
 			require.Equal(t, len(v), 2)
 		}
 		return nil
@@ -988,7 +993,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
-	logIter := restore.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, NewFakeSplitClient())
+	logIter := restore.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, NewFakeSplitClient(), 144*1024*1024, 1440000)
 	next := 0
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)

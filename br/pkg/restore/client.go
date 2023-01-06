@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -1126,9 +1127,15 @@ func (rc *Client) SplitRanges(ctx context.Context,
 	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
-func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules) LogIter {
+func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
-	return NewLogFilesIterWithSplitHelper(iter, rules, client)
+	return NewLogFilesIterWithSplitHelper(iter, rules, client, splitSize, splitKeys), nil
 }
 
 // RestoreSSTFiles tries to restore the files.

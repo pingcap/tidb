@@ -468,8 +468,6 @@ func NewSplitHelperIteratorForTest(helper *split.SplitHelper, tableID int64, rul
 	}
 }
 
-const SplitThreShold = 128 * 1024 * 1024 // 128 MB
-
 type LogSplitHelper struct {
 	tableSplitter map[int64]*split.SplitHelper
 	rules         map[int64]*RewriteRules
@@ -477,15 +475,21 @@ type LogSplitHelper struct {
 	pool          *utils.WorkerPool
 	eg            *errgroup.Group
 	regionsCh     chan []*split.RegionInfo
+
+	splitThreSholdSize uint64
+	splitThreSholdKeys int64
 }
 
-func NewLogSplitHelper(rules map[int64]*RewriteRules, client split.SplitClient) *LogSplitHelper {
+func NewLogSplitHelper(rules map[int64]*RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) *LogSplitHelper {
 	return &LogSplitHelper{
 		tableSplitter: make(map[int64]*split.SplitHelper),
 		rules:         rules,
 		client:        client,
 		pool:          utils.NewWorkerPool(128, "split region"),
 		eg:            nil,
+
+		splitThreSholdSize: splitSize,
+		splitThreSholdKeys: splitKeys,
 	}
 }
 
@@ -540,16 +544,20 @@ func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
 			StartKey: file.StartKey,
 			EndKey:   file.EndKey,
 		},
-		Value: file.Length,
+		Value: split.Value{
+			Size:   file.Length,
+			Number: file.NumberOfEntries,
+		},
 	})
 }
 
-type splitFunc = func(context.Context, *RegionSplitter, uint64, *split.RegionInfo, []split.Valued) error
+type splitFunc = func(context.Context, *RegionSplitter, uint64, int64, *split.RegionInfo, []split.Valued) error
 
 func (helper *LogSplitHelper) splitRegionByPoints(
 	ctx context.Context,
 	regionSplitter *RegionSplitter,
 	initialLength uint64,
+	initialNumber int64,
 	region *split.RegionInfo,
 	valueds []split.Valued,
 ) error {
@@ -557,16 +565,19 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 		splitPoints [][]byte = make([][]byte, 0)
 		lastKey     []byte   = region.Region.StartKey
 		length      uint64   = initialLength
+		number      int64    = initialNumber
 	)
 	for _, v := range valueds {
 		// decode will discard ts behind the key, which results in the same key for consecutive ranges
-		if v.Value+length > SplitThreShold && !bytes.Equal(lastKey, v.GetStartKey()) {
+		if !bytes.Equal(lastKey, v.GetStartKey()) && (v.Value.Size+length > helper.splitThreSholdSize || v.Value.Number+number > helper.splitThreSholdKeys) {
 			_, rawKey, _ := codec.DecodeBytes(v.GetStartKey(), nil)
 			splitPoints = append(splitPoints, rawKey)
 			length = 0
+			number = 0
 		}
 		lastKey = v.GetStartKey()
-		length += v.Value
+		length += v.Value.Size
+		number += v.Value.Number
 	}
 
 	if len(splitPoints) == 0 {
@@ -637,6 +648,7 @@ func SplitPoint(
 		regionInfo *split.RegionInfo = nil
 		// intialLength is the length of the part of the first range overlapped with the region
 		initialLength uint64 = 0
+		initialNumber int64  = 0
 	)
 	// range status
 	var (
@@ -645,7 +657,7 @@ func SplitPoint(
 	)
 
 	iter.Traverse(func(v split.Valued, endKey []byte, rule *RewriteRules) bool {
-		if v.Value == 0 {
+		if v.Value.Number == 0 || v.Value.Size == 0 {
 			return true
 		}
 		var (
@@ -694,14 +706,15 @@ func SplitPoint(
 			// should split the last recorded region,
 			// and then record this region as the region to be split
 			if bytes.Compare(vEndKey, region.Region.EndKey) < 0 {
-				endLength := v.Value / regionOverCount
+				endLength := v.Value.Size / regionOverCount
+				endNumber := v.Value.Number / int64(regionOverCount)
 				if len(regionValueds) > 0 && regionInfo != region {
 					// add a part of the range as the end part
 					if bytes.Compare(vStartKey, regionInfo.Region.EndKey) < 0 {
-						regionValueds = append(regionValueds, split.NewValued(vStartKey, regionInfo.Region.EndKey, endLength))
+						regionValueds = append(regionValueds, split.NewValued(vStartKey, regionInfo.Region.EndKey, split.Value{Size: endLength, Number: endNumber}))
 					}
 					// try to split the region
-					err = splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
+					err = splitF(ctx, regionSplitter, initialLength, initialNumber, regionInfo, regionValueds)
 					if err != nil {
 						return false
 					}
@@ -719,6 +732,7 @@ func SplitPoint(
 				} else {
 					// the region is overlapped with the last part of the range
 					initialLength = endLength
+					initialNumber = endNumber
 				}
 				regionInfo = region
 				// try the next range
@@ -735,7 +749,7 @@ func SplitPoint(
 	}
 	if len(regionValueds) > 0 {
 		// try to split the region
-		err = splitF(ctx, regionSplitter, initialLength, regionInfo, regionValueds)
+		err = splitF(ctx, regionSplitter, initialLength, initialNumber, regionInfo, regionValueds)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -806,10 +820,10 @@ type LogFilesIterWithSplitHelper struct {
 
 const SplitFilesBufferSize = 4096
 
-func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, client split.SplitClient) LogIter {
+func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) LogIter {
 	return &LogFilesIterWithSplitHelper{
 		iter:   iter,
-		helper: NewLogSplitHelper(rules, client),
+		helper: NewLogSplitHelper(rules, client, splitSize, splitKeys),
 		buffer: nil,
 		next:   0,
 	}
