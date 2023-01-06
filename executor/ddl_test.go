@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -557,6 +558,17 @@ func TestAlterTableAddColumn(t *testing.T) {
 	tk.MustExec("create sequence alter_seq")
 	err = tk.ExecToErr("alter table alter_seq add column c int")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	tk.MustExec("alter table alter_test add column c4 date default current_date")
+	now = time.Now().Format(types.DateFormat)
+	r, err = tk.Exec("select c4 from alter_test")
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(context.Background(), req)
+	require.NoError(t, err)
+	row = req.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.GreaterOrEqual(t, now, row.GetTime(0).String())
+	require.Nil(t, r.Close())
 	tk.MustExec("drop sequence alter_seq")
 }
 
@@ -1304,6 +1316,20 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 	require.Equal(t, int64(100), variable.GetDDLErrorCountLimit())
 	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
 	res.Check(testkit.Rows("100"))
+}
+
+func TestLoadDDLDistributeVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.Equal(t, variable.DefTiDBDDLEnableDistributeReorg, distributereorg.TiDBEnableDistributeReorg)
+
+	tk.MustGetDBError("set @@global.tidb_ddl_distribute_reorg = invalid_val", variable.ErrWrongValueForVar)
+	require.Equal(t, distributereorg.TiDBEnableDistributeReorg, variable.DDLEnableDistributeReorg.Load())
+	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = 'on'")
+	require.Equal(t, true, variable.DDLEnableDistributeReorg.Load())
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_distribute_reorg = %v", distributereorg.TiDBEnableDistributeReorg))
+	require.Equal(t, distributereorg.TiDBEnableDistributeReorg, variable.DDLEnableDistributeReorg.Load())
 }
 
 // Test issue #9205, fix the precision problem for time type default values

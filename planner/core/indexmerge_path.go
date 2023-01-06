@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -513,10 +515,6 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
 			continue // not a MVIndex path
 		}
-		if !ds.isSpecifiedInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
-			continue // for safety, only consider using MVIndex when there is a `use_index_merge` hint now.
-			// TODO: remove this limitation
-		}
 
 		// Step 1. Extract the underlying JSON column from MVIndex Info.
 		mvIndex := ds.possibleAccessPaths[idx].Index
@@ -552,6 +550,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 
 			var jsonPath expression.Expression
 			var vals []expression.Expression
+			var indexMergeIsIntersection bool
 			switch sf.FuncName.L {
 			case ast.JSONMemberOf: // (1 member of a->'$.zip')
 				jsonPath = sf.GetArgs()[1]
@@ -560,10 +559,30 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 					continue
 				}
 				vals = append(vals, v)
-			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-				continue // TODO: support json_overlaps
 			case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
-				continue // TODO: support json_contains
+				indexMergeIsIntersection = true
+				jsonPath = sf.GetArgs()[0]
+				var ok bool
+				//virCol.RetType
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1], virCol.GetType())
+				if !ok {
+					continue
+				}
+			case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				var jsonPathIdx int
+				if sf.GetArgs()[0].Equal(ds.ctx, targetJSONPath) {
+					jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+				} else if sf.GetArgs()[1].Equal(ds.ctx, targetJSONPath) {
+					jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
+				} else {
+					continue
+				}
+				jsonPath = sf.GetArgs()[jsonPathIdx]
+				var ok bool
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx], virCol.GetType())
+				if !ok {
+					continue
+				}
 			default:
 				continue
 			}
@@ -574,21 +593,6 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 			}
 			if !jsonPath.Equal(ds.ctx, targetJSONPath) {
 				continue // not on the same JSON col
-			}
-			// only support INT now
-			// TODO: support more types
-			if jsonPath.GetType().EvalType() == types.ETInt {
-				continue
-			}
-			allInt := true
-			// TODO: support using IndexLookUp to handle single-value cases.
-			for _, v := range vals {
-				if v.GetType().EvalType() != types.ETInt {
-					allInt = false
-				}
-			}
-			if !allInt {
-				continue
 			}
 
 			// Step 2.3. Generate a IndexMerge Path of this filter on the current MVIndex.
@@ -612,10 +616,64 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 				partialPaths = append(partialPaths, partialPath)
 			}
 			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, filterIdx)
+			indexMergePath.IndexMergeIsIntersection = indexMergeIsIntersection
+
+			// Step 2.4. Update the estimated rows.
+			// TODO: use a naive estimation strategy here now for simplicity, make it more accurate.
+			minEstRows, maxEstRows := math.MaxFloat64, -1.0
+			for _, p := range indexMergePath.PartialIndexPaths {
+				minEstRows = math.Min(minEstRows, p.CountAfterAccess)
+				maxEstRows = math.Max(maxEstRows, p.CountAfterAccess)
+			}
+			if indexMergePath.IndexMergeIsIntersection {
+				indexMergePath.CountAfterAccess = minEstRows
+			} else {
+				indexMergePath.CountAfterAccess = maxEstRows
+			}
+
 			mvIndexPaths = append(mvIndexPaths, indexMergePath)
 		}
 	}
 	return
+}
+
+// jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}
+func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expression, targetType *types.FieldType) ([]expression.Expression, bool) {
+	if !expression.IsInmutableExpr(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
+		return nil, false
+	}
+
+	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx, chunk.Row{})
+	if isNull || err != nil {
+		return nil, false
+	}
+	if jsonArray.TypeCode != types.JSONTypeCodeArray {
+		single, ok := jsonValue2Expr(jsonArray, targetType) // '1' -> []expr{1}
+		if ok {
+			return []expression.Expression{single}, true
+		}
+		return nil, false
+	}
+	var exprs []expression.Expression
+	for i := 0; i < jsonArray.GetElemCount(); i++ { // '[1, 2, 3]' -> []expr{1, 2, 3}
+		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i), targetType)
+		if !ok {
+			return nil, false
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs, true
+}
+
+func jsonValue2Expr(v types.BinaryJSON, targetType *types.FieldType) (expression.Expression, bool) {
+	datum, err := expression.ConvertJSON2Tp(v, targetType)
+	if err != nil {
+		return nil, false
+	}
+	return &expression.Constant{
+		Value:   types.NewDatum(datum),
+		RetType: targetType,
+	}, true
 }
 
 func unwrapJSONCast(expr expression.Expression) (expression.Expression, bool) {
