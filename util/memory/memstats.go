@@ -37,7 +37,7 @@ func ReadMemStats() (memStats *runtime.MemStats) {
 	}
 	failpoint.Inject("ReadMemStats", func(val failpoint.Value) {
 		injectedSize := val.(int)
-		memStats.HeapInuse += uint64(injectedSize)
+		atomic.AddUint64(&memStats.HeapInuse, uint64(injectedSize))
 	})
 	return
 }
