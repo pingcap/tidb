@@ -194,7 +194,7 @@ func (e *LoadDataExecCompressed) addTask(ctx context.Context) (uint64, error) {
 	sql := new(strings.Builder)
 	sql.Reset()
 	sqlexec.MustFormatSQL(sql, "insert into mysql.tidb_external_task "+
-		" (command,owner,args) values ('lightning',%s,%s)", owner, args)
+		" (command,owner,args) values ('lightning',%?,%?)", owner, args)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 		return 0, err
