@@ -496,6 +496,24 @@ const (
 		current_job_state text DEFAULT NULL,
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
+
+	//suport load data / into outfile compressed
+	CreateExternalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_external_task(
+		id bigint AUTO_INCREMENT,
+        command VARCHAR(64) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'pending',
+        args TEXT,
+        response TEXT,
+        owner VARCHAR(64) NOT NULL,
+        worker VARCHAR(64) NOT NULL,
+        star_time DATETIME NULL,
+        end_time DATETIME NULL,
+        live_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        create_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        delete_at DATETIME NULL,
+        PRIMARY KEY (id)
+	)`
 )
 
 // bootstrap initiates system DB for a store.
@@ -734,11 +752,13 @@ const (
 	version108 = 108
 	// version109 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version109 = 109
+	// version110 adds the table tidb_external_task
+	version110 = 110
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version109
+var currentBootstrapVersion int64 = version110
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -852,6 +872,7 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+		upgradeToVer110,
 	}
 )
 
@@ -2203,6 +2224,14 @@ func upgradeToVer109(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
+// For users that upgrade TiDB c_unicom_test version, we want to support tidb_external_task .
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	doReentrantDDL(s, CreateExternalTask)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2309,6 +2338,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
+	// Create tidb_external_task table
+	mustExecute(s, CreateExternalTask)
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.

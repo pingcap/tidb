@@ -561,7 +561,8 @@ type LoadData struct {
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 
-	GenCols InsertGeneratedColumns
+	GenCols      InsertGeneratedColumns
+	IsCompressed bool
 }
 
 // LoadStats represents a load stats plan.

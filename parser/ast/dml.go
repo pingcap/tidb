@@ -1393,9 +1393,12 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	if n.SelectIntoOpt != nil {
-		ctx.WritePlain(" ")
-		if err := n.SelectIntoOpt.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
+		// restore does not restore into outfile when the user sql specifies the compressed part.
+		if n.SelectIntoOpt.Compressed {
+			ctx.WritePlain(" ")
+			if err := n.SelectIntoOpt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
+			}
 		}
 	}
 	return nil
@@ -1809,6 +1812,8 @@ type LoadDataStmt struct {
 	ColumnAssignments []*Assignment
 
 	ColumnsAndUserVars []*ColumnNameOrUserVar
+	//supports compression import.
+	Compressed bool
 }
 
 // Restore implements Node interface.
@@ -3312,6 +3317,9 @@ type SelectIntoOption struct {
 	FileName   string
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
+	// supports compression export.
+	Compressed bool
+	SelectSQL  string
 }
 
 // Restore implements Node interface.
