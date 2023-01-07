@@ -80,7 +80,7 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 	sqlExecutor sqlexec.SQLExecutor) (bool, error) {
 	sql := new(strings.Builder)
 	sql.Reset()
-	sqlexec.MustFormatSQL(sql, "select live_time,response from  mysql.tidb_external_task where id=%?", s.recordID)
+	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),response from  mysql.tidb_external_task where id=%?", s.recordID)
 	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
@@ -107,14 +107,10 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 	//get LiveTime
 	if !row.IsNull(0) {
 		//get live time
-		lastLiveTimeStr := row.GetString(0)
-		lastLiveTime, err := time.Parse("2006-01-02 15:04:05", lastLiveTimeStr)
-		if err != nil {
-			return false, err
-		}
+		lastLiveTimeSeconds := row.GetInt64(0)
 		// If no keepalive information is written within 1 minutes,
 		//the task is considered to have timed out
-		if time.Since(lastLiveTime) > 1*time.Minute {
+		if lastLiveTimeSeconds > 60 {
 			return true, fmt.Errorf("export data task %v keep alive timed out", s.recordID)
 		}
 	}

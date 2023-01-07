@@ -88,7 +88,7 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 	sqlExecutor sqlexec.SQLExecutor) (bool, error) {
 	sql := new(strings.Builder)
 	sql.Reset()
-	sqlexec.MustFormatSQL(sql, "select live_time,response from  mysql.tidb_external_task where id =%?", e.recordID)
+	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),response from  mysql.tidb_external_task where id =%?", e.recordID)
 	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
@@ -114,16 +114,10 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 	row := iter.Begin()
 	//get LiveTime
 	if !row.IsNull(0) {
-		//passwordLockingJSON := row.GetJSON(0)
-		//return passwordLocking, passwordLocking.ParseJSON(passwordLockingJSON)
-		lastLiveTimeStr := row.GetString(0)
-		lastLiveTime, err := time.Parse("2006-01-02 15:04:05", lastLiveTimeStr)
-		if err != nil {
-			return false, err
-		}
-		// If no keepalive information is written within 20 minutes,
+		lastLiveTimeSeconds := row.GetInt64(0)
+		// If no keepalive information is written within 1 minutes,
 		//the task is considered to have timed out
-		if time.Since(lastLiveTime) > 20*time.Minute {
+		if lastLiveTimeSeconds > 60 {
 			return true, fmt.Errorf("load data task %v keep alive timed out", e.recordID)
 		}
 	}
