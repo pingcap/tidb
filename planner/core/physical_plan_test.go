@@ -2551,6 +2551,7 @@ func TestTmpRewriterDateDim(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `store_sales` (`ss_sold_date_sk` int(11) NOT NULL,`ss_sold_time_sk` int(11) DEFAULT NULL, PRIMARY KEY (`ss_sold_date_sk`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY RANGE (`ss_sold_date_sk`) (PARTITION `p0` VALUES LESS THAN (1), PARTITION `pMax` VALUES LESS THAN (MAXVALUE));")
 	tk.MustExec(" CREATE TABLE `date_dim` (`d_date_sk` int(11) NOT NULL,`d_year` int(11) DEFAULT NULL, PRIMARY KEY (`d_date_sk`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into date_dim values (1, 2000)")
 
 	// tiflash
 	dom := domain.GetDomain(tk.Session())
@@ -2559,7 +2560,7 @@ func TestTmpRewriterDateDim(t *testing.T) {
 	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
 		tableName := tblInfo.Name.L
-		if tableName == "store_sales" || tableName == "date_dim" {
+		if tableName == "store_sales" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,

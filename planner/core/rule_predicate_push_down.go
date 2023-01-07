@@ -17,9 +17,12 @@ package core
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/hint"
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
@@ -314,19 +317,25 @@ func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*ex
 		}
 		// 3. construct and evaluate subquery (select min(targetColumn) from smallTableName where smallTablePredicate) and (select min(targetColumn) from smallTableName where smallTablePredicate)
 		// todo: construct and evaluate max subquery
-		//row, retType, err := p.buildAndEvaluateSubquery(smallTableName, ctx, wherePredicates, subqueryResultColumn)
-		//if err != nil {
-		//	println("failed to execute min subquery")
-		//	return
-		//}
+		var smallSideSchema *expression.Schema
+		if smallTableIsLeft {
+			smallSideSchema = p.children[0].Schema()
+		} else {
+			smallSideSchema = p.children[1].Schema()
+		}
+		row, retType, err := p.buildAndEvaluateSubquery(smallTableName, ctx, wherePredicates, subqueryResultColumn, smallSideSchema)
+		if err != nil {
+			fmt.Println("failed to execute min subquery", err)
+			return leftPredicates, rightPredicates
+		}
 		// 4. add big_table_column >= constant and big_table_column  <= constant for left or right predicate
-		//constant := &expression.Constant{
-		//	Value:   row[0],
-		//	RetType: retType,
-		//}
+		constant := &expression.Constant{
+			Value:   row[0],
+			RetType: retType,
+		}
 		// todo: remove mock constant
-		//newGreaterEqualExpr, err := expression.NewFunction(p.ctx, ast.GE, types.NewFieldType(mysql.TypeTiny), targetColumn, constant)
-		newGreaterEqualExpr, err := expression.NewFunction(p.ctx, ast.GE, types.NewFieldType(mysql.TypeTiny), targetColumn, expression.NewOne())
+		newGreaterEqualExpr, err := expression.NewFunction(p.ctx, ast.GE, types.NewFieldType(mysql.TypeTiny), targetColumn, constant)
+		//newGreaterEqualExpr, err := expression.NewFunction(p.ctx, ast.GE, types.NewFieldType(mysql.TypeTiny), targetColumn, expression.NewOne())
 		if err != nil {
 			fmt.Println("failed to create greater equal expr")
 		}
@@ -342,13 +351,15 @@ func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*ex
 }
 
 func (p *LogicalJoin) buildAndEvaluateSubquery(smallTableName string, ctx context.Context, wherePredicates []expression.Expression,
-	subqueryResultColumn *expression.Column) (row []types.Datum, resultType *types.FieldType, err error) {
+	subqueryResultColumn *expression.Column, smallSideSchema *expression.Schema) (row []types.Datum, resultType *types.FieldType, err error) {
 	builder := &PlanBuilder{
 		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 	}
+	hintProcessor := &hint.BlockHintProcessor{Ctx: p.ctx}
+	builder.Init(p.ctx, p.ctx.GetDomainInfoSchema().(infoschema.InfoSchema), hintProcessor)
 	// 3.1 build datasource
 	tableName := &ast.TableName{
 		Name: model.NewCIStr(smallTableName),
@@ -356,18 +367,37 @@ func (p *LogicalJoin) buildAndEvaluateSubquery(smallTableName string, ctx contex
 	datasource, err := builder.buildDataSource(ctx, tableName, &model.CIStr{})
 	if err != nil {
 		fmt.Println(err)
-		return
+		return nil, nil, err
+	}
+	// todo if small schema is not table schema, it will fail
+	if len(smallSideSchema.Columns) != len(datasource.Schema().Columns) {
+		return nil, nil, errors.New("Don't support this query pattern, the small table must link join directly")
 	}
 	// 3.2 build selection
 	logicalSelection := LogicalSelection{}.Init(p.ctx, 0)
-	logicalSelection.Conditions = wherePredicates
+	// update where column unique id
+	newWherePredicates := make([]expression.Expression, 0, len(wherePredicates))
+	for _, wherePredicate := range wherePredicates {
+		hasFail, newWherePredicate := expression.ColumnSubstituteAll(wherePredicate, smallSideSchema, expression.Column2Exprs(datasource.Schema().Columns))
+		if hasFail {
+			fmt.Println("update where predicate failed:" + wherePredicate.String())
+		} else {
+			newWherePredicates = append(newWherePredicates, newWherePredicate)
+		}
+	}
+	logicalSelection.Conditions = newWherePredicates
 	logicalSelection.SetChildren(datasource)
 	// 3.3 build aggregation
 	// for min aggregation
 	// todo for max aggregation
 	logicalMinAggregation := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, 1)}.Init(p.ctx, 0)
 	argList := make([]expression.Expression, 0, 1)
-	argList = append(argList, subqueryResultColumn)
+	// update subqueryResultColumn
+	hasFail, argColumn := expression.ColumnSubstituteAll(subqueryResultColumn, smallSideSchema, expression.Column2Exprs(datasource.Schema().Columns))
+	if hasFail {
+		return nil, nil, errors.New("failed to update min arg column, the old is:" + subqueryResultColumn.String())
+	}
+	argList = append(argList, argColumn)
 	newFuncDesc, err := aggregation.NewAggFuncDesc(p.ctx, "min", argList, false)
 	logicalMinAggregation.AggFuncs = append(logicalMinAggregation.AggFuncs, newFuncDesc)
 	// schema and name
@@ -384,6 +414,10 @@ func (p *LogicalJoin) buildAndEvaluateSubquery(smallTableName string, ctx contex
 	logicalMinAggregation.SetChildren(logicalSelection)
 	// 3.4 evaluate subquery
 	physicalPlan, _, err := DoOptimize(ctx, p.ctx, builder.GetOptFlag(), logicalMinAggregation)
+	if err != nil {
+		return nil, nil, err
+	}
+	fmt.Println(fmt.Sprintf("the physical plan is :%s", physicalPlan))
 	row, err = EvalSubqueryFirstRow(ctx, physicalPlan, builder.is, p.ctx)
 	return row, logicalMinAggregation.Schema().Columns[0].GetType(), err
 }
