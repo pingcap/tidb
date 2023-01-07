@@ -46,6 +46,7 @@ type exprPrefixAdder struct {
 }
 
 func (s *ppdSolver) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	fmt.Println("execute predicate push down")
 	_, p := lp.PredicatePushDown(ctx, nil, opt)
 	return p, nil
 }
@@ -153,6 +154,7 @@ func (p *LogicalTableDual) PredicatePushDown(ctx context.Context, predicates []e
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(ctx context.Context, predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
+	fmt.Println("execute join predicate push down")
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -196,6 +198,7 @@ func (p *LogicalJoin) PredicatePushDown(ctx context.Context, predicates []expres
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
 	case SemiJoin, InnerJoin:
+		fmt.Println("execute inner join predicate push down")
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, p.LeftConditions...)
 		tempCond = append(tempCond, p.RightConditions...)
@@ -217,7 +220,7 @@ func (p *LogicalJoin) PredicatePushDown(ctx context.Context, predicates []expres
 		p.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
-		p.tmpRewriterDateDim(ctx, equalCond, leftCond, rightCond)
+		leftCond, rightCond = p.tmpRewriterDateDim(ctx, equalCond, leftCond, rightCond)
 	case AntiSemiJoin:
 		predicates = expression.PropagateConstant(p.ctx, predicates)
 		// Return table dual when filter is constant false or null.
@@ -249,19 +252,19 @@ func (p *LogicalJoin) PredicatePushDown(ctx context.Context, predicates []expres
 }
 
 func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*expression.ScalarFunction,
-	leftPredicates []expression.Expression, rightPredicates []expression.Expression) {
-	smallTableName := "date_tim"
+	leftPredicates []expression.Expression, rightPredicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	smallTableName := "date_dim"
 	// 1. find big_table_column = date_dim.column
 	for _, eqPredicate := range eqPredicates {
 		arg0, lOK := eqPredicate.GetArgs()[0].(*expression.Column)
 		arg1, rOK := eqPredicate.GetArgs()[1].(*expression.Column)
 		if !lOK || !rOK {
-			return
+			return leftPredicates, rightPredicates
 		}
 		arg0NameList := strings.Split(arg0.OrigName, ".")
 		arg1NameList := strings.Split(arg1.OrigName, ".")
 		if len(arg0NameList) != 3 || len(arg1NameList) != 3 {
-			return
+			return leftPredicates, rightPredicates
 		}
 		arg0TableName := arg0NameList[1]
 		arg1TableName := arg1NameList[1]
@@ -275,9 +278,9 @@ func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*ex
 			targetColumn = arg0
 		}
 		if subqueryResultColumn == nil {
-			return
+			return leftPredicates, rightPredicates
 		}
-		println("the subquery result outputColumn is: %s, the target outputColumn is:%s", subqueryResultColumn.OrigName, targetColumn.OrigName)
+		fmt.Println(fmt.Sprintf("the subquery result outputColumn is: %s, the target outputColumn is:%s", subqueryResultColumn.OrigName, targetColumn.OrigName))
 
 		// 2. find date_dim.outputColumn = constant
 		// 2.1 find left or right
@@ -292,7 +295,7 @@ func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*ex
 		if rightCol != nil {
 			smallTableIsLeft = false
 		}
-		println("the small table is left :%s", smallTableIsLeft)
+		fmt.Println(fmt.Sprintf("the small table is left :%t", smallTableIsLeft))
 		var candidateConstantPredicates []expression.Expression
 		if smallTableIsLeft {
 			candidateConstantPredicates = leftPredicates
@@ -305,6 +308,9 @@ func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*ex
 			if checkOnlyOnySmallTableColumn(candidatePredicate, smallTableName) {
 				wherePredicates = append(wherePredicates, candidatePredicate)
 			}
+		}
+		if wherePredicates == nil || len(wherePredicates) == 0 {
+			return leftPredicates, rightPredicates
 		}
 		// 3. construct and evaluate subquery (select min(targetColumn) from smallTableName where smallTablePredicate) and (select min(targetColumn) from smallTableName where smallTablePredicate)
 		// todo: construct and evaluate max subquery
@@ -322,17 +328,17 @@ func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*ex
 		//newGreaterEqualExpr, err := expression.NewFunction(p.ctx, ast.GE, types.NewFieldType(mysql.TypeTiny), targetColumn, constant)
 		newGreaterEqualExpr, err := expression.NewFunction(p.ctx, ast.GE, types.NewFieldType(mysql.TypeTiny), targetColumn, expression.NewOne())
 		if err != nil {
-			println("failed to create greater equal expr")
+			fmt.Println("failed to create greater equal expr")
 		}
 		if smallTableIsLeft {
 			rightPredicates = append(rightPredicates, newGreaterEqualExpr)
-			println("new greater equal expr: %s for right side", newGreaterEqualExpr.String())
+			fmt.Println(fmt.Sprintf("new greater equal expr: %s for right side", newGreaterEqualExpr.String()))
 		} else {
 			leftPredicates = append(leftPredicates, newGreaterEqualExpr)
-			println("new greater equal expr: %s for left side", newGreaterEqualExpr.String())
+			fmt.Println(fmt.Sprintf("new greater equal expr: %s for left side", newGreaterEqualExpr.String()))
 		}
 	}
-
+	return leftPredicates, rightPredicates
 }
 
 func (p *LogicalJoin) buildAndEvaluateSubquery(smallTableName string, ctx context.Context, wherePredicates []expression.Expression,
@@ -349,7 +355,7 @@ func (p *LogicalJoin) buildAndEvaluateSubquery(smallTableName string, ctx contex
 	}
 	datasource, err := builder.buildDataSource(ctx, tableName, &model.CIStr{})
 	if err != nil {
-		println(err)
+		fmt.Println(err)
 		return
 	}
 	// 3.2 build selection

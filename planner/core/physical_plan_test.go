@@ -2533,3 +2533,48 @@ func TestCountStarForTiFlash(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func TestTmpRewriterDateDim(t *testing.T) {
+	//var (
+	//	input  []string
+	//	output []struct {
+	//		SQL     string
+	//		Plan    []string
+	//		Warning []string
+	//	}
+	//)
+	//planSuiteData := core.GetPlanSuiteData()
+	//planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `store_sales` (`ss_sold_date_sk` int(11) NOT NULL,`ss_sold_time_sk` int(11) DEFAULT NULL, PRIMARY KEY (`ss_sold_date_sk`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY RANGE (`ss_sold_date_sk`) (PARTITION `p0` VALUES LESS THAN (1), PARTITION `pMax` VALUES LESS THAN (MAXVALUE));")
+	tk.MustExec(" CREATE TABLE `date_dim` (`d_date_sk` int(11) NOT NULL,`d_year` int(11) DEFAULT NULL, PRIMARY KEY (`d_date_sk`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+
+	// tiflash
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		tableName := tblInfo.Name.L
+		if tableName == "store_sales" || tableName == "date_dim" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	outputPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain select * from store_sales, date_dim where d_year in (2000) and ss_sold_date_sk = d_date_sk").Rows())
+	fmt.Println(outputPlan)
+	//tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	//for i, ts := range input {
+	//	testdata.OnRecord(func() {
+	//		output[i].SQL = ts
+	//		output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+	//	})
+	//	tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	//}
+}
