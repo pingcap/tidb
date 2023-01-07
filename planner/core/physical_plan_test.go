@@ -2550,8 +2550,8 @@ func TestTmpRewriterDateDim(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `store_sales` (`ss_sold_date_sk` int(11) NOT NULL,`ss_sold_time_sk` int(11) DEFAULT NULL, PRIMARY KEY (`ss_sold_date_sk`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY RANGE (`ss_sold_date_sk`) (PARTITION `p0` VALUES LESS THAN (1), PARTITION `pMax` VALUES LESS THAN (MAXVALUE));")
-	tk.MustExec(" CREATE TABLE `date_dim` (`d_date_sk` int(11) NOT NULL,`d_year` int(11) DEFAULT NULL, PRIMARY KEY (`d_date_sk`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("insert into date_dim values (1, 2000)")
+	tk.MustExec(" CREATE TABLE `date_dim` (`d_date_sk` int(11) NOT NULL,`d_year` int(11) DEFAULT NULL, `d_moy` int(11) DEFAULT NULL,  `d_qoy` int(11) DEFAULT NULL, PRIMARY KEY (`d_date_sk`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into date_dim values (1, 2000, 1, 1)")
 
 	// tiflash
 	dom := domain.GetDomain(tk.Session())
@@ -2568,7 +2568,7 @@ func TestTmpRewriterDateDim(t *testing.T) {
 		}
 	}
 
-	outputPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain select * from store_sales, date_dim where d_year in (2000) and ss_sold_date_sk = d_date_sk").Rows())
+	outputPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain select d_moy from store_sales, date_dim where d_year in (2000) and ss_sold_date_sk = d_date_sk").Rows())
 	fmt.Println(outputPlan)
 	//tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	//for i, ts := range input {

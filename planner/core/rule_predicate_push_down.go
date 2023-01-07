@@ -370,7 +370,16 @@ func (p *LogicalJoin) buildAndEvaluateSubquery(smallTableName string, ctx contex
 		return nil, nil, err
 	}
 	// todo if small schema is not table schema, it will fail
-	if len(smallSideSchema.Columns) != len(datasource.Schema().Columns) {
+	var newColumnExprs []*expression.Column
+	for _, smallSideColumn := range smallSideSchema.Columns {
+		for _, datasourceColumn := range datasource.Schema().Columns {
+			if smallSideColumn.OrigName == datasourceColumn.OrigName {
+				newColumnExprs = append(newColumnExprs, datasourceColumn)
+				break
+			}
+		}
+	}
+	if len(smallSideSchema.Columns) != len(newColumnExprs) {
 		return nil, nil, errors.New("Don't support this query pattern, the small table must link join directly")
 	}
 	// 3.2 build selection
@@ -378,7 +387,7 @@ func (p *LogicalJoin) buildAndEvaluateSubquery(smallTableName string, ctx contex
 	// update where column unique id
 	newWherePredicates := make([]expression.Expression, 0, len(wherePredicates))
 	for _, wherePredicate := range wherePredicates {
-		hasFail, newWherePredicate := expression.ColumnSubstituteAll(wherePredicate, smallSideSchema, expression.Column2Exprs(datasource.Schema().Columns))
+		hasFail, newWherePredicate := expression.ColumnSubstituteAll(wherePredicate, smallSideSchema, expression.Column2Exprs(newColumnExprs))
 		if hasFail {
 			logutil.Logger(ctx).Info("update where predicate failed:" + wherePredicate.String())
 		} else {
@@ -393,7 +402,7 @@ func (p *LogicalJoin) buildAndEvaluateSubquery(smallTableName string, ctx contex
 	logicalMinAggregation := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, 1)}.Init(p.ctx, 0)
 	argList := make([]expression.Expression, 0, 1)
 	// update subqueryResultColumn
-	hasFail, argColumn := expression.ColumnSubstituteAll(subqueryResultColumn, smallSideSchema, expression.Column2Exprs(datasource.Schema().Columns))
+	hasFail, argColumn := expression.ColumnSubstituteAll(subqueryResultColumn, smallSideSchema, expression.Column2Exprs(newColumnExprs))
 	if hasFail {
 		return nil, nil, errors.New("failed to update min arg column, the old is:" + subqueryResultColumn.String())
 	}
