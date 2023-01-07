@@ -106,8 +106,7 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 	row := iter.Begin()
 	//get LiveTime
 	if !row.IsNull(0) {
-		//passwordLockingJSON := row.GetJSON(0)
-		//return passwordLocking, passwordLocking.ParseJSON(passwordLockingJSON)
+		//get live time
 		lastLiveTimeStr := row.GetString(0)
 		lastLiveTime, err := time.Parse("2006-01-02 15:04:05", lastLiveTimeStr)
 		if err != nil {

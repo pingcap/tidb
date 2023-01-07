@@ -199,10 +199,11 @@ func (e *LoadDataExecCompressed) addTask(ctx context.Context) (uint64, error) {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 		return 0, err
 	}
+	lastInsertID := sysSession.GetSessionVars().StmtCtx.LastInsertID
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
 		return 0, err
 	}
-	return sysSession.GetSessionVars().StmtCtx.LastInsertID, nil
+	return lastInsertID, nil
 }
 
 // LoadDataExec represents a load data executor.
