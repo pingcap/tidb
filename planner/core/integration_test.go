@@ -5424,3 +5424,13 @@ func (s *testIntegrationSuite) TestExplainAnalyzeDMLCommit(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite) TestAutoIncrementCheckWithCheckConstraint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		id INTEGER NOT NULL AUTO_INCREMENT,
+		CHECK (id IN (0, 1)),
+		KEY idx_autoinc_id (id)
+	)`)
+}
