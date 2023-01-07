@@ -170,7 +170,7 @@ func (s *SelectIntoExecCompressed) addTask(ctx context.Context) (uint64, error) 
 		return 0, err
 	}
 	defer s.releaseSysSession(ctx, sysSession)
-	owner := config.GetGlobalConfig().Host + ":" + strconv.Itoa(int(config.GetGlobalConfig().Port))
+	owner := config.GetGlobalConfig().AdvertiseAddress + ":" + strconv.Itoa(int(config.GetGlobalConfig().Port))
 	args, err := s.generateArgs(ctx)
 	if err != nil {
 		return 0, errors.New(fmt.Sprintf("Error occur when generate select into  task args %s", err))
