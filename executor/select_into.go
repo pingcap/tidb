@@ -159,6 +159,7 @@ type SelectIntoTaskArgs struct {
 
 func (s *SelectIntoExecCompressed) generateArgs(ctx context.Context) (string, error) {
 	sita := SelectIntoTaskArgs{
+		SelSQL:     s.intoOpt.SelectSQL,
 		FileName:   s.intoOpt.FileName,
 		FieldTerm:  s.intoOpt.FieldsInfo.Terminated,
 		Enclosed:   s.intoOpt.FieldsInfo.Enclosed,
