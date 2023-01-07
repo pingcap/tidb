@@ -157,11 +157,11 @@ func (e *LoadDataExecCompressed) waitTaskEnd(ctx context.Context) (bool, error) 
 }
 
 type LoadDataTaskArgs struct {
-	FileName   string `json:filename`
-	FieldTerm  string "json: separator"
-	Enclosed   byte   "json:delimiter"
-	Terminated string "json:terminator"
-	TableName  string "json:tablename"
+	FileName   string `json:"filename"`
+	FieldTerm  string `json:"separator"`
+	Enclosed   byte   `json:"delimiter"`
+	Terminated string `json:"terminator"`
+	TableName  string `json:"tablename"`
 }
 
 func (e *LoadDataExecCompressed) generateArgs(ctx context.Context) (string, error) {

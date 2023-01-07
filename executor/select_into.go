@@ -150,11 +150,11 @@ func (s *SelectIntoExecCompressed) waitTaskEnd(ctx context.Context) (bool, error
 }
 
 type SelectIntoTaskArgs struct {
-	SelSQL     string "json:sql"
-	FileName   string `json:filename`
-	FieldTerm  string "json: separator"
-	Enclosed   byte   "json:delimiter"
-	Terminated string "json:terminator"
+	SelSQL     string `json:"sql"`
+	FileName   string `json:"filename"`
+	FieldTerm  string `json:"separator"`
+	Enclosed   byte   `json:"delimiter"`
+	Terminated string `json:"terminator"`
 }
 
 func (s *SelectIntoExecCompressed) generateArgs(ctx context.Context) (string, error) {
