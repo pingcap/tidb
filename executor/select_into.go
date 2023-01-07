@@ -27,9 +27,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -170,7 +170,7 @@ func (s *SelectIntoExecCompressed) addTask(ctx context.Context) (uint64, error) 
 		return 0, err
 	}
 	defer s.releaseSysSession(ctx, sysSession)
-	owner := variable.Hostname + ":" + variable.Port
+	owner := config.GetGlobalConfig().Host + ":" + strconv.Itoa(int(config.GetGlobalConfig().Port))
 	args, err := s.generateArgs(ctx)
 	if err != nil {
 		return 0, errors.New(fmt.Sprintf("Error occur when generate select into  task args %s", err))

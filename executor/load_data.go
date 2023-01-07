@@ -19,18 +19,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -176,7 +177,7 @@ func (e *LoadDataExecCompressed) addTask(ctx context.Context) (uint64, error) {
 		return 0, err
 	}
 	defer e.releaseSysSession(ctx, sysSession)
-	owner := variable.Hostname + ":" + variable.Port
+	owner := config.GetGlobalConfig().Host + ":" + strconv.Itoa(int(config.GetGlobalConfig().Port))
 	args, err := e.generateArgs(ctx)
 	if err != nil {
 		return 0, errors.New(fmt.Sprintf("Error occur when generate load data task args %s", err))
