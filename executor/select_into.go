@@ -44,6 +44,19 @@ type SelectIntoExecCompressed struct {
 	recordID uint64
 }
 
+type SuccessRes struct {
+	TotalRow  uint64 `json:"total_rows"`
+	TotalTime uint64 `json:"run_time"`
+}
+
+type SelectIntoTaskArgs struct {
+	SelSQL     string `json:"sql"`
+	FileName   string `json:"filename"`
+	FieldTerm  string `json:"separator"`
+	Enclosed   byte   `json:"delimiter"`
+	Terminated string `json:"terminator"`
+}
+
 func (s *SelectIntoExecCompressed) Open(ctx context.Context) error {
 	var err error
 	s.recordID, err = s.addTask(ctx)
@@ -54,9 +67,19 @@ func (s *SelectIntoExecCompressed) Open(ctx context.Context) error {
 }
 
 func (s *SelectIntoExecCompressed) Next(ctx context.Context, req *chunk.Chunk) error {
+	sql := new(strings.Builder)
+	sql.Reset()
+	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),status,"+
+		"error_message,response from  %n.%n where id=%?", mysql.SystemDB, mysql.TidbExternalTask, s.recordID)
+	isFirstTime := true
 	for {
-		time.Sleep(time.Second * 5)
-		taskStatus, err := s.waitTaskEnd(ctx)
+		if isFirstTime {
+			time.Sleep(time.Second * 1)
+			isFirstTime = false
+		} else {
+			time.Sleep(time.Second * 5)
+		}
+		taskStatus, err := s.waitTaskEnd(ctx, sql)
 		if err != nil {
 			return err
 		}
@@ -72,25 +95,16 @@ func (s *SelectIntoExecCompressed) Close() error {
 	return nil
 }
 
-func getResult(row []byte) (bool, error) {
-
-	return true, nil
-}
-
 func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
-	sqlExecutor sqlexec.SQLExecutor) (bool, error) {
-	sql := new(strings.Builder)
+	sqlExecutor sqlexec.SQLExecutor, sql *strings.Builder) (bool, error) {
 	var lastLiveTimeSeconds int64
 	var status string
 	var response string
-	sql.Reset()
-	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),status,response from  mysql.tidb_external_task where id=%?", s.recordID)
+	var errmsg string
+
 	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
-		return false, err
-	}
-	if err != nil {
 		return false, err
 	}
 	defer func() {
@@ -105,7 +119,10 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 		return false, err
 	}
 	if req.NumRows() == 0 {
-		return false, fmt.Errorf("export data task %v not found", s.recordID)
+		return false, fmt.Errorf("Export data task %d not found", s.recordID)
+	}
+	if req.NumRows() != 1 {
+		return false, fmt.Errorf("Multiple export data task %d found", s.recordID)
 	}
 	row := iter.Begin()
 	//get live_time
@@ -119,21 +136,30 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 	// If no keepalive information is written within 1 minutes,
 	//the task is considered to have timed out
 	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
-		return true, fmt.Errorf("export data task %v keep alive timed out", s.recordID)
+		return true, fmt.Errorf("Export data task %d keep alive timed out", s.recordID)
 	}
-	//get response
+	//get errmsg
 	if !row.IsNull(2) {
-		response = row.GetString(2)
+		errmsg = row.GetString(2)
 	}
 	if status == "error" {
-		return true, fmt.Errorf(response)
+		return true, fmt.Errorf("Export data fail ,%s", errmsg)
 	} else if status == "success" {
+		var sr SuccessRes
+		if !row.IsNull(3) {
+			response = row.GetString(3)
+		}
+		err = json.Unmarshal([]byte(response), &sr)
+		if err != nil {
+			return true, fmt.Errorf("Export data fail ,unmarshal response fail,%s", err.Error())
+		}
+		s.ctx.GetSessionVars().StmtCtx.AddAffectedRows(sr.TotalRow)
 		return true, nil
 	}
 	return false, nil
 }
 
-func (s *SelectIntoExecCompressed) waitTaskEnd(ctx context.Context) (bool, error) {
+func (s *SelectIntoExecCompressed) waitTaskEnd(ctx context.Context, sql *strings.Builder) (bool, error) {
 	sysSession, err := s.getSysSession()
 	if err != nil {
 		return false, err
@@ -143,7 +169,7 @@ func (s *SelectIntoExecCompressed) waitTaskEnd(ctx context.Context) (bool, error
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		return false, err
 	}
-	taskStatus, err := s.getRecordStatus(ctx, sqlExecutor)
+	taskStatus, err := s.getRecordStatus(ctx, sqlExecutor, sql)
 	if err != nil {
 		return false, err
 	}
@@ -151,14 +177,6 @@ func (s *SelectIntoExecCompressed) waitTaskEnd(ctx context.Context) (bool, error
 		return false, err
 	}
 	return taskStatus, nil
-}
-
-type SelectIntoTaskArgs struct {
-	SelSQL     string `json:"sql"`
-	FileName   string `json:"filename"`
-	FieldTerm  string `json:"separator"`
-	Enclosed   byte   `json:"delimiter"`
-	Terminated string `json:"terminator"`
 }
 
 func (s *SelectIntoExecCompressed) generateArgs(ctx context.Context) (string, error) {
@@ -190,7 +208,7 @@ func (s *SelectIntoExecCompressed) addTask(ctx context.Context) (uint64, error) 
 	}
 	sql := new(strings.Builder)
 	sql.Reset()
-	sqlexec.MustFormatSQL(sql, "insert into mysql.tidb_external_task "+
+	sqlexec.MustFormatSQL(sql, "insert into %n.%n "+
 		" (command,owner,args) values ('dumpling',%?,%?)", owner, args)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))

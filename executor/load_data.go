@@ -57,6 +57,14 @@ type LoadDataExecCompressed struct {
 	recordID     uint64
 }
 
+type LoadDataTaskArgs struct {
+	FileName   string `json:"filename"`
+	FieldTerm  string `json:"separator"`
+	Enclosed   byte   `json:"delimiter"`
+	Terminated string `json:"terminator"`
+	TableName  string `json:"tablename"`
+}
+
 func (e *LoadDataExecCompressed) Open(ctx context.Context) error {
 	var err error
 	e.recordID, err = e.addTask(ctx)
@@ -67,9 +75,19 @@ func (e *LoadDataExecCompressed) Open(ctx context.Context) error {
 }
 
 func (e *LoadDataExecCompressed) Next(ctx context.Context, req *chunk.Chunk) error {
+	sql := new(strings.Builder)
+	sql.Reset()
+	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),"+
+		"status,error_message from  %n.%n where id=%?", mysql.SystemDB, mysql.TidbExternalTask, e.recordID)
+	isFirstTime := true
 	for {
-		time.Sleep(time.Second * 5)
-		taskStatus, err := e.waitTaskEnd(ctx)
+		if isFirstTime {
+			time.Sleep(time.Second * 1)
+			isFirstTime = false
+		} else {
+			time.Sleep(time.Second * 5)
+		}
+		taskStatus, err := e.waitTaskEnd(ctx, sql)
 		if err != nil {
 			return err
 		}
@@ -81,24 +99,17 @@ func (e *LoadDataExecCompressed) Next(ctx context.Context, req *chunk.Chunk) err
 }
 
 func (e *LoadDataExecCompressed) Close() error {
-
 	return nil
 }
 
 func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
-	sqlExecutor sqlexec.SQLExecutor) (bool, error) {
-	sql := new(strings.Builder)
+	sqlExecutor sqlexec.SQLExecutor, sql *strings.Builder) (bool, error) {
 	var lastLiveTimeSeconds int64
 	var status string
-	var response string
-	sql.Reset()
-	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),status,response from  mysql.tidb_external_task where id=%?", e.recordID)
+	var errmsg string
 	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
-		return false, err
-	}
-	if err != nil {
 		return false, err
 	}
 	defer func() {
@@ -113,7 +124,10 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 		return false, err
 	}
 	if req.NumRows() == 0 {
-		return false, fmt.Errorf("import data task %v not found", e.recordID)
+		return false, fmt.Errorf("Import data task %d not found", e.recordID)
+	}
+	if req.NumRows() != 1 {
+		return false, fmt.Errorf("Multiple Import data task %d found", e.recordID)
 	}
 	row := iter.Begin()
 	//get live_time
@@ -127,21 +141,21 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 	// If no keepalive information is written within 1 minutes,
 	//the task is considered to have timed out
 	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
-		return true, fmt.Errorf("import data task %v keep alive timed out", e.recordID)
+		return true, fmt.Errorf("Import data task %d keep alive timed out", e.recordID)
 	}
 	//get response
 	if !row.IsNull(2) {
-		response = row.GetString(2)
+		errmsg = row.GetString(2)
 	}
 	if status == "error" {
-		return true, fmt.Errorf(response)
+		return true, fmt.Errorf("Import data fail ,%s ", errmsg)
 	} else if status == "success" {
 		return true, nil
 	}
 	return false, nil
 }
 
-func (e *LoadDataExecCompressed) waitTaskEnd(ctx context.Context) (bool, error) {
+func (e *LoadDataExecCompressed) waitTaskEnd(ctx context.Context, sql *strings.Builder) (bool, error) {
 	sysSession, err := e.getSysSession()
 	if err != nil {
 		return false, err
@@ -151,7 +165,7 @@ func (e *LoadDataExecCompressed) waitTaskEnd(ctx context.Context) (bool, error) 
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		return false, err
 	}
-	taskStatus, err := e.getRecordStatus(ctx, sqlExecutor)
+	taskStatus, err := e.getRecordStatus(ctx, sqlExecutor, sql)
 	if err != nil {
 		return false, err
 	}
@@ -159,14 +173,6 @@ func (e *LoadDataExecCompressed) waitTaskEnd(ctx context.Context) (bool, error) 
 		return false, err
 	}
 	return taskStatus, nil
-}
-
-type LoadDataTaskArgs struct {
-	FileName   string `json:"filename"`
-	FieldTerm  string `json:"separator"`
-	Enclosed   byte   `json:"delimiter"`
-	Terminated string `json:"terminator"`
-	TableName  string `json:"tablename"`
 }
 
 func (e *LoadDataExecCompressed) generateArgs(ctx context.Context) (string, error) {

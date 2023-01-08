@@ -502,16 +502,17 @@ const (
 		id bigint AUTO_INCREMENT,
         command VARCHAR(64) NOT NULL,
         status VARCHAR(32) NOT NULL DEFAULT 'pending',
-        args TEXT NOT NULL,
+        args TEXT ,
+		error_message TEXT,
         response TEXT,
-        owner VARCHAR(64) NOT NULL,
-        worker VARCHAR(64) NOT NULL,
-        star_time DATETIME NULL,
+        owner VARCHAR(64) ,
+        worker VARCHAR(64) ,
+        start_time DATETIME NULL,
         end_time DATETIME NULL,
         live_time DATETIME DEFAULT CURRENT_TIMESTAMP,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        update_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        delete_at DATETIME NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        deleted_at DATETIME NULL,
         PRIMARY KEY (id)
 	)`
 )
