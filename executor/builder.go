@@ -949,6 +949,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 			IsLocal:      v.IsLocal,
 			OnDuplicate:  v.OnDuplicate,
 			loadDataInfo: loadDataInfo,
+			Is:           b.is,
 		}
 	}
 	loadDataExec := &LoadDataExec{

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -55,6 +56,7 @@ type LoadDataExecCompressed struct {
 	OnDuplicate  ast.OnDuplicateKeyHandlingType
 	loadDataInfo *LoadDataInfo
 	recordID     uint64
+	Is           infoschema.InfoSchema
 }
 
 type LoadDataTaskArgs struct {
@@ -63,6 +65,7 @@ type LoadDataTaskArgs struct {
 	Enclosed   byte   `json:"delimiter"`
 	Terminated string `json:"terminator"`
 	TableName  string `json:"tablename"`
+	DBName     string `json:"dbname"`
 }
 
 func (e *LoadDataExecCompressed) Open(ctx context.Context) error {
@@ -176,12 +179,17 @@ func (e *LoadDataExecCompressed) waitTaskEnd(ctx context.Context, sql *strings.B
 }
 
 func (e *LoadDataExecCompressed) generateArgs(ctx context.Context) (string, error) {
+	dbInfo, isExist := e.Is.SchemaByTable(e.loadDataInfo.Table.Meta())
+	if !isExist {
+		return "", fmt.Errorf("can not find schema for import task %d", e.recordID)
+	}
 	ldta := LoadDataTaskArgs{
 		FileName:   e.loadDataInfo.Path,
 		FieldTerm:  e.loadDataInfo.FieldsInfo.Terminated,
 		Enclosed:   e.loadDataInfo.FieldsInfo.Enclosed,
 		Terminated: e.loadDataInfo.LinesInfo.Terminated,
 		TableName:  e.loadDataInfo.Table.Meta().Name.O,
+		DBName:     dbInfo.Name.O,
 	}
 	args, err := json.Marshal(ldta)
 	return util.String(args), err
