@@ -58,7 +58,6 @@ type LoadDataExecCompressed struct {
 }
 
 func (e *LoadDataExecCompressed) Open(ctx context.Context) error {
-	//e.ctx.Value()
 	var err error
 	e.recordID, err = e.addTask(ctx)
 	if err != nil {
