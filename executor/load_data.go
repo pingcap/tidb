@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -168,7 +169,7 @@ func (e *LoadDataExecCompressed) generateArgs(ctx context.Context) (string, erro
 		TableName:  e.loadDataInfo.Table.Meta().Name.O,
 	}
 	args, err := json.Marshal(ldta)
-	return string(args), err
+	return util.String(args), err
 }
 
 func (e *LoadDataExecCompressed) addTask(ctx context.Context) (uint64, error) {

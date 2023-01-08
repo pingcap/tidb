@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // SelectIntoExec represents a SelectInto executor.
@@ -160,7 +161,7 @@ func (s *SelectIntoExecCompressed) generateArgs(ctx context.Context) (string, er
 		Terminated: s.intoOpt.LinesInfo.Terminated,
 	}
 	args, err := json.Marshal(sita)
-	return string(args), err
+	return util.String(args), err
 }
 
 func (s *SelectIntoExecCompressed) addTask(ctx context.Context) (uint64, error) {

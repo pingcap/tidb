@@ -1393,12 +1393,9 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	if n.SelectIntoOpt != nil {
-		// restore does not restore into outfile when the user sql specifies the compressed part.
-		if n.SelectIntoOpt.Compressed {
-			ctx.WritePlain(" ")
-			if err := n.SelectIntoOpt.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
-			}
+		ctx.WritePlain(" ")
+		if err := n.SelectIntoOpt.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
 		}
 	}
 	return nil
