@@ -196,7 +196,7 @@ func (e *LoadDataExecCompressed) addTask(ctx context.Context) (uint64, error) {
 	owner := config.GetGlobalConfig().AdvertiseAddress + ":" + strconv.Itoa(int(config.GetGlobalConfig().Port))
 	args, err := e.generateArgs(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("Error occur when generate load data task args %s", err.Error())
+		return 0, fmt.Errorf("error occur when generate load data task args %s", err.Error())
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
@@ -204,7 +204,7 @@ func (e *LoadDataExecCompressed) addTask(ctx context.Context) (uint64, error) {
 	}
 	sql := new(strings.Builder)
 	sql.Reset()
-	sqlexec.MustFormatSQL(sql, "insert into %n.%m "+
+	sqlexec.MustFormatSQL(sql, "insert into %n.%n "+
 		" (command,owner,args) values ('lightning',%?,%?)", mysql.SystemDB, mysql.TidbExternalTask, owner, args)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
