@@ -64,6 +64,7 @@ func (s *SelectIntoExecCompressed) Next(ctx context.Context, req *chunk.Chunk) e
 			break
 		}
 	}
+	req.SetNumVirtualRows(100)
 	return nil
 }
 
@@ -118,6 +119,7 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 	if !row.IsNull(1) {
 		res := row.GetJSON(1)
 		fmt.Println(res)
+		//var exportNums uint64
 		//parse res and return task status
 		//getResult()
 	}
