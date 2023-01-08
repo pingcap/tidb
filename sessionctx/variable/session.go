@@ -1319,6 +1319,9 @@ type SessionVars struct {
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
+
+	// tmp for liantong, this is a fake dynamic partition pruning
+	EnableDynamicPartitionPruning bool
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool

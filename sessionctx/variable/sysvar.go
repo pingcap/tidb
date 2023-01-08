@@ -2227,16 +2227,20 @@ var defaultSysVars = []*SysVar{
 	},
 	{
 		Scope: ScopeGlobal, Name: TiDBTTLDeleteWorkerCount, Value: strconv.Itoa(DefTiDBTTLDeleteWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: 256, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			val, err := strconv.ParseInt(s, 10, 64)
-			if err != nil {
-				return err
-			}
-			TTLDeleteWorkerCount.Store(int32(val))
-			return nil
-		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-			return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
-		},
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		TTLDeleteWorkerCount.Store(int32(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
 	},
+	},
+	{Scope: ScopeSession, Name: EnableDynamicPartitionPruning, Value: BoolToOnOff(DefEnableDynamicPartitionPruning), IsHintUpdatable: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableDynamicPartitionPruning = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

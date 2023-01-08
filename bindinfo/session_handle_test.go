@@ -521,3 +521,9 @@ func TestPreparedStmt(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 1)
 	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 }
+
+func TestSetVarBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create binding for select  @@max_join_size  using select /*+ SET_VAR(max_join_size = 1) */  @@max_join_size ;")
+}

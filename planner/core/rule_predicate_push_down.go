@@ -49,7 +49,6 @@ type exprPrefixAdder struct {
 }
 
 func (s *ppdSolver) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	logutil.Logger(ctx).Info("execute predicate push down")
 	_, p := lp.PredicatePushDown(ctx, nil, opt)
 	return p, nil
 }
@@ -157,7 +156,6 @@ func (p *LogicalTableDual) PredicatePushDown(ctx context.Context, predicates []e
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(ctx context.Context, predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
-	logutil.Logger(ctx).Info("execute join predicate push down")
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -201,7 +199,6 @@ func (p *LogicalJoin) PredicatePushDown(ctx context.Context, predicates []expres
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
 	case SemiJoin, InnerJoin:
-		logutil.Logger(ctx).Info("execute inner join predicate push down")
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, p.LeftConditions...)
 		tempCond = append(tempCond, p.RightConditions...)
@@ -223,7 +220,10 @@ func (p *LogicalJoin) PredicatePushDown(ctx context.Context, predicates []expres
 		p.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
-		leftCond, rightCond = p.tmpRewriterDateDim(ctx, equalCond, leftCond, rightCond)
+		if p.ctx.GetSessionVars().EnableDynamicPartitionPruning {
+			logutil.Logger(ctx).Info("execute tmp rewrite for date dim")
+			leftCond, rightCond = p.tmpRewriterDateDim(ctx, equalCond, leftCond, rightCond)
+		}
 	case AntiSemiJoin:
 		predicates = expression.PropagateConstant(p.ctx, predicates)
 		// Return table dual when filter is constant false or null.
