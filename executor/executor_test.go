@@ -1480,8 +1480,12 @@ func TestSetOperation(t *testing.T) {
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 	// from https://github.com/pingcap/tidb/issues/40279
-	tk.MustExec("CREATE TABLE `e162aa34-6b56-4223-b14d-f8a51b935837` (`1962ae66-f5f5-4e85-8550-d59e24887fc3` char(155) NOT NULL DEFAULT 'on1unvbxp5sko6mbetn3ku26tuiyju7w3wc0olzto9ew7gsrx',`f4ae1c37-92f1-4f91-9080-c15c9e106c42` mediumint(9) NOT NULL DEFAULT '2525518',PRIMARY KEY (`f4ae1c37-92f1-4f91-9080-c15c9e106c42`,`1962ae66-f5f5-4e85-8550-d59e24887fc3`) /*T![clustered_index] CLUSTERED */);")
-	tk.MustQuery("( select    `e162aa34-6b56-4223-b14d-f8a51b935837`.`f4ae1c37-92f1-4f91-9080-c15c9e106c42` as r0 , from_base64( `e162aa34-6b56-4223-b14d-f8a51b935837`.`1962ae66-f5f5-4e85-8550-d59e24887fc3` ) as r1 from `e162aa34-6b56-4223-b14d-f8a51b935837` ) except ( select    `e162aa34-6b56-4223-b14d-f8a51b935837`.`1962ae66-f5f5-4e85-8550-d59e24887fc3` as r0 , elt(2, `e162aa34-6b56-4223-b14d-f8a51b935837`.`1962ae66-f5f5-4e85-8550-d59e24887fc3` , `e162aa34-6b56-4223-b14d-f8a51b935837`.`1962ae66-f5f5-4e85-8550-d59e24887fc3` ) as r1 from `e162aa34-6b56-4223-b14d-f8a51b935837`);")
+	tk.MustExec("CREATE TABLE `issue40279` (`a` char(155) NOT NULL DEFAULT 'on1unvbxp5sko6mbetn3ku26tuiyju7w3wc0olzto9ew7gsrx',`b` mediumint(9) NOT NULL DEFAULT '2525518',PRIMARY KEY (`b`,`a`) /*T![clustered_index] CLUSTERED */);")
+	tk.MustExec("insert into `issue40279` values ();")
+	tk.MustQuery("( select    `issue40279`.`b` as r0 , from_base64( `issue40279`.`a` ) as r1 from `issue40279` ) " +
+		"except ( " +
+		"select    `issue40279`.`a` as r0 , elt(2, `issue40279`.`a` , `issue40279`.`a` ) as r1 from `issue40279`);").
+		Check(testkit.Rows("2525518 <nil>"))
 }
 
 func TestSetOperationOnDiffColType(t *testing.T) {
