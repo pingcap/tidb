@@ -48,7 +48,7 @@ var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
 
-// LoadDataExec represents a load data executor.
+// LoadDataExecCompressed represents a load data executor.
 type LoadDataExecCompressed struct {
 	baseExecutor
 
@@ -133,20 +133,20 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 		return false, fmt.Errorf("multiple Import data task %d found", e.recordID)
 	}
 	row := iter.Begin()
-	//get live_time
+	// Get live_time from result.
 	if !row.IsNull(0) {
 		lastLiveTimeSeconds = row.GetInt64(0)
 	}
-	//get status
+	// Get status from result.
 	if !row.IsNull(1) {
 		status = strings.ToLower(row.GetString(1))
 	}
 	// If no keepalive information is written within 1 minutes,
-	//the task is considered to have timed out
+	// the task is considered to have timed out.
 	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
 		return true, fmt.Errorf("import data task %d keep alive timed out", e.recordID)
 	}
-	//get response
+	// Get error message from result.
 	if !row.IsNull(2) {
 		errmsg = row.GetString(2)
 	}

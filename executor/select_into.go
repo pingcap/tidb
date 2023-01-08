@@ -28,7 +28,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -38,7 +37,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-// SelectIntoExec represents a SelectInto executor.
+// SelectIntoExecCompressed represents a SelectInto executor.
 type SelectIntoExecCompressed struct {
 	baseExecutor
 	intoOpt  *ast.SelectIntoOption
@@ -126,26 +125,27 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 		return false, fmt.Errorf("multiple export data task %d found", s.recordID)
 	}
 	row := iter.Begin()
-	//get live_time
+	// Get live_time from result.
 	if !row.IsNull(0) {
 		lastLiveTimeSeconds = row.GetInt64(0)
 	}
-	//get status
+	// Get status from result.
 	if !row.IsNull(1) {
 		status = strings.ToLower(row.GetString(1))
 	}
 	// If no keepalive information is written within 1 minutes,
-	//the task is considered to have timed out
+	// the task is considered to have timed out
 	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
 		return true, fmt.Errorf("export data task %d keep alive timed out", s.recordID)
 	}
-	//get errmsg
+	// Get error message from result.
 	if !row.IsNull(2) {
 		errmsg = row.GetString(2)
 	}
 	if status == "error" {
 		return true, fmt.Errorf("export data fail ,%s", errmsg)
 	} else if status == "success" {
+		// Get affect rows from result.
 		var sr SuccessRes
 		if !row.IsNull(3) {
 			response = row.GetString(3)
