@@ -89,8 +89,11 @@ func (e *LoadDataExecCompressed) Close() error {
 func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 	sqlExecutor sqlexec.SQLExecutor) (bool, error) {
 	sql := new(strings.Builder)
+	var lastLiveTimeSeconds int64
+	var status string
+	var response string
 	sql.Reset()
-	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),response from  mysql.tidb_external_task where id =%?", e.recordID)
+	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),status,response from  mysql.tidb_external_task where id=%?", e.recordID)
 	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
@@ -111,23 +114,30 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 		return false, err
 	}
 	if req.NumRows() == 0 {
-		return false, fmt.Errorf("load data task %v not found", e.recordID)
+		return false, fmt.Errorf("import data task %v not found", s.recordID)
 	}
 	row := iter.Begin()
 	//get live_time
 	if !row.IsNull(0) {
-		lastLiveTimeSeconds := row.GetInt64(0)
-		// If no keepalive information is written within 1 minutes,
-		//the task is considered to have timed out
-		if lastLiveTimeSeconds > 60 {
-			return true, fmt.Errorf("load data task %v keep alive timed out", e.recordID)
-		}
+		lastLiveTimeSeconds = row.GetInt64(0)
+	}
+	//get status
+	if !row.IsNull(1) {
+		status = strings.ToLower(row.GetString(1))
+	}
+	// If no keepalive information is written within 1 minutes,
+	//the task is considered to have timed out
+	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
+		return true, fmt.Errorf("import data task %v keep alive timed out", e.recordID)
 	}
 	//get response
-	if !row.IsNull(1) {
-		res := row.GetJSON(1)
-		fmt.Println(res)
-		//parse res and return task status
+	if !row.IsNull(2) {
+		response = row.GetString(2)
+	}
+	if status == "error" {
+		return true, fmt.Errorf(response)
+	} else if status == "success" {
+		return true, nil
 	}
 	return false, nil
 }
