@@ -4805,14 +4805,19 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 		return nil, ErrNotSupportedWithSem.GenWithStackByArgs("SELECT INTO")
 	}
 	selectIntoInfo := sel.SelectIntoOpt
+	IsCompressed := selectIntoInfo.Compressed
 	sel.SelectIntoOpt = nil
 	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, sel, b.is)
 	if err != nil {
 		return nil, err
 	}
-	selectIntoInfo.SelectSQL, err = generateSelectSQL(ctx, sel)
-	if err != nil {
-		return nil, err
+	// if user sql  specify compressed, the restore interface is
+	// invoked to generate sql statement for dumpling
+	if IsCompressed {
+		selectIntoInfo.SelectSQL, err = generateSelectSQL(ctx, sel)
+		if err != nil {
+			return nil, err
+		}
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	return &SelectInto{
