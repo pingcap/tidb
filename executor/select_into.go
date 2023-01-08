@@ -104,9 +104,8 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 		return false, fmt.Errorf("export data task %v not found", s.recordID)
 	}
 	row := iter.Begin()
-	//get LiveTime
+	//get live_time
 	if !row.IsNull(0) {
-		//get live time
 		lastLiveTimeSeconds := row.GetInt64(0)
 		// If no keepalive information is written within 1 minutes,
 		//the task is considered to have timed out
@@ -121,7 +120,7 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 		//parse res and return task status
 		//getResult()
 	}
-	return true, nil
+	return false, nil
 }
 
 func (s *SelectIntoExecCompressed) waitTaskEnd(ctx context.Context) (bool, error) {

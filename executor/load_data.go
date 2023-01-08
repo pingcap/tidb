@@ -113,7 +113,7 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 		return false, fmt.Errorf("load data task %v not found", e.recordID)
 	}
 	row := iter.Begin()
-	//get LiveTime
+	//get live_time
 	if !row.IsNull(0) {
 		lastLiveTimeSeconds := row.GetInt64(0)
 		// If no keepalive information is written within 1 minutes,
@@ -128,7 +128,7 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 		fmt.Println(res)
 		//parse res and return task status
 	}
-	return true, nil
+	return false, nil
 }
 
 func (e *LoadDataExecCompressed) waitTaskEnd(ctx context.Context) (bool, error) {
