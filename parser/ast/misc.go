@@ -3780,7 +3780,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	case "set_var":
 		hintData := n.HintData.(HintSetVar)
 		ctx.WriteString(hintData.VarName)
-		ctx.WritePlain(", ")
+		ctx.WritePlain(" = ")
 		ctx.WriteString(hintData.Value)
 	}
 	ctx.WritePlain(")")
