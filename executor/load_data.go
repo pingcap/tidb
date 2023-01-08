@@ -105,7 +105,7 @@ func (e *LoadDataExecCompressed) Close() error {
 	return nil
 }
 
-func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
+func (e *LoadDataExecCompressed) getTaskStatus(ctx context.Context,
 	sqlExecutor sqlexec.SQLExecutor, sql *strings.Builder) (bool, error) {
 	var lastLiveTimeSeconds int64
 	var status string
@@ -168,7 +168,7 @@ func (e *LoadDataExecCompressed) waitTaskEnd(ctx context.Context, sql *strings.B
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		return false, err
 	}
-	taskStatus, err := e.getRecordStatus(ctx, sqlExecutor, sql)
+	taskStatus, err := e.getTaskStatus(ctx, sqlExecutor, sql)
 	if err != nil {
 		return false, err
 	}

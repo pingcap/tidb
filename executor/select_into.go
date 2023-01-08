@@ -95,7 +95,7 @@ func (s *SelectIntoExecCompressed) Close() error {
 	return nil
 }
 
-func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
+func (s *SelectIntoExecCompressed) getTaskStatus(ctx context.Context,
 	sqlExecutor sqlexec.SQLExecutor, sql *strings.Builder) (bool, error) {
 	var lastLiveTimeSeconds int64
 	var status string
@@ -170,7 +170,7 @@ func (s *SelectIntoExecCompressed) waitTaskEnd(ctx context.Context, sql *strings
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		return false, err
 	}
-	taskStatus, err := s.getRecordStatus(ctx, sqlExecutor, sql)
+	taskStatus, err := s.getTaskStatus(ctx, sqlExecutor, sql)
 	if err != nil {
 		return false, err
 	}
