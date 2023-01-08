@@ -114,7 +114,7 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 		return false, err
 	}
 	if req.NumRows() == 0 {
-		return false, fmt.Errorf("import data task %v not found", s.recordID)
+		return false, fmt.Errorf("import data task %v not found", e.recordID)
 	}
 	row := iter.Begin()
 	//get live_time
