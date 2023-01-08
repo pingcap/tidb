@@ -209,7 +209,7 @@ func (s *SelectIntoExecCompressed) addTask(ctx context.Context) (uint64, error) 
 	sql := new(strings.Builder)
 	sql.Reset()
 	sqlexec.MustFormatSQL(sql, "insert into %n.%n "+
-		" (command,owner,args) values ('dumpling',%?,%?)", owner, args)
+		" (command,owner,args) values ('dumpling',%?,%?)", mysql.SystemDB, mysql.TidbExternalTask, owner, args)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
 		return 0, err
