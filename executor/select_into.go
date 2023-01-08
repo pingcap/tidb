@@ -119,10 +119,10 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 		return false, err
 	}
 	if req.NumRows() == 0 {
-		return false, fmt.Errorf("Export data task %d not found", s.recordID)
+		return false, fmt.Errorf("export data task %d not found", s.recordID)
 	}
 	if req.NumRows() != 1 {
-		return false, fmt.Errorf("Multiple export data task %d found", s.recordID)
+		return false, fmt.Errorf("multiple export data task %d found", s.recordID)
 	}
 	row := iter.Begin()
 	//get live_time
@@ -136,14 +136,14 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 	// If no keepalive information is written within 1 minutes,
 	//the task is considered to have timed out
 	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
-		return true, fmt.Errorf("Export data task %d keep alive timed out", s.recordID)
+		return true, fmt.Errorf("export data task %d keep alive timed out", s.recordID)
 	}
 	//get errmsg
 	if !row.IsNull(2) {
 		errmsg = row.GetString(2)
 	}
 	if status == "error" {
-		return true, fmt.Errorf("Export data fail ,%s", errmsg)
+		return true, fmt.Errorf("export data fail ,%s", errmsg)
 	} else if status == "success" {
 		var sr SuccessRes
 		if !row.IsNull(3) {
@@ -151,7 +151,7 @@ func (s *SelectIntoExecCompressed) getRecordStatus(ctx context.Context,
 		}
 		err = json.Unmarshal([]byte(response), &sr)
 		if err != nil {
-			return true, fmt.Errorf("Export data fail ,unmarshal response fail,%s", err.Error())
+			return true, fmt.Errorf("export data fail ,unmarshal response fail,%s", err.Error())
 		}
 		s.ctx.GetSessionVars().StmtCtx.AddAffectedRows(sr.TotalRow)
 		return true, nil
@@ -200,7 +200,7 @@ func (s *SelectIntoExecCompressed) addTask(ctx context.Context) (uint64, error) 
 	owner := config.GetGlobalConfig().AdvertiseAddress + ":" + strconv.Itoa(int(config.GetGlobalConfig().Port))
 	args, err := s.generateArgs(ctx)
 	if err != nil {
-		return 0, errors.New(fmt.Sprintf("Error occur when generate select into  task args %s", err))
+		return 0, fmt.Errorf("error occur when generate select into task args %s", err)
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {

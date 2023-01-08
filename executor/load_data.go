@@ -124,10 +124,10 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 		return false, err
 	}
 	if req.NumRows() == 0 {
-		return false, fmt.Errorf("Import data task %d not found", e.recordID)
+		return false, fmt.Errorf("import data task %d not found", e.recordID)
 	}
 	if req.NumRows() != 1 {
-		return false, fmt.Errorf("Multiple Import data task %d found", e.recordID)
+		return false, fmt.Errorf("multiple Import data task %d found", e.recordID)
 	}
 	row := iter.Begin()
 	//get live_time
@@ -141,14 +141,14 @@ func (e *LoadDataExecCompressed) getRecordStatus(ctx context.Context,
 	// If no keepalive information is written within 1 minutes,
 	//the task is considered to have timed out
 	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
-		return true, fmt.Errorf("Import data task %d keep alive timed out", e.recordID)
+		return true, fmt.Errorf("import data task %d keep alive timed out", e.recordID)
 	}
 	//get response
 	if !row.IsNull(2) {
 		errmsg = row.GetString(2)
 	}
 	if status == "error" {
-		return true, fmt.Errorf("Import data fail ,%s ", errmsg)
+		return true, fmt.Errorf("import data fail ,%s", errmsg)
 	} else if status == "success" {
 		return true, nil
 	}
@@ -196,7 +196,7 @@ func (e *LoadDataExecCompressed) addTask(ctx context.Context) (uint64, error) {
 	owner := config.GetGlobalConfig().AdvertiseAddress + ":" + strconv.Itoa(int(config.GetGlobalConfig().Port))
 	args, err := e.generateArgs(ctx)
 	if err != nil {
-		return 0, errors.New(fmt.Sprintf("Error occur when generate load data task args %s", err))
+		return 0, fmt.Errorf("Error occur when generate load data task args %s", err.Error())
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
