@@ -168,6 +168,8 @@ type Session interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	// ParseWithParams parses sql and returns the ast.
+	ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
@@ -1769,6 +1771,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
 	if len(stmts) != 1 {
+		logutil.Logger(ctx).Error("multiple stmt internal error", zap.Int("len", len(stmts)), zap.Error(err))
 		err = errors.New("run multiple statements internally is not supported")
 	}
 	if err != nil {

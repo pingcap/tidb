@@ -1322,6 +1322,12 @@ type SessionVars struct {
 
 	// tmp for liantong, this is a fake dynamic partition pruning
 	EnableDynamicPartitionPruning bool
+
+	// ETLConcurrency increases the speed of ETL operations.
+	ETLConcurrency int
+
+	// ETLBatchSize is the non-transactional batch size of ETL operations.
+	ETLBatchSize int
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
