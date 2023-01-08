@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hint"
 	"strings"
 
@@ -220,9 +221,12 @@ func (p *LogicalJoin) PredicatePushDown(ctx context.Context, predicates []expres
 		p.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
-		if p.ctx.GetSessionVars().EnableDynamicPartitionPruning {
-			logutil.Logger(ctx).Info("execute tmp rewrite for date dim")
-			leftCond, rightCond = p.tmpRewriterDateDim(ctx, equalCond, leftCond, rightCond)
+		enableRewrite, err := p.ctx.GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.EnableDynamicPartitionPruning)
+		if err == nil {
+			if enableRewrite == "ON" {
+				logutil.Logger(ctx).Info("execute tmp rewrite for date dim")
+				leftCond, rightCond = p.tmpRewriterDateDim(ctx, equalCond, leftCond, rightCond)
+			}
 		}
 	case AntiSemiJoin:
 		predicates = expression.PropagateConstant(p.ctx, predicates)

@@ -525,5 +525,7 @@ func TestPreparedStmt(t *testing.T) {
 func TestSetVarBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create binding for select  @@max_join_size  using select /*+ SET_VAR(max_join_size = 1) */  @@max_join_size ;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("select /*+ SET_VAR(enable_dynamic_partition_pruning = 1) */ * from t a, t b where a.a=b.a  and a.b=1;")
 }
