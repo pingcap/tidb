@@ -767,3 +767,12 @@ func TestPreparedIssue17419(t *testing.T) {
 	// _, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
 	// require.True(t, ok)
 }
+
+func TestLimitUnsupportedCase(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	//tk.MustExec("drop table if exists t")
+	//tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("prepare st from 'select 1 limit ?'")
+}
