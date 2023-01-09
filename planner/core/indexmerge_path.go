@@ -515,10 +515,6 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
 			continue // not a MVIndex path
 		}
-		if !ds.isSpecifiedInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
-			continue // for safety, only consider using MVIndex when there is a `use_index_merge` hint now.
-			// TODO: remove this limitation
-		}
 
 		// Step 1. Extract the underlying JSON column from MVIndex Info.
 		mvIndex := ds.possibleAccessPaths[idx].Index
@@ -567,7 +563,8 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 				indexMergeIsIntersection = true
 				jsonPath = sf.GetArgs()[0]
 				var ok bool
-				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1])
+				//virCol.RetType
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1], virCol.GetType())
 				if !ok {
 					continue
 				}
@@ -582,7 +579,7 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 				}
 				jsonPath = sf.GetArgs()[jsonPathIdx]
 				var ok bool
-				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx])
+				vals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx], virCol.GetType())
 				if !ok {
 					continue
 				}
@@ -596,21 +593,6 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 			}
 			if !jsonPath.Equal(ds.ctx, targetJSONPath) {
 				continue // not on the same JSON col
-			}
-			// only support INT now
-			// TODO: support more types
-			if jsonPath.GetType().EvalType() == types.ETInt {
-				continue
-			}
-			allInt := true
-			// TODO: support using IndexLookUp to handle single-value cases.
-			for _, v := range vals {
-				if v.GetType().EvalType() != types.ETInt {
-					allInt = false
-				}
-			}
-			if !allInt {
-				continue
 			}
 
 			// Step 2.3. Generate a IndexMerge Path of this filter on the current MVIndex.
@@ -635,6 +617,20 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 			}
 			indexMergePath := ds.buildIndexMergeOrPath(filters, partialPaths, filterIdx)
 			indexMergePath.IndexMergeIsIntersection = indexMergeIsIntersection
+
+			// Step 2.4. Update the estimated rows.
+			// TODO: use a naive estimation strategy here now for simplicity, make it more accurate.
+			minEstRows, maxEstRows := math.MaxFloat64, -1.0
+			for _, p := range indexMergePath.PartialIndexPaths {
+				minEstRows = math.Min(minEstRows, p.CountAfterAccess)
+				maxEstRows = math.Max(maxEstRows, p.CountAfterAccess)
+			}
+			if indexMergePath.IndexMergeIsIntersection {
+				indexMergePath.CountAfterAccess = minEstRows
+			} else {
+				indexMergePath.CountAfterAccess = maxEstRows
+			}
+
 			mvIndexPaths = append(mvIndexPaths, indexMergePath)
 		}
 	}
@@ -642,16 +638,8 @@ func (ds *DataSource) generateIndexMergeJSONMVIndexPath(normalPathCnt int, filte
 }
 
 // jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}
-func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expression) ([]expression.Expression, bool) {
-	// only support cast(const as JSON)
-	arrayExpr, wrappedByJSONCast := unwrapJSONCast(jsonArrayExpr)
-	if !wrappedByJSONCast {
-		return nil, false
-	}
-	if _, isConst := arrayExpr.(*expression.Constant); !isConst {
-		return nil, false
-	}
-	if expression.IsMutableEffectsExpr(arrayExpr) {
+func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expression, targetType *types.FieldType) ([]expression.Expression, bool) {
+	if !expression.IsInmutableExpr(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
 		return nil, false
 	}
 
@@ -660,7 +648,7 @@ func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expre
 		return nil, false
 	}
 	if jsonArray.TypeCode != types.JSONTypeCodeArray {
-		single, ok := jsonValue2Expr(jsonArray) // '1' -> []expr{1}
+		single, ok := jsonValue2Expr(jsonArray, targetType) // '1' -> []expr{1}
 		if ok {
 			return []expression.Expression{single}, true
 		}
@@ -668,7 +656,7 @@ func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expre
 	}
 	var exprs []expression.Expression
 	for i := 0; i < jsonArray.GetElemCount(); i++ { // '[1, 2, 3]' -> []expr{1, 2, 3}
-		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i))
+		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i), targetType)
 		if !ok {
 			return nil, false
 		}
@@ -677,16 +665,14 @@ func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expre
 	return exprs, true
 }
 
-func jsonValue2Expr(v types.BinaryJSON) (expression.Expression, bool) {
-	if v.TypeCode != types.JSONTypeCodeInt64 {
-		// only support INT now
-		// TODO: support more types
+func jsonValue2Expr(v types.BinaryJSON, targetType *types.FieldType) (expression.Expression, bool) {
+	datum, err := expression.ConvertJSON2Tp(v, targetType)
+	if err != nil {
 		return nil, false
 	}
-	val := v.GetInt64()
 	return &expression.Constant{
-		Value:   types.NewDatum(val),
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		Value:   types.NewDatum(datum),
+		RetType: targetType,
 	}, true
 }
 
