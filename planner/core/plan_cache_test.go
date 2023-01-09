@@ -477,4 +477,5 @@ func TestUnsupportedLimitCase(t *testing.T) {
 	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 	tk.MustExec("set @a = 1_2")
 	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("deallocate prepare stmt")
 }
