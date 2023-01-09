@@ -90,7 +90,6 @@ func (s *SelectIntoExecCompressed) Next(ctx context.Context, req *chunk.Chunk) e
 
 // Close implements the Executor Close interface.
 func (s *SelectIntoExecCompressed) Close() error {
-
 	return nil
 }
 
