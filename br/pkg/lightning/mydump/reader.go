@@ -169,8 +169,6 @@ func (pr PooledReader) Read(p []byte) (n int, err error) {
 
 // Seek implements io.Seeker
 func (pr PooledReader) Seek(offset int64, whence int) (int64, error) {
-	w := pr.ioWorkers.Apply()
-	defer pr.ioWorkers.Recycle(w)
 	return pr.reader.Seek(offset, whence)
 }
 
