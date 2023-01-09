@@ -62,7 +62,7 @@ type LoadDataExecCompressed struct {
 type LoadDataTaskArgs struct {
 	FileName   string `json:"filename"`
 	FieldTerm  string `json:"separator"`
-	Enclosed   byte   `json:"delimiter"`
+	Enclosed   string `json:"delimiter"`
 	Replace    int    `json:"replace"`
 	Terminated string `json:"terminator"`
 	TableName  string `json:"tablename"`
@@ -187,7 +187,7 @@ func (e *LoadDataExecCompressed) generateArgs(ctx context.Context) (string, erro
 	ldta := LoadDataTaskArgs{
 		FileName:   e.loadDataInfo.Path,
 		FieldTerm:  e.loadDataInfo.FieldsInfo.Terminated,
-		Enclosed:   e.loadDataInfo.FieldsInfo.Enclosed,
+		Enclosed:   string(e.loadDataInfo.FieldsInfo.Enclosed),
 		Terminated: e.loadDataInfo.LinesInfo.Terminated,
 		TableName:  e.loadDataInfo.Table.Meta().Name.O,
 		DBName:     dbInfo.Name.O,
