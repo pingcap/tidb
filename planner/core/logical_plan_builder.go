@@ -162,7 +162,7 @@ func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	a.exprDepth++
 	if n, ok := inNode.(*driver.ParamMarkerExpr); ok {
 		if a.exprDepth == 1 {
-			_, isNull, isExpectedType := getUintFromNode(a.ctx, n)
+			_, isNull, isExpectedType := getUintFromNode(a.ctx, n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
 				return expression.ConstructPositionExpr(n), true
@@ -1999,7 +1999,7 @@ CheckReferenced:
 // getUintFromNode gets uint64 value from ast.Node.
 // For ordinary statement, node should be uint64 constant value.
 // For prepared statement, node is string. We should convert it to uint64.
-func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bool, isExpectedType bool) {
+func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64OrUint64 bool) (uVal uint64, isNull bool, isExpectedType bool) {
 	var val interface{}
 	switch v := n.(type) {
 	case *driver.ValueExpr:
@@ -2007,6 +2007,11 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 	case *driver.ParamMarkerExpr:
 		if !v.InExecute {
 			return 0, false, true
+		}
+		if mustInt64OrUint64 {
+			if expected := checkParamTypeInt64OrUint64(v); !expected {
+				return 0, false, false
+			}
 		}
 		param, err := expression.ParamMarkerExpression(ctx, v, false)
 		if err != nil {
@@ -2041,57 +2046,9 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 	return 0, false, false
 }
 
-// getUintFromLimitNode gets uint64 value from ast.Node.
-// For ordinary statement, node should be uint64 constant value.
-// For prepared statement, node is string. We should convert it to uint64.
-func getUintFromLimitNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bool, isExpectedType bool) {
-	var val interface{}
-	switch v := n.(type) {
-	case *driver.ValueExpr:
-		val = v.GetValue()
-	case *driver.ParamMarkerExpr:
-		if !v.InExecute {
-			return 0, false, true
-		}
-		if expected := checkParamTypeExpected(v); !expected {
-			return 0, false, false
-		}
-		param, err := expression.ParamMarkerExpression(ctx, v, false)
-		if err != nil {
-			return 0, false, false
-		}
-		str, isNull, err := expression.GetStringFromConstant(ctx, param)
-		if err != nil {
-			return 0, false, false
-		}
-		if isNull {
-			return 0, true, true
-		}
-		val = str
-	default:
-		return 0, false, false
-	}
-	switch v := val.(type) {
-	case uint64:
-		return v, false, true
-	case int64:
-		if v >= 0 {
-			return uint64(v), false, true
-		}
-	case string:
-		sc := ctx.GetSessionVars().StmtCtx
-		uVal, err := types.StrToUint(sc, v, false)
-		if err != nil {
-			return 0, false, false
-		}
-		return uVal, false, true
-	}
-	return 0, false, false
-}
-
-// check param type for plan cache, only allow int now
+// check param type for plan cache limit, only allow int64 and uint64 now
 // eg: set @a = 1;
-func checkParamTypeExpected(param *driver.ParamMarkerExpr) bool {
+func checkParamTypeInt64OrUint64(param *driver.ParamMarkerExpr) bool {
 	val := param.GetValue()
 	switch v := val.(type) {
 	case int64:
@@ -2108,13 +2065,13 @@ func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count ui
 	offset uint64, err error) {
 	var isExpectedType bool
 	if limit.Count != nil {
-		count, _, isExpectedType = getUintFromLimitNode(ctx, limit.Count)
+		count, _, isExpectedType = getUintFromNode(ctx, limit.Count, true)
 		if !isExpectedType {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
 	if limit.Offset != nil {
-		offset, _, isExpectedType = getUintFromLimitNode(ctx, limit.Offset)
+		offset, _, isExpectedType = getUintFromNode(ctx, limit.Offset, true)
 		if !isExpectedType {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
@@ -2895,7 +2852,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *driver.ParamMarkerExpr:
 		g.isParam = true
 		if g.exprDepth == 1 {
-			_, isNull, isExpectedType := getUintFromNode(g.ctx, n)
+			_, isNull, isExpectedType := getUintFromNode(g.ctx, n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
 			if !isNull && isExpectedType {
 				return expression.ConstructPositionExpr(n), true
@@ -6268,7 +6225,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		if bound.Type == ast.CurrentRow {
 			return bound, nil
 		}
-		numRows, _, _ := getUintFromNode(b.ctx, boundClause.Expr)
+		numRows, _, _ := getUintFromNode(b.ctx, boundClause.Expr, false)
 		bound.Num = numRows
 		return bound, nil
 	}
@@ -6584,7 +6541,7 @@ func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *a
 		if bound.Unit != ast.TimeUnitInvalid {
 			return ErrWindowRowsIntervalUse.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
-		_, isNull, isExpectedType := getUintFromNode(b.ctx, bound.Expr)
+		_, isNull, isExpectedType := getUintFromNode(b.ctx, bound.Expr, false)
 		if isNull || !isExpectedType {
 			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
