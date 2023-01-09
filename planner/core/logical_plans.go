@@ -369,8 +369,8 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 // means whether there is a `NullEQ` of a join key.
 func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
 	for _, expr := range p.EqualConditions {
-		leftKeys = append(leftKeys, expression.ExtractColumnsFromExpression(expr.GetArgs()[0], nil)...)
-		rightKeys = append(rightKeys, expression.ExtractColumnsFromExpression(expr.GetArgs()[1], nil)...)
+		leftKeys = append(leftKeys, expression.ExtractColumns(expr.GetArgs()[0], nil)...)
+		rightKeys = append(rightKeys, expression.ExtractColumns(expr.GetArgs()[1], nil)...)
 		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
 		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
 	}
