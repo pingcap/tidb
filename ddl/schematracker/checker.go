@@ -433,6 +433,22 @@ func (d Checker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPla
 	panic("implement me")
 }
 
+// CreateResourceGroup implements the DDL interface.
+// ResourceGroup do not affect the transaction.
+func (d Checker) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error {
+	return nil
+}
+
+// DropResourceGroup implements the DDL interface.
+func (d Checker) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error {
+	return nil
+}
+
+// AlterResourceGroup implements the DDL interface.
+func (d Checker) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error {
+	return nil
+}
+
 // CreateSchemaWithInfo implements the DDL interface.
 func (d Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInfo, onExist ddl.OnExist) error {
 	err := d.realDDL.CreateSchemaWithInfo(ctx, info, onExist)

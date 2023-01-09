@@ -1068,6 +1068,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterTablePartitionPlacement(d, t, job)
 	case model.ActionAlterTablePlacement:
 		ver, err = onAlterTablePlacement(d, t, job)
+	case model.ActionCreateResourceGroup:
+		ver, err = onCreateResourceGroup(d, t, job)
+	case model.ActionAlterResourceGroup:
+		ver, err = onAlterResourceGroup(d, t, job)
+	case model.ActionDropResourceGroup:
+		ver, err = onDropResourceGroup(d, t, job)
 	case model.ActionAlterCacheTable:
 		ver, err = onAlterCacheTable(d, t, job)
 	case model.ActionAlterNoCacheTable:

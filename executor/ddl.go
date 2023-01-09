@@ -204,6 +204,12 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeDropPlacementPolicy(x)
 	case *ast.AlterPlacementPolicyStmt:
 		err = e.executeAlterPlacementPolicy(x)
+	case *ast.CreateResourceGroupStmt:
+		err = e.executeCreateResourceGroup(x)
+	case *ast.DropResourceGroupStmt:
+		err = e.executeDropResourceGroup(x)
+	case *ast.AlterResourceGroupStmt:
+		err = e.executeAlterResourceGroup(x)
 	}
 	if err != nil {
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
@@ -734,4 +740,16 @@ func (e *DDLExec) executeDropPlacementPolicy(s *ast.DropPlacementPolicyStmt) err
 
 func (e *DDLExec) executeAlterPlacementPolicy(s *ast.AlterPlacementPolicyStmt) error {
 	return domain.GetDomain(e.ctx).DDL().AlterPlacementPolicy(e.ctx, s)
+}
+
+func (e *DDLExec) executeCreateResourceGroup(s *ast.CreateResourceGroupStmt) error {
+	return domain.GetDomain(e.ctx).DDL().CreateResourceGroup(e.ctx, s)
+}
+
+func (e *DDLExec) executeAlterResourceGroup(s *ast.AlterResourceGroupStmt) error {
+	return domain.GetDomain(e.ctx).DDL().AlterResourceGroup(e.ctx, s)
+}
+
+func (e *DDLExec) executeDropResourceGroup(s *ast.DropResourceGroupStmt) error {
+	return domain.GetDomain(e.ctx).DDL().DropResourceGroup(e.ctx, s)
 }

@@ -216,7 +216,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
+	resourceGroups, err := do.fetchResourceGroups(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
+
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -246,6 +251,14 @@ func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
 		return nil, err
 	}
 	return allPolicies, nil
+}
+
+func (do *Domain) fetchResourceGroups(m *meta.Meta) ([]*model.ResourceGroupInfo, error) {
+	allResourceGroups, err := m.ListResourceGroups()
+	if err != nil {
+		return nil, err
+	}
+	return allResourceGroups, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
