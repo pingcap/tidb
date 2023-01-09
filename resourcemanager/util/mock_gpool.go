@@ -27,7 +27,7 @@ func NewMockGPool(name string) *MockGPool {
 }
 
 // Release is only for test
-func (*MockGPool) Release() {
+func (*MockGPool) ReleaseAndWait() {
 	panic("implement me")
 }
 
