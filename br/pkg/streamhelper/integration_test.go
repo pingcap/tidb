@@ -14,6 +14,7 @@ import (
 
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -142,6 +143,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("testGetGlobalCheckPointTS", func(t *testing.T) { testGetGlobalCheckPointTS(t, metaCli) })
 	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 	t.Run("TestStreamCheckpoint", func(t *testing.T) { testStreamCheckpoint(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+	t.Run("testStoptask", func(t *testing.T) { testStoptask(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 }
 
 func TestChecking(t *testing.T) {
@@ -313,25 +315,89 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	require.False(t, ok)
 }
 
+// getCheckpoint gets the central checkpoint ts.
+func getCheckpoint(ctx context.Context, req *require.Assertions, metaCli streamhelper.AdvancerExt, task string) uint64 {
+	resp, err := metaCli.KV.Get(ctx, streamhelper.GlobalCheckpointOf(task))
+	req.NoError(err)
+	if len(resp.Kvs) == 0 {
+		return 0
+	}
+	req.Len(resp.Kvs, 1)
+	return binary.BigEndian.Uint64(resp.Kvs[0].Value)
+}
+
 func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx := context.Background()
 	task := "simple"
 	req := require.New(t)
-	getCheckpoint := func() uint64 {
-		resp, err := metaCli.KV.Get(ctx, streamhelper.GlobalCheckpointOf(task))
-		req.NoError(err)
-		if len(resp.Kvs) == 0 {
-			return 0
-		}
-		req.Len(resp.Kvs, 1)
-		return binary.BigEndian.Uint64(resp.Kvs[0].Value)
-	}
+
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 5))
-	req.EqualValues(5, getCheckpoint())
+	req.EqualValues(5, getCheckpoint(ctx, req, metaCli, task))
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 18))
-	req.EqualValues(18, getCheckpoint())
+	req.EqualValues(18, getCheckpoint(ctx, req, metaCli, task))
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 16))
-	req.EqualValues(18, getCheckpoint())
+	req.EqualValues(18, getCheckpoint(ctx, req, metaCli, task))
 	req.NoError(metaCli.ClearV3GlobalCheckpointForTask(ctx, task))
-	req.EqualValues(0, getCheckpoint())
+	req.EqualValues(0, getCheckpoint(ctx, req, metaCli, task))
+}
+
+func testStoptask(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	var (
+		ctx      = context.Background()
+		taskName = "stop_task"
+		req      = require.New(t)
+		taskInfo = streamhelper.TaskInfo{
+			PBInfo: backuppb.StreamBackupTaskInfo{
+				Name:    taskName,
+				StartTs: 0,
+			},
+		}
+		storeID           = "5"
+		storageCheckpoint = make([]byte, 8)
+	)
+
+	// put task
+	req.NoError(metaCli.PutTask(ctx, taskInfo))
+	t2, err := metaCli.GetTask(ctx, taskName)
+	req.NoError(err)
+	req.EqualValues(taskInfo.PBInfo.Name, t2.Info.Name)
+
+	// upload global checkpoint
+	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, taskName, 100))
+	req.EqualValues(100, getCheckpoint(ctx, req, metaCli, taskName))
+
+	//upload storage checkpoint
+	key := path.Join(streamhelper.StorageCheckpointOf(taskName), storeID)
+	binary.BigEndian.PutUint64(storageCheckpoint, 90)
+	_, err = metaCli.Put(ctx, key, string(storageCheckpoint))
+	req.NoError(err)
+
+	task := streamhelper.NewTask(&metaCli.MetaDataClient, taskInfo.PBInfo)
+	ts, err := task.GetStorageCheckpoint(ctx)
+	req.NoError(err)
+	req.EqualValues(ts, 90)
+
+	// pause task
+	req.NoError(metaCli.PauseTask(ctx, taskName))
+	resp, err := metaCli.KV.Get(ctx, streamhelper.Pause(taskName))
+	req.NoError(err)
+	req.EqualValues(1, len(resp.Kvs))
+
+	// stop task
+	err = metaCli.DeleteTask(ctx, taskName)
+	req.NoError(err)
+
+	// check task and other meta infomations not existed
+	_, err = metaCli.GetTask(ctx, taskName)
+	req.Error(err)
+
+	ts, err = task.GetStorageCheckpoint(ctx)
+	req.NoError(err)
+	req.EqualValues(ts, 0)
+
+	req.EqualValues(0, getCheckpoint(ctx, req, metaCli, taskName))
+
+	resp, err = metaCli.KV.Get(ctx, streamhelper.Pause(taskName))
+	req.NoError(err)
+	req.EqualValues(0, len(resp.Kvs))
 }
