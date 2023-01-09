@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	backup "github.com/pingcap/kvproto/pkg/brpb"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -274,7 +273,7 @@ func testGetGlobalCheckPointTS(t *testing.T, metaCli streamhelper.MetaDataClient
 		require.NoError(t, err)
 	}
 
-	task := streamhelper.NewTask(&metaCli, backup.StreamBackupTaskInfo{Name: taskName})
+	task := streamhelper.NewTask(&metaCli, backuppb.StreamBackupTaskInfo{Name: taskName})
 	task.UploadGlobalCheckpoint(ctx, 1003)
 
 	globalTS, err := task.GetGlobalCheckPointTS(ctx)
@@ -315,30 +314,27 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	require.False(t, ok)
 }
 
-// getCheckpoint gets the central checkpoint ts.
-func getCheckpoint(ctx context.Context, req *require.Assertions, metaCli streamhelper.AdvancerExt, task string) uint64 {
-	resp, err := metaCli.KV.Get(ctx, streamhelper.GlobalCheckpointOf(task))
-	req.NoError(err)
-	if len(resp.Kvs) == 0 {
-		return 0
-	}
-	req.Len(resp.Kvs, 1)
-	return binary.BigEndian.Uint64(resp.Kvs[0].Value)
-}
-
 func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx := context.Background()
 	task := "simple"
 	req := require.New(t)
 
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 5))
-	req.EqualValues(5, getCheckpoint(ctx, req, metaCli, task))
+	ts, err := metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(5, ts)
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 18))
-	req.EqualValues(18, getCheckpoint(ctx, req, metaCli, task))
+	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(18, ts)
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, task, 16))
-	req.EqualValues(18, getCheckpoint(ctx, req, metaCli, task))
+	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(18, ts)
 	req.NoError(metaCli.ClearV3GlobalCheckpointForTask(ctx, task))
-	req.EqualValues(0, getCheckpoint(ctx, req, metaCli, task))
+	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, task)
+	req.NoError(err)
+	req.EqualValues(0, ts)
 }
 
 func testStoptask(t *testing.T, metaCli streamhelper.AdvancerExt) {
@@ -364,7 +360,9 @@ func testStoptask(t *testing.T, metaCli streamhelper.AdvancerExt) {
 
 	// upload global checkpoint
 	req.NoError(metaCli.UploadV3GlobalCheckpointForTask(ctx, taskName, 100))
-	req.EqualValues(100, getCheckpoint(ctx, req, metaCli, taskName))
+	ts, err := metaCli.GetGlobalCheckpointForTask(ctx, taskName)
+	req.NoError(err)
+	req.EqualValues(100, ts)
 
 	//upload storage checkpoint
 	key := path.Join(streamhelper.StorageCheckpointOf(taskName), storeID)
@@ -373,7 +371,7 @@ func testStoptask(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	req.NoError(err)
 
 	task := streamhelper.NewTask(&metaCli.MetaDataClient, taskInfo.PBInfo)
-	ts, err := task.GetStorageCheckpoint(ctx)
+	ts, err = task.GetStorageCheckpoint(ctx)
 	req.NoError(err)
 	req.EqualValues(ts, 90)
 
@@ -395,7 +393,9 @@ func testStoptask(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	req.NoError(err)
 	req.EqualValues(ts, 0)
 
-	req.EqualValues(0, getCheckpoint(ctx, req, metaCli, taskName))
+	ts, err = metaCli.GetGlobalCheckpointForTask(ctx, taskName)
+	req.NoError(err)
+	req.EqualValues(0, ts)
 
 	resp, err = metaCli.KV.Get(ctx, streamhelper.Pause(taskName))
 	req.NoError(err)
