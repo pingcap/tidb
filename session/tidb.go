@@ -40,12 +40,11 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 type domainMap struct {
-	mu      syncutil.Mutex
+	mu      sync.Mutex
 	domains map[string]*domain.Domain
 }
 
@@ -80,21 +79,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-<<<<<<< HEAD
-		onClose := func() {
-			dm.Delete(store)
-		}
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
-		err1 = d.Init(ddlLease, sysFactory)
-=======
 		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory)
-
-		var ddlInjector func(ddl.DDL) *schematracker.Checker
-		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
-			ddlInjector = injector.Injector
-		}
-		err1 = d.Init(ddlLease, sysFactory, ddlInjector)
->>>>>>> 408a46654d (session: fix deadlock when init domain failed (#40409))
+		err1 = d.Init(ddlLease, sysFactory)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
