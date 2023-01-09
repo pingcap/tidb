@@ -71,14 +71,8 @@ func (s *SelectIntoExecCompressed) Next(ctx context.Context, req *chunk.Chunk) e
 	sql.Reset()
 	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),status,"+
 		"error_message,response from  %n.%n where id=%?", mysql.SystemDB, mysql.TidbExternalTask, s.recordID)
-	isFirstTime := true
 	for {
-		if isFirstTime {
-			time.Sleep(time.Second * 1)
-			isFirstTime = false
-		} else {
-			time.Sleep(time.Second * 5)
-		}
+		time.Sleep(time.Second * 1)
 		taskStatus, err := s.waitTaskEnd(ctx, sql)
 		if err != nil {
 			return err
