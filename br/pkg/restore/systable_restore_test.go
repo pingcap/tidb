@@ -3,11 +3,12 @@
 package restore
 
 import (
+	"regexp"
+	"testing"
+
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
-	"regexp"
-	"testing"
 )
 
 func testTableInfo(name string) *model.TableInfo {
