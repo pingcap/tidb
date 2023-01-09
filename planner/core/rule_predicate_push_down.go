@@ -391,7 +391,7 @@ func (p *LogicalJoin) buildAndEvaluateSubquery(ctx context.Context, smallTableNa
 	// update where column unique id
 	newWherePredicates := make([]expression.Expression, 0, len(wherePredicates))
 	for _, wherePredicate := range wherePredicates {
-		hasFail, newWherePredicate := expression.ColumnSubstituteAll(wherePredicate, smallSideSchema, expression.Column2Exprs(newColumnExprs))
+		hasFail, newWherePredicate := expression.ColumnSubstituteAllTmp(wherePredicate, smallSideSchema, expression.Column2Exprs(newColumnExprs))
 		if hasFail {
 			logutil.Logger(ctx).Info("update where predicate failed:" + wherePredicate.String())
 		} else {
@@ -406,7 +406,7 @@ func (p *LogicalJoin) buildAndEvaluateSubquery(ctx context.Context, smallTableNa
 	logicalMinAggregation := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, 1)}.Init(p.ctx, 0)
 	argList := make([]expression.Expression, 0, 1)
 	// update subqueryResultColumn
-	hasFail, argColumn := expression.ColumnSubstituteAll(subqueryResultColumn, smallSideSchema, expression.Column2Exprs(newColumnExprs))
+	hasFail, argColumn := expression.ColumnSubstituteAllTmp(subqueryResultColumn, smallSideSchema, expression.Column2Exprs(newColumnExprs))
 	if hasFail {
 		return nil, nil, errors.New("failed to update min arg column, the old is:" + subqueryResultColumn.String())
 	}
