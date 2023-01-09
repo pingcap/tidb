@@ -552,6 +552,9 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 
 func (tc *TiDBContext) tryETL(stmt ast.StmtNode) *ast.NonTransactionalDMLStmt {
 	sessVars := tc.Session.GetSessionVars()
+	if sessVars.InRestrictedSQL {
+		return nil
+	}
 	if sessVars.ETLConcurrency == 0 {
 		return nil
 	}

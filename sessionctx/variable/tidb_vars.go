@@ -1159,7 +1159,7 @@ const (
 	DefTiDBTTLDeleteWorkerCount                      = 4
 	DefEnableDynamicPartitionPruning                 = false
 	DefTiDBETLConcurrency                            = 64
-	DefTiDBETLBatchSize                              = 1000
+	DefTiDBETLBatchSize                              = 2000
 )
 
 // Process global variables.
