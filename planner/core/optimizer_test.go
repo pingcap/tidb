@@ -20,8 +20,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
@@ -117,10 +117,8 @@ func TestHandleFineGrainedShuffleNoDataCompression(t *testing.T) {
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
 	hashSender := &PhysicalExchangeSender{
-		ExchangeType: tipb.ExchangeType_Hash,
-		ExchangeSenderMeta: &mpp.ExchangeSenderMeta{
-			Compression: mpp.CompressionMode_FAST,
-		},
+		ExchangeType:    tipb.ExchangeType_Hash,
+		CompressionMode: kv.ExchangeCompressionModeFast,
 	}
 	tableScan := &PhysicalTableScan{}
 	sortItem := property.SortItem{
@@ -144,7 +142,7 @@ func TestHandleFineGrainedShuffleNoDataCompression(t *testing.T) {
 	handleFineGrainedShuffle(nil, sctx, tableReader)
 
 	require.True(t, hashSender.TiFlashFineGrainedShuffleStreamCount == 8)
-	require.True(t, hashSender.ExchangeSenderMeta == nil) // disable compression
+	require.True(t, hashSender.CompressionMode == kv.ExchangeCompressionModeNONE) // disable compression
 }
 
 // Test for core.handleFineGrainedShuffle()
@@ -169,9 +167,6 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	}
 	hashSender := &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
-		ExchangeSenderMeta: &mpp.ExchangeSenderMeta{
-			Compression: mpp.CompressionMode_FAST,
-		},
 	}
 	tableScan := &PhysicalTableScan{}
 	plans = append(plans, &partWindow.basePhysicalPlan)

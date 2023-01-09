@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // MppVersion indicates the mpp-version used to build mpp plan
@@ -142,13 +143,12 @@ type MPPDispatchRequest struct {
 	IsRoot  bool        // root task returns data to tidb directly.
 	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar          int64
-	StartTs            uint64
-	MppQueryID         MPPQueryID
-	ID                 int64 // identify a single task
-	State              MppTaskStates
-	MppVersion         MppVersion              // mpp version
-	ExchangeSenderMeta *mpp.ExchangeSenderMeta // exchange sender info, compress method
+	SchemaVar  int64
+	StartTs    uint64
+	MppQueryID MPPQueryID
+	ID         int64 // identify a single task
+	State      MppTaskStates
+	MppVersion MppVersion // mpp version
 }
 
 // MPPClient accepts and processes mpp requests.
@@ -201,24 +201,24 @@ func ToExchangeCompressionMode(name string) (ExchangeCompressionMode, bool) {
 	if name == exchangeCompressionModeUnspecifiedName {
 		return ExchangeCompressionModeUnspecified, true
 	}
-	value, ok := mpp.CompressionMode_value[name]
+	value, ok := tipb.CompressionMode_value[name]
 	if ok {
 		return ExchangeCompressionMode(value), true
 	}
 	return DefaultExchangeCompressionMode, false
 }
 
-// ToMppCompressionMode returns mpp.CompressionMode from kv.ExchangeCompressionMode
-func (t ExchangeCompressionMode) ToMppCompressionMode() mpp.CompressionMode {
+// ToMppCompressionMode returns tipb.CompressionMode from kv.ExchangeCompressionMode
+func (t ExchangeCompressionMode) ToMppCompressionMode() tipb.CompressionMode {
 	switch t {
 	case ExchangeCompressionModeNONE:
-		return mpp.CompressionMode_NONE
+		return tipb.CompressionMode_NONE
 	case ExchangeCompressionModeFast:
-		return mpp.CompressionMode_FAST
+		return tipb.CompressionMode_FAST
 	case ExchangeCompressionModeHC:
-		return mpp.CompressionMode_HIGH_COMPRESSION
+		return tipb.CompressionMode_HIGH_COMPRESSION
 	}
 
 	// Use `FAST` as the defualt method
-	return mpp.CompressionMode_FAST
+	return tipb.CompressionMode_FAST
 }

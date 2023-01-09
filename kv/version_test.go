@@ -17,7 +17,7 @@ package kv
 import (
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -68,6 +68,6 @@ func TestExchangeCompressionMode(t *testing.T) {
 		assert.True(t, ok)
 	}
 	// default `FAST`
-	assert.Equal(t, mpp.CompressionMode_FAST, ExchangeCompressionModeUnspecified.ToMppCompressionMode())
+	assert.Equal(t, tipb.CompressionMode_FAST, ExchangeCompressionModeUnspecified.ToMppCompressionMode())
 
 }

@@ -99,20 +99,19 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
 			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
 			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-			zap.String("exchange-sender-compression-mode", (pf.ExchangeSender.ExchangeSenderMeta.GetCompression().String())),
+			zap.String("exchange-compression-mode", (pf.ExchangeSender.CompressionMode.Name())),
 		)
 		req := &kv.MPPDispatchRequest{
-			Data:               pbData,
-			Meta:               mppTask.Meta,
-			ID:                 mppTask.ID,
-			IsRoot:             pf.IsRoot,
-			Timeout:            10,
-			SchemaVar:          e.is.SchemaMetaVersion(),
-			StartTs:            e.startTS,
-			MppQueryID:         mppTask.MppQueryID,
-			State:              kv.MppTaskReady,
-			MppVersion:         mppTask.MppVersion,
-			ExchangeSenderMeta: pf.ExchangeSender.ExchangeSenderMeta,
+			Data:       pbData,
+			Meta:       mppTask.Meta,
+			ID:         mppTask.ID,
+			IsRoot:     pf.IsRoot,
+			Timeout:    10,
+			SchemaVar:  e.is.SchemaMetaVersion(),
+			StartTs:    e.startTS,
+			MppQueryID: mppTask.MppQueryID,
+			State:      kv.MppTaskReady,
+			MppVersion: mppTask.MppVersion,
 		}
 		e.mppReqs = append(e.mppReqs, req)
 	}

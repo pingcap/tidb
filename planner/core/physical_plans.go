@@ -20,9 +20,7 @@ import (
 	// "sync/atomic"
 	"unsafe"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -1516,9 +1514,9 @@ type PhysicalExchangeSender struct {
 	ExchangeType tipb.ExchangeType
 	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
-	Tasks              []*kv.MPPTask
-	MppVersion         kv.MppVersion
-	ExchangeSenderMeta *mpp.ExchangeSenderMeta
+	Tasks           []*kv.MPPTask
+	MppVersion      kv.MppVersion
+	CompressionMode kv.ExchangeCompressionMode
 }
 
 // Clone implment PhysicalPlan interface.
@@ -1532,7 +1530,7 @@ func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np.ExchangeType = p.ExchangeType
 	np.HashCols = p.HashCols
 	np.MppVersion = p.MppVersion
-	np.ExchangeSenderMeta = proto.Clone(p.ExchangeSenderMeta).(*mpp.ExchangeSenderMeta)
+	np.CompressionMode = p.CompressionMode
 	return np, nil
 }
 

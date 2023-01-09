@@ -233,7 +233,6 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		Timeout:            60,
 		SchemaVer:          req.SchemaVar,
 		Regions:            regionInfos,
-		ExchangeSenderMeta: req.ExchangeSenderMeta,
 	}
 	if originalTask != nil {
 		mppReq.TableRegions = originalTask.PartitionTableRegions

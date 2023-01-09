@@ -815,10 +815,8 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "HashPartition")
 		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.HashCols))
 	}
-	if p.ctx.GetSessionVars().ExplainShowMppFeature {
-		if p.ExchangeSenderMeta != nil {
-			fmt.Fprintf(buffer, ", Compression: %s", p.ExchangeSenderMeta.Compression.String())
-		}
+	if p.ctx.GetSessionVars().ExplainShowMppFeature && p.CompressionMode != kv.ExchangeCompressionModeNONE {
+		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
 	}
 	if len(p.Tasks) > 0 {
 		fmt.Fprintf(buffer, ", tasks: [")

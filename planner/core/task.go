@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -2152,10 +2151,9 @@ func accumulateNetSeekCost4MPP(p PhysicalPlan) (cost float64) {
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
+		// no need to compress data in exchange operator when type is `PassThrough`
+		MppVersion: t.mppVersion,
 	}.Init(ctx, t.p.statsInfo())
-
-	// no need to compress data in exchange operator when type is `PassThrough`
-	sender.MppVersion = t.mppVersion
 
 	sender.SetChildren(t.p)
 
@@ -2245,16 +2243,18 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	sender := PhysicalExchangeSender{
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
+		MppVersion:   t.mppVersion,
 	}.Init(ctx, t.p.statsInfo())
-
-	sender.MppVersion = t.mppVersion
 
 	if sender.MppVersion >= kv.MppVersionV1 {
 		// only use compress when exhancge tyoe is `Hash`
 		if sender.ExchangeType == tipb.ExchangeType_Hash {
-			sender.ExchangeSenderMeta = &mpp.ExchangeSenderMeta{
-				Compression: ctx.GetSessionVars().MppExchangeCompressionMode.ToMppCompressionMode(),
+			mode := ctx.GetSessionVars().MppExchangeCompressionMode
+			if mode == kv.ExchangeCompressionModeUnspecified {
+				// If unspecified, use FAST mode
+				mode = kv.ExchangeCompressionModeFast
 			}
+			sender.CompressionMode = mode
 		}
 	}
 

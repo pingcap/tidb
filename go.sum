@@ -891,6 +891,10 @@ github.com/solotzg/kvproto v0.0.0-20230106015849-4f3ab10cd530 h1:tIw1PJ4XOShIses
 github.com/solotzg/kvproto v0.0.0-20230106015849-4f3ab10cd530/go.mod h1:OYtxs0786qojVTmkVeufx93xe+jUgm56GUYRIKnmaGI=
 github.com/solotzg/kvproto v0.0.0-20230106023154-f918cbbbbd89 h1:myH+7c4hshO97Is1Z4feN6x+ldcJCk9Q58cfLalWt+E=
 github.com/solotzg/kvproto v0.0.0-20230106023154-f918cbbbbd89/go.mod h1:OYtxs0786qojVTmkVeufx93xe+jUgm56GUYRIKnmaGI=
+github.com/solotzg/kvproto v0.0.0-20230109071449-64b9fb7aeae7 h1:d0oqSgnCRFE1VoX90Rs9OZgYI2akvyEp3bgRyVDLihg=
+github.com/solotzg/kvproto v0.0.0-20230109071449-64b9fb7aeae7/go.mod h1:OYtxs0786qojVTmkVeufx93xe+jUgm56GUYRIKnmaGI=
+github.com/solotzg/tipb v0.0.0-20230109071255-a24d6bb7d151 h1:8cK51HmEvksPpBdUW5vo8LAqB8irEg2oZ2upy2t5nKo=
+github.com/solotzg/tipb v0.0.0-20230109071255-a24d6bb7d151/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72/go.mod h1:JwIasOWyU6f++ZhiEuf87xNszmSA2myDM2Kzu9HwQUA=
 github.com/spaolacci/murmur3 v1.1.0 h1:7c1g84S4BPRrfL5Xrdp6fOJ206sU9y293DDHaoy0bLI=
 github.com/spaolacci/murmur3 v1.1.0/go.mod h1:JwIasOWyU6f++ZhiEuf87xNszmSA2myDM2Kzu9HwQUA=
