@@ -37,7 +37,7 @@ func TestGenerateResetSQL(t *testing.T) {
 		TemporaryName:  utils.TemporaryDBName("mysql"),
 	}
 	for name := range sysPrivilegeTableMap {
-		name += "non_avaiable"
+		name += "non_available"
 		mockDB.ExistingTables[name] = testTableInfo(name)
 	}
 	resetUsers = []string{"cloud_admin", "root"}
