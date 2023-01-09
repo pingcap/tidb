@@ -430,14 +430,6 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 	return
 }
 
-// updateDDLReorgStartHandle update the startKey of the handle.
-func updateDDLReorgStartHandle(sess *session, job *model.Job, element *meta.Element, startKey kv.Key) error {
-	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s where job_id = %d",
-		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), job.ID)
-	_, err := sess.execute(context.Background(), sql, "update_start_handle")
-	return err
-}
-
 // updateDDLReorgHandle update startKey, endKey physicalTableID and element of the handle.
 func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",

@@ -268,17 +268,12 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 		rc.resetWarnings()
 
-		// Update a reorgInfo's handle.
-		// Since daemon-worker is triggered by timer to store the info half-way.
-		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
-		err := updateDDLReorgStartHandle(rh.s, job, currentElement, doneKey)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
 			zap.Duration("wait time", waitTimeout),
 			zap.ByteString("element type", currentElement.TypeKey),
 			zap.Int64("element ID", currentElement.ID),
 			zap.Int64("total added row count", rowCount),
-			zap.String("done key", hex.EncodeToString(doneKey)),
-			zap.Error(err))
+			zap.String("done key", hex.EncodeToString(doneKey)))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return dbterror.ErrWaitReorgTimeout
 	}
