@@ -4497,6 +4497,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 						fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
 				}
 			}
+		} else {
+			b.optFlag = b.optFlag | flagPartitionProcessor
 		}
 		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
