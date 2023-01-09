@@ -34,12 +34,9 @@ func TestVersion(t *testing.T) {
 
 func TestMppVersion(t *testing.T) {
 	assert.Equal(t, int64(1), GetTiDBMppVersion().ToInt64())
-	assert.Equal(t, "none", GetMppVersionFeatures(MppVersionUnspecified))
-	assert.Equal(t, "none", GetMppVersionFeatures(MppVersionV0))
-	assert.Equal(t, "exchange data compression", GetMppVersionFeatures(MppVersionV1))
-	assert.Equal(t, "unspecified(use 1), features `exchange data compression`", FmtMppVersion(MppVersionUnspecified))
-	assert.Equal(t, "0, features `none`", FmtMppVersion(MppVersionV0))
-	assert.Equal(t, "1, features `exchange data compression`", FmtMppVersion(MppVersionV1))
+	assert.Equal(t, "unspecified(use 1)", FmtMppVersion(MppVersionUnspecified))
+	assert.Equal(t, "0", FmtMppVersion(MppVersionV0))
+	assert.Equal(t, "1", FmtMppVersion(MppVersionV1))
 }
 
 func TestExchangeCompressionMode(t *testing.T) {

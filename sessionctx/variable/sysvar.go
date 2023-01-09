@@ -2231,10 +2231,10 @@ var defaultSysVars = []*SysVar{
 			if kv.MppVersion(version) >= kv.MppVersionUnspecified && kv.MppVersion(version) <= kv.NewestMppVersion {
 				return normalizedValue, nil
 			}
-			errMsg := fmt.Sprintf("incorrect value: `%s`. %s options: `%d` unspecified(recommended)",
+			errMsg := fmt.Sprintf("incorrect value: %s. %s options: %d (unspecified)",
 				originalValue, MppVersion, kv.MppVersionUnspecified)
 			for i := kv.MppVersionV0; i <= kv.NewestMppVersion; i += 1 {
-				errMsg = fmt.Sprintf("%s, `%d` features `%s`", errMsg, i, kv.GetMppVersionFeatures(i))
+				errMsg = fmt.Sprintf("%s, %d", errMsg, i)
 			}
 
 			return normalizedValue, errors.New(errMsg)

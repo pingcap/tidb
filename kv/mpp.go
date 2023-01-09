@@ -59,15 +59,6 @@ var mppVersionFeatures = map[MppVersion]string{
 	MppVersionV1: "exchange data compression",
 }
 
-// GetMppVersionFeatures returns the features for mpp-version
-func GetMppVersionFeatures(mppVersion MppVersion) string {
-	val, ok := mppVersionFeatures[mppVersion]
-	if ok {
-		return val
-	}
-	return "none"
-}
-
 // FmtMppVersion returns the description about mpp-version
 func FmtMppVersion(v MppVersion) string {
 	var version string
@@ -77,8 +68,7 @@ func FmtMppVersion(v MppVersion) string {
 	} else {
 		version = fmt.Sprintf("%d", v)
 	}
-
-	return fmt.Sprintf("%s, features `%s`", version, GetMppVersionFeatures(v))
+	return version
 }
 
 // MPPTaskMeta means the meta info such as location of a mpp task.
