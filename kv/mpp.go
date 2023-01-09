@@ -60,7 +60,7 @@ var mppVersionFeatures = map[MppVersion]string{
 }
 
 // FmtMppVersion returns the description about mpp-version
-func FmtMppVersion(v MppVersion) string {
+func (v MppVersion) FmtMppVersion() string {
 	var version string
 	if v == MppVersionUnspecified {
 		v = GetTiDBMppVersion()
@@ -169,11 +169,11 @@ const (
 	ExchangeCompressionModeFast
 	// ExchangeCompressionModeHC indicates high compression (HC) ratio mode
 	ExchangeCompressionModeHC
-	// ExchangeCompressionModeUnspecified means unspecified compress method, let TiDB choose one
+	// ExchangeCompressionModeUnspecified indicates unspecified compress method, let TiDB choose one
 	ExchangeCompressionModeUnspecified
 
-	// DefaultExchangeCompressionMode means default compress method
-	DefaultExchangeCompressionMode ExchangeCompressionMode = ExchangeCompressionModeUnspecified
+	// RecommendedExchangeCompressionMode indicates recommended compression mode
+	RecommendedExchangeCompressionMode ExchangeCompressionMode = ExchangeCompressionModeFast
 
 	exchangeCompressionModeUnspecifiedName string = "UNSPECIFIED"
 )
@@ -195,7 +195,7 @@ func ToExchangeCompressionMode(name string) (ExchangeCompressionMode, bool) {
 	if ok {
 		return ExchangeCompressionMode(value), true
 	}
-	return DefaultExchangeCompressionMode, false
+	return ExchangeCompressionModeNONE, false
 }
 
 // ToMppCompressionMode returns tipb.CompressionMode from kv.ExchangeCompressionMode
@@ -208,7 +208,16 @@ func (t ExchangeCompressionMode) ToMppCompressionMode() tipb.CompressionMode {
 	case ExchangeCompressionModeHC:
 		return tipb.CompressionMode_HIGH_COMPRESSION
 	}
+	return tipb.CompressionMode_NONE
+}
 
-	// Use `FAST` as the defualt method
-	return tipb.CompressionMode_FAST
+// FmtMppExchangeCompressionMode returns the description about exchange compression mode
+func (m ExchangeCompressionMode) FmtMppExchangeCompressionMode() string {
+	var res string
+	if m == ExchangeCompressionModeUnspecified {
+		res = fmt.Sprintf("unspecified(use %s)", RecommendedExchangeCompressionMode.Name())
+	} else {
+		res = fmt.Sprintf("%s", m.Name())
+	}
+	return res
 }

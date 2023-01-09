@@ -2101,12 +2101,12 @@ func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
 	tk.MustGetErrMsg(
 		"SET SESSION mpp_exchange_compression_mode = 123",
 		"incorrect value: `123`. mpp_exchange_compression_mode options: NONE, FAST, HIGH_COMPRESSION, UNSPECIFIED")
-	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("UNSPECIFIED"))
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("unspecified(use FAST)"))
 
 	tk.MustExec("SET SESSION mpp_exchange_compression_mode = none")
-	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("none"))
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("NONE"))
 	tk.MustExec("SET SESSION mpp_exchange_compression_mode = fast")
-	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("fast"))
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("FAST"))
 	tk.MustExec("SET SESSION mpp_exchange_compression_mode = HIGH_COMPRESSION")
 	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("HIGH_COMPRESSION"))
 

@@ -118,7 +118,7 @@ func TestHandleFineGrainedShuffleNoDataCompression(t *testing.T) {
 	}
 	hashSender := &PhysicalExchangeSender{
 		ExchangeType:    tipb.ExchangeType_Hash,
-		CompressionMode: kv.ExchangeCompressionModeFast,
+		CompressionMode: kv.RecommendedExchangeCompressionMode,
 	}
 	tableScan := &PhysicalTableScan{}
 	sortItem := property.SortItem{

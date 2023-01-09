@@ -2198,7 +2198,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompressionMode, Type: TypeStr, Value: kv.DefaultExchangeCompressionMode.Name(),
+	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompressionMode, Type: TypeStr, Value: DefaultExchangeCompressionMode.Name(),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			_, ok := kv.ToExchangeCompressionMode(strings.ToUpper(normalizedValue))
 			if !ok {
@@ -2220,6 +2220,9 @@ var defaultSysVars = []*SysVar{
 		SetSession: func(s *SessionVars, val string) error {
 			s.MppExchangeCompressionMode, _ = kv.ToExchangeCompressionMode(strings.ToUpper(val))
 			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return s.MppExchangeCompressionMode.FmtMppExchangeCompressionMode(), nil
 		},
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, Value: strconv.FormatInt((kv.MppVersionUnspecified.ToInt64()), 10),
@@ -2248,7 +2251,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		GetSession: func(s *SessionVars) (string, error) {
-			return kv.FmtMppVersion(s.MppVersion), nil
+			return s.MppVersion.FmtMppVersion(), nil
 		},
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: ExplainShowMppFeature, Value: BoolToOnOff(DefExplainShowMppFeature), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {

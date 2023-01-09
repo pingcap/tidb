@@ -1714,7 +1714,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
-		MppExchangeCompressionMode:    kv.DefaultExchangeCompressionMode,
+		MppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		MppVersion:                    kv.MppVersionUnspecified,
 		ExplainShowMppFeature:         DefExplainShowMppFeature,
 	}

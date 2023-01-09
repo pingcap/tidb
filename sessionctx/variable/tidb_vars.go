@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/util/memory"
@@ -1167,6 +1168,7 @@ const (
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
 	DefExplainShowMppFeature                         = false
+	DefaultExchangeCompressionMode                   = kv.ExchangeCompressionModeUnspecified
 )
 
 // Process global variables.
