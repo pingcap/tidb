@@ -327,7 +327,7 @@ func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*ex
 		} else {
 			smallSideSchema = p.children[1].Schema()
 		}
-		row, retType, err := p.buildAndEvaluateSubquery(smallTableName, ctx, wherePredicates, subqueryResultColumn, smallSideSchema)
+		row, retType, err := p.buildAndEvaluateSubquery(ctx, smallTableName, wherePredicates, subqueryResultColumn, smallSideSchema)
 		if err != nil {
 			logutil.Logger(ctx).Error("failed to execute min subquery", zap.Error(err))
 			return leftPredicates, rightPredicates
