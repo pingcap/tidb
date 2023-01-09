@@ -870,6 +870,15 @@ func TestSetVar(t *testing.T) {
 	require.Equal(t, uint64(2), tk.Session().GetSessionVars().CDCWriteSource)
 	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
+
+	// test tidb_enable_plan_cache_with_dynamic_prune_mode
+	require.Equal(t, false, tk.Session().GetSessionVars().PlanCacheWithDynamicPruneMode)
+	tk.MustQuery("select @@tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_enable_plan_cache_with_dynamic_prune_mode = on")
+	tk.MustQuery("select @@tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("1"))
+	require.Equal(t, true, tk.Session().GetSessionVars().PlanCacheWithDynamicPruneMode)
+	tk.MustExec("set @@session.tidb_enable_plan_cache_with_dynamic_prune_mode = 0")
+	require.Equal(t, false, tk.Session().GetSessionVars().PlanCacheWithDynamicPruneMode)
 }
 
 func TestGetSetNoopVars(t *testing.T) {
@@ -2071,4 +2080,31 @@ func TestSetChunkReuseVariable(t *testing.T) {
 
 	// error value
 	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s;", errno.ErrWrongValueForVar)
+}
+
+func TestPlanCacheWithDynamicPruneMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_enable_plan_cache_with_dynamic_prune_mode=ON")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("1"))
+	tk.MustExec("set GLOBAL tidb_enable_plan_cache_with_dynamic_prune_mode=ON")
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_enable_plan_cache_with_dynamic_prune_mode=OFF")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("0"))
+	tk.MustExec("set GLOBAL tidb_enable_plan_cache_with_dynamic_prune_mode=OFF")
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("0"))
+	tk.MustExec("set GLOBAL tidb_enable_plan_cache_with_dynamic_prune_mode=ON")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("0"))
+	tk = testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_enable_plan_cache_with_dynamic_prune_mode=0")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("1"))
+	tk = testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("0"))
+
+	// error value
+	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s", errno.ErrWrongValueForVar)
 }

@@ -146,14 +146,15 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if isPartitionTable(checker.schema, node) {
 				// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
 				// is fixed and additional tests with dynamic partition prune mode has been added.
-				/*
-					if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
-						return in, false // dynamic-mode for partition tables can use plan-cache
-					}
-				*/
-				checker.cacheable = false
-				checker.reason = "query accesses partitioned tables is un-cacheable"
-				return in, true
+				// This is enabled again as an experiment for a Proof-of-Concept, with a new
+				// system variable 'tidb_enable_plan_cache_with_dynamic_prune_mode'
+				if checker.sctx == nil ||
+					(checker.sctx.GetSessionVars().IsDynamicPartitionPruneEnabled() &&
+						!checker.sctx.GetSessionVars().PlanCacheWithDynamicPruneMode) {
+					checker.cacheable = false
+					checker.reason = "query accesses partitioned tables is un-cacheable"
+					return in, true
+				}
 			}
 			if hasGeneratedCol(checker.schema, node) {
 				checker.cacheable = false

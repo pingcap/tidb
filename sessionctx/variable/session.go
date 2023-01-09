@@ -1116,6 +1116,9 @@ type SessionVars struct {
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
+	// PlanCacheWithDynamicPruneMode indicates how and when to prune partitions.
+	PlanCacheWithDynamicPruneMode bool
+
 	// TxnScope indicates the scope of the transactions. It should be `global` or equal to the value of key `zone` in config.Labels.
 	TxnScope kv.TxnScopeVar
 
@@ -1454,6 +1457,17 @@ func (s *SessionVars) IsDynamicPartitionPruneEnabled() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
+// IsPlanCacheWithDynamicPruneMode indicates whether dynamic partition prune mode will allow
+// plan cache to be used for partitioned table (PoC only code, not to be merged into Master)
+// Note that: IsPlanCacheWithDynamicPruneMode will allow potentially bad results,
+// see https://github.com/pingcap/tidb/issues/33031 since it has not yet been fixed.
+func (s *SessionVars) IsPlanCacheWithDynamicPruneMode() bool {
+	if s.IsDynamicPartitionPruneEnabled() {
+		return s.PlanCacheWithDynamicPruneMode
+	}
+	return false
+}
+
 // BuildParserConfig generate parser.ParserConfig for initial parser
 func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	return parser.ParserConfig{
@@ -1647,6 +1661,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ShardAllocateStep:             DefTiDBShardAllocateStep,
 		EnableAmendPessimisticTxn:     DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
+		PlanCacheWithDynamicPruneMode: DefTiDBPlanCacheWithDynamicPruneMode,
 		TxnScope:                      kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:             DefTiDBEnableAsyncCommit,

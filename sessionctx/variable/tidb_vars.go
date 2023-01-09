@@ -578,6 +578,10 @@ const (
 	// TiDBPartitionPruneMode indicates the partition prune mode used.
 	TiDBPartitionPruneMode = "tidb_partition_prune_mode"
 
+	// TiDBPlanCacheWithDynamicPruneMode enables the plan cache for partitioned tables,
+	// when dynamic prune mode is enabled.
+	TiDBPlanCacheWithDynamicPruneMode = "tidb_enable_plan_cache_with_dynamic_prune_mode"
+
 	// TiDBRedactLog indicates that whether redact log.
 	TiDBRedactLog = "tidb_redact_log"
 
@@ -1027,6 +1031,7 @@ const (
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
+	DefTiDBPlanCacheWithDynamicPruneMode           = false
 	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
 	DefTiDBEnable1PC                               = false
