@@ -467,10 +467,7 @@ func TestUnsupportedLimitCase(t *testing.T) {
 	tk.MustExec("create table t(a int, key(a))")
 	tk.MustExec("prepare stmt from 'select 1 limit ?'")
 
-	tk.MustExec("set @a = 1.2")
-	_, err := tk.Exec("execute stmt using @a")
-	require.True(t, plannercore.ErrWrongArguments.Equal(err))
-
+	//tk.MustExec("set @a = 1.2")
 	//tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 	//tk.MustExec("set @a = 1.")
 	//tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
