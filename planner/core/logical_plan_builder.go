@@ -995,7 +995,8 @@ func (b *PlanBuilder) rewriteFullJoin(ctx context.Context, joinNode *ast.Join) (
 	topProj := LogicalProjection{
 		Exprs: expression.Column2Exprs(unionAll.Schema().Columns),
 	}.Init(b.ctx, b.getSelectOffset())
-	topProj.SetSchema(expression.MergeSchema(lChild2.Schema(), rChild2.Schema()))
+	topProj.SetSchema(leftJoinPlan.schema.Clone())
+	resetNotNullFlag(topProj.schema, 0, topProj.schema.Len())
 	topProj.SetOutputNames(leftJoinPlan.OutputNames())
 	topProj.SetChildren(unionAll)
 	return topProj, nil
