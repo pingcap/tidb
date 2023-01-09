@@ -448,15 +448,15 @@ func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv
 
 // initDDLReorgHandle initializes the handle for ddl reorg.
 func initDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	deleteSql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", jobID)
-	sql := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
+	delete := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", jobID)
+	insert := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
 		jobID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
 	return runInTxn(sess, func(se *session) error {
-		_, err := se.execute(context.Background(), deleteSql, "init_handle")
+		_, err := se.execute(context.Background(), delete, "init_handle")
 		if err != nil {
 			logutil.BgLogger().Info("initDDLReorgHandle failed to delete", zap.Int64("jobID", jobID), zap.Error(err))
 		}
-		_, err = se.execute(context.Background(), sql, "init_handle")
+		_, err = se.execute(context.Background(), insert, "init_handle")
 		return err
 	})
 }
