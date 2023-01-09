@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/parser/duration"
 )
 
 %}
@@ -621,6 +622,7 @@ import (
 	truncate              "TRUNCATE"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
+	ttlJobInterval    "TTL_JOB_INTERVAL"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -1603,13 +1605,13 @@ ResourceGroupOptionList:
 	}
 
 DirectResourceGroupOption:
-	"RRU_PER_SEC" EqOpt stringLit
+	"RRU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, UintValue: $3.(uint64)}
 	}
-|	"WRU_PER_SEC" EqOpt stringLit
+|	"WRU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, UintValue: $3.(uint64)}
 	}
 |	"CPU" EqOpt stringLit
 	{
@@ -1617,11 +1619,11 @@ DirectResourceGroupOption:
 	}
 |	"IO_READ_BANDWIDTH" EqOpt stringLit
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadRate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadBandwidth, StrValue: $3}
 	}
 |	"IO_WRITE_BANDWIDTH" EqOpt stringLit
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteRate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteBandwidth, StrValue: $3}
 	}
 
 PlacementOptionList:
@@ -6480,6 +6482,7 @@ UnReservedKeyword:
 |	"TOKEN_ISSUER"
 |	"TTL"
 |	"TTL_ENABLE"
+|	"TTL_JOB_INTERVAL"
 |	"FAILED_LOGIN_ATTEMPTS"
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
@@ -11892,6 +11895,15 @@ TableOption:
 			yylex.AppendError(yylex.Errorf("The TTL_ENABLE option has to be set 'ON' or 'OFF'"))
 			return 1
 		}
+	}
+|	"TTL_JOB_INTERVAL" EqOpt stringLit
+	{
+		_, err := duration.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The TTL_JOB_INTERVAL option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
 	}
 
 ForceOpt:

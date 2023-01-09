@@ -487,8 +487,17 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJS
 	return types.CreateBinaryJSON(arrayVals), false, nil
 }
 
-func convertJSON2Tp(eval types.EvalType) func(*stmtctx.StatementContext, types.BinaryJSON, *types.FieldType) (any, error) {
-	switch eval {
+// ConvertJSON2Tp returns a function that can convert JSON to the specified type.
+func ConvertJSON2Tp(v types.BinaryJSON, targetType *types.FieldType) (any, error) {
+	convertFunc := convertJSON2Tp(targetType.EvalType())
+	if convertFunc == nil {
+		return nil, ErrInvalidJSONForFuncIndex
+	}
+	return convertFunc(fakeSctx, v, targetType)
+}
+
+func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, types.BinaryJSON, *types.FieldType) (any, error) {
+	switch evalType {
 	case types.ETString:
 		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
 			if item.TypeCode != types.JSONTypeCodeString {
