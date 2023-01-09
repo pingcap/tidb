@@ -994,8 +994,13 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...TableStatsOpt) 
 
 // GetPartitionStats retrieves the partition stats from cache.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...TableStatsOpt) *statistics.Table {
-	statsCache := h.statsCache.Load().(statsCache)
 	var tbl *statistics.Table
+	if h == nil {
+		tbl = statistics.PseudoTable(tblInfo)
+		tbl.PhysicalID = pid
+		return tbl
+	}
+	statsCache := h.statsCache.Load().(statsCache)
 	var ok bool
 	option := &tableStatsOption{}
 	for _, opt := range opts {
