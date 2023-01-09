@@ -943,6 +943,15 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		b.err = err
 		return nil
 	}
+	if v.IsCompressed {
+		return &LoadDataExecCompressed{
+			baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+			IsLocal:      v.IsLocal,
+			OnDuplicate:  v.OnDuplicate,
+			loadDataInfo: loadDataInfo,
+			Is:           b.is,
+		}
+	}
 	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
 		IsLocal:      v.IsLocal,
@@ -1199,6 +1208,12 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
 	child := b.build(v.TargetPlan)
 	if b.err != nil {
 		return nil
+	}
+	if v.IntoOpt.Compressed {
+		return &SelectIntoExecCompressed{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), child),
+			intoOpt:      v.IntoOpt,
+		}
 	}
 	return &SelectIntoExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), child),

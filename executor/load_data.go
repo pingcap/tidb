@@ -17,14 +17,18 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -34,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -41,6 +47,183 @@ var (
 	null          = []byte("NULL")
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
+
+// LoadDataExecCompressed represents a load data executor.
+type LoadDataExecCompressed struct {
+	baseExecutor
+
+	IsLocal      bool
+	OnDuplicate  ast.OnDuplicateKeyHandlingType
+	loadDataInfo *LoadDataInfo
+	recordID     uint64
+	Is           infoschema.InfoSchema
+}
+
+// LoadDataTaskArgs is used to store the import args.
+type LoadDataTaskArgs struct {
+	FileName   string `json:"filename"`
+	FieldTerm  string `json:"separator"`
+	Enclosed   byte   `json:"delimiter"`
+	Replace    int    `json:"replace"`
+	Terminated string `json:"terminator"`
+	TableName  string `json:"tablename"`
+	DBName     string `json:"dbname"`
+}
+
+// Open implements the Executor Open interface.
+func (e *LoadDataExecCompressed) Open(ctx context.Context) error {
+	var err error
+	e.recordID, err = e.addTask(ctx)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *LoadDataExecCompressed) Next(ctx context.Context, req *chunk.Chunk) error {
+	sql := new(strings.Builder)
+	sql.Reset()
+	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),"+
+		"status,error_message from  %n.%n where id=%?", mysql.SystemDB, mysql.TidbExternalTask, e.recordID)
+	for {
+		time.Sleep(time.Second * 1)
+		taskStatus, err := e.waitTaskEnd(ctx, sql)
+		if err != nil {
+			return err
+		}
+		if taskStatus {
+			break
+		}
+	}
+	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *LoadDataExecCompressed) Close() error {
+	return nil
+}
+
+func (e *LoadDataExecCompressed) getTaskStatus(ctx context.Context,
+	sqlExecutor sqlexec.SQLExecutor, sql *strings.Builder) (bool, error) {
+	var lastLiveTimeSeconds int64
+	var status string
+	var errmsg string
+	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		return false, err
+	}
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	req := rs.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	err = rs.Next(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	if req.NumRows() == 0 {
+		return false, fmt.Errorf("import data task %d not found", e.recordID)
+	}
+	if req.NumRows() != 1 {
+		return false, fmt.Errorf("multiple Import data task %d found", e.recordID)
+	}
+	row := iter.Begin()
+	// Get live_time from result.
+	if !row.IsNull(0) {
+		lastLiveTimeSeconds = row.GetInt64(0)
+	}
+	// Get status from result.
+	if !row.IsNull(1) {
+		status = strings.ToLower(row.GetString(1))
+	}
+	// If no keepalive information is written within 1 minutes,
+	// the task is considered to have timed out.
+	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
+		return true, fmt.Errorf("import data task %d keep alive timed out", e.recordID)
+	}
+	if status == "error" {
+		// Get error message from result.
+		if !row.IsNull(2) {
+			errmsg = row.GetString(2)
+		}
+		return true, fmt.Errorf("import data fail ,%s", errmsg)
+	} else if status == "success" {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (e *LoadDataExecCompressed) waitTaskEnd(ctx context.Context, sql *strings.Builder) (bool, error) {
+	sysSession, err := e.getSysSession()
+	if err != nil {
+		return false, err
+	}
+	defer e.releaseSysSession(ctx, sysSession)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
+		return false, err
+	}
+	taskStatus, err := e.getTaskStatus(ctx, sqlExecutor, sql)
+	if err != nil {
+		return false, err
+	}
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+		return false, err
+	}
+	return taskStatus, nil
+}
+
+func (e *LoadDataExecCompressed) generateArgs(ctx context.Context) (string, error) {
+	dbInfo, isExist := e.Is.SchemaByTable(e.loadDataInfo.Table.Meta())
+	if !isExist {
+		return "", fmt.Errorf("can not find schema for import task %d", e.recordID)
+	}
+	ldta := LoadDataTaskArgs{
+		FileName:   e.loadDataInfo.Path,
+		FieldTerm:  e.loadDataInfo.FieldsInfo.Terminated,
+		Enclosed:   e.loadDataInfo.FieldsInfo.Enclosed,
+		Terminated: e.loadDataInfo.LinesInfo.Terminated,
+		TableName:  e.loadDataInfo.Table.Meta().Name.O,
+		DBName:     dbInfo.Name.O,
+		Replace:    int(e.OnDuplicate),
+	}
+	args, err := json.Marshal(ldta)
+	return util.String(args), err
+}
+
+func (e *LoadDataExecCompressed) addTask(ctx context.Context) (uint64, error) {
+	sysSession, err := e.getSysSession()
+	if err != nil {
+		return 0, err
+	}
+	defer e.releaseSysSession(ctx, sysSession)
+	owner := config.GetGlobalConfig().AdvertiseAddress + ":" + strconv.Itoa(int(config.GetGlobalConfig().Port))
+	args, err := e.generateArgs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("error occur when generate load data task args %s", err.Error())
+	}
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
+		return 0, err
+	}
+	sql := new(strings.Builder)
+	sql.Reset()
+	sqlexec.MustFormatSQL(sql, "insert into %n.%n "+
+		" (command,owner,args) values ('lightning',%?,%?)", mysql.SystemDB, mysql.TidbExternalTask, owner, args)
+	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		return 0, err
+	}
+	lastInsertID := sysSession.GetSessionVars().StmtCtx.LastInsertID
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+		return 0, err
+	}
+	return lastInsertID, nil
+}
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {

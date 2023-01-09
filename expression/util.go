@@ -399,6 +399,89 @@ func ColumnSubstituteAll(expr Expression, schema *Schema, newExprs []Expression)
 	return hasFail, resExpr
 }
 
+// ColumnSubstituteAllTmp tmp logic to avoid json_arrayagg error about constant
+func ColumnSubstituteAllTmp(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+	_, hasFail, resExpr := ColumnSubstituteImplTmp(expr, schema, newExprs, true)
+	return hasFail, resExpr
+}
+
+// ColumnSubstituteImplTmp tmp logic to avoid json_arrayagg error about constant
+func ColumnSubstituteImplTmp(expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
+	switch v := expr.(type) {
+	case *Column:
+		id := schema.ColumnIndex(v)
+		if id == -1 {
+			return false, false, v
+		}
+		newExpr := newExprs[id]
+		if v.InOperand {
+			newExpr = SetExprColumnInOperand(newExpr)
+		}
+		newExpr.SetCoercibility(v.Coercibility())
+		return true, false, newExpr
+	case *Constant:
+		return true, false, v.Clone()
+	case *ScalarFunction:
+		substituted := false
+		hasFail := false
+		if v.FuncName.L == ast.Cast {
+			var newArg Expression
+			substituted, hasFail, newArg = ColumnSubstituteImplTmp(v.GetArgs()[0], schema, newExprs, fail1Return)
+			if fail1Return && hasFail {
+				return substituted, hasFail, v
+			}
+			if substituted {
+				e := BuildCastFunction(v.GetCtx(), newArg, v.RetType)
+				e.SetCoercibility(v.Coercibility())
+				return true, false, e
+			}
+			return false, false, v
+		}
+		// cowExprRef is a copy-on-write util, args array allocation happens only
+		// when expr in args is changed
+		refExprArr := cowExprRef{v.GetArgs(), nil}
+		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
+		var tmpArgForCollCheck []Expression
+		if collate.NewCollationEnabled() {
+			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
+		}
+		for idx, arg := range v.GetArgs() {
+			changed, failed, newFuncExpr := ColumnSubstituteImplTmp(arg, schema, newExprs, fail1Return)
+			if fail1Return && failed {
+				return changed, failed, v
+			}
+			oldChanged := changed
+			if collate.NewCollationEnabled() && changed {
+				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
+				changed = false
+				copy(tmpArgForCollCheck, refExprArr.Result())
+				tmpArgForCollCheck[idx] = newFuncExpr
+				_, newColl := DeriveCollationFromExprs(v.GetCtx(), tmpArgForCollCheck...)
+				if coll == newColl {
+					changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
+				}
+			}
+			hasFail = hasFail || failed || oldChanged != changed
+			if fail1Return && oldChanged != changed {
+				// Only when the oldChanged is true and changed is false, we will get here.
+				// And this means there some dependency in this arg can be substituted with
+				// given expressions, while it has some collation compatibility, finally we
+				// fall back to use the origin args. (commonly used in projection elimination
+				// in which fallback usage is unacceptable)
+				return changed, true, v
+			}
+			refExprArr.Set(idx, changed, newFuncExpr)
+			if changed {
+				substituted = true
+			}
+		}
+		if substituted {
+			return true, hasFail, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+		}
+	}
+	return false, false, expr
+}
+
 // ColumnSubstituteImpl tries to substitute column expr using newExprs,
 // the newFunctionInternal is only called if its child is substituted
 // @return bool means whether the expr has changed.

@@ -521,3 +521,11 @@ func TestPreparedStmt(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 1)
 	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 }
+
+func TestSetVarBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("select /*+ SET_VAR(enable_dynamic_partition_pruning = 1) */ * from t a, t b where a.a=b.a  and a.b=1;")
+}
