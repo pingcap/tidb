@@ -3713,7 +3713,7 @@ func TestAggressiveLockingBasic(t *testing.T) {
 
 	// TODO: Check aggressive locking is indeed used and the RPC is avoided when doing pessimistic retry.
 
-	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
 	tk.MustExec("create table t (id int primary key, k int unique, v int)")
 	tk.MustExec("insert into t values (1, 1, 1)")
 
@@ -3801,7 +3801,7 @@ func TestAggressiveLockingInsert(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
 	tk.MustExec("create table t (id int primary key, v int)")
 
 	tk.MustExec("begin pessimistic")
@@ -3838,7 +3838,7 @@ func TestAggressiveLockingLockWithConflictIdempotency(t *testing.T) {
 	tk2.Session().SetConnectionID(0)
 	tk2.MustExec("use test")
 
-	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
 	tk.MustExec("create table t (id int primary key, v int)")
 	tk.MustExec("insert into t values (1, 1)")
 
@@ -3871,7 +3871,7 @@ func TestAggressiveLockingRetry(t *testing.T) {
 		tk.MustExec("rollback")
 	}
 
-	tk.MustExec("set @@tidb_pessimistic_transaction_aggressive_locking = 1")
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
 	tk.MustExec("create table t1 (id int primary key, v int)")
 	tk.MustExec("create table t2 (id int primary key, v int)")
 	tk.MustExec("create table t3 (id int primary key, v int, v2 int)")

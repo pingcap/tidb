@@ -135,8 +135,7 @@ type Context interface {
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
 	StmtCommit()
-	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
-	// for auto-retrying execution of DMLs in pessimistic transactions.
+	// StmtRollback provides statement level rollback.`
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation

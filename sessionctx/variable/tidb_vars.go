@@ -792,7 +792,7 @@ const (
 
 	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
 	// is enabled.
-	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_transaction_aggressive_locking"
+	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
 )
 
 // TiDB vars that have only global scope
