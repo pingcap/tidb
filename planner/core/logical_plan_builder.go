@@ -2009,7 +2009,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 			return 0, false, true
 		}
 		if mustInt64orUint64 {
-			if expected := checkParamTypeInt64OrUint64(v); !expected {
+			if expected := checkParamTypeInt64orUint64(v); !expected {
 				return 0, false, false
 			}
 		}
@@ -2048,7 +2048,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 
 // check param type for plan cache limit, only allow int64 and uint64 now
 // eg: set @a = 1;
-func checkParamTypeInt64OrUint64(param *driver.ParamMarkerExpr) bool {
+func checkParamTypeInt64orUint64(param *driver.ParamMarkerExpr) bool {
 	val := param.GetValue()
 	switch v := val.(type) {
 	case int64:
