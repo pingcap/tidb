@@ -551,7 +551,7 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 	}
 	e.idxColFieldTypes = make([]*types.FieldType, 0, len(e.columns))
 	for _, col := range e.columns {
-		e.idxColFieldTypes = append(e.idxColFieldTypes, &col.FieldType)
+		e.idxColFieldTypes = append(e.idxColFieldTypes, col.FieldType.ArrayType())
 	}
 	return e.idxColFieldTypes
 }

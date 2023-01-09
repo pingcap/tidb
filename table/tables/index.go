@@ -124,7 +124,8 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 			if !c.tblInfo.Columns[c.idxInfo.Columns[i].Offset].FieldType.IsArray() {
 				val = append(val, v)
 			} else {
-				if v.IsNull() {
+				// if the datum type is not JSON, it must come from cleanup index.
+				if v.IsNull() || v.Kind() != types.KindMysqlJSON {
 					val = append(val, v)
 					jsonIsNull = true
 					continue
