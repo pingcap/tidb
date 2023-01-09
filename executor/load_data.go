@@ -59,6 +59,7 @@ type LoadDataExecCompressed struct {
 	Is           infoschema.InfoSchema
 }
 
+// LoadDataTaskArgs is used to store the import args.
 type LoadDataTaskArgs struct {
 	FileName   string `json:"filename"`
 	FieldTerm  string `json:"separator"`
@@ -69,6 +70,7 @@ type LoadDataTaskArgs struct {
 	DBName     string `json:"dbname"`
 }
 
+// Open implements the Executor Open interface.
 func (e *LoadDataExecCompressed) Open(ctx context.Context) error {
 	var err error
 	e.recordID, err = e.addTask(ctx)
@@ -78,6 +80,7 @@ func (e *LoadDataExecCompressed) Open(ctx context.Context) error {
 	return nil
 }
 
+// Next implements the Executor Next interface.
 func (e *LoadDataExecCompressed) Next(ctx context.Context, req *chunk.Chunk) error {
 	sql := new(strings.Builder)
 	sql.Reset()
@@ -95,6 +98,7 @@ func (e *LoadDataExecCompressed) Next(ctx context.Context, req *chunk.Chunk) err
 	}
 	return nil
 }
+
 
 func (e *LoadDataExecCompressed) Close() error {
 	return nil

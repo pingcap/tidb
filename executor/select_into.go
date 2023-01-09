@@ -44,11 +44,13 @@ type SelectIntoExecCompressed struct {
 	recordID uint64
 }
 
+// SuccessRes is used to store exported result sets.
 type SuccessRes struct {
 	TotalRow  uint64 `json:"total_rows"`
 	TotalTime uint64 `json:"run_time"`
 }
 
+// SelectIntoTaskArgs is used to store the export args.
 type SelectIntoTaskArgs struct {
 	SelSQL     string `json:"sql"`
 	FileName   string `json:"filename"`
@@ -57,6 +59,7 @@ type SelectIntoTaskArgs struct {
 	Terminated string `json:"terminator"`
 }
 
+// Open implements the Executor Open interface.
 func (s *SelectIntoExecCompressed) Open(ctx context.Context) error {
 	var err error
 	s.recordID, err = s.addTask(ctx)
@@ -66,6 +69,7 @@ func (s *SelectIntoExecCompressed) Open(ctx context.Context) error {
 	return nil
 }
 
+// Next implements the Executor Next interface.
 func (s *SelectIntoExecCompressed) Next(ctx context.Context, req *chunk.Chunk) error {
 	sql := new(strings.Builder)
 	sql.Reset()
@@ -84,6 +88,7 @@ func (s *SelectIntoExecCompressed) Next(ctx context.Context, req *chunk.Chunk) e
 	return nil
 }
 
+// Close implements the Executor Close interface.
 func (s *SelectIntoExecCompressed) Close() error {
 
 	return nil
