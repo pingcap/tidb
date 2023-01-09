@@ -17,16 +17,19 @@ package ttlworker_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
 	dbsession "github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
@@ -57,15 +60,11 @@ func TestParallelLockNewJob(t *testing.T) {
 
 	sessionFactory := sessionFactory(t, store)
 
-	storedTTLJobRunInterval := variable.TTLJobRunInterval.Load()
-	variable.TTLJobRunInterval.Store(0)
-	defer func() {
-		variable.TTLJobRunInterval.Store(storedTTLJobRunInterval)
-	}()
-
-	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
+	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: duration.Duration{Hour: 1}}}}
 	// simply lock a new job
 	m := ttlworker.NewJobManager("test-id", nil, store)
+	m.InfoSchemaCache().Tables[testTable.ID] = testTable
+
 	se := sessionFactory()
 	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now())
 	require.NoError(t, err)
@@ -74,9 +73,12 @@ func TestParallelLockNewJob(t *testing.T) {
 	// lock one table in parallel, only one of them should lock successfully
 	testTimes := 100
 	concurrency := 5
+	now := time.Now()
 	for i := 0; i < testTimes; i++ {
 		successCounter := atomic.NewUint64(0)
 		successJob := &ttlworker.TTLJob{}
+
+		now = now.Add(time.Hour * 48)
 
 		wg := sync.WaitGroup{}
 		for j := 0; j < concurrency; j++ {
@@ -84,9 +86,10 @@ func TestParallelLockNewJob(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				m := ttlworker.NewJobManager(jobManagerID, nil, store)
+				m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 				se := sessionFactory()
-				job, err := m.LockNewJob(context.Background(), se, testTable, time.Now())
+				job, err := m.LockNewJob(context.Background(), se, testTable, now)
 				if err == nil {
 					successCounter.Add(1)
 					successJob = job
@@ -115,6 +118,7 @@ func TestFinishJob(t *testing.T) {
 
 	// finish with error
 	m := ttlworker.NewJobManager("test-id", nil, store)
+	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 	se := sessionFactory()
 	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now())
 	require.NoError(t, err)
@@ -122,4 +126,116 @@ func TestFinishJob(t *testing.T) {
 	job.Finish(se, time.Now())
 
 	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 {\"total_rows\":0,\"success_rows\":0,\"error_rows\":0,\"total_scan_task\":1,\"scheduled_scan_task\":0,\"finished_scan_task\":0,\"scan_task_err\":\"\\\"'an error message contains both single and double quote'\\\"\"}"))
+}
+
+func TestTTLAutoAnalyze(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-info-schema-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/update-info-schema-cache-interval")
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-status-table-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/update-status-table-cache-interval")
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/resize-workers-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/resize-workers-interval")
+
+	originAutoAnalyzeMinCnt := handle.AutoAnalyzeMinCnt
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, created_at datetime) ttl = `created_at` + interval 1 day")
+
+	// insert ten rows, the 2,3,4,6,9,10 of them are expired
+	for i := 1; i <= 10; i++ {
+		t := time.Now()
+		if i%2 == 0 || i%3 == 0 {
+			t = t.Add(-time.Hour * 48)
+		}
+
+		tk.MustExec("insert into t values(?, ?)", i, t.Format(time.RFC3339))
+	}
+	// TODO: use a better way to pause and restart ttl worker after analyze the table to make it more stable
+	// but as the ttl worker takes several seconds to start, it's not too serious.
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show stats_meta").Rows()
+	require.Equal(t, rows[0][4], "0")
+	require.Equal(t, rows[0][5], "10")
+
+	retryTime := 15
+	retryInterval := time.Second * 2
+	deleted := false
+	for retryTime >= 0 {
+		retryTime--
+		time.Sleep(retryInterval)
+
+		rows := tk.MustQuery("select count(*) from t").Rows()
+		count := rows[0][0].(string)
+		if count == "3" {
+			deleted = true
+			break
+		}
+	}
+	require.True(t, deleted, "ttl should remove expired rows")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.True(t, h.HandleAutoAnalyze(is))
+}
+
+func TestTTLJobDisable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-info-schema-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/update-info-schema-cache-interval")
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/update-status-table-cache-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/update-status-table-cache-interval")
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/resize-workers-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/resize-workers-interval")
+
+	originAutoAnalyzeMinCnt := handle.AutoAnalyzeMinCnt
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, created_at datetime) ttl = `created_at` + interval 1 day")
+
+	// insert ten rows, the 2,3,4,6,9,10 of them are expired
+	for i := 1; i <= 10; i++ {
+		t := time.Now()
+		if i%2 == 0 || i%3 == 0 {
+			t = t.Add(-time.Hour * 48)
+		}
+
+		tk.MustExec("insert into t values(?, ?)", i, t.Format(time.RFC3339))
+	}
+	// turn off the `tidb_ttl_job_enable`
+	tk.MustExec("set global tidb_ttl_job_enable = 'OFF'")
+	defer tk.MustExec("set global tidb_ttl_job_enable = 'ON'")
+
+	retryTime := 15
+	retryInterval := time.Second * 2
+	deleted := false
+	for retryTime >= 0 {
+		retryTime--
+		time.Sleep(retryInterval)
+
+		rows := tk.MustQuery("select count(*) from t").Rows()
+		count, err := strconv.Atoi(rows[0][0].(string))
+		require.NoError(t, err)
+		if count < 10 {
+			deleted = true
+			break
+		}
+
+		require.Len(t, dom.TTLJobManager().RunningJobs(), 0)
+	}
+	require.False(t, deleted)
 }

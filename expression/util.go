@@ -1145,6 +1145,33 @@ func IsMutableEffectsExpr(expr Expression) bool {
 	return false
 }
 
+// IsInmutableExpr checks whether this expression only consists of foldable functions and inmutable constants.
+// This expression can be evaluated by using `expr.Eval(chunk.Row{})` directly if it's inmutable.
+func IsInmutableExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return false
+		}
+		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if !IsInmutableExpr(arg) {
+				return false
+			}
+		}
+		return true
+	case *Constant:
+		if x.DeferredExpr != nil || x.ParamMarker != nil {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // RemoveDupExprs removes identical exprs. Not that if expr contains functions which
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
@@ -1241,7 +1268,7 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache || ctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	if !ctx.GetSessionVars().StmtCtx.UseCache {
 		return false
 	}
 	return containMutableConst(ctx, exprs)

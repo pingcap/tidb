@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -148,6 +149,16 @@ func (m *JobManager) LockNewJob(ctx context.Context, se session.Session, table *
 	return m.lockNewJob(ctx, se, table, now)
 }
 
+// RunningJobs returns the running jobs inside ttl job manager
+func (m *JobManager) RunningJobs() []*TTLJob {
+	return m.runningJobs
+}
+
+// InfoSchemaCache is an exported getter of infoSchemaCache for test
+func (m *JobManager) InfoSchemaCache() *cache.InfoSchemaCache {
+	return m.infoSchemaCache
+}
+
 func (j *ttlJob) Finish(se session.Session, now time.Time) {
 	j.finish(se, now)
 }
@@ -167,8 +178,12 @@ func newMockTTLJob(tbl *cache.PhysicalTable, status cache.JobStatus) *ttlJob {
 
 func TestReadyForNewJobTables(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
-	m := NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m := NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl)
 	se := newMockSession(t, tbl)
+
+	tblWithDailyInterval := newMockTTLTbl(t, "t2")
+	tblWithDailyInterval.TTLInfo.JobInterval = duration.Duration{Day: 1}
 
 	cases := []struct {
 		name             string
@@ -185,9 +200,13 @@ func TestReadyForNewJobTables(t *testing.T) {
 		// table whose current job owner id is not empty, but heart beat time is expired will be scheduled
 		{"hb time expired", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, CurrentJobOwnerID: "test-another-id", CurrentJobOwnerHBTime: time.Now().Add(-time.Hour)}}, true},
 		// if the last finished time is too near, it will also not be scheduled
-		{"last finished time too near", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, LastJobFinishTime: time.Now()}}, false},
+		{"last start time too near", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, LastJobStartTime: time.Now()}}, false},
 		// if the last finished time is expired, it will be scheduled
-		{"last finished time expired", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, LastJobFinishTime: time.Now().Add(time.Hour * 2)}}, false},
+		{"last start time expired", []*cache.PhysicalTable{tbl}, []*cache.TableStatus{{TableID: tbl.ID, ParentTableID: tbl.ID, LastJobStartTime: time.Now().Add(-time.Hour * 2)}}, true},
+		// if the interval is 24h, and the last finished time is near, it will not be scheduled
+		{"last start time too near for 24h", []*cache.PhysicalTable{tblWithDailyInterval}, []*cache.TableStatus{{TableID: tblWithDailyInterval.ID, ParentTableID: tblWithDailyInterval.ID, LastJobStartTime: time.Now().Add(-time.Hour * 2)}}, false},
+		// if the interval is 24h, and the last finished time is far enough, it will be scheduled
+		{"last start time far enough for 24h", []*cache.PhysicalTable{tblWithDailyInterval}, []*cache.TableStatus{{TableID: tblWithDailyInterval.ID, ParentTableID: tblWithDailyInterval.ID, LastJobStartTime: time.Now().Add(-time.Hour * 25)}}, true},
 	}
 
 	for _, c := range cases {
@@ -218,7 +237,7 @@ func TestLockNewTable(t *testing.T) {
 	assert.NoError(t, err)
 	expireTime := now
 
-	testPhysicalTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year"}}}
+	testPhysicalTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year", JobInterval: duration.Duration{Hour: 1}}}}
 
 	type executeInfo struct {
 		sql  string
@@ -293,11 +312,11 @@ func TestLockNewTable(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			tbl := newMockTTLTbl(t, "t1")
+			m := NewJobManager("test-id", newMockSessionPool(t), nil)
+			m.infoSchemaCache.Tables[c.table.ID] = c.table
 
-			m := NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
 			sqlCounter := 0
-			se := newMockSession(t, tbl)
+			se := newMockSession(t)
 			se.executeSQL = func(ctx context.Context, sql string, args ...interface{}) (rows []chunk.Row, err error) {
 				assert.Less(t, sqlCounter, len(c.sqls))
 				assert.Equal(t, sql, c.sqls[sqlCounter].sql)
@@ -333,7 +352,8 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker1.Start()
 	scanWorker2 := newMockScanWorker(t)
 
-	m := NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m := NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
 	})
@@ -351,7 +371,8 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker2 = newMockScanWorker(t)
 	scanWorker2.Start()
 
-	m = NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m = NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
 		scanWorker2,
@@ -366,7 +387,8 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker2 = newMockScanWorker(t)
 	scanWorker2.Start()
 
-	m = NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m = NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
 		scanWorker2,
@@ -384,7 +406,8 @@ func TestLocalJobs(t *testing.T) {
 	tbl1.ID = 1
 	tbl2 := newMockTTLTbl(t, "t2")
 	tbl2.ID = 2
-	m := NewJobManager("test-id", newMockSessionPool(t, tbl1, tbl2), nil)
+	m := NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl1, tbl2)
 
 	m.runningJobs = []*ttlJob{{tbl: tbl1, id: "1", ctx: context.Background()}, {tbl: tbl2, id: "2", ctx: context.Background()}}
 	m.tableStatusCache.Tables = map[int64]*cache.TableStatus{
@@ -410,7 +433,8 @@ func TestRescheduleJobs(t *testing.T) {
 	scanWorker2.Start()
 	scanWorker2.setOneRowResult(tbl, 2022)
 
-	m := NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m := NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
 		scanWorker2,
@@ -463,7 +487,8 @@ func TestRescheduleJobsOutOfWindow(t *testing.T) {
 	scanWorker2.Start()
 	scanWorker2.setOneRowResult(tbl, 2022)
 
-	m := NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m := NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl)
 	m.SetScanWorkers4Test([]worker{
 		scanWorker1,
 		scanWorker2,
@@ -508,7 +533,8 @@ func TestCheckFinishedJob(t *testing.T) {
 	se := newMockSession(t, tbl)
 
 	// cancelled job will be regarded as finished
-	m := NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m := NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl)
 	m.runningJobs = []*ttlJob{newMockTTLJob(tbl, cache.JobStatusCancelled)}
 	m.checkFinishedJob(se, se.Now())
 	assert.Len(t, m.runningJobs, 0)
@@ -517,7 +543,8 @@ func TestCheckFinishedJob(t *testing.T) {
 	finishedStatistics := &ttlStatistics{}
 	finishedStatistics.TotalRows.Store(1)
 	finishedStatistics.SuccessRows.Store(1)
-	m = NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m = NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl)
 	m.runningJobs = []*ttlJob{newMockTTLJob(tbl, cache.JobStatusRunning)}
 	m.runningJobs[0].statistics = finishedStatistics
 	m.runningJobs[0].tasks[0].statistics = finishedStatistics
@@ -545,7 +572,8 @@ func TestCheckFinishedJob(t *testing.T) {
 	// check timeout job
 	now = se.Now()
 	createTime := now.Add(-20 * time.Hour)
-	m = NewJobManager("test-id", newMockSessionPool(t, tbl), nil)
+	m = NewJobManager("test-id", nil, nil)
+	m.sessPool = newMockSessionPool(t, tbl)
 	m.runningJobs = []*ttlJob{
 		{
 			ctx:        context.Background(),
