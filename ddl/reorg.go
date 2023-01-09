@@ -17,7 +17,6 @@ package ddl
 import (
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -632,12 +632,6 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		/*
-			err = rh.RemoveDDLReorgHandle(job, elements)
-			if err != nil {
-				return &info, errors.Trace(err)
-			}
-		*/
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
@@ -774,7 +768,7 @@ type reorgHandler struct {
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
-func NewReorgHandlerForTest(_ *meta.Meta, sess sessionctx.Context) *reorgHandler {
+func NewReorgHandlerForTest(sess sessionctx.Context) *reorgHandler {
 	return newReorgHandler(newSession(sess))
 }
 
