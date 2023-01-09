@@ -479,5 +479,4 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
-
 }
