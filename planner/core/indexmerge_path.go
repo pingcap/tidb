@@ -614,7 +614,7 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		return nil, false, nil
 	}
 
-	var partialPaths []*util.AccessPath
+	partialPaths := make([]*util.AccessPath, 0, len(virColVals))
 	for _, v := range virColVals {
 		// rewrite json functions to EQ to calculate range, `(1 member of j)` -> `j=1`.
 		eq, err := expression.NewFunction(ds.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
