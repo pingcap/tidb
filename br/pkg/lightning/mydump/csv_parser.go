@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 )
@@ -336,6 +337,9 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
+		if len(buf) > tidbconfig.MaxTxnEntrySizeLimit {
+			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
+		}
 		parser.buf = nil
 		if err := parser.readBlock(); err != nil || len(parser.buf) == 0 {
 			if err == nil {
