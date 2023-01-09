@@ -16,7 +16,6 @@ package kv
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
@@ -28,21 +27,33 @@ type MPPTaskMeta interface {
 	GetAddress() string
 }
 
+// MPPQueryID means the global unique id of a mpp query.
+type MPPQueryID struct {
+	QueryTs      uint64 // timestamp of query execution, used for TiFlash minTSO schedule
+	LocalQueryID uint64 // unique mpp query id in local tidb memory.
+	ServerID     uint64
+}
+
 // MPPTask means the minimum execution unit of a mpp computation job.
 type MPPTask struct {
-	Meta    MPPTaskMeta // on which store this task will execute
-	ID      int64       // mppTaskID
-	StartTs uint64
-	TableID int64 // physical table id
+	Meta       MPPTaskMeta // on which store this task will execute
+	ID         int64       // mppTaskID
+	StartTs    uint64
+	MppQueryID MPPQueryID
+	TableID    int64 // physical table id
 
-	PartitionTableIDs []int64
+	PartitionTableIDs                 []int64
+	IsDisaggregatedTiFlashStaticPrune bool
 }
 
 // ToPB generates the pb structure.
 func (t *MPPTask) ToPB() *mpp.TaskMeta {
 	meta := &mpp.TaskMeta{
-		StartTs: t.StartTs,
-		TaskId:  t.ID,
+		StartTs:      t.StartTs,
+		QueryTs:      t.MppQueryID.QueryTs,
+		LocalQueryId: t.MppQueryID.LocalQueryID,
+		ServerId:     t.MppQueryID.ServerID,
+		TaskId:       t.ID,
 	}
 	if t.ID != -1 {
 		meta.Address = t.Meta.GetAddress()
@@ -71,20 +82,21 @@ type MPPDispatchRequest struct {
 	IsRoot  bool        // root task returns data to tidb directly.
 	Timeout uint64      // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
 	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar int64
-	StartTs   uint64
-	ID        int64 // identify a single task
-	State     MppTaskStates
+	SchemaVar  int64
+	StartTs    uint64
+	MppQueryID MPPQueryID
+	ID         int64 // identify a single task
+	State      MppTaskStates
 }
 
 // MPPClient accepts and processes mpp requests.
 type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, *sync.Map, time.Duration) ([]MPPTaskMeta, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, time.Duration) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID MPPQueryID) Response
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

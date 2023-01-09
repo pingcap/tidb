@@ -1101,18 +1101,6 @@ var defaultSysVars = []*SysVar{
 			return err
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBEnableConcurrentDDL, Value: BoolToOnOff(DefTiDBEnableConcurrentDDL), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		if EnableConcurrentDDL.Load() != TiDBOptOn(val) {
-			err := SwitchConcurrentDDL(TiDBOptOn(val))
-			if err != nil {
-				return err
-			}
-			EnableConcurrentDDL.Store(TiDBOptOn(val))
-		}
-		return nil
-	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(EnableConcurrentDDL.Load()), nil
-	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableMDL, Value: BoolToOnOff(DefTiDBEnableMDL), Type: TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
 		if EnableMDL.Load() != TiDBOptOn(val) {
 			err := SwitchMDL(TiDBOptOn(val))
@@ -1871,14 +1859,6 @@ var defaultSysVars = []*SysVar{
 		s.ShardAllocateStep = TidbOptInt64(val, DefTiDBShardAllocateStep)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAmendPessimisticTxn, Value: BoolToOnOff(DefTiDBEnableAmendPessimisticTxn), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		enableAmend := TiDBOptOn(val)
-		if enableAmend && EnableFastReorg.Load() {
-			return errors.Errorf("amend pessimistic transactions is not compatible with tidb_ddl_enable_fast_reorg")
-		}
-		s.EnableAmendPessimisticTxn = enableAmend
-		return nil
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncCommit, Value: BoolToOnOff(DefTiDBEnableAsyncCommit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAsyncCommit = TiDBOptOn(val)
 		return nil
@@ -2208,20 +2188,6 @@ var defaultSysVars = []*SysVar{
 		Type: TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
 			s.StoreBatchSize = TidbOptInt(val, DefTiDBStoreBatchSize)
 			return nil
-		},
-	},
-	{
-		Scope: ScopeGlobal, Name: TiDBTTLJobRunInterval, Value: DefTiDBTTLJobRunInterval, Type: TypeDuration, MinValue: int64(10 * time.Minute), MaxValue: uint64(8760 * time.Hour), SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			interval, err := time.ParseDuration(s)
-			if err != nil {
-				return err
-			}
-			TTLJobRunInterval.Store(interval)
-			return nil
-		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-			interval := TTLJobRunInterval.Load()
-
-			return interval.String(), nil
 		},
 	},
 	{
