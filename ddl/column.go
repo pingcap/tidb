@@ -1382,6 +1382,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
+		// Optimize for few warnings!
 		warningsMap := make(map[errors.ErrorID]*terror.Error, 2)
 		warningsCountMap := make(map[errors.ErrorID]int64, 2)
 		for _, rowRecord := range rowRecords {

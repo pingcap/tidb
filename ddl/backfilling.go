@@ -1321,15 +1321,12 @@ func GetMaxBackfillJob(sess *session, jobID, currEleID int64, currEleKey []byte)
 }
 
 // MoveBackfillJobsToHistoryTable moves backfill table jobs to the backfill history table.
-func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bfJob *BackfillJob) error {
-	sess, ok := sessCtx.(*session)
-	if !ok {
-		return errors.Errorf("sess ctx:%#v convert session failed", sessCtx)
-	}
+func MoveBackfillJobsToHistoryTable(sctx sessionctx.Context, bfJob *BackfillJob) error {
+	s := newSession(sctx)
 
-	return runInTxn(sess, func(se *session) error {
+	return s.runInTxn(func(se *session) error {
 		// TODO: Consider batch by batch update backfill jobs and insert backfill history jobs.
-		bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
+		bJobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
 			bfJob.JobID, bfJob.EleID, bfJob.EleKey), "update_backfill_job")
 		if err != nil {
 			return errors.Trace(err)
@@ -1343,13 +1340,13 @@ func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bfJob *BackfillJ
 			return errors.Trace(err)
 		}
 		startTS := txn.StartTS()
-		err = RemoveBackfillJob(sess, true, bJobs[0])
+		err = RemoveBackfillJob(se, true, bJobs[0])
 		if err == nil {
 			for _, bj := range bJobs {
 				bj.State = model.JobStateCancelled
 				bj.FinishTS = startTS
 			}
-			err = AddBackfillHistoryJob(sess, bJobs)
+			err = AddBackfillHistoryJob(se, bJobs)
 		}
 		logutil.BgLogger().Info("[ddl] move backfill jobs to history table", zap.Int("job count", len(bJobs)))
 		return errors.Trace(err)
