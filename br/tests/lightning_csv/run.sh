@@ -46,4 +46,4 @@ run_lightning --backend local -d "tests/$TEST_NAME/errData" --log-file "$TEST_DI
 # err content presented
 grep ",7,8" "$TEST_DIR/lightning-err.log"
 # pos should not set to end
-grep "[\"syntax error\"] [pos=30]" "$TEST_DIR/lightning-err.log"
+grep "[\"syntax error\"] [pos=22]" "$TEST_DIR/lightning-err.log"
