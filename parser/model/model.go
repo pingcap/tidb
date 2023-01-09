@@ -1839,6 +1839,62 @@ func (p *PlacementSettings) Clone() *PlacementSettings {
 	return &cloned
 }
 
+// ResourceGroupRefInfo is the struct to refer the resource group.
+type ResourceGroupRefInfo struct {
+	ID   int64 `json:"id"`
+	Name CIStr `json:"name"`
+}
+
+// ResourceGroupSettings is the settings of the resource group
+type ResourceGroupSettings struct {
+	RRURate          uint64 `json:"rru_per_sec"`
+	WRURate          uint64 `json:"wru_per_sec"`
+	CPULimiter       string `json:"cpu_limit"`
+	IOReadBandwidth  string `json:"io_read_bandwidth"`
+	IOWriteBandwidth string `json:"io_write_bandwidth"`
+}
+
+func (p *ResourceGroupSettings) String() string {
+	sb := new(strings.Builder)
+	if p.RRURate != 0 {
+		writeSettingIntegerToBuilder(sb, "RRU_PER_SEC", p.RRURate)
+	}
+	if p.WRURate != 0 {
+		writeSettingIntegerToBuilder(sb, "WRU_PER_SEC", p.WRURate)
+	}
+	if len(p.CPULimiter) > 0 {
+		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
+	}
+	if len(p.IOReadBandwidth) > 0 {
+		writeSettingStringToBuilder(sb, "IO_READ_BANDWIDTH", p.IOReadBandwidth)
+	}
+	if len(p.IOWriteBandwidth) > 0 {
+		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth)
+	}
+	return sb.String()
+}
+
+// Clone clones the resource group settings.
+func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
+	cloned := *p
+	return &cloned
+}
+
+// ResourceGroupInfo is the struct to store the placement policy.
+type ResourceGroupInfo struct {
+	*ResourceGroupSettings
+	ID    int64       `json:"id"`
+	Name  CIStr       `json:"name"`
+	State SchemaState `json:"state"`
+}
+
+// Clone clones the ResourceGroupInfo.
+func (p *ResourceGroupInfo) Clone() *ResourceGroupInfo {
+	cloned := *p
+	cloned.ResourceGroupSettings = p.ResourceGroupSettings.Clone()
+	return &cloned
+}
+
 // StatsOptions is the struct to store the stats options.
 type StatsOptions struct {
 	*StatsWindowSettings
