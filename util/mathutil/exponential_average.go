@@ -52,3 +52,8 @@ func (m *ExponentialMovingAverage) Add(value float64) {
 func (m *ExponentialMovingAverage) Get() float64 {
 	return m.value
 }
+
+// Update the current value.
+func (m *ExponentialMovingAverage) Update(f func(float64) float64) {
+	m.value = f(m.value)
+}

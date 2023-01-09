@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "limiter",
+    srcs = [
+        "bbr_limiter.go",
+        "limiter.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanager/limiter",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//resourcemanager/util",
+        "//util/cpu",
+    ],
+)

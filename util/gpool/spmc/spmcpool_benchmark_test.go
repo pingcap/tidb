@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
+	rmutl "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gpool"
 )
@@ -29,7 +30,7 @@ const (
 )
 
 func BenchmarkGPool(b *testing.B) {
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("test", 10)
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("test", 10, rmutl.UNKNOWN)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -54,6 +55,7 @@ func BenchmarkGPool(b *testing.B) {
 			}
 			return struct{}{}, gpool.ErrProducerClosed
 		}
+
 		resultCh, ctl := p.AddProducer(producerFunc, RunTimes, pooltask.NilContext{}, WithConcurrency(6), WithResultChanLen(10))
 		exitCh := make(chan struct{})
 		wg.Run(func() {

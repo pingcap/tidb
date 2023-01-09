@@ -32,6 +32,7 @@ var (
 type loopQueue[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	items  []*goWorker[T, U, C, CT, TF]
 	expiry []*goWorker[T, U, C, CT, TF]
+
 	head   int
 	tail   int
 	size   int

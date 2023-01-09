@@ -16,6 +16,7 @@ package pooltask
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 // Context is a interface that can be used to create a context.
@@ -31,6 +32,17 @@ func (NilContext) GetContext() any {
 	return nil
 }
 
+const (
+	// PendingTask is a task waiting to start
+	PendingTask int32 = iota
+	// RunningTask is a task running
+	RunningTask
+	// StopTask is a stop task
+	StopTask
+	// PausingTask is a task running
+	PausingTask
+)
+
 // TaskBox is a box which contains all info about pooltask.
 type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	constArgs   C
@@ -39,9 +51,10 @@ type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	task        chan Task[T]
 	resultCh    chan U
 	taskID      uint64
+	status      atomic.Int32 // task manager is able to make this task stop, wait or running
 }
 
-// NewTaskBox is to create a task box for pool.
+// NewTaskBox is to create a pooltask box.
 func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contextFunc TF, wg *sync.WaitGroup, taskCh chan Task[T], resultCh chan U, taskID uint64) TaskBox[T, U, C, CT, TF] {
 	return TaskBox[T, U, C, CT, TF]{
 		constArgs:   constArgs,
@@ -51,11 +64,6 @@ func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contex
 		resultCh:    resultCh,
 		taskID:      taskID,
 	}
-}
-
-// TaskID is to get the task id.
-func (t TaskBox[T, U, C, CT, TF]) TaskID() uint64 {
-	return t.taskID
 }
 
 // ConstArgs is to get the const args.
@@ -78,7 +86,17 @@ func (t *TaskBox[T, U, C, CT, TF]) GetContextFunc() TF {
 	return t.contextFunc
 }
 
-// Done is to set the pooltask status to complete.
+// GetStatus is to get the status of task.
+func (t *TaskBox[T, U, C, CT, TF]) GetStatus() int32 {
+	return t.status.Load()
+}
+
+// SetStatus is to set the status of task.
+func (t *TaskBox[T, U, C, CT, TF]) SetStatus(s int32) {
+	t.status.Store(s)
+}
+
+// Done is to set the task status to complete.
 func (t *TaskBox[T, U, C, CT, TF]) Done() {
 	t.wg.Done()
 }
@@ -91,7 +109,9 @@ func (t *TaskBox[T, U, C, CT, TF]) Clone() *TaskBox[T, U, C, CT, TF] {
 
 // GPool is a goroutine pool.
 type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
-	Tune(size int)
+	Tune(size int, isLimit bool)
+
+	DeleteTask(id uint64)
 }
 
 // TaskController is a controller that can control or watch the pool.
@@ -103,7 +123,7 @@ type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
 	resultCh chan U
 }
 
-// NewTaskController create a controller to deal with pooltask's status.
+// NewTaskController create a controller to deal with pooltask's statue.
 func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh chan struct{}, wg *sync.WaitGroup, resultCh chan U) TaskController[T, U, C, CT, TF] {
 	return TaskController[T, U, C, CT, TF]{
 		pool:     p,
@@ -114,19 +134,29 @@ func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U
 	}
 }
 
-// Wait is to wait the pool task to stop.
+// Wait is to wait the pooltask to stop.
 func (t *TaskController[T, U, C, CT, TF]) Wait() {
 	<-t.close
 	t.wg.Wait()
+	t.pool.DeleteTask(t.taskID)
 	close(t.resultCh)
 }
 
-// TaskID is to get the task id.
-func (t *TaskController[T, U, C, CT, TF]) TaskID() uint64 {
-	return t.taskID
+// IsProduceClose is to judge whether the producer is completed.
+func (t *TaskController[T, U, C, CT, TF]) IsProduceClose() bool {
+	select {
+	case <-t.close:
+		return true
+	default:
+	}
+	return false
 }
 
-// Task is a task that can be executed.
+// Task is a pooltask that can be executed.
 type Task[T any] struct {
 	Task T
+	Done DoneFunc
 }
+
+// DoneFunc is done function.
+type DoneFunc func()

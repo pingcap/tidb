@@ -18,6 +18,9 @@ import (
 	"errors"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/resourcemanager/pooltask"
+	atomicutil "go.uber.org/atomic"
 )
 
 const (
@@ -44,13 +47,21 @@ var (
 
 // BasePool is base class of pool
 type BasePool struct {
-	name      string
-	generator atomic.Uint64
+	lastTuneTs atomicutil.Time
+	limiterTTL atomicutil.Time // it is relation with limiter
+	statistic  *pooltask.Statistic
+	name       string
+	limit      atomic.Bool
+	generator  atomic.Uint64
 }
 
 // NewBasePool is to create a new BasePool.
 func NewBasePool() BasePool {
-	return BasePool{}
+	return BasePool{
+		statistic:  pooltask.NewStatistic(),
+		lastTuneTs: *atomicutil.NewTime(time.Now()),
+		limiterTTL: *atomicutil.NewTime(time.Now()),
+	}
 }
 
 // SetName is to set name.
@@ -63,7 +74,98 @@ func (p *BasePool) Name() string {
 	return p.name
 }
 
-// NewTaskID is to get a new task ID.
+// SetStatistic is to set Statistic
+func (p *BasePool) SetStatistic(statistic *pooltask.Statistic) {
+	p.statistic = statistic
+}
+
+// GetStatistic is to get Statistic
+func (p *BasePool) GetStatistic() *pooltask.Statistic {
+	return p.statistic
+}
+
+// MaxInFlight is to get max in flight.
+func (p *BasePool) MaxInFlight() int64 {
+	return p.statistic.MaxInFlight()
+}
+
+// GetQueueSize is to get queue size.
+func (p *BasePool) GetQueueSize() int64 {
+	return p.statistic.GetQueueSize()
+}
+
+// MaxPASS is to get max pass.
+func (p *BasePool) MaxPASS() uint64 {
+	return p.statistic.MaxPASS()
+}
+
+// MinRT is to get min rt.
+func (p *BasePool) MinRT() uint64 {
+	return p.statistic.MinRT()
+}
+
+// InFlight is to get in flight.
+func (p *BasePool) InFlight() int64 {
+	return p.statistic.InFlight()
+}
+
+// LongRTT is to get long rtt.
+func (p *BasePool) LongRTT() float64 {
+	return p.statistic.LongRTT()
+}
+
+// ShortRTT is to get short rtt.
+func (p *BasePool) ShortRTT() uint64 {
+	return p.statistic.ShortRTT()
+}
+
+// UpdateLongRTT is to update long rtt.
+func (p *BasePool) UpdateLongRTT(fn func(float64) float64) {
+	p.statistic.UpdateLongRTT(fn)
+}
+
+// NewTaskID is to get new task id.
 func (p *BasePool) NewTaskID() uint64 {
 	return p.generator.Add(1)
+}
+
+// LastTunerTs returns the last time when the pool was tuned.
+func (p *BasePool) LastTunerTs() time.Time {
+	return p.lastTuneTs.Load()
+}
+
+// SetLastTuneTs sets the last time when the pool was tuned.
+func (p *BasePool) SetLastTuneTs(t time.Time) {
+	p.lastTuneTs.Store(t)
+}
+
+// OnLimit is to be in limit mode.
+func (p *BasePool) OnLimit() {
+	p.limit.Store(true)
+}
+
+// offLimit is to be in non-limit mode.
+func (p *BasePool) offLimit() {
+	p.limit.Store(false)
+}
+
+// IsLimit is to check if in limit mode.
+func (p *BasePool) IsLimit() bool {
+	if !p.limit.Load() {
+		if time.Now().Before(p.limiterTTL.Load()) {
+			return true
+		}
+		p.limit.Store(false)
+	}
+	return false
+}
+
+// Start is to start the pool.
+func (p *BasePool) Start() {
+	p.statistic.Start()
+}
+
+// Stop is to stop the pool.
+func (p *BasePool) Stop() {
+	p.statistic.Stop()
 }

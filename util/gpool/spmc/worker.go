@@ -40,6 +40,7 @@ type goWorker[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 func (w *goWorker[T, U, C, CT, TF]) run() {
 	w.pool.addRunning(1)
 	go func() {
+		//log.Info("worker start")
 		defer func() {
 			w.pool.addRunning(-1)
 			w.pool.workerCache.Put(w)
@@ -55,8 +56,18 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 		}()
 
 		for f := range w.taskBoxCh {
+			w.pool.GetStatistic().OutQueue()
 			if f == nil {
 				return
+			}
+			switch f.GetStatus() {
+			case pooltask.PendingTask:
+				f.SetStatus(pooltask.RunningTask)
+			case pooltask.StopTask:
+				continue
+			case pooltask.RunningTask:
+				log.Error("worker got task running")
+				continue
 			}
 			w.pool.subWaitingTask()
 			ctx := f.GetContextFunc().GetContext()
@@ -64,7 +75,13 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 				for t := range f.GetTaskCh() {
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
 					f.Done()
+					if f.GetStatus() == pooltask.PendingTask {
+						w.pool.GetStatistic().InQueue()
+						w.taskBoxCh <- f
+						break
+					}
 				}
+				f.SetStatus(pooltask.StopTask)
 			}
 			if ok := w.pool.revertWorker(w); !ok {
 				return
