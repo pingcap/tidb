@@ -53,21 +53,19 @@ type domainMap struct {
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	dm.mu.Lock()
+	defer dm.mu.Unlock()
 
 	if store == nil {
 		for _, d := range dm.domains {
 			// return available domain if any
-			dm.mu.Unlock()
 			return d, nil
 		}
-		dm.mu.Unlock()
 		return nil, errors.New("can not find available domain for a nil store")
 	}
 
 	key := store.UUID()
 
 	d = dm.domains[key]
-	dm.mu.Unlock()
 	if d != nil {
 		return
 	}
@@ -84,10 +82,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		onClose := func() {
-			dm.Delete(store)
-		}
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory)
 
 		var ddlInjector func(ddl.DDL) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
@@ -105,10 +100,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if err != nil {
 		return nil, err
 	}
-
-	dm.mu.Lock()
 	dm.domains[key] = d
-	dm.mu.Unlock()
+	d.SetOnClose(func() {
+		dm.Delete(store)
+	})
 
 	return
 }
