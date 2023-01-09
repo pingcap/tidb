@@ -75,17 +75,51 @@ func isStatsTable(tableName string) bool {
 	return ok
 }
 
+func generateResetSQLs(db *database, resetUsers []string) []string {
+	if db.Name.L != mysql.SystemDB {
+		return nil
+	}
+	sqls := make([]string, 0, 10)
+	// we only need reset root password once
+	rootReset := false
+	for tableName := range db.ExistingTables {
+		if sysPrivilegeTableMap[tableName] != "" {
+			for _, name := range resetUsers {
+				if strings.ToLower(name) == rootUser {
+					if !rootReset {
+						updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string='',"+
+							" Shutdown_priv='Y',"+
+							" Config_priv='Y'"+
+							" WHERE USER='root' AND Host='%%';",
+							db.Name.L, sysUserTableName)
+						sqls = append(sqls, updateSQL)
+						rootReset = true
+					} else {
+						continue
+					}
+				} else {
+					/* #nosec G202: SQL string concatenation */
+					whereClause := fmt.Sprintf("WHERE "+sysPrivilegeTableMap[tableName], name)
+					deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
+						utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
+					sqls = append(sqls, deleteSQL)
+				}
+			}
+		}
+	}
+	return sqls
+}
+
 // ClearSystemUsers is used for volume-snapshot restoration.
 // because we can not support restore user in some scenarios, for example in cloud.
 // we'd better use this function to drop cloud_admin user after volume-snapshot restore.
-func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) error {
+func (rc *Client) ClearSystemUsers(ctx context.Context, resetUsers []string) error {
 	sysDB := mysql.SystemDB
 	db, ok := rc.getDatabaseByName(sysDB)
 	if !ok {
 		log.Warn("target database not exist, aborting", zap.String("database", sysDB))
 		return nil
 	}
-
 	execSQL := func(sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.se.Execute(ctx, sql); err != nil {
@@ -103,39 +137,11 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, filterUsers []string) er
 		return nil
 	}
 
-	for _, name := range filterUsers {
-		if strings.ToLower(name) == rootUser {
-			// we cannot directly remove root account. instead, we reset its password. and let cloud_admin control it lately.
-			updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string='',"+
-				" Shutdown_priv='Y',"+
-				" Config_priv='Y'"+
-				" WHERE USER='root' AND Host='%%';",
-				sysDB, sysUserTableName)
-			log.Info("clear root user for cloud", zap.String("sql", updateSQL))
-			err := execSQL(updateSQL)
-			if err != nil {
-				return err
-			}
-			// we need treat the root account specially.
-			break
-		}
-	}
-
-	for tableName := range db.ExistingTables {
-		if sysPrivilegeTableMap[tableName] != "" {
-			for _, name := range filterUsers {
-				// we already handle root account before.
-				if strings.ToLower(name) != rootUser {
-					/* #nosec G202: SQL string concatenation */
-					whereClause := fmt.Sprintf("WHERE "+sysPrivilegeTableMap[tableName], name)
-					deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
-						utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
-					log.Info("clear system user for cloud", zap.String("sql", deleteSQL))
-					if err := execSQL(deleteSQL); err != nil {
-						return err
-					}
-				}
-			}
+	sqls := generateResetSQLs(db, resetUsers)
+	for _, sql := range sqls {
+		log.Info("reset system user for cloud", zap.String("sql", sql))
+		if err := execSQL(sql); err != nil {
+			return err
 		}
 	}
 	return nil
