@@ -354,7 +354,7 @@ func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*ex
 	return leftPredicates, rightPredicates
 }
 
-func (p *LogicalJoin) buildAndEvaluateSubquery(smallTableName string, ctx context.Context, wherePredicates []expression.Expression,
+func (p *LogicalJoin) buildAndEvaluateSubquery(ctx context.Context, smallTableName string, wherePredicates []expression.Expression,
 	subqueryResultColumn *expression.Column, smallSideSchema *expression.Schema) (row []types.Datum, resultType *types.FieldType, err error) {
 	builder := &PlanBuilder{
 		outerCTEs:           make([]*cteInfo, 0),
@@ -445,9 +445,8 @@ func checkOnlyOnySmallTableColumn(candidatePredicate expression.Expression, smal
 		tableName := columnNameList[1]
 		if tableName == smallTableName {
 			return true
-		} else {
-			return false
 		}
+		return false
 	}
 	_, ok2 := candidatePredicate.(*expression.Constant)
 	if ok2 {
