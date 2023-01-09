@@ -9,7 +9,10 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/resourcemanager/util",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_pingcap_errors//:errors"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_atomic//:atomic",
+    ],
 )
 
 go_test(

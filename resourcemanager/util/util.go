@@ -14,7 +14,15 @@
 
 package util
 
-import "time"
+import (
+	"time"
+
+	"go.uber.org/atomic"
+)
+
+var (
+	MinSchedulerInterval = atomic.NewDuration(200 * time.Millisecond)
+)
 
 // GorotinuePool is a pool interface
 type GorotinuePool interface {

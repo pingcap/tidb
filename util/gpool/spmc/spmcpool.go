@@ -135,7 +135,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	if capacity == -1 || size <= 0 || size == capacity {
 		return
 	}
-	p.SetLastTuneTs(time.Now().Add(p.options.LimitDuration))
+	p.SetLastTuneTs(time.Now())
 	p.capacity.Store(int32(size))
 	if size > capacity {
 		// boost
