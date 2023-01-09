@@ -32,20 +32,20 @@ func TestCacheKey(t *testing.T) {
 	ctx.GetSessionVars().InRestrictedSQL = false
 	variable.RestrictedReadOnly.Store(false)
 	variable.VarTiDBSuperReadOnly.Store(false)
-	key, err := NewPlanCacheKey(ctx.GetSessionVars(), "", "test", 1, 1, "", []int64{})
+	key, err := NewPlanCacheKey(ctx.GetSessionVars(), "", "test", 1, 1, "", []uint64{})
 	if err.Error() != "no statement text" {
 		t.Fail() // no statement text
 	}
-	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "", 1, 1, "", []int64{})
+	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "", 1, 1, "", []uint64{})
 	if err != nil {
 		t.Fail() // schema can be nil
 	}
 	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "test", 1, 1,
-		"select /*+ ignore_plan_cache() */ * from t", []int64{})
+		"select /*+ ignore_plan_cache() */ * from t", []uint64{})
 	if err != nil {
 		t.Fail()
 	}
-	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "test", 1, 1, "", []int64{})
+	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "test", 1, 1, "", []uint64{})
 	if err != nil {
 		t.Fail()
 	}
