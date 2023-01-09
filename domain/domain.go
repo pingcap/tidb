@@ -2479,6 +2479,10 @@ func (do *Domain) serverIDKeeper() {
 // StartTTLJobManager creates and starts the ttl job manager
 func (do *Domain) StartTTLJobManager() {
 	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("ttlJobManager exited.")
+		}()
+
 		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store)
 		do.ttlJobManager = ttlJobManager
 		ttlJobManager.Start()

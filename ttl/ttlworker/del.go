@@ -255,7 +255,10 @@ func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool sessionPool) *ttlDele
 
 func (w *ttlDeleteWorker) loop() error {
 	tracer := metrics.NewDeleteWorkerPhaseTracer()
-	defer tracer.EndPhase()
+	defer func() {
+		tracer.EndPhase()
+		logutil.BgLogger().Info("ttlDeleteWorker loop exited.")
+	}()
 
 	tracer.EnterPhase(metrics.PhaseOther)
 	se, err := getSession(w.sessionPool)

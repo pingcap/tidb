@@ -284,7 +284,10 @@ func (w *ttlScanWorker) PollTaskResult() *ttlScanTaskExecResult {
 func (w *ttlScanWorker) loop() error {
 	ctx := w.baseWorker.ctx
 	tracer := metrics.NewScanWorkerPhaseTracer()
-	defer tracer.EndPhase()
+	defer func() {
+		tracer.EndPhase()
+		logutil.BgLogger().Info("ttlScanWorker loop exited.")
+	}()
 
 	ticker := time.Tick(time.Second * 5)
 	for w.Status() == workerStatusRunning {
