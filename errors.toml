@@ -1861,6 +1861,16 @@ error = '''
 Unknown placement policy '%-.192s'
 '''
 
+["meta:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["meta:8249"]
+error = '''
+Unknown resource group '%-.192s'
+'''
+
 ["planner:1044"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'
@@ -2504,6 +2514,16 @@ Placement policy '%-.192s' already exists
 ["schema:8239"]
 error = '''
 Unknown placement policy '%-.192s'
+'''
+
+["schema:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["schema:8249"]
+error = '''
+Unknown resource group '%-.192s'
 '''
 
 ["session:8002"]
