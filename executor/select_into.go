@@ -18,16 +18,207 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 )
+
+// SelectIntoExecCompressed represents a SelectInto executor.
+type SelectIntoExecCompressed struct {
+	baseExecutor
+	intoOpt  *ast.SelectIntoOption
+	recordID uint64
+}
+
+// SuccessRes is used to store exported result sets.
+type SuccessRes struct {
+	TotalRow  uint64 `json:"total_rows"`
+	TotalTime uint64 `json:"run_time"`
+}
+
+// SelectIntoTaskArgs is used to store the export args.
+type SelectIntoTaskArgs struct {
+	SelSQL     string `json:"sql"`
+	FileName   string `json:"filename"`
+	FieldTerm  string `json:"separator"`
+	Enclosed   byte   `json:"delimiter"`
+	Terminated string `json:"terminator"`
+}
+
+// Open implements the Executor Open interface.
+func (s *SelectIntoExecCompressed) Open(ctx context.Context) error {
+	var err error
+	s.recordID, err = s.addTask(ctx)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (s *SelectIntoExecCompressed) Next(ctx context.Context, req *chunk.Chunk) error {
+	sql := new(strings.Builder)
+	sql.Reset()
+	sqlexec.MustFormatSQL(sql, "select TIMESTAMPDIFF(SECOND,live_time,now()),status,"+
+		"error_message,response from  %n.%n where id=%?", mysql.SystemDB, mysql.TidbExternalTask, s.recordID)
+	for {
+		time.Sleep(time.Second * 1)
+		taskStatus, err := s.waitTaskEnd(ctx, sql)
+		if err != nil {
+			return err
+		}
+		if taskStatus {
+			break
+		}
+	}
+	return nil
+}
+
+// Close implements the Executor Close interface.
+func (s *SelectIntoExecCompressed) Close() error {
+	return nil
+}
+
+func (s *SelectIntoExecCompressed) getTaskStatus(ctx context.Context,
+	sqlExecutor sqlexec.SQLExecutor, sql *strings.Builder) (bool, error) {
+	var lastLiveTimeSeconds int64
+	var status string
+	var response string
+	var errmsg string
+
+	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		return false, err
+	}
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	req := rs.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	err = rs.Next(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	if req.NumRows() == 0 {
+		return false, fmt.Errorf("export data task %d not found", s.recordID)
+	}
+	if req.NumRows() != 1 {
+		return false, fmt.Errorf("multiple export data task %d found", s.recordID)
+	}
+	row := iter.Begin()
+	// Get live_time from result.
+	if !row.IsNull(0) {
+		lastLiveTimeSeconds = row.GetInt64(0)
+	}
+	// Get status from result.
+	if !row.IsNull(1) {
+		status = strings.ToLower(row.GetString(1))
+	}
+	// If no keepalive information is written within 1 minutes,
+	// the task is considered to have timed out.
+	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
+		return true, fmt.Errorf("export data task %d keep alive timed out", s.recordID)
+	}
+	if status == "error" {
+		// Get error message from result.
+		if !row.IsNull(2) {
+			errmsg = row.GetString(2)
+		}
+		return true, fmt.Errorf("export data fail ,%s", errmsg)
+	} else if status == "success" {
+		// Get affect rows from result.
+		var sr SuccessRes
+		if !row.IsNull(3) {
+			response = row.GetString(3)
+		}
+		err = json.Unmarshal([]byte(response), &sr)
+		if err != nil {
+			return true, fmt.Errorf("export data fail ,unmarshal response fail,%s", err.Error())
+		}
+		s.ctx.GetSessionVars().StmtCtx.AddAffectedRows(sr.TotalRow)
+		return true, nil
+	}
+	return false, nil
+}
+
+func (s *SelectIntoExecCompressed) waitTaskEnd(ctx context.Context, sql *strings.Builder) (bool, error) {
+	sysSession, err := s.getSysSession()
+	if err != nil {
+		return false, err
+	}
+	defer s.releaseSysSession(ctx, sysSession)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
+		return false, err
+	}
+	taskStatus, err := s.getTaskStatus(ctx, sqlExecutor, sql)
+	if err != nil {
+		return false, err
+	}
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+		return false, err
+	}
+	return taskStatus, nil
+}
+
+func (s *SelectIntoExecCompressed) generateArgs(ctx context.Context) (string, error) {
+	sita := SelectIntoTaskArgs{
+		SelSQL:     s.intoOpt.SelectSQL,
+		FileName:   s.intoOpt.FileName,
+		FieldTerm:  s.intoOpt.FieldsInfo.Terminated,
+		Enclosed:   s.intoOpt.FieldsInfo.Enclosed,
+		Terminated: s.intoOpt.LinesInfo.Terminated,
+	}
+	args, err := json.Marshal(sita)
+	return util.String(args), err
+}
+
+func (s *SelectIntoExecCompressed) addTask(ctx context.Context) (uint64, error) {
+	sysSession, err := s.getSysSession()
+	if err != nil {
+		return 0, err
+	}
+	defer s.releaseSysSession(ctx, sysSession)
+	owner := config.GetGlobalConfig().AdvertiseAddress + ":" + strconv.Itoa(int(config.GetGlobalConfig().Port))
+	args, err := s.generateArgs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("error occur when generate select into task args %s", err)
+	}
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
+		return 0, err
+	}
+	sql := new(strings.Builder)
+	sql.Reset()
+	sqlexec.MustFormatSQL(sql, "insert into %n.%n "+
+		" (command,owner,args) values ('dumpling',%?,%?)", mysql.SystemDB, mysql.TidbExternalTask, owner, args)
+	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		return 0, err
+	}
+	lastInsertID := sysSession.GetSessionVars().StmtCtx.LastInsertID
+	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+		return 0, err
+	}
+	return lastInsertID, nil
+}
 
 // SelectIntoExec represents a SelectInto executor.
 type SelectIntoExec struct {

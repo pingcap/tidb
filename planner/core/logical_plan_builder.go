@@ -906,11 +906,6 @@ func (b *PlanBuilder) rewriteFullJoin(ctx context.Context, joinNode *ast.Join) (
 		rFullSchema = rChild1.Schema()
 		rFullNames = rChild1.OutputNames()
 	}
-	if joinNode.Tp == ast.RightJoin {
-		// Make sure lFullSchema means outer full schema and rFullSchema means inner full schema.
-		lFullSchema, rFullSchema = rFullSchema, lFullSchema
-		lFullNames, rFullNames = rFullNames, lFullNames
-	}
 	leftJoinPlan.fullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
 
 	// Merge sub-plan's fullNames into this join plan, similar to the fullSchema logic above.
@@ -924,10 +919,8 @@ func (b *PlanBuilder) rewriteFullJoin(ctx context.Context, joinNode *ast.Join) (
 		leftJoinPlan.fullNames = append(leftJoinPlan.fullNames, &name)
 	}
 
-	// Clear NotNull flag for the inner side schema if it's an outer join.
-	if joinNode.Tp == ast.LeftJoin || joinNode.Tp == ast.RightJoin {
-		resetNotNullFlag(leftJoinPlan.fullSchema, 0, leftJoinPlan.fullSchema.Len())
-	}
+	// Clear NotNull flag for all columns.
+	resetNotNullFlag(leftJoinPlan.fullSchema, 0, leftJoinPlan.fullSchema.Len())
 
 	if joinNode.On != nil {
 		b.curClause = onClause
@@ -988,6 +981,8 @@ func (b *PlanBuilder) rewriteFullJoin(ctx context.Context, joinNode *ast.Join) (
 	}.Init(b.ctx, b.getSelectOffset())
 	proj.SetChildren(antiJoinPlan)
 	proj.SetSchema(expression.MergeSchema(lChild2.Schema(), rChild2.Schema()))
+	// Clear NotNull flag for all columns.
+	resetNotNullFlag(proj.schema, 0, proj.schema.Len())
 
 	// Union the result
 	unionAll, err := b.buildUnionAll(ctx, []LogicalPlan{leftJoinPlan, proj})
@@ -4734,6 +4729,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+
 	ds := DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
@@ -4741,7 +4737,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		tableInfo:           tableInfo,
 		physicalTableID:     tableInfo.ID,
 		astIndexHints:       tn.IndexHints,
-		IndexHints:          b.TableHints().indexHintList,
 		indexMergeHints:     indexMergeHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
@@ -4751,6 +4746,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		is:                  b.is,
 		isForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
+	// tmp for liantong poc
+	if b.TableHints() != nil {
+		ds.IndexHints = b.TableHints().indexHintList
+	}
 	var handleCols HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))

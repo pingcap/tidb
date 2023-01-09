@@ -1813,6 +1813,8 @@ type LoadDataStmt struct {
 	ColumnAssignments []*Assignment
 
 	ColumnsAndUserVars []*ColumnNameOrUserVar
+	//supports compression import.
+	Compressed bool
 }
 
 // Restore implements Node interface.
@@ -3316,6 +3318,9 @@ type SelectIntoOption struct {
 	FileName   string
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
+	// supports compression export.
+	Compressed bool
+	SelectSQL  string
 }
 
 // Restore implements Node interface.

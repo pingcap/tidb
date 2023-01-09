@@ -211,6 +211,8 @@ const (
 	DefaultRoleTable = "default_roles"
 	// PasswordHistoryTable is the table in system db contains password history.
 	PasswordHistoryTable = "password_history"
+	// TidbExternalTask is the table in system db contains external tasks.
+	TidbExternalTask = "tidb_external_task"
 )
 
 // MySQL type maximum length.
