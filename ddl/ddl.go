@@ -1339,7 +1339,6 @@ func getDDLInfo(sess *session) (*Info, error) {
 		return info, nil
 	}
 
-	// TODO: should we change to a new session, instead?
 	_, info.ReorgHandle, _, _, err = newReorgHandler(sess).GetDDLReorgHandle(reorgJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {

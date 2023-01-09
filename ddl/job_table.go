@@ -467,22 +467,19 @@ func removeDDLReorgHandle(sess *session, job *model.Job, elements []*meta.Elemen
 		return nil
 	}
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	_, err := sess.execute(context.Background(), sql, "remove_handle")
-	logutil.BgLogger().Info("removeDDLReorgHandle", zap.Error(err), zap.Stack("stack"))
-	return err
-	/*
-		return runInTxn(sess, func(se *session) error {
-			_, err := se.execute(context.Background(), sql, "remove_handle")
-			return err
-		})
-	*/
+	return runInTxn(sess, func(se *session) error {
+		_, err := se.execute(context.Background(), sql, "remove_handle")
+		return err
+	})
 }
 
 // removeReorgElement removes the element from ddl reorg, it is the same with removeDDLReorgHandle, only used in failpoint
 func removeReorgElement(sess *session, job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	_, err := sess.execute(context.Background(), sql, "remove_handle")
-	return err
+	return runInTxn(sess, func(se *session) error {
+		_, err := sess.execute(context.Background(), sql, "remove_handle")
+		return err
+	})
 }
 
 // cleanDDLReorgHandles removes handles that are no longer needed.
