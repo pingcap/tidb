@@ -86,11 +86,11 @@ func TestParallelLockNewJob(t *testing.T) {
 			jobManagerID := fmt.Sprintf("test-ttl-manager-%d", j)
 			wg.Add(1)
 			go func() {
-				m := ttlworker.NewJobManager(jobManagerID, nil, store)
+				m := ttlworker.NewJobManager(jobManagerID, nil, store, nil)
 				m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 				se := sessionFactory()
-				job, err := m.LockNewJob(context.Background(), se, testTable, now, nil)
+				job, err := m.LockNewJob(context.Background(), se, testTable, now, false)
 				if err == nil {
 					successCounter.Add(1)
 					successJob = job
