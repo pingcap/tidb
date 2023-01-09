@@ -622,7 +622,7 @@ import (
 	truncate              "TRUNCATE"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
-	ttlJobInterval    "TTL_JOB_INTERVAL"
+	ttlJobInterval        "TTL_JOB_INTERVAL"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
