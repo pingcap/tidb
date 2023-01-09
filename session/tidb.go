@@ -42,11 +42,12 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 type domainMap struct {
-	mu      sync.Mutex
+	mu      syncutil.Mutex
 	domains map[string]*domain.Domain
 }
 
