@@ -2568,7 +2568,7 @@ func TestTmpRewriterDateDim(t *testing.T) {
 		}
 	}
 
-	outputPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain select d_moy from store_sales, date_dim where d_year in (2000) and ss_sold_date_sk = d_date_sk").Rows())
+	outputPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain select  /*+ set_var(enable_dynamic_partition_pruning=1)*/  * from store_sales, date_dim where d_year in (2000) and ss_sold_date_sk = d_date_sk").Rows())
 	fmt.Println(outputPlan)
 	//tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	//for i, ts := range input {

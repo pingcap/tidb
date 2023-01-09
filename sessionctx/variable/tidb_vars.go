@@ -1142,18 +1142,18 @@ const (
 	DefTiDBTTLScanBatchMaxSize                       = 10240
 	DefTiDBTTLScanBatchMinSize                       = 1
 	DefTiDBTTLDeleteBatchSize                        = 100
-	DefTiDBTTLDeleteBatchMaxSize         = 10240
-	DefTiDBTTLDeleteBatchMinSize         = 1
-	DefTiDBTTLDeleteRateLimit            = 0
-	DefPasswordReuseHistory              = 0
-	DefPasswordReuseTime                 = 0
-	DefTiDBStoreBatchSize                = 0
-	DefTiDBTTLJobRunInterval             = "1h0m0s"
-	DefTiDBTTLJobScheduleWindowStartTime = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime   = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount            = 4
-	DefTiDBTTLDeleteWorkerCount          = 4
-	DefEnableDynamicPartitionPruning     = false
+	DefTiDBTTLDeleteBatchMaxSize                     = 10240
+	DefTiDBTTLDeleteBatchMinSize                     = 1
+	DefTiDBTTLDeleteRateLimit                        = 0
+	DefPasswordReuseHistory                          = 0
+	DefPasswordReuseTime                             = 0
+	DefTiDBStoreBatchSize                            = 0
+	DefTiDBTTLJobRunInterval                         = "1h0m0s"
+	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                        = 4
+	DefTiDBTTLDeleteWorkerCount                      = 4
+	DefEnableDynamicPartitionPruning                 = false
 )
 
 // Process global variables.

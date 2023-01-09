@@ -2237,7 +2237,8 @@ var defaultSysVars = []*SysVar{
 		return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
 	},
 	},
-	{Scope: ScopeSession, Name: EnableDynamicPartitionPruning, Value: BoolToOnOff(DefEnableDynamicPartitionPruning), IsHintUpdatable: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{
+		Scope: ScopeSession, Name: EnableDynamicPartitionPruning, Value: BoolToOnOff(DefEnableDynamicPartitionPruning), IsHintUpdatable: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableDynamicPartitionPruning = TiDBOptOn(val)
 		return nil
 	}},
