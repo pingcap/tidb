@@ -8135,3 +8135,15 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 		KEY idx_autoinc_id (id)
 	)`)
 }
+
+func TestFullJoinSimple(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(1), (2)")
+	tk.MustExec("insert into t2 values(2), (3)")
+	tk.MustQuery("select * from t1 full join t2 on t1.a=t2.a").Sort().Check(testkit.Rows("1 <nil>", "2 2", "<nil> 3"))
+	tk.MustQuery("select * from t1 full outer join t2 on t1.a=t2.a").Sort().Check(testkit.Rows("1 <nil>", "2 2", "<nil> 3"))
+}

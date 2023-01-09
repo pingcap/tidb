@@ -43,7 +43,7 @@ func TestSimple(t *testing.T) {
 		"current_timestamp", "current_user", "database", "databases", "day_hour", "day_microsecond",
 		"day_minute", "day_second", "decimal", "default", "delete", "desc", "describe",
 		"distinct", "distinctRow", "div", "double", "drop", "dual", "else", "enclosed", "escaped",
-		"exists", "explain", "false", "float", "fetch", "for", "force", "foreign", "from",
+		"exists", "explain", "false", "float", "fetch", "for", "force", "foreign", "from", "full",
 		"fulltext", "grant", "group", "having", "hour_microsecond", "hour_minute",
 		"hour_second", "if", "ignore", "in", "index", "infile", "inner", "insert", "int", "into", "integer",
 		"interval", "is", "join", "key", "keys", "kill", "leading", "left", "like", "limit", "lines", "load",
@@ -82,7 +82,7 @@ func TestSimple(t *testing.T) {
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
-		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
+		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
 		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
@@ -2200,9 +2200,9 @@ func TestIdentifier(t *testing.T) {
 		{"use select", false, "USE `select`"},
 		{`select * from t as a`, true, "SELECT * FROM `t` AS `a`"},
 		{"select 1 full, 1 row, 1 abs", false, ""},
-		{"select 1 full, 1 `row`, 1 abs", true, "SELECT 1 AS `full`,1 AS `row`,1 AS `abs`"},
+		{"select 1 `full`, 1 `row`, 1 abs", true, "SELECT 1 AS `full`,1 AS `row`,1 AS `abs`"},
 		{"select * from t full, t1 row, t2 abs", false, ""},
-		{"select * from t full, t1 `row`, t2 abs", true, "SELECT * FROM ((`t` AS `full`) JOIN `t1` AS `row`) JOIN `t2` AS `abs`"},
+		{"select * from t `full`, t1 `row`, t2 abs", true, "SELECT * FROM ((`t` AS `full`) JOIN `t1` AS `row`) JOIN `t2` AS `abs`"},
 		// for issue 1878, identifiers may begin with digit.
 		{"create database 123test", true, "CREATE DATABASE `123test`"},
 		{"create database 123", false, "CREATE DATABASE `123`"},
