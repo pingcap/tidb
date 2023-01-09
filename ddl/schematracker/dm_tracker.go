@@ -1173,6 +1173,21 @@ func (SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.Alte
 	return nil
 }
 
+// CreateResourceGroup implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) CreateResourceGroup(_ sessionctx.Context, _ *ast.CreateResourceGroupStmt) error {
+	return nil
+}
+
+// DropResourceGroup implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) DropResourceGroup(_ sessionctx.Context, _ *ast.DropResourceGroupStmt) error {
+	return nil
+}
+
+// AlterResourceGroup implements the DDL interface, it's no-op in DM's case.
+func (SchemaTracker) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error {
+	return nil
+}
+
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
 func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	for _, tableInfo := range info {
@@ -1255,14 +1270,4 @@ func (SchemaTracker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infosc
 // DoDDLJob implements the DDL interface, it's no-op in DM's case.
 func (SchemaTracker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return nil
-}
-
-// MoveJobFromQueue2Table implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) MoveJobFromQueue2Table(b bool) error {
-	panic("implement me")
-}
-
-// MoveJobFromTable2Queue implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) MoveJobFromTable2Queue() error {
-	panic("implement me")
 }

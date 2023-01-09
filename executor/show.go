@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/parser/tidb"
 	field_types "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
@@ -68,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"golang.org/x/exp/slices"
@@ -305,13 +307,14 @@ func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var bindRecords []*bindinfo.BindRecord
+	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		bindRecords = handle.GetAllBindRecord()
+		tmp = handle.GetAllBindRecord()
 	} else {
-		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
+	bindRecords := slice.Copy(tmp)
 	// Remove the invalid bindRecord.
 	ind := 0
 	for _, bindData := range bindRecords {
@@ -1009,8 +1012,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 						}
 						buf.WriteString(" DEFAULT NULL")
 					}
-				case "CURRENT_TIMESTAMP":
-					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+				case "CURRENT_TIMESTAMP", "CURRENT_DATE":
+					buf.WriteString(" DEFAULT ")
+					buf.WriteString(defaultValue.(string))
 					if col.GetDecimal() > 0 {
 						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
 					}
@@ -1227,24 +1231,50 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 
 	if tableInfo.TTLInfo != nil {
-		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes
+		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
 		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
 
-		columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
-		timeUnit := ast.TimeUnitExpr{Unit: ast.TimeUnitType(tableInfo.TTLInfo.IntervalTimeUnit)}
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
+			timeUnit := ast.TimeUnitExpr{Unit: ast.TimeUnitType(tableInfo.TTLInfo.IntervalTimeUnit)}
+			restoreCtx.WriteKeyWord("TTL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteName(columnName.String())
+			restoreCtx.WritePlainf(" + INTERVAL %s ", tableInfo.TTLInfo.IntervalExprStr)
+			return timeUnit.Restore(restoreCtx)
+		})
 
-		restoreCtx.WriteKeyWord(" TTL ")
-		restoreCtx.WritePlain("= ")
-		restoreCtx.WriteName(columnName.String())
-		restoreCtx.WritePlainf(" + INTERVAL %s ", tableInfo.TTLInfo.IntervalExprStr)
-		err = timeUnit.Restore(restoreCtx)
 		if err != nil {
 			return err
 		}
-		if tableInfo.TTLInfo.Enable {
-			fmt.Fprintf(buf, " TTL_ENABLE = 'ON'")
-		} else {
-			fmt.Fprintf(buf, " TTL_ENABLE = 'OFF'")
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			restoreCtx.WriteKeyWord("TTL_ENABLE")
+			restoreCtx.WritePlain("=")
+			if tableInfo.TTLInfo.Enable {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval.String())
+			return nil
+		})
+
+		if err != nil {
+			return err
 		}
 	}
 	return nil

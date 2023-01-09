@@ -11,6 +11,7 @@ go_test(
         "random_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         "//config",
         "//domain",

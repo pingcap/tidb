@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -68,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
@@ -121,6 +123,7 @@ type Domain struct {
 	expiredTimeStamp4PC     types.Time
 	logBackupAdvancer       *daemon.OwnerDaemon
 	historicalStatsWorker   *HistoricalStatsWorker
+	ttlJobManager           *ttlworker.JobManager
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -185,6 +188,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// 1. Not first time bootstrap loading, which needs a full load.
 	// 2. It is newer than the current one, so it will be "the current one" after this function call.
 	// 3. There are less 100 diffs.
+	// 4. No regenrated schema diff.
 	startTime := time.Now()
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
 		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
@@ -212,7 +216,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
+	resourceGroups, err := do.fetchResourceGroups(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
+
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -242,6 +251,14 @@ func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
 		return nil, err
 	}
 	return allPolicies, nil
+}
+
+func (do *Domain) fetchResourceGroups(m *meta.Meta) ([]*model.ResourceGroupInfo, error) {
+	allResourceGroups, err := m.ListResourceGroups()
+	if err != nil {
+		return nil, err
+	}
+	return allResourceGroups, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
@@ -343,6 +360,9 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		IDs, err := builder.ApplyDiff(m, diff)
 		if err != nil {
 			return nil, nil, err
+		}
+		if diff.RegenerateSchemaMap {
+			return nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
@@ -878,7 +898,7 @@ func (do *Domain) Close() {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, onClose func()) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
@@ -888,8 +908,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
-		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
-		onClose:             onClose,
+		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
@@ -1060,6 +1079,11 @@ func (do *Domain) Init(
 	}
 
 	return nil
+}
+
+// SetOnClose used to set do.onClose func.
+func (do *Domain) SetOnClose(onClose func()) {
+	do.onClose = onClose
 }
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
@@ -1420,7 +1444,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 // WatchTiFlashComputeNodeChange create a routine to watch if the topology of tiflash_compute node is changed.
 // TODO: tiflashComputeNodeKey is not put to etcd yet(finish this when AutoScaler is done)
 //
-//	store cache will only be invalidated every 30 seconds.
+//	store cache will only be invalidated every n seconds.
 func (do *Domain) WatchTiFlashComputeNodeChange() error {
 	var watchCh clientv3.WatchChan
 	if do.etcdClient != nil {
@@ -1461,8 +1485,8 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 			case tikv.Storage:
 				logCount++
 				s.GetRegionCache().InvalidateTiFlashComputeStores()
-				if logCount == 60 {
-					// Print log every 60*duration seconds.
+				if logCount == 6 {
+					// Print log every 6*duration seconds.
 					logutil.BgLogger().Debug("tiflash_compute store cache invalied, will update next query", zap.Bool("watched", watched))
 					logCount = 0
 				}
@@ -1641,8 +1665,8 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 	}
 	taskCH := make(chan *PlanReplayerDumpTask, 16)
 	taskStatus := &planReplayerDumpTaskStatus{}
-	taskStatus.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
-	taskStatus.runningTaskMu.runningTasks = map[PlanReplayerTaskKey]struct{}{}
+	taskStatus.finishedTaskMu.finishedTask = map[replayer.PlanReplayerTaskKey]struct{}{}
+	taskStatus.runningTaskMu.runningTasks = map[replayer.PlanReplayerTaskKey]struct{}{}
 
 	do.planReplayerHandle.planReplayerTaskDumpHandle = &planReplayerTaskDumpHandle{
 		taskCH: taskCH,
@@ -1934,8 +1958,10 @@ func (do *Domain) loadStatsWorker() {
 		lease = 3 * time.Second
 	}
 	loadTicker := time.NewTicker(lease)
+	updStatsHealthyTicker := time.NewTicker(20 * lease)
 	defer func() {
 		loadTicker.Stop()
+		updStatsHealthyTicker.Stop()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 	statsHandle := do.StatsHandle()
@@ -1961,6 +1987,8 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
+		case <-updStatsHealthyTicker.C:
+			statsHandle.UpdateStatsHealthyMetrics()
 		case <-do.exit:
 			return
 		}
@@ -2176,7 +2204,7 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
 // clients are subscribed to for updates. For the caller, the cache is also built
 // synchronously so that the effect is immediate.
-func (do *Domain) NotifyUpdateSysVarCache() {
+func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), sysVarCacheKey, "")
@@ -2185,8 +2213,10 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 		}
 	}
 	// update locally
-	if err := do.rebuildSysVarCache(nil); err != nil {
-		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
+	if updateLocal {
+		if err := do.rebuildSysVarCache(nil); err != nil {
+			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
+		}
 	}
 }
 
@@ -2444,6 +2474,32 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
+}
+
+// StartTTLJobManager creates and starts the ttl job manager
+func (do *Domain) StartTTLJobManager() {
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("ttlJobManager exited.")
+		}()
+
+		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store)
+		do.ttlJobManager = ttlJobManager
+		ttlJobManager.Start()
+
+		<-do.exit
+
+		ttlJobManager.Stop()
+		err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
+		if err != nil {
+			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+		}
+	})
+}
+
+// TTLJobManager returns the ttl job manager on this domain
+func (do *Domain) TTLJobManager() *ttlworker.JobManager {
+	return do.ttlJobManager
 }
 
 func init() {

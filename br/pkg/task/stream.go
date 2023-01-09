@@ -480,6 +480,12 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// If the oldRatio is negative, which is not normal status.
+	// It should set default value "1.1" after PiTR finished.
+	if strings.HasPrefix(oldRatio, "-") {
+		oldRatio = "1.1"
+	}
+
 	return func() error {
 		return utils.SetGcRatio(execCtx, oldRatio)
 	}, nil
@@ -1177,7 +1183,7 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	defer func() {
-		if err = restoreGc(); err != nil {
+		if err := restoreGc(); err != nil {
 			log.Error("failed to set gc enabled", zap.Error(err))
 		}
 	}()

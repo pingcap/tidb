@@ -479,7 +479,15 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL scope  */
-	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
+	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			MaxPreparedStmtCountValue.Store(num)
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: InitConnect, Value: "", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		p := parser.New()
 		p.SetSQLMode(vars.SQLMode)
@@ -1062,14 +1070,14 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatFloat(PreparedPlanCacheMemoryGuardRatio.Load(), 'f', -1, 64), nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGeneralPlanCache, Value: BoolToOnOff(DefTiDBEnableGeneralPlanCache), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableGeneralPlanCache = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNonPreparedPlanCache, Value: BoolToOnOff(DefTiDBEnableNonPreparedPlanCache), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNonPreparedPlanCache = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBGeneralPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBGeneralPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonPreparedPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBNonPreparedPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
 		uVal, err := strconv.ParseUint(val, 10, 64)
 		if err == nil {
-			s.GeneralPlanCacheSize = uVal
+			s.NonPreparedPlanCacheSize = uVal
 		}
 		return err
 	}},
@@ -1093,18 +1101,6 @@ var defaultSysVars = []*SysVar{
 			return err
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBEnableConcurrentDDL, Value: BoolToOnOff(DefTiDBEnableConcurrentDDL), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		if EnableConcurrentDDL.Load() != TiDBOptOn(val) {
-			err := SwitchConcurrentDDL(TiDBOptOn(val))
-			if err != nil {
-				return err
-			}
-			EnableConcurrentDDL.Store(TiDBOptOn(val))
-		}
-		return nil
-	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(EnableConcurrentDDL.Load()), nil
-	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableMDL, Value: BoolToOnOff(DefTiDBEnableMDL), Type: TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
 		if EnableMDL.Load() != TiDBOptOn(val) {
 			err := SwitchMDL(TiDBOptOn(val))
@@ -1169,7 +1165,28 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 
+	{Scope: ScopeGlobal, Name: TiDBHistoricalStatsDuration, Value: DefTiDBHistoricalStatsDuration.String(), Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: uint64(time.Hour * 24 * 365),
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return HistoricalStatsDuration.Load().String(), nil
+		}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			HistoricalStatsDuration.Store(d)
+			return nil
+		}},
+
 	/* The system variables below have GLOBAL and SESSION scope  */
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuesCapture, Value: BoolToOnOff(false), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnablePlanReplayedContinuesCapture = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			return BoolToOnOff(vars.EnablePlanReplayedContinuesCapture), nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnablePlanReplayerCapture = TiDBOptOn(val)
@@ -1842,14 +1859,6 @@ var defaultSysVars = []*SysVar{
 		s.ShardAllocateStep = TidbOptInt64(val, DefTiDBShardAllocateStep)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAmendPessimisticTxn, Value: BoolToOnOff(DefTiDBEnableAmendPessimisticTxn), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		enableAmend := TiDBOptOn(val)
-		if enableAmend && EnableFastReorg.Load() {
-			return errors.Errorf("amend pessimistic transactions is not compatible with tidb_ddl_enable_fast_reorg")
-		}
-		s.EnableAmendPessimisticTxn = enableAmend
-		return nil
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncCommit, Value: BoolToOnOff(DefTiDBEnableAsyncCommit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAsyncCommit = TiDBOptOn(val)
 		return nil
@@ -2179,6 +2188,56 @@ var defaultSysVars = []*SysVar{
 		Type: TypeInt, MinValue: 0, MaxValue: 25000, SetSession: func(s *SessionVars, val string) error {
 			s.StoreBatchSize = TidbOptInt(val, DefTiDBStoreBatchSize)
 			return nil
+		},
+	},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLJobScheduleWindowStartTime, Value: DefTiDBTTLJobScheduleWindowStartTime, Type: TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			startTime, err := time.ParseInLocation(FullDayTimeFormat, s, time.UTC)
+			if err != nil {
+				return err
+			}
+			TTLJobScheduleWindowStartTime.Store(startTime)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			startTime := TTLJobScheduleWindowStartTime.Load()
+			return startTime.Format(FullDayTimeFormat), nil
+		},
+	},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLJobScheduleWindowEndTime, Value: DefTiDBTTLJobScheduleWindowEndTime, Type: TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			endTime, err := time.ParseInLocation(FullDayTimeFormat, s, time.UTC)
+			if err != nil {
+				return err
+			}
+			TTLJobScheduleWindowEndTime.Store(endTime)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			endTime := TTLJobScheduleWindowEndTime.Load()
+			return endTime.Format(FullDayTimeFormat), nil
+		},
+	},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLScanWorkerCount, Value: strconv.Itoa(DefTiDBTTLScanWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: 256, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			TTLScanWorkerCount.Store(int32(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(TTLScanWorkerCount.Load())), nil
+		},
+	},
+	{
+		Scope: ScopeGlobal, Name: TiDBTTLDeleteWorkerCount, Value: strconv.Itoa(DefTiDBTTLDeleteWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: 256, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			val, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			TTLDeleteWorkerCount.Store(int32(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
 		},
 	},
 }

@@ -19,8 +19,10 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -125,6 +127,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	}
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("18 18", "21 21", "24 24", "27 27", "30 30"))
+	tk.MustQuery(fmt.Sprintf("select distinct source from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Sort().Check(testkit.Rows("flush stats"))
 
 	// assert delete
 	tk.MustExec("delete from test.t where test.t.a = 1")
@@ -177,4 +180,66 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'",
 		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
+}
+
+func TestGCOutdatedHistoryStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("analyze table test.t")
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	// dump historical stats
+	h := dom.StatsHandle()
+	hsWorker := dom.GetHistoricalStatsWorker()
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.Nil(t, err)
+
+	// assert the records of history stats table
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d' order by create_time",
+		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'",
+		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
+
+	variable.HistoricalStatsDuration.Store(1 * time.Second)
+	time.Sleep(2 * time.Second)
+	err = dom.StatsHandle().ClearOutdatedHistoryStats()
+	require.NoError(t, err)
+	// assert the records of history stats table
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d' order by create_time",
+		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id = '%d'",
+		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
+}
+
+func TestPartitionTableHistoricalStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (a int, b int, index idx(b))
+PARTITION BY RANGE ( a ) (
+PARTITION p0 VALUES LESS THAN (6)
+)`)
+	tk.MustExec("delete from mysql.stats_history")
+
+	tk.MustExec("analyze table test.t")
+	// dump historical stats
+	h := dom.StatsHandle()
+	hsWorker := dom.GetHistoricalStatsWorker()
+
+	// assert global table and partition table be dumped
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	err := hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	tblID = hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	tk.MustQuery("select count(*) from mysql.stats_history").Check(testkit.Rows("2"))
 }

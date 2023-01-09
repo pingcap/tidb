@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -111,6 +112,7 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
+	resourceGroupManager  ResourceGroupManager
 }
 
 // ServerInfo is server static information.
@@ -192,6 +194,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
+	is.resourceGroupManager = initResourceGroupManager(etcdCli)
 	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -235,6 +238,13 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 		return &mockPlacementManager{}
 	}
 	return &PDPlacementManager{etcdCli: etcdCli}
+}
+
+func initResourceGroupManager(etcdCli *clientv3.Client) ResourceGroupManager {
+	if etcdCli == nil {
+		return &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
+	}
+	return NewResourceManager(etcdCli)
 }
 
 func initTiFlashReplicaManager(etcdCli *clientv3.Client) TiFlashReplicaManager {
@@ -503,7 +513,7 @@ func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) 
 	return util2.InternalHTTPClient().Do(req)
 }
 
-// GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
+// GetAllRuleBundles is used to get all rule bundles from PD It is used to load full rules from PD while fullload infoschema.
 func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -561,6 +571,53 @@ func PutRuleBundlesWithRetry(ctx context.Context, bundles []*placement.Bundle, m
 	}
 
 	return
+}
+
+// GetResourceGroup is used to get one specific resource group from resource manager.
+func GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	return is.resourceGroupManager.GetResourceGroup(ctx, name)
+}
+
+// GetAllResourceGroups is used to get all resource groups from resource manager.
+func GetAllResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	return is.resourceGroupManager.GetAllResourceGroups(ctx)
+}
+
+// CreateResourceGroup is used to create one specific resource group to resource manager.
+func CreateResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.resourceGroupManager.CreateResourceGroup(ctx, group)
+}
+
+// ModifyResourceGroup is used to modify one specific resource group to resource manager.
+func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.resourceGroupManager.ModifyResourceGroup(ctx, group)
+}
+
+// DeleteResourceGroup is used to delete one specific resource group from resource manager.
+func DeleteResourceGroup(ctx context.Context, name string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.resourceGroupManager.DeleteResourceGroup(ctx, name)
 }
 
 // PutRuleBundlesWithDefaultRetry will retry for default times
@@ -689,8 +746,6 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if sm == nil {
 		return
 	}
-	pl := sm.ShowProcessList()
-	innerSessionStartTSList := sm.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -704,18 +759,8 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	minStartTS := oracle.GoTimeToTS(now)
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
-	for _, info := range pl {
-		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
-			minStartTS = info.CurTxnStartTS
-		}
-	}
-
-	for _, innerTS := range innerSessionStartTSList {
-		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("Internal Session Transaction StartTS", innerTS))
-		kv.PrintLongTimeInternalTxn(now, innerTS, false)
-		if innerTS > startTSLowerLimit && innerTS < minStartTS {
-			minStartTS = innerTS
-		}
+	if ts := sm.GetMinStartTS(startTSLowerLimit); ts > startTSLowerLimit && ts < minStartTS {
+		minStartTS = ts
 	}
 
 	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)

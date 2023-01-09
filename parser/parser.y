@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/parser/duration"
 )
 
 %}
@@ -53,6 +54,7 @@ import (
 	identifier  "identifier"
 	asof        "AS OF"
 	toTimestamp "TO TIMESTAMP"
+	memberof    "MEMBER OF"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -77,6 +79,7 @@ import (
 	alter             "ALTER"
 	analyze           "ANALYZE"
 	and               "AND"
+	array             "ARRAY"
 	as                "AS"
 	asc               "ASC"
 	between           "BETWEEN"
@@ -458,6 +461,7 @@ import (
 	maxUpdatesPerHour     "MAX_UPDATES_PER_HOUR"
 	maxUserConnections    "MAX_USER_CONNECTIONS"
 	mb                    "MB"
+	member                "MEMBER"
 	memory                "MEMORY"
 	merge                 "MERGE"
 	microsecond           "MICROSECOND"
@@ -618,6 +622,7 @@ import (
 	truncate              "TRUNCATE"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
+	ttlJobInterval    "TTL_JOB_INTERVAL"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -652,6 +657,7 @@ import (
 	copyKwd               "COPY"
 	constraints           "CONSTRAINTS"
 	curTime               "CURTIME"
+	curDate               "CURDATE"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
 	dotType               "DOT"
@@ -986,6 +992,7 @@ import (
 	AlterTableSpecListOpt                  "Alter table specification list optional"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
+	ArrayKwdOpt                            "Array options"
 	AnalyzeOption                          "Analyze option"
 	AnalyzeOptionList                      "Analyze option list"
 	AnalyzeOptionListOpt                   "Optional analyze option list"
@@ -1375,6 +1382,7 @@ import (
 	PrimaryOpt        "Optional primary keyword"
 	NowSym            "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP"
 	NowSymFunc        "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
+	CurdateSym        "CURDATE or CURRENT_DATE"
 	DefaultKwdOpt     "optional DEFAULT keyword"
 	DatabaseSym       "DATABASE or SCHEMA"
 	ExplainSym        "EXPLAIN or DESCRIBE or DESC"
@@ -1597,13 +1605,13 @@ ResourceGroupOptionList:
 	}
 
 DirectResourceGroupOption:
-	"RRU_PER_SEC" EqOpt stringLit
+	"RRU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, UintValue: $3.(uint64)}
 	}
-|	"WRU_PER_SEC" EqOpt stringLit
+|	"WRU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, UintValue: $3.(uint64)}
 	}
 |	"CPU" EqOpt stringLit
 	{
@@ -1611,11 +1619,11 @@ DirectResourceGroupOption:
 	}
 |	"IO_READ_BANDWIDTH" EqOpt stringLit
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadRate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadBandwidth, StrValue: $3}
 	}
 |	"IO_WRITE_BANDWIDTH" EqOpt stringLit
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteRate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteBandwidth, StrValue: $3}
 	}
 
 PlacementOptionList:
@@ -1789,10 +1797,6 @@ AlterTableSpecSingleOpt:
 	}
 |	"REMOVE" "TTL"
 	{
-		if !TTLFeatureGate {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableRemoveTTL,
 		}
@@ -3619,6 +3623,14 @@ NowSymOptionFraction:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: []ast.ExprNode{ast.NewValueExpr($3, parser.charset, parser.collation)}}
 	}
+|	CurdateSym '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_DATE")}
+	}
+|	"CURRENT_DATE"
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_DATE")}
+	}
 
 NextValueForSequence:
 	"NEXT" "VALUE" forKwd TableName
@@ -3656,6 +3668,10 @@ NowSym:
 	"CURRENT_TIMESTAMP"
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
+
+CurdateSym:
+	builtinCurDate
+|	"CURRENT_DATE"
 
 SignedLiteral:
 	Literal
@@ -5818,6 +5834,10 @@ PredicateExpr:
 	{
 		$$ = &ast.PatternRegexpExpr{Expr: $1, Pattern: $3, Not: !$2.(bool)}
 	}
+|	BitExpr memberof '(' SimpleExpr ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONMemberOf), Args: []ast.ExprNode{$1, $4}}
+	}
 |	BitExpr
 
 RegexpSym:
@@ -6337,6 +6357,7 @@ UnReservedKeyword:
 |	"ACCOUNT"
 |	"INCREMENTAL"
 |	"CPU"
+|	"MEMBER"
 |	"MEMORY"
 |	"BLOCK"
 |	"IO"
@@ -6461,6 +6482,7 @@ UnReservedKeyword:
 |	"TOKEN_ISSUER"
 |	"TTL"
 |	"TTL_ENABLE"
+|	"TTL_JOB_INTERVAL"
 |	"FAILED_LOGIN_ATTEMPTS"
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
@@ -6523,6 +6545,7 @@ NotKeywordToken:
 |	"CAST"
 |	"COPY"
 |	"CURTIME"
+|	"CURDATE"
 |	"DATE_ADD"
 |	"DATE_SUB"
 |	"DOT"
@@ -7245,7 +7268,7 @@ SimpleExpr:
 			FunctionType: ast.CastBinaryOperator,
 		}
 	}
-|	builtinCast '(' Expression "AS" CastType ')'
+|	builtinCast '(' Expression "AS" CastType ArrayKwdOpt ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		tp := $5.(*types.FieldType)
@@ -7256,6 +7279,7 @@ SimpleExpr:
 		if tp.GetDecimal() == types.UnspecifiedLength {
 			tp.SetDecimal(defaultDecimal)
 		}
+		tp.SetArray($6.(bool))
 		explicitCharset := parser.explicitCharset
 		parser.explicitCharset = false
 		$$ = &ast.FuncCastExpr{
@@ -7323,6 +7347,15 @@ SimpleExpr:
 		expr := ast.NewValueExpr($3, parser.charset, parser.collation)
 		extract := &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONExtract), Args: []ast.ExprNode{$1, expr}}
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.JSONUnquote), Args: []ast.ExprNode{extract}}
+	}
+
+ArrayKwdOpt:
+	{
+		$$ = false
+	}
+|	"ARRAY"
+	{
+		$$ = true
 	}
 
 DistinctKwd:
@@ -11844,10 +11877,6 @@ TableOption:
 	}
 |	"TTL" EqOpt Identifier '+' "INTERVAL" Literal TimeUnit
 	{
-		if !TTLFeatureGate {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		$$ = &ast.TableOption{
 			Tp:            ast.TableOptionTTL,
 			ColumnName:    &ast.ColumnName{Name: model.NewCIStr($3)},
@@ -11857,10 +11886,6 @@ TableOption:
 	}
 |	"TTL_ENABLE" EqOpt stringLit
 	{
-		if !TTLFeatureGate {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		onOrOff := strings.ToLower($3)
 		if onOrOff == "on" {
 			$$ = &ast.TableOption{Tp: ast.TableOptionTTLEnable, BoolValue: true}
@@ -11870,6 +11895,15 @@ TableOption:
 			yylex.AppendError(yylex.Errorf("The TTL_ENABLE option has to be set 'ON' or 'OFF'"))
 			return 1
 		}
+	}
+|	"TTL_JOB_INTERVAL" EqOpt stringLit
+	{
+		_, err := duration.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The TTL_JOB_INTERVAL option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
 	}
 
 ForceOpt:
@@ -13334,6 +13368,15 @@ SetBindingStmt:
 			BindingStatusType: $3.(ast.BindingStatusType),
 			OriginNode:        originStmt,
 			HintedNode:        hintedStmt,
+		}
+
+		$$ = x
+	}
+|	"SET" "BINDING" BindingStatusType "FOR" "SQL" "DIGEST" stringLit
+	{
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			SQLDigest:         $7,
 		}
 
 		$$ = x
