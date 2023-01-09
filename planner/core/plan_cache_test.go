@@ -458,25 +458,3 @@ func TestUncacheableReason(t *testing.T) {
 	// show the corresponding un-cacheable reason at execute-stage as well
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
 }
-
-//func TestLimitUnsupportedCase(t *testing.T) {
-//	store := testkit.CreateMockStore(t)
-//	tk := testkit.NewTestKit(t, store)
-//	tk.MustExec("use test")
-//	//tk.MustExec("drop table if exists t")
-//	//tk.MustExec("create table t(a int, key(a))")
-//	tk.MustExec("prepare st from 'select 1 limit ?'")
-
-//tk.MustExec("set @a = 1.2")
-//tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-//tk.MustExec("set @a = 1.")
-//tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-//tk.MustExec("set @a = '0'")
-//tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-//tk.MustExec("set @a = '1'")
-//tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-//tk.MustExec("set @a = 1_2")
-//tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-//_, err := tk.Exec("execute stmt using @a")
-//require.True(t, plannercore.ErrWrongArguments.Equal(err))
-//}
