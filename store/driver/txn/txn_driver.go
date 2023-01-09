@@ -76,6 +76,12 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	return txn.extractKeyErr(err)
 }
 
+func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
+	keys := toTiKVKeys(keysInput)
+	err := txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
+	return txn.extractKeyErr(err)
+}
+
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	err := txn.KVTxn.Commit(ctx)
 	return txn.extractKeyErr(err)
@@ -218,8 +224,6 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		} else {
 			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*txnsnapshot.SnapshotRuntimeStats))
 		}
-	case kv.SchemaAmender:
-		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
 	case kv.SampleStep:
 		txn.KVTxn.GetSnapshot().SetSampleStep(val.(uint32))
 	case kv.CommitHook:
