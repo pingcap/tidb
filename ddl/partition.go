@@ -192,15 +192,6 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			for _, d := range partInfo.Definitions {
 				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
-				err = infosync.UpdateTiFlashProgressCache(d.ID, 1)
-				if err != nil {
-					// just print log, progress will be updated in `refreshTiFlashTicker`
-					logutil.BgLogger().Error("update tiflash sync progress cache failed",
-						zap.Error(err),
-						zap.Int64("tableID", tblInfo.ID),
-						zap.Int64("partitionID", d.ID),
-					)
-				}
 			}
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.

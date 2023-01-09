@@ -341,45 +341,12 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	return nil
 }
 
-<<<<<<< HEAD
 func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
 	allReplicaReady := true
 	defer func() {
 		pollTiFlashContext.HandlePdCounter += 1
 		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick.Load()
 	}()
-=======
-func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
-	pollMaxCount := RefreshProgressMaxTableCount
-	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
-		pollMaxCount = uint64(val.(int))
-	})
-	for element := pollTiFlashContext.UpdatingProgressTables.Front(); element != nil && pollMaxCount > 0; pollMaxCount-- {
-		availableTableID := element.Value.(AvailableTableID)
-		var table table.Table
-		if availableTableID.IsPartition {
-			table, _, _ = schemas.FindTableByPartitionID(availableTableID.ID)
-			if table == nil {
-				logutil.BgLogger().Info("get table by partition failed, may be dropped or truncated",
-					zap.Int64("partitionID", availableTableID.ID),
-				)
-				pollTiFlashContext.UpdatingProgressTables.Remove(element)
-				element = element.Next()
-				continue
-			}
-		} else {
-			var ok bool
-			table, ok = schemas.TableByID(availableTableID.ID)
-			if !ok {
-				logutil.BgLogger().Info("get table id failed, may be dropped or truncated",
-					zap.Int64("tableID", availableTableID.ID),
-				)
-				pollTiFlashContext.UpdatingProgressTables.Remove(element)
-				element = element.Next()
-				continue
-			}
-		}
->>>>>>> 7f83ec475e (DDL: Fix bug that TiFlash replica unavailable after add partition with small probability (#39170))
 
 	updateTiFlash := pollTiFlashContext.UpdateTiFlashStoreCounter%UpdateTiFlashStoreTick.Load() == 0
 	if updateTiFlash {
@@ -416,8 +383,6 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 		}
 	}
 
-<<<<<<< HEAD
-=======
 	failpoint.Inject("waitForAddPartition", func(val failpoint.Value) {
 		for _, phyTable := range tableList {
 			is := d.infoCache.GetLatest()
@@ -433,12 +398,6 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 		}
 	})
 
-	needPushPending := false
-	if pollTiFlashContext.UpdatingProgressTables.Len() == 0 {
-		needPushPending = true
-	}
-
->>>>>>> 7f83ec475e (DDL: Fix bug that TiFlash replica unavailable after add partition with small probability (#39170))
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// These request can be batched as an optimization.
@@ -447,12 +406,8 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 			available = val.(bool)
 		})
 		// We only check unavailable tables here, so doesn't include blocked add partition case.
-<<<<<<< HEAD
-		if !available {
-			allReplicaReady = false
-=======
 		if !available && !tb.LogicalTableAvailable {
->>>>>>> 7f83ec475e (DDL: Fix bug that TiFlash replica unavailable after add partition with small probability (#39170))
+			allReplicaReady = false
 			enabled, inqueue, _ := pollTiFlashContext.Backoff.Tick(tb.ID)
 			if inqueue && !enabled {
 				logutil.BgLogger().Info("Escape checking available status due to backoff", zap.Int64("tableId", tb.ID))
@@ -518,113 +473,6 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 	return allReplicaReady, nil
 }
 
-<<<<<<< HEAD
-func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infoschema.InfoSchema, tikvHelper *helper.Helper, replicaInfos *[]TiFlashReplicaStatus) error {
-	store := tikvHelper.Store.(kv.Storage)
-
-	txn, err := store.Begin()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	gcSafePoint, err := gcutil.GetGCSafePoint(ctx)
-	if err != nil {
-		return err
-	}
-	uniqueIDMap := make(map[int64]struct{})
-	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
-		// Avoid duplicate table ID info.
-		if _, ok := currentSchema.TableByID(tblInfo.ID); ok {
-			return false, nil
-		}
-		if _, ok := uniqueIDMap[tblInfo.ID]; ok {
-			return false, nil
-		}
-		uniqueIDMap[tblInfo.ID] = struct{}{}
-		GetTiFlashReplicaInfo(tblInfo, replicaInfos)
-		return false, nil
-	}
-	fn := func(jobs []*model.Job) (bool, error) {
-		getTable := func(StartTS uint64, SchemaID int64, TableID int64) (*model.TableInfo, error) {
-			snapMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(StartTS)))
-			if err != nil {
-				return nil, err
-			}
-			tbl, err := snapMeta.GetTable(SchemaID, TableID)
-			return tbl, err
-		}
-		return GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, handleJobAndTableInfo)
-	}
-
-	err = IterAllDDLJobs(txn, fn)
-	if err != nil {
-		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
-			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
-			// just ignore the error and return directly.
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
-// HandlePlacementRuleRoutine fetch all rules from pd, remove all obsolete rules.
-// It handles rare situation, when we fail to alter pd rules.
-func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFlashReplicaStatus) error {
-	c := context.Background()
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
-	if !ok {
-		return errors.New("Can not get Helper")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-
-	allRulesArr, err := infosync.GetTiFlashGroupRules(c, "tiflash")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	allRules := make(map[string]placement.TiFlashRule)
-	for _, r := range allRulesArr {
-		allRules[r.ID] = r
-	}
-
-	start := time.Now()
-	originLen := len(tableList)
-	currentSchema := d.GetInfoSchemaWithInterceptor(ctx)
-	if err := getDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList); err != nil {
-		// may fail when no `tikv_gc_safe_point` available, should return in order to remove valid pd rules.
-		logutil.BgLogger().Error("getDropOrTruncateTableTiflash returns error", zap.Error(err))
-		return errors.Trace(err)
-	}
-	elapsed := time.Since(start)
-	logutil.BgLogger().Info("getDropOrTruncateTableTiflash cost", zap.Duration("time", elapsed), zap.Int("updated", len(tableList)-originLen))
-	for _, tb := range tableList {
-		// For every region in each table, if it has one replica, we reckon it ready.
-		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
-		if _, ok := allRules[ruleID]; !ok {
-			// Mostly because of a previous failure of setting pd rule.
-			logutil.BgLogger().Warn(fmt.Sprintf("Table %v exists, but there are no rule for it", tb.ID))
-			newRule := infosync.MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
-			_ = infosync.SetTiFlashPlacementRule(context.Background(), *newRule)
-		}
-		// For every existing table, we do not remove their rules.
-		delete(allRules, ruleID)
-	}
-
-	// Remove rules of non-existing table
-	for _, v := range allRules {
-		logutil.BgLogger().Info("Remove TiFlash rule", zap.String("id", v.ID))
-		if err := infosync.DeleteTiFlashPlacementRule(c, "tiflash", v.ID); err != nil {
-			logutil.BgLogger().Warn("delete TiFlash pd rule failed", zap.Error(err), zap.String("ruleID", v.ID))
-		}
-	}
-
-	return nil
-}
-
-=======
->>>>>>> 7f83ec475e (DDL: Fix bug that TiFlash replica unavailable after add partition with small probability (#39170))
 func (d *ddl) PollTiFlashRoutine() {
 	pollTiflashContext, err := NewTiFlashManagementContext()
 	if err != nil {
