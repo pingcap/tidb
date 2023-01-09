@@ -316,7 +316,7 @@ func (p *LogicalJoin) tmpRewriterDateDim(ctx context.Context, eqPredicates []*ex
 				wherePredicates = append(wherePredicates, candidatePredicate)
 			}
 		}
-		if wherePredicates == nil || len(wherePredicates) == 0 {
+		if len(wherePredicates) == 0 {
 			return leftPredicates, rightPredicates
 		}
 		// 3. construct and evaluate subquery (select min(targetColumn) from smallTableName where smallTablePredicate) and (select min(targetColumn) from smallTableName where smallTablePredicate)
@@ -443,10 +443,7 @@ func checkOnlyOnySmallTableColumn(candidatePredicate expression.Expression, smal
 			return false
 		}
 		tableName := columnNameList[1]
-		if tableName == smallTableName {
-			return true
-		}
-		return false
+		return tableName == smallTableName
 	}
 	_, ok2 := candidatePredicate.(*expression.Constant)
 	if ok2 {
