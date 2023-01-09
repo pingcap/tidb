@@ -154,13 +154,6 @@ func ExtractColumnsFromExpressions(result []*Column, exprs []Expression, filter 
 	return result
 }
 
-// ExtractColumnsFromExpression is to extract columns from an expression.
-func ExtractColumnsFromExpression(expr Expression, filter func(*Column) bool) []*Column {
-	var result []*Column
-	result = extractColumns(result, expr, filter)
-	return result
-}
-
 func extractColumns(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
 	switch v := expr.(type) {
 	case *Column:
