@@ -8228,7 +8228,7 @@ func TestMppVersion(t *testing.T) {
 	tk.MustExec("create table t(a bigint, b bigint)")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@tidb_max_tiflash_threads = -1")
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
@@ -8260,7 +8260,7 @@ func TestMppVersion(t *testing.T) {
 		res.CheckAt([]int{0, 2, 4}, rows)
 	}
 
-	tk.MustExec("set @@explain_mpp_feature = on")
+	tk.MustExec("set @@explain_show_mpp_feature = on")
 	// explain show mpp features
 	{
 		tk.MustExec("set @@mpp_version = 1")

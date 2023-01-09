@@ -2092,7 +2092,7 @@ func TestSetMppVersionVariable(t *testing.T) {
 	}
 
 	// default 0
-	tk.MustQuery("select @@session.explain_mpp_feature").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.explain_show_mpp_feature").Check(testkit.Rows("0"))
 }
 
 func TestSetMppExchangeCompressionModeVariable(t *testing.T) {

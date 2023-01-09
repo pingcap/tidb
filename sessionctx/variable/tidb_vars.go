@@ -260,7 +260,7 @@ const (
 	TiDBUseAlloc = "last_sql_use_alloc"
 
 	// ExplainShowMppFeature indicates whether to show mpp feature in explain result
-	ExplainShowMppFeature = "explain_mpp_feature"
+	ExplainShowMppFeature = "explain_show_mpp_feature"
 )
 
 // TiDB system variable names that both in session and global scope.
