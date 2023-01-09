@@ -1064,6 +1064,7 @@ import (
 	HandleRangeList                        "handle range list"
 	IfExists                               "If Exists"
 	IfNotExists                            "If Not Exists"
+	LoadDataCompressOpt                    "Load Data  supports compressed format"
 	IfNotRunning                           "If Not Running"
 	IfRunning                              "If Running"
 	IgnoreOptional                         "IGNORE or empty"
@@ -9518,11 +9519,12 @@ SelectStmtIntoOption:
 	{
 		$$ = nil
 	}
-|	"INTO" "OUTFILE" stringLit Fields Lines
+|	"INTO" "OUTFILE" stringLit Fields Lines LoadDataCompressOpt
 	{
 		x := &ast.SelectIntoOption{
-			Tp:       ast.SelectIntoOutfile,
-			FileName: $3,
+			Tp:         ast.SelectIntoOutfile,
+			FileName:   $3,
+			Compressed: $6.(bool),
 		}
 		if $4 != nil {
 			x.FieldsInfo = $4.(*ast.FieldsClause)
@@ -13642,11 +13644,20 @@ RevokeRoleStmt:
 		}
 	}
 
+LoadDataCompressOpt:
+	{
+		$$ = false
+	}
+|	"COMPRESSED"
+	{
+		$$ = true
+	}
+
 /**************************************LoadDataStmt*****************************************
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataCompressOpt
 	{
 		x := &ast.LoadDataStmt{
 			Path:               $5,
@@ -13654,6 +13665,7 @@ LoadDataStmt:
 			Table:              $9.(*ast.TableName),
 			ColumnsAndUserVars: $14.([]*ast.ColumnNameOrUserVar),
 			IgnoreLines:        $13.(uint64),
+			Compressed:         $16.(bool),
 		}
 		if $3 != nil {
 			x.IsLocal = true
