@@ -176,6 +176,9 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 		}
 		collector.Base().Count += int64(chk.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
+			if s.Rng.Float64() > s.SampleRate {
+				continue
+			}
 			datums := RowToDatums(row, s.RecordSet.Fields())
 			newCols := make([]types.Datum, len(datums))
 			// sizes are used to calculate the total size information. We calculate the sizes here because we need the
@@ -222,22 +225,22 @@ func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []type
 		}
 		// Minus one is to remove the flag byte.
 		s.TotalSizes[i] += sizes[i] - 1
-		err := s.FMSketches[i].InsertValue(sc, col)
-		if err != nil {
-			return err
-		}
+		//err := s.FMSketches[i].InsertValue(sc, col)
+		//if err != nil {
+		//	return err
+		//}
 	}
 	return nil
 }
 
 func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64, sizes []int64) error {
 	colLen := len(cols)
-	datumBuffer := make([]types.Datum, 0, len(cols))
+	//datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
-		datumBuffer = datumBuffer[:0]
+		//datumBuffer = datumBuffer[:0]
 		hasNull := true
 		for _, c := range group {
-			datumBuffer = append(datumBuffer, cols[c])
+			//datumBuffer = append(datumBuffer, cols[c])
 			hasNull = hasNull && cols[c].IsNull()
 			s.TotalSizes[colLen+i] += sizes[c] - 1
 		}
@@ -246,10 +249,10 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 			s.NullCount[colLen+i]++
 			continue
 		}
-		err := s.FMSketches[colLen+i].InsertRowValue(sc, datumBuffer)
-		if err != nil {
-			return err
-		}
+		//err := s.FMSketches[colLen+i].InsertRowValue(sc, datumBuffer)
+		//if err != nil {
+		//	return err
+		//}
 	}
 	return nil
 }
@@ -427,9 +430,9 @@ func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *Bernoulli
 }
 
 func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Rand) {
-	if rng.Float64() > s.SampleRate {
-		return
-	}
+	//if rng.Float64() > s.SampleRate {
+	//	return
+	//}
 	s.baseCollector.Samples = append(s.baseCollector.Samples, &ReservoirRowSampleItem{
 		Columns: row,
 		Weight:  0,
