@@ -17,6 +17,7 @@ package ddl
 import (
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -252,10 +253,6 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 
 		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
-		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
-			return errors.Trace(err1)
-		}
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
 		d.removeReorgCtx(job)
@@ -807,6 +804,27 @@ func (r *reorgHandler) RemoveReorgElementFailPoint(job *model.Job) error {
 // RemoveDDLReorgHandle removes the job reorganization related handles.
 func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
 	return removeDDLReorgHandle(r.s, job, elements)
+}
+
+// CleanupDDLReorgHandles removes the job reorganization related handles.
+func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool) {
+	if job != nil && !job.IsFinished() && !job.IsSynced() {
+		// Job is given, but it is neither finished nor synced; do nothing
+		return
+	}
+	se, err := pool.get()
+	if err != nil {
+		logutil.BgLogger().Info("CleanupDDLReorgHandles get sessionctx failed", zap.Error(err))
+		return
+	}
+	defer pool.put(se)
+
+	// Should there be any other options?
+	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	err = cleanDDLReorgHandles(newSession(se), job)
+	if err != nil {
+		logutil.BgLogger().Info("cleanDDLReorgHandles failed", zap.Error(err))
+	}
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
