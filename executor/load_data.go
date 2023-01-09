@@ -99,7 +99,7 @@ func (e *LoadDataExecCompressed) Next(ctx context.Context, req *chunk.Chunk) err
 	return nil
 }
 
-
+// Close implements the Executor Close interface.
 func (e *LoadDataExecCompressed) Close() error {
 	return nil
 }
