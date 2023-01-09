@@ -460,19 +460,22 @@ func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 
 // locateBucket locates where a value falls in the range of the Histogram.
 // Return value:
-// 	exceed: if the value is larger than the upper bound of the last Bucket of the Histogram
-// 	bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
+//
+//	exceed: if the value is larger than the upper bound of the last Bucket of the Histogram
+//	bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
 //		considered belong to this Bucket)
-// 	inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
+//	inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
 //		this Bucket and the previous Bucket.
-// 	matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat)
+//	matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat)
+//
 // Examples:
-// 	val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
-// 	locateBucket(val0): false, 0, false, false
-// 	locateBucket(val1): false, 1, true, true
-// 	locateBucket(val2): false, 2, false, false
-// 	locateBucket(val3): false, 2, true, false
-// 	locateBucket(val4): true, 3, false, false
+//
+//	val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
+//	locateBucket(val0): false, 0, false, false
+//	locateBucket(val1): false, 1, true, true
+//	locateBucket(val2): false, 2, false, false
+//	locateBucket(val3): false, 2, true, false
+//	locateBucket(val4): true, 3, false, false
 func (hg *Histogram) locateBucket(value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	// Empty histogram
 	if hg == nil || hg.Bounds.NumRows() == 0 {
@@ -880,18 +883,22 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
 // Note that we assume histL-boundL == histR-histL == boundR-histR here.
 //
-//               /│             │\
-//             /  │             │  \
-//           /x│  │◄─histogram─►│    \
-//         / xx│  │    range    │      \
-//       / │xxx│  │             │        \
-//     /   │xxx│  │             │          \
-//────┴────┴───┴──┴─────────────┴───────────┴─────
-//    ▲    ▲   ▲  ▲             ▲           ▲
-//    │    │   │  │             │           │
+//	          /│             │\
+//	        /  │             │  \
+//	      /x│  │◄─histogram─►│    \
+//	    / xx│  │    range    │      \
+//	  / │xxx│  │             │        \
+//	/   │xxx│  │             │          \
+//
+// ────┴────┴───┴──┴─────────────┴───────────┴─────
+//
+//	▲    ▲   ▲  ▲             ▲           ▲
+//	│    │   │  │             │           │
+//
 // boundL  │   │histL         histR       boundR
-//         │   │
-//    lDatum  rDatum
+//
+//	     │   │
+//	lDatum  rDatum
 func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCount int64) float64 {
 	if hg.Len() == 0 {
 		return 0
@@ -1599,7 +1606,8 @@ type countByRangeFunc = func(sessionctx.Context, int64, []*ranger.Range) (float6
 
 // newHistogramBySelectivity fulfills the content of new histogram by the given selectivity result.
 // TODO: Datum is not efficient, try to avoid using it here.
-//  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
+//
+//	Also, there're redundant calculation with Selectivity(). We need to reduce it too.
 func newHistogramBySelectivity(sctx sessionctx.Context, histID int64, oldHist, newHist *Histogram, ranges []*ranger.Range, cntByRangeFunc countByRangeFunc) error {
 	cntPerVal := int64(oldHist.AvgCountPerNotNullValue(int64(oldHist.TotalRowCount())))
 	var totCnt int64
@@ -2019,10 +2027,12 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 
 // mergeParitionBuckets merges buckets[l...r) to one global bucket.
 // global bucket:
-//		upper = buckets[r-1].upper
-//		count = sum of buckets[l...r).count
-//		repeat = sum of buckets[i] (buckets[i].upper == global bucket.upper && i in [l...r))
-//		ndv = merge bucket ndv from r-1 to l by mergeBucketNDV
+//
+//	upper = buckets[r-1].upper
+//	count = sum of buckets[l...r).count
+//	repeat = sum of buckets[i] (buckets[i].upper == global bucket.upper && i in [l...r))
+//	ndv = merge bucket ndv from r-1 to l by mergeBucketNDV
+//
 // Notice: lower is not calculated here.
 func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Merging) (*bucket4Merging, error) {
 	if len(buckets) == 0 {

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -238,5 +239,77 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, true))
 	for i := 0; i < len(tables); i++ {
 		require.Nil(t, tables[i].Info.TiFlashReplica)
+	}
+}
+
+func TestCheckNewCollationEnable(t *testing.T) {
+	caseList := []struct {
+		backupMeta                  *backuppb.BackupMeta
+		newCollationEnableInCluster string
+		CheckRequirements           bool
+		isErr                       bool
+	}{
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "True"},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           true,
+			isErr:                       false,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "True"},
+			newCollationEnableInCluster: "False",
+			CheckRequirements:           true,
+			isErr:                       true,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "False"},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           true,
+			isErr:                       true,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "False"},
+			newCollationEnableInCluster: "false",
+			CheckRequirements:           true,
+			isErr:                       false,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "False"},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           false,
+			isErr:                       true,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: "True"},
+			newCollationEnableInCluster: "False",
+			CheckRequirements:           false,
+			isErr:                       true,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: ""},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           false,
+			isErr:                       false,
+		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: ""},
+			newCollationEnableInCluster: "True",
+			CheckRequirements:           true,
+			isErr:                       true,
+		},
+	}
+
+	for i, ca := range caseList {
+		g := &gluetidb.MockGlue{
+			GlobalVars: map[string]string{"new_collation_enabled": ca.newCollationEnableInCluster},
+		}
+		err := restore.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
+
+		t.Logf("[%d] Got Error: %v\n", i, err)
+		if ca.isErr {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
 	}
 }

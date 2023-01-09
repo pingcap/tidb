@@ -225,7 +225,7 @@ func escapeSQL(sql string, args ...interface{}) ([]byte, error) {
 // 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
 // 2. %%: output %
 // 3. %n: for identifiers, for example ("use %n", db)
-// But it does not prevent you from doing EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
+// But it does not prevent you from doing EscapeSQL("select '%?", ";SQL injection!;") => "select ”;SQL injection!;'".
 // It is still your responsibility to write safe SQL.
 func EscapeSQL(sql string, args ...interface{}) (string, error) {
 	str, err := escapeSQL(sql, args...)
