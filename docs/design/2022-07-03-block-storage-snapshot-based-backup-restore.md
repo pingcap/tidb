@@ -439,10 +439,10 @@ After the TiDB Operator starts the Restore Worker, it starts to restore work.
    "replicas" : 3
  },
  "kubernetes" : {
-   "pvs" : [],  // PersistentVolume as resource native to Kubernetes
-   "pvcs" : [],  // PersistentVolumeClaim as resource native to Kubernetes
-   "crd_tidb_cluster" : {},     // CRD-TidbCluster for TiDB-Operator - Optional
-   "options" : {}   // unstructured.Unstructured uses a collection of nested map[string]interface{} values - Optional
+   "pvs" : [],
+   "pvcs" : [],
+   "crd_tidb_cluster" : {},
+   "options" : {}
  }，
  "options" : {} 
 }
@@ -538,10 +538,10 @@ Backup worker workflow
    "replicas" : 3
  }, 
  "kubernetes" : {
-   "pvs" : [],  // PersistentVolume as resource native to Kubernetes
-   "pvcs" : [],  // PersistentVolumeClaim as resource native to Kubernetes
-   "crd_tidb_cluster" : {},     // CRD-TidbCluster for TiDB-Operator - Optional
-   "options" : {}   // unstructured.Unstructured uses a collection of nested map[string]interface{} values - Optional
+   "pvs" : [],
+   "pvcs" : [],
+   "crd_tidb_cluster" : {},
+   "options" : {}
  }，
  "options" : {}
 }
@@ -1039,8 +1039,6 @@ Notice: prefix with ec2 Action is require to do the ebs backup and restore.
 [AWS API](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/Welcome.html)
 
 [AWS EBS Snapshot](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/AmazonEBS.html)
-
-[K8S CSI driver](https://www.google.com/url?q=https://github.com/kubernetes-sigs/aws-ebs-csi-driver/tree/master/examples/kubernetes/snapshot&sa=D&source=docs&ust=1649386957733703&usg=AOvVaw2a-iF4GtipADKwzRItsAiK)
 
 
 ## Technical Risk
