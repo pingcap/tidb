@@ -146,11 +146,11 @@ func (e *LoadDataExecCompressed) getTaskStatus(ctx context.Context,
 	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
 		return true, fmt.Errorf("import data task %d keep alive timed out", e.recordID)
 	}
-	// Get error message from result.
-	if !row.IsNull(2) {
-		errmsg = row.GetString(2)
-	}
 	if status == "error" {
+		// Get error message from result.
+		if !row.IsNull(2) {
+			errmsg = row.GetString(2)
+		}
 		return true, fmt.Errorf("import data fail ,%s", errmsg)
 	} else if status == "success" {
 		return true, nil

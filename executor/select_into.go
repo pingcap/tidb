@@ -138,11 +138,11 @@ func (s *SelectIntoExecCompressed) getTaskStatus(ctx context.Context,
 	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
 		return true, fmt.Errorf("export data task %d keep alive timed out", s.recordID)
 	}
-	// Get error message from result.
-	if !row.IsNull(2) {
-		errmsg = row.GetString(2)
-	}
 	if status == "error" {
+		// Get error message from result.
+		if !row.IsNull(2) {
+			errmsg = row.GetString(2)
+		}
 		return true, fmt.Errorf("export data fail ,%s", errmsg)
 	} else if status == "success" {
 		// Get affect rows from result.
