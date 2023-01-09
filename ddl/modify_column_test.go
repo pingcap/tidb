@@ -117,6 +117,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	require.NoError(t, checkErr)
 	// Check whether the reorg information is cleaned up when executing "modify column" failed.
 	checkReorgHandle := func(gotElements, expectedElements []*meta.Element) {
+		require.Equal(t, len(expectedElements), len(gotElements))
 		for i, e := range gotElements {
 			require.Equal(t, expectedElements[i], e)
 		}
