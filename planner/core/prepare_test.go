@@ -1127,11 +1127,11 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
 		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
 		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
-		if pruneMode.(string) == string(variable.Dynamic) && planCache.(string) == "0" {
+		if pruneMode.(string) == string(variable.Dynamic) && planCache.(string) == "1" {
 			// When the temporary disabling of prepared plan cache for dynamic partition prune mode is disabled, change this to 1!
-			tk.MustQuery(`select @@last_plan_from_cache /* pruneMode = ` + pruneMode.(string) + ` planCache = ` + planCache.(string) + ` */`).Check(testkit.Rows("0"))
-		} else {
 			tk.MustQuery(`select @@last_plan_from_cache /* pruneMode = ` + pruneMode.(string) + ` planCache = ` + planCache.(string) + ` */`).Check(testkit.Rows("1"))
+		} else {
+			tk.MustQuery(`select @@last_plan_from_cache /* pruneMode = ` + pruneMode.(string) + ` planCache = ` + planCache.(string) + ` */`).Check(testkit.Rows("0"))
 		}
 	}
 }

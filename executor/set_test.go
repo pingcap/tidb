@@ -2106,5 +2106,5 @@ func TestPlanCacheWithDynamicPruneMode(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_enable_plan_cache_with_dynamic_prune_mode").Check(testkit.Rows("0"))
 
 	// error value
-	tk.MustGetErrCode("set @@tidb_enable_reuse_chunk=s", errno.ErrWrongValueForVar)
+	tk.MustGetErrCode("set @@tidb_enable_plan_cache_with_dynamic_prune_mode=s", errno.ErrWrongValueForVar)
 }

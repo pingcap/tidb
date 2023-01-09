@@ -148,9 +148,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				// is fixed and additional tests with dynamic partition prune mode has been added.
 				// This is enabled again as an experiment for a Proof-of-Concept, with a new
 				// system variable 'tidb_enable_plan_cache_with_dynamic_prune_mode'
-				if checker.sctx == nil ||
-					(checker.sctx.GetSessionVars().IsDynamicPartitionPruneEnabled() &&
-						!checker.sctx.GetSessionVars().PlanCacheWithDynamicPruneMode) {
+				if checker.sctx == nil || !checker.sctx.GetSessionVars().IsPlanCacheWithDynamicPruneMode() {
 					checker.cacheable = false
 					checker.reason = "query accesses partitioned tables is un-cacheable"
 					return in, true
