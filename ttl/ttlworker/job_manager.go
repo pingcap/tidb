@@ -17,12 +17,11 @@ package ttlworker
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -240,43 +239,26 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		terror.Log(m.cmdCli.ResponseCommand(m.ctx, requestID, err))
 	}
 
-	is, ok := se.GetDomainInfoSchema().(infoschema.InfoSchema)
-	if !ok {
-		// should never happen
-		responseErr(errors.New("the return value session.GetDomainInfoSchema is not infoschema.InfoSchema"))
-		return
-	}
-
-	tbl, err := is.TableByName(model.NewCIStr(cmd.DBName), model.NewCIStr(cmd.TableName))
-	if err != nil {
+	if err = m.infoSchemaCache.Update(se); err != nil {
 		responseErr(err)
 		return
 	}
 
-	tblInfo := tbl.Meta()
-	if tblInfo.TTLInfo == nil {
-		responseErr(errors.Errorf("table %s.%s is not a TTL table", cmd.DBName, cmd.TableName))
+	if err = m.tableStatusCache.Update(m.ctx, se); err != nil {
+		responseErr(err)
 		return
 	}
 
 	var tables []*cache.PhysicalTable
-	if tblInfo.Partition == nil {
-		ttlTable, err := cache.NewPhysicalTable(model.NewCIStr(cmd.DBName), tblInfo, model.NewCIStr(""))
-		if err != nil {
-			responseErr(err)
-			return
+	for _, tbl := range m.infoSchemaCache.Tables {
+		if tbl.Schema.L == strings.ToLower(cmd.DBName) && tbl.Name.L == strings.ToLower(cmd.TableName) {
+			tables = append(tables, tbl)
 		}
-		tables = []*cache.PhysicalTable{ttlTable}
-	} else {
-		tables = make([]*cache.PhysicalTable, 0, len(tblInfo.Partition.Definitions))
-		for _, par := range tblInfo.Partition.Definitions {
-			ttlTable, err := cache.NewPhysicalTable(model.NewCIStr(cmd.DBName), tblInfo, par.Name)
-			if err != nil {
-				responseErr(err)
-				return
-			}
-			tables = append(tables, ttlTable)
-		}
+	}
+
+	if len(tables) == 0 {
+		responseErr(errors.Errorf("table %s.%s not exists", cmd.DBName, cmd.TableName))
+		return
 	}
 
 	now := time.Now()
@@ -665,7 +647,7 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 		return false
 	}
 
-	if tableStatus.LastJobStartTime.IsZero() {
+	if ignoreScheduleInterval || tableStatus.LastJobStartTime.IsZero() {
 		return true
 	}
 
