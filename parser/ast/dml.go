@@ -65,6 +65,8 @@ const (
 	LeftJoin
 	// RightJoin is right Join type.
 	RightJoin
+	// FullJoin is the full outer join type.
+	FullJoin
 )
 
 // Join represents table join.
@@ -187,6 +189,8 @@ func (n *Join) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" LEFT")
 	case RightJoin:
 		ctx.WriteKeyWord(" RIGHT")
+	case FullJoin:
+		ctx.WriteKeyWord(" FULL")
 	}
 	if n.StraightJoin {
 		ctx.WriteKeyWord(" STRAIGHT_JOIN ")

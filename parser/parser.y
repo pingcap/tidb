@@ -137,6 +137,7 @@ import (
 	force             "FORCE"
 	foreign           "FOREIGN"
 	from              "FROM"
+	full              "FULL"
 	fulltext          "FULLTEXT"
 	generated         "GENERATED"
 	grant             "GRANT"
@@ -409,7 +410,6 @@ import (
 	flush                 "FLUSH"
 	following             "FOLLOWING"
 	format                "FORMAT"
-	full                  "FULL"
 	function              "FUNCTION"
 	general               "GENERAL"
 	global                "GLOBAL"
@@ -6125,7 +6125,6 @@ UnReservedKeyword:
 |	"FLUSH"
 |	"FOLLOWING"
 |	"FORMAT"
-|	"FULL"
 |	"GENERAL"
 |	"GLOBAL"
 |	"HASH"
@@ -9272,7 +9271,11 @@ JoinTable:
 	}
 
 JoinType:
-	"LEFT"
+	"FULL"
+	{
+		$$ = ast.FullJoin
+	}
+|	"LEFT"
 	{
 		$$ = ast.LeftJoin
 	}

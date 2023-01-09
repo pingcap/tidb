@@ -724,6 +724,10 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	// Add join reorder flag regardless of inner join or outer join.
 	b.optFlag = b.optFlag | flagJoinReOrder
 
+	if joinNode.Tp == ast.FullJoin {
+		return b.rewriteFullJoin(ctx, joinNode)
+	}
+
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left, false)
 	if err != nil {
 		return nil, err
@@ -854,6 +858,152 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	}
 
 	return joinPlan, nil
+}
+
+// rewriteFullJoin rewrites the full join to left join + anit join with null supplement.
+// select ... from t1 full join t2 on ONCOND => select ... from (select t1 left join t2 on ONCOND union all select null, null, ..., t2.* from t2 where not exists (select 1 from t1 where ONCOND))
+func (b *PlanBuilder) rewriteFullJoin(ctx context.Context, joinNode *ast.Join) (LogicalPlan, error) {
+	// build the part of left join.
+	lChild1, err := b.buildResultSetNode(ctx, joinNode.Left, false)
+	if err != nil {
+		return nil, err
+	}
+	rChild1, err := b.buildResultSetNode(ctx, joinNode.Right, false)
+	if err != nil {
+		return nil, err
+	}
+
+	handleMap1 := b.handleHelper.popMap()
+	handleMap2 := b.handleHelper.popMap()
+	b.handleHelper.mergeAndPush(handleMap1, handleMap2)
+
+	leftJoinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.Init(b.ctx, b.getSelectOffset())
+	leftJoinPlan.SetChildren(lChild1, rChild1)
+	leftJoinPlan.SetSchema(expression.MergeSchema(lChild1.Schema(), rChild1.Schema()))
+	leftJoinPlan.names = make([]*types.FieldName, lChild1.Schema().Len()+rChild1.Schema().Len())
+	copy(leftJoinPlan.names, lChild1.OutputNames())
+	copy(leftJoinPlan.names[lChild1.Schema().Len():], rChild1.OutputNames())
+
+	leftJoinPlan.JoinType = LeftOuterJoin
+
+	// Merge sub-plan's fullSchema into this join plan.
+	// Please read the comment of LogicalJoin.fullSchema for the details.
+	var (
+		lFullSchema, rFullSchema *expression.Schema
+		lFullNames, rFullNames   types.NameSlice
+	)
+	if left, ok := lChild1.(*LogicalJoin); ok && left.fullSchema != nil {
+		lFullSchema = left.fullSchema
+		lFullNames = left.fullNames
+	} else {
+		lFullSchema = lChild1.Schema()
+		lFullNames = lChild1.OutputNames()
+	}
+	if right, ok := rChild1.(*LogicalJoin); ok && right.fullSchema != nil {
+		rFullSchema = right.fullSchema
+		rFullNames = right.fullNames
+	} else {
+		rFullSchema = rChild1.Schema()
+		rFullNames = rChild1.OutputNames()
+	}
+	if joinNode.Tp == ast.RightJoin {
+		// Make sure lFullSchema means outer full schema and rFullSchema means inner full schema.
+		lFullSchema, rFullSchema = rFullSchema, lFullSchema
+		lFullNames, rFullNames = rFullNames, lFullNames
+	}
+	leftJoinPlan.fullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
+
+	// Merge sub-plan's fullNames into this join plan, similar to the fullSchema logic above.
+	leftJoinPlan.fullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
+	for _, lName := range lFullNames {
+		name := *lName
+		leftJoinPlan.fullNames = append(leftJoinPlan.fullNames, &name)
+	}
+	for _, rName := range rFullNames {
+		name := *rName
+		leftJoinPlan.fullNames = append(leftJoinPlan.fullNames, &name)
+	}
+
+	// Clear NotNull flag for the inner side schema if it's an outer join.
+	if joinNode.Tp == ast.LeftJoin || joinNode.Tp == ast.RightJoin {
+		resetNotNullFlag(leftJoinPlan.fullSchema, 0, leftJoinPlan.fullSchema.Len())
+	}
+
+	if joinNode.On != nil {
+		b.curClause = onClause
+		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, leftJoinPlan, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if newPlan != leftJoinPlan {
+			return nil, errors.New("ON condition doesn't support subqueries yet")
+		}
+		onCondition := expression.SplitCNFItems(onExpr)
+		leftJoinPlan.AttachOnConds(onCondition)
+	}
+
+	// build the part of anti join.
+	lChild2, err := b.buildResultSetNode(ctx, joinNode.Left, false)
+	if err != nil {
+		return nil, err
+	}
+	rChild2, err := b.buildResultSetNode(ctx, joinNode.Right, false)
+	if err != nil {
+		return nil, err
+	}
+	handleMap1 = b.handleHelper.popMap()
+	handleMap2 = b.handleHelper.popMap()
+	b.handleHelper.mergeAndPush(handleMap1, handleMap2)
+
+	antiJoinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.Init(b.ctx, b.getSelectOffset())
+	antiJoinPlan.SetChildren(rChild2, lChild2)
+	antiJoinPlan.SetSchema(expression.MergeSchema(rChild2.Schema(), lChild2.Schema()))
+	antiJoinPlan.names = make([]*types.FieldName, rChild2.Schema().Len()+lChild2.Schema().Len())
+	copy(antiJoinPlan.names, rChild2.OutputNames())
+	copy(antiJoinPlan.names[rChild2.Schema().Len():], lChild2.OutputNames())
+	antiJoinPlan.JoinType = AntiSemiJoin
+	if joinNode.On != nil {
+		b.curClause = onClause
+		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, antiJoinPlan, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if newPlan != antiJoinPlan {
+			return nil, errors.New("ON condition doesn't support subqueries yet")
+		}
+		onCondition := expression.SplitCNFItems(onExpr)
+		antiJoinPlan.AttachOnConds(onCondition)
+	}
+	antiJoinPlan.SetSchema(rChild2.Schema())
+	antiJoinPlan.SetOutputNames(rChild2.OutputNames())
+
+	// Supplement the null parts.
+	projExprs := make([]expression.Expression, lChild2.Schema().Len()+rChild2.Schema().Len())
+	copy(projExprs[lChild2.Schema().Len():], expression.Column2Exprs(rChild2.Schema().Columns))
+	for i := 0; i < lChild2.Schema().Len(); i++ {
+		projExprs[i] = expression.NewNull()
+	}
+	proj := LogicalProjection{
+		Exprs: projExprs,
+	}.Init(b.ctx, b.getSelectOffset())
+	proj.SetChildren(antiJoinPlan)
+	proj.SetSchema(expression.MergeSchema(lChild2.Schema(), rChild2.Schema()))
+
+	// Union the result
+	unionAll, err := b.buildUnionAll(ctx, []LogicalPlan{leftJoinPlan, proj})
+	if err != nil {
+		return nil, err
+	}
+
+	// We use the ExtraColID to prune the _rowid column when unfolding the SELECT *
+	// So the projection should output the ExtraColID.
+	topProj := LogicalProjection{
+		Exprs: expression.Column2Exprs(unionAll.Schema().Columns),
+	}.Init(b.ctx, b.getSelectOffset())
+	topProj.SetSchema(expression.MergeSchema(lChild2.Schema(), rChild2.Schema()))
+	topProj.SetOutputNames(leftJoinPlan.OutputNames())
+	topProj.SetChildren(unionAll)
+	return topProj, nil
 }
 
 // buildUsingClause eliminate the redundant columns and ordering columns based
