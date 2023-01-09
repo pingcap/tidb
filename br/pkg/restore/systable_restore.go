@@ -123,7 +123,7 @@ func (rc *Client) ClearSystemUsers(ctx context.Context, resetUsers []string) err
 	execSQL := func(sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.se.Execute(ctx, sql); err != nil {
-			log.Warn("failed to execute SQL restore system database",
+			log.Warn("failed to clear system users",
 				zap.Stringer("database", db.Name),
 				zap.String("sql", sql),
 				zap.Error(err),
