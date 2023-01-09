@@ -2025,6 +2025,27 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}
 }
 
+func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, owner owner.Manager) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
+		statsHandle.FlushStats()
+		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
+		owner.Cancel()
+		logutil.BgLogger().Info("updateStatsWorker exit preprocessing finished")
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("updateStatsWorker exit preprocessing timeout, force exiting")
+		return
+	}
+}
+
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	lease := do.statsLease
@@ -2049,8 +2070,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	for {
 		select {
 		case <-do.exit:
-			statsHandle.FlushStats()
-			owner.Cancel()
+			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
