@@ -459,7 +459,7 @@ func TestUncacheableReason(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
 }
 
-func TestUnsupportedLimitCase(t *testing.T) {
+func TestLimitUnsupportedCase(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
