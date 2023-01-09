@@ -477,6 +477,8 @@ type MydumperRuntime struct {
 	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
 	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
 	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
+	// DisableRealOffset disable real offset operation
+	DisableRealOffset bool `toml:"disable-real-offset" json:"disable-real-offset"`
 }
 
 type AllIgnoreColumns []*IgnoreColumns
