@@ -278,7 +278,7 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 	tableName *ast.TableName, se Session, originalCondition ast.ExprNode) (rs []string, err error) {
 	concurrency := se.GetSessionVars().ETLConcurrency
 	// no concurrency for dry run.
-	if stmt.DryRun != ast.NoDryRun {
+	if stmt.DryRun != ast.NoDryRun || !stmt.TransferFromInsert {
 		concurrency = 0
 	}
 
@@ -304,20 +304,37 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 			format.RestoreStringWithoutCharset, &sb))
 		if err != nil {
 			logutil.Logger(ctx).Error("Non-transactional DML, failed to restore the DML statement", zap.Error(err))
-			se.Close()
-			wg.Done()
 			return nil, err
 		}
 		if concurrency > len(jobs) {
 			concurrency = len(jobs)
 		}
-		logutil.Logger(ctx).Warn("Non-transactional DML execute concurrently", zap.Int("concurrency", concurrency))
 		dmlSQL := sb.String()
+		var originalConditionSQL string
+		if originalCondition != nil {
+			sb = strings.Builder{}
+			originalCondSel := &ast.SelectStmt{
+				SelectStmtOpts: &ast.SelectStmtOpts{},
+				Where:          originalCondition,
+			}
+			err = originalCondSel.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
+				format.RestoreNameBackQuotes|
+				format.RestoreSpacesAroundBinaryOperation|
+				format.RestoreBracketAroundBinaryOperation|
+				format.RestoreStringWithoutCharset, &sb))
+			if err != nil {
+				logutil.Logger(ctx).Error("Non-transactional DML, failed to restore the DML statement", zap.Error(err))
+				return nil, err
+			}
+			originalConditionSQL = sb.String()
+		}
+
+		logutil.Logger(ctx).Warn("Non-transactional DML execute concurrently", zap.Int("concurrency", concurrency))
 		jobCh = make(chan *job, 2*concurrency)
 		errCh = make(chan error, 2*concurrency)
 		wg.Add(concurrency)
 		for i := 0; i < concurrency; i++ {
-			if err = jobWorker(ctx, se, jobCh, errCh, len(jobs), stmt, dmlSQL, tableName, originalCondition, &wg, &affectedRows); err != nil {
+			if err = jobWorker(ctx, se, jobCh, errCh, len(jobs), stmt, dmlSQL, tableName, originalConditionSQL, &wg, &affectedRows); err != nil {
 				return nil, err
 			}
 		}
@@ -428,7 +445,7 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 }
 
 func jobWorker(ctx context.Context, s Session, jobCh <-chan *job, errCh chan<- error, totalJobCount int,
-	stmt *ast.NonTransactionalDMLStmt, dmlSQL string, tableName *ast.TableName, originalCondition ast.ExprNode, wg *sync.WaitGroup, affectedRows *uint64) error {
+	stmt *ast.NonTransactionalDMLStmt, dmlSQL string, tableName *ast.TableName, originalConditionSQL string, wg *sync.WaitGroup, affectedRows *uint64) error {
 	se, err := CreateSession(s.GetStore())
 	if err != nil {
 		wg.Done()
@@ -438,21 +455,20 @@ func jobWorker(ctx context.Context, s Session, jobCh <-chan *job, errCh chan<- e
 	se.GetSessionVars().EnableWindowFunction = true
 	se.GetSessionVars().ETLConcurrency = 0
 
+	var originalCondition ast.ExprNode
+	if originalConditionSQL != "" {
+		originalConditionSel, err := se.ParseWithParams(ctx, originalConditionSQL)
+		if err != nil {
+			se.Close()
+			wg.Done()
+			return err
+		}
+		originalCondition = originalConditionSel.(*ast.SelectStmt).Where
+	}
 	dml, err := se.ParseWithParams(ctx, dmlSQL)
 	if err != nil {
 		se.Close()
 		wg.Done()
-
-		start := 0
-		for start < len(dmlSQL) {
-			end := start + 2000
-			if end > len(dmlSQL) {
-				end = len(dmlSQL)
-			}
-			part := dmlSQL[start:end]
-			start += 2000
-			logutil.Logger(ctx).Info("Non-transactional DML stmt parse err", zap.String("sql", part), zap.Error(err))
-		}
 		return err
 	}
 	var dmlStmt ast.ShardableDMLStmt
