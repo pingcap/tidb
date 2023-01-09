@@ -30,8 +30,8 @@ const (
 	FeatureIDPlacement = "placement"
 	// FeatureIDTTL is the `ttl` feature
 	FeatureIDTTL = "ttl"
-	// FeatureIDResouceGroup is the `resource group` feature.
-	FeatureIDResouceGroup = "resource_group"
+	// FeatureIDResourceGroup is the `resource group` feature.
+	FeatureIDResourceGroup = "resource_group"
 )
 
 var featureIDs = map[string]struct{}{
