@@ -83,11 +83,13 @@ func CheckPointsOf(task string) string {
 }
 
 // GlobalCheckpointOf returns the path to the "global" checkpoint of some task.
+// Normally it would be <prefix>/checkpoint/<task-name>/central_globa.
 func GlobalCheckpointOf(task string) string {
 	return path.Join(streamKeyPrefix, taskCheckpointPath, task, checkpointTypeGlobal)
 }
 
 // StorageCheckpointOf get the prefix path of the `storage checkpoint status` of a task.
+// Normally it would be <prefix>/storage-checkpoint/<task>.
 func StorageCheckpointOf(task string) string {
 	return path.Join(streamKeyPrefix, storageCheckPoint, task)
 }

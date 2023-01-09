@@ -163,6 +163,8 @@ func (c *MetaDataClient) DeleteTask(ctx context.Context, taskName string) error 
 			clientv3.OpDelete(CheckPointsOf(taskName), clientv3.WithPrefix()),
 			clientv3.OpDelete(Pause(taskName)),
 			clientv3.OpDelete(LastErrorPrefixOf(taskName), clientv3.WithPrefix()),
+			clientv3.OpDelete(GlobalCheckpointOf(taskName)),
+			clientv3.OpDelete(StorageCheckpointOf(taskName), clientv3.WithPrefix()),
 		).
 		Commit()
 	if err != nil {
