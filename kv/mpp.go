@@ -59,7 +59,7 @@ var mppVersionFeatures = map[MppVersion]string{
 	MppVersionV1: "exchange data compression",
 }
 
-// GetMppVersionFeatures return the features for mpp-version
+// GetMppVersionFeatures returns the features for mpp-version
 func GetMppVersionFeatures(mppVersion MppVersion) string {
 	val, ok := mppVersionFeatures[mppVersion]
 	if ok {
@@ -68,7 +68,7 @@ func GetMppVersionFeatures(mppVersion MppVersion) string {
 	return "none"
 }
 
-// FmtMppVersion return
+// FmtMppVersion returns the description about mpp-version
 func FmtMppVersion(v MppVersion) string {
 	var version string
 	if v == MppVersionUnspecified {
@@ -98,7 +98,7 @@ type MPPQueryID struct {
 type MPPTask struct {
 	Meta       MPPTaskMeta // on which store this task will execute
 	ID         int64       // mppTaskID
-	StartTs    uint64      //
+	StartTs    uint64
 	MppQueryID MPPQueryID
 	TableID    int64      // physical table id
 	MppVersion MppVersion // mpp version

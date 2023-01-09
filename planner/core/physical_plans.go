@@ -17,7 +17,6 @@ package core
 import (
 	"fmt"
 	"strconv"
-	// "sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"

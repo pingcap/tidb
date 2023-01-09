@@ -224,15 +224,17 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 
 	// meta for current task.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
-		Address: req.Meta.GetAddress(), MppVersion: req.MppVersion.ToInt64()}
+		Address:    req.Meta.GetAddress(),
+		MppVersion: req.MppVersion.ToInt64(),
+	}
 
 	mppReq := &mpp.DispatchTaskRequest{
 		Meta:        taskMeta,
 		EncodedPlan: req.Data,
 		// TODO: This is only an experience value. It's better to be configurable.
-		Timeout:            60,
-		SchemaVer:          req.SchemaVar,
-		Regions:            regionInfos,
+		Timeout:   60,
+		SchemaVer: req.SchemaVar,
+		Regions:   regionInfos,
 	}
 	if originalTask != nil {
 		mppReq.TableRegions = originalTask.PartitionTableRegions

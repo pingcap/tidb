@@ -99,7 +99,7 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
 			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
 			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-			zap.String("exchange-compression-mode", (pf.ExchangeSender.CompressionMode.Name())),
+			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
 		)
 		req := &kv.MPPDispatchRequest{
 			Data:       pbData,
