@@ -43,11 +43,6 @@ func TestGenerateResetSQL(t *testing.T) {
 	require.Equal(t, 0, len(generateResetSQLs(mockDB, resetUsers)))
 
 	// case #3: only reset cloud admin account
-	mockDB = &database{
-		ExistingTables: map[string]*model.TableInfo{},
-		Name:           model.NewCIStr("mysql"),
-		TemporaryName:  utils.TemporaryDBName("mysql"),
-	}
 	for name := range sysPrivilegeTableMap {
 		mockDB.ExistingTables[name] = testTableInfo(name)
 	}
@@ -60,14 +55,6 @@ func TestGenerateResetSQL(t *testing.T) {
 	}
 
 	// case #4: reset cloud admin/other account
-	mockDB = &database{
-		ExistingTables: map[string]*model.TableInfo{},
-		Name:           model.NewCIStr("mysql"),
-		TemporaryName:  utils.TemporaryDBName("mysql"),
-	}
-	for name := range sysPrivilegeTableMap {
-		mockDB.ExistingTables[name] = testTableInfo(name)
-	}
 	resetUsers = []string{"cloud_admin", "cloud_other"}
 	sqls = generateResetSQLs(mockDB, resetUsers)
 	require.Equal(t, 16, len(sqls))
@@ -77,14 +64,6 @@ func TestGenerateResetSQL(t *testing.T) {
 	}
 
 	// case #5: reset cloud admin && root account
-	mockDB = &database{
-		ExistingTables: map[string]*model.TableInfo{},
-		Name:           model.NewCIStr("mysql"),
-		TemporaryName:  utils.TemporaryDBName("mysql"),
-	}
-	for name := range sysPrivilegeTableMap {
-		mockDB.ExistingTables[name] = testTableInfo(name)
-	}
 	resetUsers = []string{"cloud_admin", "root"}
 	sqls = generateResetSQLs(mockDB, resetUsers)
 	// 8 DELETE sqls for cloud admin and 1 UPDATE sql for root
