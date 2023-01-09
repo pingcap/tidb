@@ -933,6 +933,9 @@ func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.Table
 				subSources = make([]*ast.TableSource, 0)
 				err        error
 			)
+			if v.From == nil {
+				return tableSources, aliases, nil
+			}
 			subSources, aliases, err = collectTableSourcesInJoin(v.From.TableRefs, subSources, aliases)
 			if err != nil {
 				return nil, nil, err

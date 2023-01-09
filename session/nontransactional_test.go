@@ -722,7 +722,8 @@ func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	err = tk.ExecToErr("batch limit 1 insert into t select 1, 1")
 	require.EqualError(t, err, "table reference is nil")
 	err = tk.ExecToErr("batch limit 1 insert into t select * from (select 1, 2) tmp")
-	require.EqualError(t, err, "Non-transactional DML, table name not found in join")
+	// we tolerance no table name in join now.
+	require.EqualError(t, err, "Non-transactional DML, no tables found in table refs")
 }
 
 func TestNonTransactionalWithOptimizerHints(t *testing.T) {
