@@ -61,12 +61,6 @@ func RangeKeyOf(name string, startKey []byte) string {
 	return RangesOf(name) + string(startKey)
 }
 
-func writeUint64(buf *bytes.Buffer, num uint64) {
-	items := [8]byte{}
-	binary.BigEndian.PutUint64(items[:], num)
-	buf.Write(items[:])
-}
-
 func encodeUint64(num uint64) []byte {
 	items := [8]byte{}
 	binary.BigEndian.PutUint64(items[:], num)
@@ -92,16 +86,6 @@ func GlobalCheckpointOf(task string) string {
 // Normally it would be <prefix>/storage-checkpoint/<task>.
 func StorageCheckpointOf(task string) string {
 	return path.Join(streamKeyPrefix, storageCheckPoint, task)
-}
-
-// CheckpointOf returns the checkpoint prefix of some store.
-// Normally it would be <prefix>/checkpoint/<task-name>/<store-id(binary-u64)>.
-func CheckPointOf(task string, store uint64) string {
-	buf := bytes.NewBuffer(nil)
-	buf.WriteString(strings.TrimSuffix(path.Join(streamKeyPrefix, taskCheckpointPath, task), "/"))
-	buf.WriteRune('/')
-	writeUint64(buf, store)
-	return buf.String()
 }
 
 // Pause returns the path for pausing the task.
