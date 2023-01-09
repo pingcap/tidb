@@ -426,7 +426,7 @@ func ColumnSubstituteImplTmp(expr Expression, schema *Schema, newExprs []Express
 		hasFail := false
 		if v.FuncName.L == ast.Cast {
 			var newArg Expression
-			substituted, hasFail, newArg = ColumnSubstituteImpl(v.GetArgs()[0], schema, newExprs, fail1Return)
+			substituted, hasFail, newArg = ColumnSubstituteImplTmp(v.GetArgs()[0], schema, newExprs, fail1Return)
 			if fail1Return && hasFail {
 				return substituted, hasFail, v
 			}
@@ -446,7 +446,7 @@ func ColumnSubstituteImplTmp(expr Expression, schema *Schema, newExprs []Express
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
 		}
 		for idx, arg := range v.GetArgs() {
-			changed, failed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fail1Return)
+			changed, failed, newFuncExpr := ColumnSubstituteImplTmp(arg, schema, newExprs, fail1Return)
 			if fail1Return && failed {
 				return changed, failed, v
 			}
