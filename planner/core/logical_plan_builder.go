@@ -1999,7 +1999,7 @@ CheckReferenced:
 // getUintFromNode gets uint64 value from ast.Node.
 // For ordinary statement, node should be uint64 constant value.
 // For prepared statement, node is string. We should convert it to uint64.
-func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64OrUint64 bool) (uVal uint64, isNull bool, isExpectedType bool) {
+func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool) (uVal uint64, isNull bool, isExpectedType bool) {
 	var val interface{}
 	switch v := n.(type) {
 	case *driver.ValueExpr:
@@ -2008,7 +2008,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64OrUint64 bool)
 		if !v.InExecute {
 			return 0, false, true
 		}
-		if mustInt64OrUint64 {
+		if mustInt64orUint64 {
 			if expected := checkParamTypeInt64OrUint64(v); !expected {
 				return 0, false, false
 			}
