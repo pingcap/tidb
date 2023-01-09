@@ -356,6 +356,8 @@ const (
 	HintUse IndexHintType = iota + 1
 	HintIgnore
 	HintForce
+	HintKeepOrder
+	HintNoKeepOrder
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.
@@ -386,6 +388,10 @@ func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 		indexHintType = "IGNORE INDEX"
 	case HintForce:
 		indexHintType = "FORCE INDEX"
+	case HintKeepOrder:
+		indexHintType = "KEEP ORDER"
+	case HintNoKeepOrder:
+		indexHintType = "NO KEEP ORDER"
 	default: // Prevent accidents
 		return errors.New("IndexHintType has an error while matching")
 	}
