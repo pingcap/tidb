@@ -194,7 +194,7 @@ type planCacheKey struct {
 	inRestrictedSQL          bool
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
-	limitOffsetAndCount      []int64
+	limitOffsetAndCount      []uint64
 
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
@@ -232,7 +232,7 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
 		for _, l := range key.limitOffsetAndCount {
-			key.hash = codec.EncodeInt(key.hash, l)
+			key.hash = codec.EncodeUint(key.hash, l)
 		}
 	}
 	return key.hash
@@ -275,7 +275,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string, offsetAndCount []int64) (kvcache.Key, error) {
+	lastUpdatedSchemaVersion int64, bindSQL string, offsetAndCount []uint64) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -461,7 +461,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 
 type limitExtractor struct {
 	cacheable         bool // For safety considerations, check if limit count less than 10000
-	offsetAndCount    []int64
+	offsetAndCount    []uint64
 	unCacheableReason string
 	paramTypeErr      error
 }
@@ -472,7 +472,6 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 	case *ast.Limit:
 		if node.Count != nil {
 			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-				// currently, we just support INT type parameters, eg: set @a = 123
 				typeExpected, val := checkLimitParamType(count)
 				if typeExpected {
 					if val > 10000 {
@@ -508,17 +507,17 @@ func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
-func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]int64, error) {
+func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, error) {
 	if node == nil {
-		return []int64{}, nil
+		return []uint64{}, nil
 	}
 	checker := limitExtractor{
 		cacheable:      true,
-		offsetAndCount: []int64{},
+		offsetAndCount: []uint64{},
 	}
 	node.Accept(&checker)
 	if checker.paramTypeErr != nil {
-		return []int64{}, checker.paramTypeErr
+		return []uint64{}, checker.paramTypeErr
 	}
 	if sctx != nil && !checker.cacheable {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
@@ -526,11 +525,13 @@ func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]int64, error
 	return checker.offsetAndCount, nil
 }
 
-func checkLimitParamType(node *driver.ParamMarkerExpr) (bool, int64) {
+func checkLimitParamType(node *driver.ParamMarkerExpr) (bool, uint64) {
 	val := node.GetValue()
 	switch v := val.(type) {
 	case int64:
+		return true, uint64(v)
+	case uint64:
 		return true, v
 	}
-	return false, -1
+	return false, 0
 }
