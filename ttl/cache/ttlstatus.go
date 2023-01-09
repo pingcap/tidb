@@ -82,6 +82,7 @@ type TableStatusCache struct {
 func NewTableStatusCache(updateInterval time.Duration) *TableStatusCache {
 	return &TableStatusCache{
 		baseCache: newBaseCache(updateInterval),
+		Tables:    make(map[int64]*TableStatus),
 	}
 }
 

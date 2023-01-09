@@ -211,6 +211,12 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyDropPolicy(diff.SchemaID), nil
 	case model.ActionAlterPlacementPolicy:
 		return b.applyAlterPolicy(m, diff)
+	case model.ActionCreateResourceGroup:
+		return nil, b.applyCreateOrAlterResourceGroup(m, diff)
+	case model.ActionAlterResourceGroup:
+		return nil, b.applyCreateOrAlterResourceGroup(m, diff)
+	case model.ActionDropResourceGroup:
+		return b.applyDropResourceGroup(m, diff), nil
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return b.applyTruncateTableOrPartition(m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
@@ -501,13 +507,36 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	}
 }
 
+func (b *Builder) applyCreateOrAlterResourceGroup(m *meta.Meta, diff *model.SchemaDiff) error {
+	group, err := m.GetResourceGroup(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if group == nil {
+		return ErrResourceGroupNotExists.GenWithStackByArgs(fmt.Sprintf("(Group ID %d)", diff.SchemaID))
+	}
+	// TODO: need mark updated?
+	b.is.setResourceGroup(group)
+	return nil
+}
+
+func (b *Builder) applyDropResourceGroup(m *meta.Meta, diff *model.SchemaDiff) []int64 {
+	group, ok := b.is.ResourceGroupByID(diff.SchemaID)
+	if !ok {
+		return nil
+	}
+	b.is.deleteResourceGroup(group.Name.L)
+	// TODO: return the related information.
+	return []int64{}
+}
+
 func (b *Builder) applyCreatePolicy(m *meta.Meta, diff *model.SchemaDiff) error {
 	po, err := m.GetPolicy(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if po == nil {
-		return ErrPlacementPolicyExists.GenWithStackByArgs(
+		return ErrPlacementPolicyNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Policy ID %d)", diff.SchemaID),
 		)
 	}
@@ -529,7 +558,7 @@ func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	}
 
 	if po == nil {
-		return nil, ErrPlacementPolicyExists.GenWithStackByArgs(
+		return nil, ErrPlacementPolicyNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Policy ID %d)", diff.SchemaID),
 		)
 	}
@@ -897,12 +926,17 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, schemaVersion int64) (*Builder, error) {
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
 	// build the policies.
 	for _, policy := range policies {
 		info.setPolicy(policy)
+	}
+
+	// build the groups.
+	for _, group := range resourceGroups {
+		info.setResourceGroup(group)
 	}
 
 	// Maintain foreign key reference information.
@@ -1008,6 +1042,7 @@ func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Build
 		is: &infoSchema{
 			schemaMap:             map[string]*schemaTables{},
 			policyMap:             map[string]*model.PolicyInfo{},
+			resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
 			ruleBundleMap:         map[int64]*placement.Bundle{},
 			sortedTablesBuckets:   make([]sortedTables, bucketCount),
 			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
