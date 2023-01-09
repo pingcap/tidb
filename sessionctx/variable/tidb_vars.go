@@ -892,6 +892,8 @@ const (
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
+	// EnableDynamicPartitionPruning tmp for liantong poc
+	EnableDynamicPartitionPruning = "enable_dynamic_partition_pruning"
 )
 
 // TiDB intentional limits
@@ -1151,6 +1153,7 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
+	DefEnableDynamicPartitionPruning                 = false
 )
 
 // Process global variables.
