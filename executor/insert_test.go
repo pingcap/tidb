@@ -419,6 +419,34 @@ func TestInsertValueForCastDecimalField(t *testing.T) {
 	tk.MustQuery(`select cast(a as decimal) from t1;`).Check(testkit.Rows(`9999999999`))
 }
 
+func TestInsertForMultiValuedIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a json, b int, unique index idx((cast(a as signed array))));`)
+	tk.MustExec(`insert into t1 values ('[1,11]', 1);`)
+	tk.MustExec(`insert into t1 values ('[2, 22]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustGetErrMsg(`insert into t1 values ('[2, 222]', 2);`, "[kv:1062]Duplicate entry '2' for key 't1.idx'")
+	tk.MustExec(`replace into t1 values ('[1, 10]', 10)`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[2, 22] 2`, `[1, 10] 10`))
+	tk.MustExec(`replace into t1 values ('[1, 2]', 1)`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 2] 1`))
+	tk.MustExec(`replace into t1 values ('[1, 11]', 1)`)
+	tk.MustExec(`insert into t1 values ('[2, 22]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustExec(`insert ignore into t1 values ('[1]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustExec(`insert ignore into t1 values ('[1, 2]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustExec(`insert into t1 values ('[2]', 2) on duplicate key update b = 10;`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 10`))
+	tk.MustGetErrMsg(`insert into t1 values ('[2, 1]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[1,2]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[11, 22]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+}
+
 func TestInsertDateTimeWithTimeZone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
