@@ -21,6 +21,7 @@ import (
 )
 
 var (
+	// MinSchedulerInterval is the minimum interval between two scheduling.
 	MinSchedulerInterval = atomic.NewDuration(200 * time.Millisecond)
 )
 
