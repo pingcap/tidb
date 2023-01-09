@@ -724,7 +724,7 @@ func (do *Domain) Close() {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, onClose func()) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
@@ -734,8 +734,12 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
+<<<<<<< HEAD
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		onClose:             onClose,
+=======
+		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
+>>>>>>> 408a46654d (session: fix deadlock when init domain failed (#40409))
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
 
@@ -883,6 +887,162 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// SetOnClose used to set do.onClose func.
+func (do *Domain) SetOnClose(onClose func()) {
+	do.onClose = onClose
+}
+
+func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
+	cfg := config.GetGlobalConfig()
+	if pdClient == nil || do.etcdClient == nil {
+		log.Warn("pd / etcd client not provided, won't begin Advancer.")
+		return nil
+	}
+	env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+	if err != nil {
+		return err
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	do.logBackupAdvancer = daemon.New(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient), adv.Config().TickDuration)
+	loop, err := do.logBackupAdvancer.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	do.wg.Run(loop)
+	return nil
+}
+
+// when tidb_replica_read = 'closest-adaptive', check tidb and tikv's zone label matches.
+// if not match, disable replica_read to avoid uneven read traffic distribution.
+func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.Client) {
+	defer util.Recover(metrics.LabelDomain, "closestReplicaReadCheckLoop", nil, false)
+
+	// trigger check once instantly.
+	if err := do.checkReplicaRead(ctx, pdClient); err != nil {
+		logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
+	}
+
+	ticker := time.NewTicker(time.Minute)
+	defer func() {
+		ticker.Stop()
+		do.wg.Done()
+		logutil.BgLogger().Info("closestReplicaReadCheckLoop exited.")
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := do.checkReplicaRead(ctx, pdClient); err != nil {
+				logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
+			}
+		}
+	}
+}
+
+// Periodically check and update the replica-read status when `tidb_replica_read` is set to "closest-adaptive"
+// We disable "closest-adaptive" in following conditions to ensure the read traffic is evenly distributed across
+// all AZs:
+// - There are no TiKV servers in the AZ of this tidb instance
+// - The AZ if this tidb contains more tidb than other AZ and this tidb's id is the bigger one.
+func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) error {
+	do.sysVarCache.RLock()
+	replicaRead := do.sysVarCache.global[variable.TiDBReplicaRead]
+	do.sysVarCache.RUnlock()
+
+	if !strings.EqualFold(replicaRead, "closest-adaptive") {
+		logutil.BgLogger().Debug("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
+		return nil
+	}
+
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	zone := ""
+	for k, v := range serverInfo.Labels {
+		if k == placement.DCLabelKey && v != "" {
+			zone = v
+			break
+		}
+	}
+	if zone == "" {
+		logutil.BgLogger().Debug("server contains no 'zone' label, disable closest replica read", zap.Any("labels", serverInfo.Labels))
+		variable.SetEnableAdaptiveReplicaRead(false)
+		return nil
+	}
+
+	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return err
+	}
+
+	storeZones := make(map[string]int)
+	for _, s := range stores {
+		// skip tumbstone stores or tiflash
+		if s.NodeState == metapb.NodeState_Removing || s.NodeState == metapb.NodeState_Removed || engine.IsTiFlash(s) {
+			continue
+		}
+		for _, label := range s.Labels {
+			if label.Key == placement.DCLabelKey && label.Value != "" {
+				storeZones[label.Value] = 0
+				break
+			}
+		}
+	}
+
+	// no stores in this AZ
+	if _, ok := storeZones[zone]; !ok {
+		variable.SetEnableAdaptiveReplicaRead(false)
+		return nil
+	}
+
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return err
+	}
+	svrIdsInThisZone := make([]string, 0)
+	for _, s := range servers {
+		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
+			if _, ok := storeZones[v]; ok {
+				storeZones[v] += 1
+				if v == zone {
+					svrIdsInThisZone = append(svrIdsInThisZone, s.ID)
+				}
+			}
+		}
+	}
+	enabledCount := math.MaxInt
+	for _, count := range storeZones {
+		if count < enabledCount {
+			enabledCount = count
+		}
+	}
+	// sort tidb in the same AZ by ID and disable the tidb with bigger ID
+	// because ID is unchangeable, so this is a simple and stable algorithm to select
+	// some instances across all tidb servers.
+	if enabledCount < len(svrIdsInThisZone) {
+		sort.Slice(svrIdsInThisZone, func(i, j int) bool {
+			return strings.Compare(svrIdsInThisZone[i], svrIdsInThisZone[j]) < 0
+		})
+	}
+	enabled := true
+	for _, s := range svrIdsInThisZone[enabledCount:] {
+		if s == serverInfo.ID {
+			enabled = false
+			break
+		}
+	}
+
+	if variable.SetEnableAdaptiveReplicaRead(enabled) {
+		logutil.BgLogger().Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", enabled))
+	}
+	return nil
+}
+
+>>>>>>> 408a46654d (session: fix deadlock when init domain failed (#40409))
 type sessionPool struct {
 	resources chan pools.Resource
 	factory   pools.Factory
