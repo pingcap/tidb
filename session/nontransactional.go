@@ -745,7 +745,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se S
 	}
 
 	// _tidb_rowid may be null in join, handle this case
-	if stmt.ShardColumn.Name.L == "_tidb_rowid" {
+	if stmt.ShardColumn.Name.L == "_tidb_rowid" && stmt.TransferFromInsert {
 		var nullStart, nullEnd types.Datum
 		nullStart.SetNull()
 		nullEnd.SetNull()
