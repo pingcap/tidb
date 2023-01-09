@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -342,6 +343,7 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 				err = io.EOF
 			}
 			parser.pos += int64(len(buf))
+			log.L().Info("size of buf", zap.Int("size", len(buf)))
 			return buf, 0, errors.Trace(err)
 		}
 		index := IndexAnyByte(parser.buf, chars)
