@@ -58,5 +58,4 @@ func TestCopy(t *testing.T) {
 			require.True(t, s[i] != e[i])
 		}
 	}
-
 }
