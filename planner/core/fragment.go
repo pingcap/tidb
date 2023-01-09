@@ -409,10 +409,11 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	for _, meta := range metas {
 		task := &kv.MPPTask{Meta: meta,
 			ID:                AllocMPPTaskID(e.ctx),
+			MppVersion:        e.MppVersion,
 			StartTs:           e.startTS,
 			MppQueryID:        e.mppQueryID,
 			TableID:           ts.Table.ID,
-			PartitionTableIDs: allPartitionsIDs, MppVersion: e.MppVersion}
+			PartitionTableIDs: allPartitionsIDs}
 		tasks = append(tasks, task)
 	}
 	return tasks, nil
