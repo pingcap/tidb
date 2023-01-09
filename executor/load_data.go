@@ -63,6 +63,7 @@ type LoadDataTaskArgs struct {
 	FileName   string `json:"filename"`
 	FieldTerm  string `json:"separator"`
 	Enclosed   byte   `json:"delimiter"`
+	Replace    int    `json:"replace"`
 	Terminated string `json:"terminator"`
 	TableName  string `json:"tablename"`
 	DBName     string `json:"dbname"`
@@ -190,6 +191,7 @@ func (e *LoadDataExecCompressed) generateArgs(ctx context.Context) (string, erro
 		Terminated: e.loadDataInfo.LinesInfo.Terminated,
 		TableName:  e.loadDataInfo.Table.Meta().Name.O,
 		DBName:     dbInfo.Name.O,
+		Replace:    int(e.OnDuplicate),
 	}
 	args, err := json.Marshal(ldta)
 	return util.String(args), err
