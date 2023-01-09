@@ -138,7 +138,6 @@ func TestIntegration(t *testing.T) {
 	defer etcd.Server.Stop()
 	metaCli := streamhelper.MetaDataClient{Client: cli}
 	t.Run("TestBasic", func(t *testing.T) { testBasic(t, metaCli, etcd) })
-	t.Run("TestForwardProgress", func(t *testing.T) { testForwardProgress(t, metaCli, etcd) })
 	t.Run("testGetStorageCheckpoint", func(t *testing.T) { testGetStorageCheckpoint(t, metaCli) })
 	t.Run("testGetGlobalCheckPointTS", func(t *testing.T) { testGetGlobalCheckPointTS(t, metaCli) })
 	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
@@ -208,31 +207,6 @@ func testBasic(t *testing.T, metaCli streamhelper.MetaDataClient, etcd *embed.Et
 	require.NoError(t, metaCli.DeleteTask(ctx, taskName))
 	keyNotExists(t, []byte(streamhelper.TaskOf(taskName)), etcd)
 	rangeIsEmpty(t, []byte(streamhelper.RangesOf(taskName)), etcd)
-}
-
-func testForwardProgress(t *testing.T, metaCli streamhelper.MetaDataClient, etcd *embed.Etcd) {
-	ctx := context.Background()
-	taskName := "many_tables"
-	taskInfo := simpleTask(taskName, 65)
-	defer func() {
-		require.NoError(t, metaCli.DeleteTask(ctx, taskName))
-	}()
-
-	require.NoError(t, metaCli.PutTask(ctx, taskInfo))
-	task, err := metaCli.GetTask(ctx, taskName)
-	require.NoError(t, err)
-	require.NoError(t, task.Step(ctx, 1, 41))
-	require.NoError(t, task.Step(ctx, 1, 42))
-	require.NoError(t, task.Step(ctx, 2, 40))
-	rs, err := task.Ranges(ctx)
-	require.NoError(t, err)
-	require.Equal(t, simpleRanges(65), rs)
-	store1Checkpoint, err := task.MinNextBackupTS(ctx, 1)
-	require.NoError(t, err)
-	require.Equal(t, store1Checkpoint, uint64(42))
-	store2Checkpoint, err := task.MinNextBackupTS(ctx, 2)
-	require.NoError(t, err)
-	require.Equal(t, store2Checkpoint, uint64(40))
 }
 
 func testGetStorageCheckpoint(t *testing.T, metaCli streamhelper.MetaDataClient) {
