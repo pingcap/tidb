@@ -2012,7 +2012,6 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 			if expected := checkParamTypeInt64orUint64(v); !expected {
 				return 0, false, false
 			}
-			logutil.BgLogger().Info("test")
 		}
 		param, err := expression.ParamMarkerExpression(ctx, v, false)
 		if err != nil {
