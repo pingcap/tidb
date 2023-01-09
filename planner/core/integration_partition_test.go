@@ -1619,3 +1619,39 @@ func TestPartitionRangeColumnPruning(t *testing.T) {
 	tk.MustQuery(`select * from t1 where a = 'a' AND c = 'd'`).Check(testkit.Rows("a <nil> d"))
 	tk.MustExec(`drop table t1`)
 }
+
+func TestPartitionProcessorWithUninitializedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(" create table q1(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+	tk.MustExec(" create table q2(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));")
+
+	rows := [][]interface{}{
+		{"HashJoin"},
+		{"├─PartitionUnion(Build)"},
+		{"│ ├─TableReader"},
+		{"│ │ └─TableFullScan"},
+		{"│ └─TableReader"},
+		{"│   └─TableFullScan"},
+		{"└─PartitionUnion(Probe)"},
+		{"  ├─TableReader"},
+		{"  │ └─TableFullScan"},
+		{"  └─TableReader"},
+		{"    └─TableFullScan"},
+	}
+	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
+
+	tk.MustExec("analyze table q1")
+	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
+
+	tk.MustExec("analyze table q2")
+	rows = [][]interface{}{
+		{"HashJoin"},
+		{"├─TableReader(Build)"},
+		{"│ └─TableFullScan"},
+		{"└─TableReader(Probe)"},
+		{"  └─TableFullScan"},
+	}
+	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
+}
