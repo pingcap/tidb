@@ -481,7 +481,7 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 					}
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
-					checker.paramTypeErr = errors.New("incorrect arguments to limit in plan cache")
+					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
 					return in, true
 				}
 			}
@@ -492,7 +492,7 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 				if typeExpected {
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
-					checker.paramTypeErr = errors.New("incorrect arguments to limit in plan cache")
+					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
 					return in, true
 				}
 			}
