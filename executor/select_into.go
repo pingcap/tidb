@@ -132,7 +132,7 @@ func (s *SelectIntoExecCompressed) getTaskStatus(ctx context.Context,
 		status = strings.ToLower(row.GetString(1))
 	}
 	// If no keepalive information is written within 1 minutes,
-	// the task is considered to have timed out
+	// the task is considered to have timed out.
 	if lastLiveTimeSeconds > 60 && (!(status == "error" || status == "success")) {
 		return true, fmt.Errorf("export data task %d keep alive timed out", s.recordID)
 	}

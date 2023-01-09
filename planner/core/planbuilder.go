@@ -4811,8 +4811,8 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	if err != nil {
 		return nil, err
 	}
-	// if user sql  specify compressed, the restore interface is
-	// invoked to generate sql statement for dumpling
+	// If user sql  specify compressed, the restore interface is
+	// invoked to generate sql statement for dumpling.
 	if isCompressed {
 		selectIntoInfo.SelectSQL, err = generateSelectSQL(ctx, sel)
 		if err != nil {

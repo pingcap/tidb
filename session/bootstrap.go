@@ -497,7 +497,7 @@ const (
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 
-	// CreateExternalTask support load data / into outfile compressed
+	// CreateExternalTask support load data / into outfile compressed.
 	CreateExternalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_external_task(
 		id bigint AUTO_INCREMENT,
         command VARCHAR(64) NOT NULL,
