@@ -202,7 +202,7 @@ func TestTriggerTTLJob(t *testing.T) {
 
 	// make sure the table had run a job one time to make the test stable
 	cli := do.TTLJobManager().GetCommandCli()
-	_, err = client.TriggerNewTTLJob(ctx, cli, "test", "t")
+	_, _ = client.TriggerNewTTLJob(ctx, cli, "test", "t")
 	r := tk.MustQuery("select last_job_id, current_job_id from mysql.tidb_ttl_table_status where table_id=?", tblID)
 	require.Equal(t, 1, len(r.Rows()))
 	waitTTLJobFinished(t, tk, tblID)
