@@ -703,12 +703,10 @@ func (s *session) StmtCommit(ctx context.Context) {
 
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback(ctx context.Context, isForPessimisticRetry bool) {
-	if !isForPessimisticRetry {
-		txnManager := sessiontxn.GetTxnManager(s)
-		err := txnManager.OnStmtRollback(ctx, isForPessimisticRetry)
-		if err != nil {
-			logutil.Logger(ctx).Error("txnManager failed to handle OnStmtRollback", zap.Error(err))
-		}
+	txnManager := sessiontxn.GetTxnManager(s)
+	err := txnManager.OnStmtRollback(ctx, isForPessimisticRetry)
+	if err != nil {
+		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtRollback", zap.Error(err))
 	}
 	s.txn.cleanup()
 }
