@@ -117,6 +117,7 @@ func (m *JobManager) jobLoop() error {
 	defer func() {
 		err = multierr.Combine(err, multierr.Combine(m.resizeScanWorkers(0), m.resizeDelWorkers(0)))
 		se.Close()
+		logutil.Logger(m.ctx).Info("ttlJobManager loop exited.")
 	}()
 
 	scheduleTicker := time.Tick(jobManagerLoopTickerInterval)
@@ -247,7 +248,8 @@ func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() w
 		}
 
 		var errs error
-		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+		// don't use `m.ctx` here, because when shutdown the server, `m.ctx` has already been cancelled
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		for _, w := range workers[count:] {
 			err := w.WaitStopped(ctx, 30*time.Second)
 			if err != nil {
@@ -351,6 +353,24 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
 		// Local jobs will also not run, but as the server is still sending heartbeat,
 		// and keep the job in memory, it could start the left task in the next window.
+		return
+	}
+	if !variable.EnableTTLJob.Load() {
+		if len(m.runningJobs) > 0 {
+			ctx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
+
+			for _, job := range m.runningJobs {
+				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id), zap.String("statistics", job.statistics.String()))
+				m.removeJob(job)
+				err := job.Cancel(ctx, se)
+				if err != nil {
+					logutil.Logger(m.ctx).Warn("fail to cancel job", zap.Error(err))
+				}
+				job.finish(se, se.Now())
+			}
+
+			cancel()
+		}
 		return
 	}
 
@@ -467,7 +487,7 @@ tblLoop:
 		}
 
 		status := m.tableStatusCache.Tables[table.ID]
-		ok := m.couldTrySchedule(status, now)
+		ok := m.couldTrySchedule(status, table, now)
 		if ok {
 			tables = append(tables, table)
 		}
@@ -477,30 +497,34 @@ tblLoop:
 }
 
 // couldTrySchedule returns whether a table should be tried to run TTL
-func (m *JobManager) couldTrySchedule(table *cache.TableStatus, now time.Time) bool {
-	if table == nil {
+func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cache.PhysicalTable, now time.Time) bool {
+	if tableStatus == nil {
 		// if the table status hasn't been created, return true
 		return true
 	}
-	if table.CurrentJobOwnerID != "" {
+	if table == nil {
+		// if the table is not recorded in info schema, return false
+		return false
+	}
+	if tableStatus.CurrentJobOwnerID != "" {
 		// see whether it's heart beat time is expired
-		hbTime := table.CurrentJobOwnerHBTime
+		hbTime := tableStatus.CurrentJobOwnerHBTime
 		// a more concrete value is `2 * max(updateTTLTableStatusCacheInterval, jobManagerLoopTickerInterval)`, but the
 		// `updateTTLTableStatusCacheInterval` is greater than `jobManagerLoopTickerInterval` in most cases.
 		if hbTime.Add(2 * getUpdateTTLTableStatusCacheInterval()).Before(now) {
-			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.TableID), zap.Time("hbTime", hbTime), zap.Time("now", now))
+			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.ID), zap.Time("hbTime", hbTime), zap.Time("now", now))
 			return true
 		}
 		return false
 	}
 
-	if table.LastJobFinishTime.IsZero() {
+	if tableStatus.LastJobStartTime.IsZero() {
 		return true
 	}
 
-	finishTime := table.LastJobFinishTime
+	startTime := tableStatus.LastJobStartTime
 
-	return finishTime.Add(variable.TTLJobRunInterval.Load()).Before(now)
+	return startTime.Add(table.TTLInfo.JobInterval.GoDuration()).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
@@ -535,7 +559,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		if err != nil {
 			return err
 		}
-		if !m.couldTrySchedule(tableStatus, now) {
+		if !m.couldTrySchedule(tableStatus, m.infoSchemaCache.Tables[tableStatus.TableID], now) {
 			return errors.New("couldn't schedule ttl job")
 		}
 

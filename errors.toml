@@ -1223,7 +1223,7 @@ Cannot drop column '%-.192s': needed in TTL config
 
 ["ddl:8150"]
 error = '''
-Cannot set TTL_ENABLE on a table without TTL config
+Cannot set %s on a table without TTL config
 '''
 
 ["ddl:8151"]
@@ -1859,6 +1859,16 @@ Placement policy '%-.192s' already exists
 ["meta:8239"]
 error = '''
 Unknown placement policy '%-.192s'
+'''
+
+["meta:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["meta:8249"]
+error = '''
+Unknown resource group '%-.192s'
 '''
 
 ["planner:1044"]
@@ -2504,6 +2514,16 @@ Placement policy '%-.192s' already exists
 ["schema:8239"]
 error = '''
 Unknown placement policy '%-.192s'
+'''
+
+["schema:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["schema:8249"]
+error = '''
+Unknown resource group '%-.192s'
 '''
 
 ["session:8002"]
