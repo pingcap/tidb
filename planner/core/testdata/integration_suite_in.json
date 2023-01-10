@@ -695,16 +695,16 @@
       "explain select /*+ no_keep_order(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
 
       // Use the keep_order/ no_keep_order with the use_view hint at the same time
-      "select /*+ qb_name(qb, v) keep_order(t1, idx_a) */ * from v",
-      "select /*+ qb_name(qb, v) keep_order(t, primary) */ * from v1",
-      "select /*+ qb_name(qb, v) no_keep_order(t1, idx_a) */ * from v",
-      "select /*+ qb_name(qb, v) no_keep_order(t, primary) */ * from v1",
+      "explain select /*+ qb_name(qb, v) keep_order(t1@qb, idx_a) */ * from v",
+      "explain select /*+ qb_name(qb, v1) keep_order(t@qb, primary) */ * from v1",
+      "explain select /*+ qb_name(qb, v) no_keep_order(t1@qb, idx_a) */ * from v",
+      "explain select /*+ qb_name(qb, v1) no_keep_order(t@qb, primary) */ * from v1",
 
       // Use the keep_order/ no_keep_order with CTE at the same time
-      "WITH CTE AS (select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
-      "WITH CTE AS (select /*+ keep_order(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
-      "WITH CTE AS (select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
-      "WITH CTE AS (select /*+ no_keep_order(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;"
+      "explain WITH CTE AS (select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "explain WITH CTE AS (select /*+ keep_order(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "explain WITH CTE AS (select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "explain WITH CTE AS (select /*+ no_keep_order(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;"
     ]
   },
   {
