@@ -185,6 +185,18 @@ func TestFormatSQLDatum(t *testing.T) {
 			types:  []string{"text(8)"},
 			errMsg: "[ddl:1170]BLOB/TEXT column 'pk0' used in key specification without a key length",
 		},
+		{
+			types:  []string{"int", "json"},
+			errMsg: "[ddl:3152]JSON column 'pk1' cannot be used in key specification.",
+		},
+		{
+			types:  []string{"int", "blob"},
+			errMsg: "[ddl:1170]BLOB/TEXT column 'pk1' used in key specification without a key length",
+		},
+		{
+			types:  []string{"int", "text"},
+			errMsg: "[ddl:1170]BLOB/TEXT column 'pk1' used in key specification without a key length",
+		},
 	}
 
 	cases := []struct {
