@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,7 +113,7 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	}
 
 	if stmt.DryRun == ast.DryRunQuery {
-		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.GetSessionVars().BatchSize.MaxChunkSize)
+		return buildDryRunResults(stmt.DryRun, []string{selectSQL.sql}, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
 
 	// TODO: choose an appropriate quota.
@@ -660,6 +661,14 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 }
 
 func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session,
+	selectSQL *SelectSQL, shardColumnInfo *model.ColumnInfo, memTracker *memory.Tracker) ([]job, error) {
+	if selectSQL.order {
+		return buildShardJobsOrdered(ctx, stmt, se, selectSQL.sql, shardColumnInfo, memTracker)
+	}
+	return buildShardJobsUnordered(ctx, stmt, se, selectSQL.sql, memTracker)
+}
+
+func buildShardJobsOrdered(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session,
 	selectSQL string, shardColumnInfo *model.ColumnInfo, memTracker *memory.Tracker) ([]job, error) {
 	var shardColumnCollate string
 	if shardColumnInfo != nil {
@@ -759,37 +768,138 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se S
 	return jobs, nil
 }
 
+// Int64Slice attaches the methods of Interface to []int64, sorting in increasing order.
+type Int64Slice []int64
+
+func (x Int64Slice) Len() int           { return len(x) }
+func (x Int64Slice) Less(i, j int) bool { return x[i] < x[j] }
+func (x Int64Slice) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
+
+func buildShardJobsUnordered(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se Session,
+	selectSQL string, memTracker *memory.Tracker) ([]job, error) {
+	// A NT-DML is not a SELECT. We ignore the SelectLimit for selectSQL so that it can read all values.
+	originalSelectLimit := se.GetSessionVars().SelectLimit
+	se.GetSessionVars().SelectLimit = math.MaxUint64
+	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
+	rss, err := se.Execute(ctx, selectSQL)
+	se.GetSessionVars().SelectLimit = originalSelectLimit
+
+	if err != nil {
+		return nil, err
+	}
+	if len(rss) != 1 {
+		return nil, errors.Errorf("Non-transactional DML, expecting 1 record set, but got %d", len(rss))
+	}
+	rs := rss[0]
+	defer func() {
+		_ = rs.Close()
+	}()
+
+	batchSize := int(stmt.Limit)
+	if batchSize <= 0 {
+		return nil, errors.New("Non-transactional DML, batch size should be positive")
+	}
+
+	rowIDs := make([]int64, 0, 2<<20)
+
+	chk := rs.NewChunk(nil)
+	for {
+		err = rs.Next(ctx, chk)
+		if err != nil {
+			return nil, err
+		}
+		// last chunk
+		if chk.NumRows() == 0 {
+			break
+		}
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			current := row.GetDatum(0, &rs.Fields()[0].Column.FieldType)
+			rowIDs = append(rowIDs, current.GetInt64())
+		}
+	}
+
+	sort.Sort(Int64Slice(rowIDs))
+
+	jobCount := 0
+	currentSize := 0
+	jobs := make([]job, 0, (len(rowIDs)/batchSize)+2)
+	if len(rowIDs) > 0 {
+		var start *types.Datum
+		for _, i := range rowIDs {
+			if start == nil {
+				start = &types.Datum{}
+				start.SetInt64(i)
+			}
+			currentSize++
+			if currentSize >= batchSize {
+				end := types.Datum{}
+				end.SetInt64(i)
+				jobs = appendNewJob(jobs, jobCount+1, *start, end, currentSize, memTracker)
+				start = nil
+				jobCount++
+				currentSize = 0
+			}
+		}
+		if start != nil {
+			end := types.Datum{}
+			end.SetInt64(rowIDs[len(rowIDs)-1])
+			jobs = appendNewJob(jobs, jobCount+1, *start, end, currentSize, memTracker)
+		}
+	}
+
+	// _tidb_rowid may be null in join, handle this case
+	if stmt.TransferFromInsert {
+		var nullStart, nullEnd types.Datum
+		nullStart.SetNull()
+		nullEnd.SetNull()
+		jobs = appendNewJob(jobs, 0, nullStart, nullEnd, 1, memTracker)
+		if len(jobs) > 1 {
+			lastIdx := len(jobs) - 1
+			jobs[0], jobs[lastIdx] = jobs[lastIdx], jobs[0]
+		}
+	}
+
+	return jobs, nil
+}
+
 func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size int, tracker *memory.Tracker) []job {
 	jobs = append(jobs, job{jobID: id, start: start, end: end, jobSize: size})
 	tracker.Consume(start.EstimatedMemUsage() + end.EstimatedMemUsage() + 64)
 	return jobs
 }
 
+// SelectSQL is used to shard column.
+type SelectSQL struct {
+	sql   string
+	order bool
+}
+
 func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
-	*ast.TableName, string, *model.ColumnInfo, []*ast.TableSource, error) {
+	*ast.TableName, *SelectSQL, *model.ColumnInfo, []*ast.TableSource, error) {
 	// only use the first table
 	join, ok := stmt.DMLStmt.TableRefsJoin()
 	if !ok {
-		return nil, "", nil, nil, errors.New("Non-transactional DML, table source not found")
+		return nil, nil, nil, nil, errors.New("Non-transactional DML, table source not found")
 	}
 	tableSources := make([]*ast.TableSource, 0)
 	aliases := make(map[string]*ast.TableName)
 	tableSources, aliases, err := collectTableSourcesInJoin(join, tableSources, aliases)
 	if err != nil {
-		return nil, "", nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if len(tableSources) == 0 {
-		return nil, "", nil, nil, errors.New("Non-transactional DML, no tables found in table refs")
+		return nil, nil, nil, nil, errors.New("Non-transactional DML, no tables found in table refs")
 	}
 	leftMostTableSource := tableSources[0]
 	leftMostTableName, ok := leftMostTableSource.Source.(*ast.TableName)
 	if !ok {
-		return nil, "", nil, nil, errors.New("Non-transactional DML, table name not found")
+		return nil, nil, nil, nil, errors.New("Non-transactional DML, table name not found")
 	}
 
 	shardColumnInfo, tableName, alias, err := selectShardColumn(stmt, se, tableSources, aliases, leftMostTableName, leftMostTableSource)
 	if err != nil {
-		return nil, "", nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	var sb strings.Builder
@@ -801,19 +911,28 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se Session) (
 			format.RestoreStringWithoutCharset, &sb),
 		)
 		if err != nil {
-			return nil, "", nil, nil, errors.Annotate(err, "Failed to restore where clause in non-transactional DML")
+			return nil, nil, nil, nil, errors.Annotate(err, "Failed to restore where clause in non-transactional DML")
 		}
 	} else {
 		sb.WriteString("TRUE")
 	}
+	var selectSQL SelectSQL
 	// assure NULL values are placed first
-	selectSQL := fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
-		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
+	if stmt.ShardColumn.Name.L != "_tidb_rowid" {
+		selectSQL.sql = fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
+			stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
+		selectSQL.order = true
+	} else {
+		// avoid sort OOM since _tidb_rowid is not indexed.
+		selectSQL.sql = fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s",
+			stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String())
+		selectSQL.order = false
+	}
 	if alias != "" {
 		stmt.ShardColumn.Schema = model.NewCIStr("")
 		stmt.ShardColumn.Table = model.NewCIStr(alias)
 	}
-	return tableName, selectSQL, shardColumnInfo, tableSources, nil
+	return tableName, &selectSQL, shardColumnInfo, tableSources, nil
 }
 
 func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se Session, tableSources []*ast.TableSource, aliases map[string]*ast.TableName,
