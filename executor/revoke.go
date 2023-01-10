@@ -207,7 +207,8 @@ func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	privName := strings.ToUpper(priv.Priv.String())
 	defer func() {
-		if err == nil && user == e.ctx.GetSessionVars().User.AuthUsername && host == e.ctx.GetSessionVars().User.AuthHostname {
+		currentUser := e.ctx.GetSessionVars().User
+		if currentUser != nil && err == nil && user == currentUser.AuthUsername && host == currentUser.AuthHostname {
 			e.ctx.GetSessionVars().RevokedGlobalPrivileges[privName] = struct{}{}
 		}
 	}()
