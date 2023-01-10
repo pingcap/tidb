@@ -1323,7 +1323,10 @@ func GetMaxBackfillJob(sess *session, jobID, currEleID int64, currEleKey []byte)
 
 // MoveBackfillJobsToHistoryTable moves backfill table jobs to the backfill history table.
 func MoveBackfillJobsToHistoryTable(sctx sessionctx.Context, bfJob *BackfillJob) error {
-	s := newSession(sctx)
+	s, ok := sctx.(*session)
+	if !ok {
+		return errors.Errorf("sess ctx:%#v convert session failed", sctx)
+	}
 
 	return s.runInTxn(func(se *session) error {
 		// TODO: Consider batch by batch update backfill jobs and insert backfill history jobs.
