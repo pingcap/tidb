@@ -598,7 +598,7 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e Executor) 
 		// change first.
 		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
-		a.Ctx.StmtCommit()
+		a.Ctx.StmtCommit(ctx)
 	}
 	err := a.handleForeignKeyTrigger(ctx, e, 1)
 	if err != nil {
@@ -689,7 +689,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		}
 		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
 		// then the later fk cascade executors can see the mem-buffer changes.
-		a.Ctx.StmtCommit()
+		a.Ctx.StmtCommit(ctx)
 		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
 		if err != nil {
 			return err
@@ -863,13 +863,12 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 		return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 	}
 
-	txn, err := a.Ctx.Txn(false)
+	txnManager := sessiontxn.GetTxnManager(a.Ctx)
+	err := txnManager.OnHandlePessimisticStmtStart(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if a.Ctx.GetSessionVars().PessimisticTransactionAggressiveLocking {
-		txn.StartAggressiveLocking()
-	}
+
 	isFirstAttempt := true
 
 	for {
@@ -885,14 +884,11 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
-			cancelAggressiveLockingIfNeeded(ctx, txn)
 			return nil, err
 		}
 		if e == nil {
-			doneAggressiveLockingIfNeeded(ctx, txn)
 			return rs, nil
 		}
-		retryAggressiveLockingIfNeeded(ctx, txn)
 
 		failpoint.Inject("pessimisticSelectForUpdateRetry", nil)
 	}
@@ -991,21 +987,22 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 		}
 	}()
 
-	if sctx.GetSessionVars().PessimisticTransactionAggressiveLocking {
-		txn.StartAggressiveLocking()
+	txnManager := sessiontxn.GetTxnManager(a.Ctx)
+	err = txnManager.OnHandlePessimisticStmtStart(ctx)
+	if err != nil {
+		return err
 	}
+
 	isFirstAttempt := true
 
 	for {
 		if !isFirstAttempt {
-			retryAggressiveLockingIfNeeded(ctx, txn)
 			failpoint.Inject("pessimisticDMLRetry", nil)
 		}
 
 		startTime := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
-			cancelAggressiveLockingIfNeeded(ctx, txn)
 			return err
 		}
 
@@ -1023,19 +1020,16 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 				if ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startTime).Seconds())
 				}
-				cancelAggressiveLockingIfNeeded(ctx, txn)
 				return err
 			}
 			continue
 		}
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
-			cancelAggressiveLockingIfNeeded(ctx, txn)
 			return err1
 		}
 		keys = txnCtx.CollectUnchangedRowKeys(keys)
 		if len(keys) == 0 {
-			doneAggressiveLockingIfNeeded(ctx, txn)
 			return nil
 		}
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
@@ -1054,7 +1048,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
 		}
 		if err == nil {
-			doneAggressiveLockingIfNeeded(ctx, txn)
 			return nil
 		}
 		e, err = a.handlePessimisticLockError(ctx, err)
@@ -1063,7 +1056,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 			if ErrDeadlock.Equal(err) {
 				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
 			}
-			cancelAggressiveLockingIfNeeded(ctx, txn)
 			return err
 		}
 	}
@@ -1124,7 +1116,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, err
 	}
 	// Rollback the statement change before retry it.
-	a.Ctx.StmtRollback()
+	a.Ctx.StmtRollback(ctx, true)
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
@@ -2101,22 +2093,4 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		dumpTask.NormalizedSQL = nsql
 	}
 	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
-}
-
-func retryAggressiveLockingIfNeeded(ctx context.Context, c kv.AggressiveLockingController) {
-	if c.IsInAggressiveLockingMode() {
-		c.RetryAggressiveLocking(ctx)
-	}
-}
-
-func cancelAggressiveLockingIfNeeded(ctx context.Context, c kv.AggressiveLockingController) {
-	if c.IsInAggressiveLockingMode() {
-		c.CancelAggressiveLocking(ctx)
-	}
-}
-
-func doneAggressiveLockingIfNeeded(ctx context.Context, c kv.AggressiveLockingController) {
-	if c.IsInAggressiveLockingMode() {
-		c.DoneAggressiveLocking(ctx)
-	}
 }

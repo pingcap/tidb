@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
@@ -672,10 +673,16 @@ func (s *session) HasDirtyContent(tid int64) bool {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() {
+func (s *session) StmtCommit(ctx context.Context) {
 	defer func() {
 		s.txn.cleanup()
 	}()
+
+	txnManager := sessiontxn.GetTxnManager(s)
+	err := txnManager.OnStmtCommit(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtCommit", zap.Error(err))
+	}
 
 	st := &s.txn
 	st.flushStmtBuf()
@@ -688,7 +695,14 @@ func (s *session) StmtCommit() {
 }
 
 // StmtRollback implements the sessionctx.Context interface.
-func (s *session) StmtRollback() {
+func (s *session) StmtRollback(ctx context.Context, isForPessimisticRetry bool) {
+	if !isForPessimisticRetry {
+		txnManager := sessiontxn.GetTxnManager(s)
+		err := txnManager.OnStmtRollback(ctx, isForPessimisticRetry)
+		if err != nil {
+			logutil.Logger(ctx).Error("txnManager failed to handle OnStmtRollback", zap.Error(err))
+		}
+	}
 	s.txn.cleanup()
 }
 

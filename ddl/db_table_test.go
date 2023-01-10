@@ -917,7 +917,7 @@ func TestAddColumn2(t *testing.T) {
 	require.NoError(t, err)
 	_, err = writeOnlyTable.AddRecord(tk.Session(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	require.NoError(t, err)
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(ctx)
 	err = tk.Session().CommitTxn(ctx)
 	require.NoError(t, err)
 

@@ -54,7 +54,7 @@ func (s *stmtState) prepareStmt(useStartTS bool) error {
 
 // PessimisticRCTxnContextProvider provides txn context for isolation level read-committed
 type PessimisticRCTxnContextProvider struct {
-	baseTxnContextProvider
+	basePessimisticTxnContextProvider
 	stmtState
 	latestOracleTS uint64
 	// latestOracleTSValid shows whether we have already fetched a ts from pd and whether the ts we fetched is still valid.
@@ -66,15 +66,17 @@ type PessimisticRCTxnContextProvider struct {
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
 func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRCTxnContextProvider {
 	provider := &PessimisticRCTxnContextProvider{
-		baseTxnContextProvider: baseTxnContextProvider{
-			sctx:                  sctx,
-			causalConsistencyOnly: causalConsistencyOnly,
-			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
-				txnCtx.IsPessimistic = true
-				txnCtx.Isolation = ast.ReadCommitted
-			},
-			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
-				txn.SetOption(kv.Pessimistic, true)
+		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
+			baseTxnContextProvider: baseTxnContextProvider{
+				sctx:                  sctx,
+				causalConsistencyOnly: causalConsistencyOnly,
+				onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
+					txnCtx.IsPessimistic = true
+					txnCtx.Isolation = ast.ReadCommitted
+				},
+				onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+					txn.SetOption(kv.Pessimistic, true)
+				},
 			},
 		},
 	}

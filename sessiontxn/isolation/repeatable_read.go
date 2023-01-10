@@ -34,7 +34,7 @@ import (
 
 // PessimisticRRTxnContextProvider provides txn context for isolation level repeatable-read
 type PessimisticRRTxnContextProvider struct {
-	baseTxnContextProvider
+	basePessimisticTxnContextProvider
 
 	// Used for ForUpdateRead statement
 	forUpdateTS       uint64
@@ -47,15 +47,17 @@ type PessimisticRRTxnContextProvider struct {
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
 func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRRTxnContextProvider {
 	provider := &PessimisticRRTxnContextProvider{
-		baseTxnContextProvider: baseTxnContextProvider{
-			sctx:                  sctx,
-			causalConsistencyOnly: causalConsistencyOnly,
-			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
-				txnCtx.IsPessimistic = true
-				txnCtx.Isolation = ast.RepeatableRead
-			},
-			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
-				txn.SetOption(kv.Pessimistic, true)
+		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
+			baseTxnContextProvider: baseTxnContextProvider{
+				sctx:                  sctx,
+				causalConsistencyOnly: causalConsistencyOnly,
+				onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
+					txnCtx.IsPessimistic = true
+					txnCtx.Isolation = ast.RepeatableRead
+				},
+				onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+					txn.SetOption(kv.Pessimistic, true)
+				},
 			},
 		},
 	}
