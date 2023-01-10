@@ -463,7 +463,12 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	if s.cfg.Store == "tikv" {
 		keyspaceName := config.GetGlobalKeyspaceName()
 		for {
-			fullPath := fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+			var fullPath string
+			if keyspaceName == "" {
+				fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
+			} else {
+				fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+			}
 			store, err := store.New(fullPath)
 			if err != nil {
 				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
