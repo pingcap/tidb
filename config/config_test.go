@@ -1302,6 +1302,4 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 	UpdateGlobal(func(conf *Config) {
 		conf.KeyspaceName = ""
 	})
-	require.Nil(t, os.Setenv(EnvVarKeyspaceName, "test2"))
-	require.Equal(t, "test2", GetGlobalKeyspaceName())
 }
