@@ -24,9 +24,10 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/assert"
@@ -34,86 +35,32 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestGetFlashbackKeyRanges(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
+func TestGetTableDataKeyRanges(t *testing.T) {
+	// case 1, empty flashbackIDs
+	keyRanges := ddl.GetTableDataKeyRanges([]int64{})
+	require.Len(t, keyRanges, 1)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
-	defer resetGC()
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// case 2, insert a execluded table ID
+	keyRanges = ddl.GetTableDataKeyRanges([]int64{3})
+	require.Len(t, keyRanges, 2)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
+	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
 
-	startTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-	require.NoError(t, err)
-
-	kvRanges, err := ddl.GetFlashbackKeyRanges(se, startTS)
-	require.NoError(t, err)
-	// The results are 12 key ranges
-	// 0: `stats_meta` table
-	// 1: `stats_histograms` table
-	// 2: `stats_buckets` table
-	// 3: `gc_delete_range` table
-	// 4: `stats_feedback` table
-	// 5: `stats_top_n` table
-	// 6: `stats_extended` table
-	// 7: `stats_fm_sketch` table
-	// 8: `stats_history` table
-	// 9: `stats_meta_history` table
-	// 10: `stats_table_locked` table
-	// 11: `test` schema
-	require.Len(t, kvRanges, 12)
-
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE employees (" +
-		"    id INT NOT NULL," +
-		"    store_id INT NOT NULL" +
-		") PARTITION BY RANGE (store_id) (" +
-		"    PARTITION p0 VALUES LESS THAN (6)," +
-		"    PARTITION p1 VALUES LESS THAN (11)," +
-		"    PARTITION p2 VALUES LESS THAN (16)," +
-		"    PARTITION p3 VALUES LESS THAN (21)" +
-		");")
-
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se, startTS)
-	require.NoError(t, err)
-	// 12 previous key ranges and 1 table with 4 partitions
-	require.Len(t, kvRanges, 12+1+4)
-
-	// truncate `employees` table, add more 5 key ranges.
-	ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-	time.Sleep(10 * time.Millisecond)
-	tk.MustExec("truncate table test.employees")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se, ts)
-	require.NoError(t, err)
-	require.Len(t, kvRanges, 12+1+4+5)
-
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se, startTS)
-	require.NoError(t, err)
-	require.Len(t, kvRanges, 12+1+4)
-
-	/*
-		ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-		require.NoError(t, err)
-		// ts is after truncate table operate, so only 4 ranges.
-		kvRanges, err = ddl.GetFlashbackKeyRanges(context.Background(), se, ts)
-		require.NoError(t, err)
-		require.Len(t, kvRanges, 4)
-
-		tk.MustExec("truncate table test.employees")
-		ts, err = store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-		require.NoError(t, err)
-
-		// ts is after truncate table opreate, so only 3 ranges.
-		kvRanges, err = ddl.GetFlashbackKeyRanges(context.Background(), se, ts)
-		require.NoError(t, err)
-		require.Len(t, kvRanges, 3)
-		// startTS is before truncate table opreate, so need process dropped tables key ranges.
-		// 3 current exists table key ranges, 11 truncate system table ranges, 4 partitions.
-		kvRanges, err = ddl.GetFlashbackKeyRanges(context.Background(), se, startTS)
-		require.NoError(t, err)
-		require.Len(t, kvRanges, 3+11+4)
-	*/
+	// case 3, insert some execluded table ID
+	keyRanges = ddl.GetTableDataKeyRanges([]int64{3, 5, 9})
+	require.Len(t, keyRanges, 4)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
+	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(5))
+	require.Equal(t, keyRanges[2].StartKey, tablecodec.EncodeTablePrefix(6))
+	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
+	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
+	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
 }
 
 func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {

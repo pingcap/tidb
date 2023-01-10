@@ -345,8 +345,11 @@ func TestFlashbackCreateDropSchema(t *testing.T) {
 
 		tk.MustExec("drop schema test")
 		tk.MustExec("create schema test1")
+		tk.MustExec("create schema test2")
 		tk.MustExec("use test1")
 		tk.MustGetErrCode("use test", errno.ErrBadDB)
+		tk.MustExec("use test2")
+		tk.MustExec("drop schema test2")
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 
@@ -360,6 +363,7 @@ func TestFlashbackCreateDropSchema(t *testing.T) {
 		res := tk.MustQuery("select max(a) from test.t").Rows()
 		require.Equal(t, res[0][0], "2")
 		tk.MustGetErrCode("use test1", errno.ErrBadDB)
+		tk.MustGetErrCode("use test2", errno.ErrBadDB)
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))

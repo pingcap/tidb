@@ -48,6 +48,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var pdScheduleKey = []string{
@@ -281,73 +282,58 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	return nil
 }
 
-func needAddToSlice(schema string, tableName string) bool {
+func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []int64) []int64 {
 	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") && tableName != "gc_delete_range" {
-		return false
+		flashbackIDs = append(flashbackIDs, tableID)
 	}
-	return true
+	return flashbackIDs
 }
 
-func getFlashbackTableIDs(schemas []*model.DBInfo) []int64 {
-	var tableIDs []int64
-	for _, db := range schemas {
-		for _, table := range db.Tables {
-			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
-				continue
-			}
-			if needAddToSlice(db.Name.L, table.Name.L) {
-				tableIDs = append(tableIDs, table.ID)
-				tableIDs = append(tableIDs, getPartitionIDs(table)...)
-			}
-		}
+// GetTableDataKeyRanges get keyRanges by `flashbackIDs`.
+// This func will return all flashback table data key ranges.
+func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
+	var keyRanges []kv.KeyRange
+
+	nonFlashbackTableIDs = append(nonFlashbackTableIDs, -1)
+
+	slices.SortFunc(nonFlashbackTableIDs, func(a, b int64) bool {
+		return a < b
+	})
+
+	for i := 1; i < len(nonFlashbackTableIDs); i++ {
+		keyRanges = append(keyRanges, kv.KeyRange{
+			StartKey: tablecodec.EncodeTablePrefix(nonFlashbackTableIDs[i-1] + 1),
+			EndKey:   tablecodec.EncodeTablePrefix(nonFlashbackTableIDs[i]),
+		})
 	}
-	return tableIDs
+
+	// Add all other key ranges.
+	keyRanges = append(keyRanges, kv.KeyRange{
+		StartKey: tablecodec.EncodeTablePrefix(nonFlashbackTableIDs[len(nonFlashbackTableIDs)-1] + 1),
+		EndKey:   tablecodec.EncodeTablePrefix(meta.MaxGlobalID),
+	})
+
+	return keyRanges
 }
 
 // GetFlashbackKeyRanges get keyRanges for flashback cluster.
-// It contains all current table key ranges, history table key ranges at flashbackTS and meta data key ranges.
+// It contains all non system table key ranges and meta data key ranges.
 // The returned KeyRanges will order by startKey.
 // The time complexity is O(nlogn).
 func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
+	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	// The semantic of keyRanges(output).
 	var keyRanges []kv.KeyRange
 
-	// get current table IDs.
-	currentSchemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	currentTableIDs := getFlashbackTableIDs(currentSchemas)
-
-	// get snapshot table IDs.
+	// get snapshot schema IDs.
 	flashbackSnapshotMeta := meta.NewSnapshotMeta(sess.GetStore().GetSnapshot(kv.NewVersion(flashbackTS)))
 	snapshotSchemas, err := flashbackSnapshotMeta.ListDatabases()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, schema := range snapshotSchemas {
-		schema.Tables, err = flashbackSnapshotMeta.ListTables(schema.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	snapshotTableIDs := getFlashbackTableIDs(snapshotSchemas)
-
-	tableIDs := make(map[int64]struct{})
-	for _, id := range currentTableIDs {
-		tableIDs[id] = struct{}{}
-	}
-	for _, id := range snapshotTableIDs {
-		tableIDs[id] = struct{}{}
-	}
-
-	// The table data key ranges.
-	for tableID := range tableIDs {
-		keyRanges = append(keyRanges, kv.KeyRange{
-			StartKey: tablecodec.EncodeTablePrefix(tableID),
-			EndKey:   tablecodec.EncodeTablePrefix(tableID + 1),
-		})
-	}
 
 	schemaIDs := make(map[int64]struct{})
-	for _, schema := range currentSchemas {
+	for _, schema := range schemas {
 		if !filter.IsSystemSchema(schema.Name.L) {
 			schemaIDs[schema.ID] = struct{}{}
 		}
@@ -374,7 +360,22 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 		EndKey:   startKey.PrefixNext(),
 	})
 
-	return keyRanges, nil
+	var nonFlashbackTableIDs []int64
+	for _, db := range schemas {
+		for _, table := range db.Tables {
+			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
+				continue
+			}
+			nonFlashbackTableIDs = addToSlice(db.Name.L, table.Name.L, table.ID, nonFlashbackTableIDs)
+			if table.Partition != nil {
+				for _, partition := range table.Partition.Definitions {
+					nonFlashbackTableIDs = addToSlice(db.Name.L, table.Name.L, partition.ID, nonFlashbackTableIDs)
+				}
+			}
+		}
+	}
+
+	return append(keyRanges, GetTableDataKeyRanges(nonFlashbackTableIDs)...), nil
 }
 
 // SendPrepareFlashbackToVersionRPC prepares regions for flashback, the purpose is to put region into flashback state which region stop write
