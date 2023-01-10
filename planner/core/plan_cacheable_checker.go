@@ -24,7 +24,6 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"reflect"
 )
 
 // Cacheable checks whether the input ast is cacheable with empty session context, which is mainly for testing.
@@ -254,33 +253,28 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 	switch node := in.(type) {
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join,
 		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *driver.ValueExpr, *ast.PatternInExpr:
-		return in, false
+		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.BinaryOperationExpr:
 		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
-			return in, true
 		}
-		return in, false
+		return in, !checker.cacheable
 	case *ast.TableName:
 		if checker.schema != nil {
 			if isPartitionTable(checker.schema, node) {
 				checker.cacheable = false
-				return in, true
 			}
 			if hasGeneratedCol(checker.schema, node) {
 				checker.cacheable = false
-				return in, true
 			}
 			if isTempTable(checker.schema, node) {
 				checker.cacheable = false
-				return in, true
 			}
 		}
-		return in, false
+		return in, !checker.cacheable
 	}
-	fmt.Println(">>>>>>>>>>>>>> unexpected >>> ", reflect.TypeOf(in))
 	checker.cacheable = false // unexpected cases
-	return in, false
+	return in, !checker.cacheable
 }
 
 // Leave implements Visitor interface.
