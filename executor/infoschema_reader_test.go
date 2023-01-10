@@ -254,7 +254,7 @@ func TestDDLJobs(t *testing.T) {
 	tk.MustExec("create table tt (a int);")
 	tk.MustExec("alter table tt add index t(a), add column b int")
 	tk.MustQuery("select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3").Check(
-		testkit.Rows("test_ddl_jobs tt alter table multi-schema change", "test_ddl_jobs tt add index /* subjob */", "test_ddl_jobs tt add column /* subjob */"))
+		testkit.Rows("test_ddl_jobs tt alter table multi-schema change", "test_ddl_jobs tt add index /* subjob */ /* txn-merge */", "test_ddl_jobs tt add column /* subjob */"))
 }
 
 func TestKeyColumnUsage(t *testing.T) {

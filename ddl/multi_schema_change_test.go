@@ -1052,7 +1052,7 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			assert.Equal(t, len(rows), 4)
 			assert.Equal(t, rows[1][1], "test")
 			assert.Equal(t, rows[1][2], "t")
-			assert.Equal(t, rows[1][3], "add index /* subjob */")
+			assert.Equal(t, rows[1][3], "add index /* subjob */ /* txn-merge */")
 			assert.Equal(t, rows[1][4], "delete only")
 			assert.Equal(t, rows[1][len(rows[1])-1], "running")
 

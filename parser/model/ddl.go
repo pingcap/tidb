@@ -356,6 +356,7 @@ type SubJob struct {
 	Warning     *terror.Error   `json:"warning"`
 	CtxVars     []interface{}   `json:"-"`
 	SchemaVer   int64           `json:"schema_version"`
+	ReorgTp     ReorgType       `json:"reorg_tp"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -418,6 +419,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
+	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 }
 
 // JobMeta is meta info of Job.
