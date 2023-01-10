@@ -1,5 +1,6 @@
 # Require review from domain experts when the PR modified significant config files.
-/sessionctx/variable @pingcap/tidb-configuration-reviewer
-/config/config.toml.example @pingcap/tidb-configuration-reviewer
-/session/bootstrap.go @pingcap/tidb-configuration-reviewer
-/telemetry/ @pingcap/telemetry-reviewer
+# TODO: Enable these again before merging the feature branch to pingcap/master
+#/sessionctx/variable @pingcap/tidb-configuration-reviewer
+#/config/config.toml.example @pingcap/tidb-configuration-reviewer
+#/session/bootstrap.go @pingcap/tidb-configuration-reviewer
+#/telemetry/ @pingcap/telemetry-reviewer
