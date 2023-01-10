@@ -739,23 +739,18 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
-	se, err := pool.get()
+	sctx, err := pool.get()
 	if err != nil {
 		return
 	}
-	defer pool.put(se)
+	defer pool.put(sctx)
 
-	sess := newSession(se)
+	sess := newSession(sctx)
 	err = sess.begin()
 	if err != nil {
 		return
 	}
-	txn, err := sess.txn()
-	if err != nil {
-		sess.rollback()
-		return err
-	}
-	rh := newReorgHandler(meta.NewMeta(txn), sess)
+	rh := newReorgHandler(sess)
 	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
 	err1 := sess.commit()
 	if err == nil {
@@ -766,17 +761,16 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
-	m *meta.Meta
 	s *session
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
-func NewReorgHandlerForTest(t *meta.Meta, sess sessionctx.Context) *reorgHandler {
-	return newReorgHandler(t, newSession(sess))
+func NewReorgHandlerForTest(sess sessionctx.Context) *reorgHandler {
+	return newReorgHandler(newSession(sess))
 }
 
-func newReorgHandler(t *meta.Meta, sess *session) *reorgHandler {
-	return &reorgHandler{m: t, s: sess}
+func newReorgHandler(sess *session) *reorgHandler {
+	return &reorgHandler{s: sess}
 }
 
 // InitDDLReorgHandle initializes the job reorganization information.
