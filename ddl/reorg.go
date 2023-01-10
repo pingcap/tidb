@@ -794,16 +794,16 @@ func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool) {
 		// Job is given, but it is neither finished nor synced; do nothing
 		return
 	}
-	se, err := pool.get()
+	sctx, err := pool.get()
 	if err != nil {
 		logutil.BgLogger().Info("CleanupDDLReorgHandles get sessionctx failed", zap.Error(err))
 		return
 	}
-	defer pool.put(se)
+	defer pool.put(sctx)
 
 	// Should there be any other options?
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	err = cleanDDLReorgHandles(newSession(se), job)
+	sctx.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	err = cleanDDLReorgHandles(newSession(sctx), job)
 	if err != nil {
 		logutil.BgLogger().Info("cleanDDLReorgHandles failed", zap.Error(err))
 	}
