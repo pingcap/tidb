@@ -10,6 +10,7 @@ go_library(
         "//util",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/pdpb",
         "@org_uber_go_zap//:zap",
     ],
 )
