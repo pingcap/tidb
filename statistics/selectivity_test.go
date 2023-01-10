@@ -128,7 +128,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	statsTbl := h.GetTableStats(table.Meta())
 	sctx := mock.NewContext()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.Count, false)
+	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.Count, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
 	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
 	// so we use a range here.
@@ -147,8 +147,9 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	statsSuiteData := statistics.GetStatsSuiteData()
 	statsSuiteData.GetTestCases(t, &input, &output)
 	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
+	modifyCount := int64(float64(statsTbl.Count) * 0.5)
 	for i, ran := range input {
-		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, false)
+		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -157,6 +158,42 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		})
 		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
 		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+	}
+}
+
+// TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
+// The test result doesn't perfectly reflect the actual data distribution, but this is the expected behavior for now.
+func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int unsigned)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
+	}
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("delete from t where a < 500")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
@@ -551,6 +588,7 @@ func TestSelectivity(t *testing.T) {
 		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
 
 		histColl.Count *= 10
+		histColl.ModifyCount = histColl.Count * 9
 		ratio, _, err = histColl.Selectivity(sctx, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
@@ -762,7 +800,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	statsSuiteData := statistics.GetStatsSuiteData()
 	statsSuiteData.GetTestCases(t, &input, &output)
 	for i, ran := range input {
-		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, false)
+		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, statsTbl.ModifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -893,3 +931,164 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
 }
+<<<<<<< HEAD
+=======
+
+func TestDefaultSelectivityForStrMatch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b varchar(100))")
+
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+
+	matchExplain, err := regexp.Compile("^explain")
+	require.NoError(t, err)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		ok := matchExplain.MatchString(tt)
+		if !ok {
+			testKit.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestTopNAssistedEstimationWithoutNewCollation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	collate.SetNewCollationEnabledForTest(false)
+	var (
+		input  []string
+		output []outputType
+	)
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	testTopNAssistedEstimationInner(t, input, output, store, dom)
+}
+
+func TestTopNAssistedEstimationWithNewCollation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	collate.SetNewCollationEnabledForTest(true)
+	var (
+		input  []string
+		output []outputType
+	)
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	testTopNAssistedEstimationInner(t, input, output, store, dom)
+}
+
+func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outputType, store kv.Storage, dom *domain.Domain) {
+	h := dom.StatsHandle()
+	h.Clear()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_default_string_match_selectivity = 0")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 3000")
+	tk.MustExec("create table t(" +
+		"a varchar(100) charset utf8mb4 collate utf8mb4_bin," +
+		"b varchar(100) charset utf8mb4 collate utf8mb4_general_ci," +
+		"c varchar(100) charset utf8mb4 collate utf8mb4_general_ci," +
+		"d varchar(100) charset gbk collate gbk_bin," +
+		"e varchar(100) charset gbk collate gbk_chinese_ci," +
+		"f varbinary(100))")
+	// data distribution:
+	// "111abc111", "111cba111", "111234111": 10 rows for each value
+	// null: 3 rows
+	// "tttttt", "uuuuuu", "vvvvvv", "wwwwww", "xxxxxx", "yyyyyy", "zzzzzz": 1 rows for each value
+	// total: 40 rows
+	for i := 0; i < 10; i++ {
+		tk.MustExec(`insert into t value("111abc111", "111abc111", "111abc111", "111abc111", "111abc111", "111abc111")`)
+		tk.MustExec(`insert into t value("111cba111", "111cba111", "111cba111", "111cba111", "111cba111", "111cba111")`)
+		tk.MustExec(`insert into t value("111234111", "111234111", "111234111", "111234111", "111234111", "111234111")`)
+	}
+	for i := 0; i < 3; i++ {
+		tk.MustExec(`insert into t value(null, null, null, null, null, null)`)
+	}
+	tk.MustExec(`insert into t value("tttttt", "tttttt", "tttttt", "tttttt", "tttttt", "tttttt")`)
+	tk.MustExec(`insert into t value("uuuuuu", "uuuuuu", "uuuuuu", "uuuuuu", "uuuuuu", "uuuuuu")`)
+	tk.MustExec(`insert into t value("vvvvvv", "vvvvvv", "vvvvvv", "vvvvvv", "vvvvvv", "vvvvvv")`)
+	tk.MustExec(`insert into t value("wwwwww", "wwwwww", "wwwwww", "wwwwww", "wwwwww", "wwwwww")`)
+	tk.MustExec(`insert into t value("xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx")`)
+	tk.MustExec(`insert into t value("yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy")`)
+	tk.MustExec(`insert into t value("zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz")`)
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec(`analyze table t with 3 topn`)
+
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+type outputType struct {
+	SQL    string
+	Result []string
+}
+
+func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int unsigned) " +
+		"partition by range (a) " +
+		"(partition p0 values less than (400), " +
+		"partition p1 values less than (600), " +
+		"partition p2 values less than (800)," +
+		"partition p3 values less than (1000)," +
+		"partition p4 values less than (1200))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
+	}
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("delete from t where a < 500")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+	testKit.MustExec("analyze table t partition p4 with 1 samplerate, 0 topn")
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	for i := range input {
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+>>>>>>> 3cb091ba18 (statistics: change the upper bound of the out-of-range estimation to modify count | tidb-test=pr/2012 (#39011))
