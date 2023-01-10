@@ -118,6 +118,10 @@ const (
 	HintIgnoreIndex = "ignore_index"
 	// HintForceIndex make optimizer to use this index even if it thinks a table scan is more efficient.
 	HintForceIndex = "force_index"
+	// HintKeepOrder is hint enforce using some indexes and keep the index's order.
+	HintKeepOrder = "keep_order"
+	// HintNoKeepOrder is hint enforce using some indexes and not keep the index's order.
+	HintNoKeepOrder = "no_keep_order"
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
 	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
@@ -1576,7 +1580,9 @@ func (*PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.Ex
 		childTp := cols[i].GetType()
 		childTpCharLen := 1
 		if isBinary {
-			childTpCharLen = charset.CharacterSetInfos[childTp.GetCharset()].Maxlen
+			if charsetInfo, ok := charset.CharacterSetInfos[childTp.GetCharset()]; ok {
+				childTpCharLen = charsetInfo.Maxlen
+			}
 		}
 		resultTp.SetFlen(mathutil.Max(resultTp.GetFlen(), childTpCharLen*childTp.GetFlen()))
 	}
@@ -3608,7 +3614,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
-			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintIndexMerge, HintLeading:
+			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintKeepOrder, HintNoKeepOrder, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				b.pushHintWithoutTableWarning(hint)
 				continue
@@ -3644,10 +3650,23 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			aggHints.preferAggType |= preferStreamAgg
 		case HintAggToCop:
 			aggHints.preferAggToCop = true
-		case HintUseIndex:
+		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintKeepOrder, HintNoKeepOrder:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
 				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+			}
+			var hintType ast.IndexHintType
+			switch hint.HintName.L {
+			case HintUseIndex:
+				hintType = ast.HintUse
+			case HintIgnoreIndex:
+				hintType = ast.HintIgnore
+			case HintForceIndex:
+				hintType = ast.HintForce
+			case HintKeepOrder:
+				hintType = ast.HintKeepOrder
+			case HintNoKeepOrder:
+				hintType = ast.HintNoKeepOrder
 			}
 			indexHintList = append(indexHintList, indexHintInfo{
 				dbName:     dbName,
@@ -3655,37 +3674,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 				partitions: hint.Tables[0].PartitionList,
 				indexHint: &ast.IndexHint{
 					IndexNames: hint.Indexes,
-					HintType:   ast.HintUse,
-					HintScope:  ast.HintForScan,
-				},
-			})
-		case HintIgnoreIndex:
-			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
-				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-			}
-			indexHintList = append(indexHintList, indexHintInfo{
-				dbName:     dbName,
-				tblName:    hint.Tables[0].TableName,
-				partitions: hint.Tables[0].PartitionList,
-				indexHint: &ast.IndexHint{
-					IndexNames: hint.Indexes,
-					HintType:   ast.HintIgnore,
-					HintScope:  ast.HintForScan,
-				},
-			})
-		case HintForceIndex:
-			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
-				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-			}
-			indexHintList = append(indexHintList, indexHintInfo{
-				dbName:     dbName,
-				tblName:    hint.Tables[0].TableName,
-				partitions: hint.Tables[0].PartitionList,
-				indexHint: &ast.IndexHint{
-					IndexNames: hint.Indexes,
-					HintType:   ast.HintForce,
+					HintType:   hintType,
 					HintScope:  ast.HintForScan,
 				},
 			})
@@ -4471,30 +4460,39 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
-		h := domain.GetDomain(b.ctx).StatsHandle()
-		tblStats := h.GetTableStats(tableInfo)
-		isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
-		globalStatsReady := tblStats.IsInitialized()
-		// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-		usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
+		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
+		// otherwise we need to check global stats initialized for each partition table
+		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			b.optFlag = b.optFlag | flagPartitionProcessor
+		} else {
+			if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode {
+				b.optFlag = b.optFlag | flagPartitionProcessor
+			} else {
+				h := domain.GetDomain(b.ctx).StatsHandle()
+				tblStats := h.GetTableStats(tableInfo)
+				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
+				globalStatsReady := tblStats.IsInitialized()
+				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
+				usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
 
-		failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
-			if val.(bool) {
-				if isDynamicEnabled {
-					usePartitionProcessor = false
+				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
+					if val.(bool) {
+						if isDynamicEnabled {
+							usePartitionProcessor = false
+						}
+					}
+				})
+
+				if usePartitionProcessor {
+					b.optFlag = b.optFlag | flagPartitionProcessor
+					b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
+					if isDynamicEnabled {
+						b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+							fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
+					}
 				}
 			}
-		})
-
-		if usePartitionProcessor {
-			b.optFlag = b.optFlag | flagPartitionProcessor
-			b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
-			if isDynamicEnabled {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
-					fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
-			}
 		}
-
 		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
 		if len(tn.PartitionNames) > 0 {
