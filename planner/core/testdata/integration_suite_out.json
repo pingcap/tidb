@@ -4322,6 +4322,74 @@
     ]
   },
   {
+    "Name": "TestKeepOrderHint",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "Plan": [
+          "Limit_12 1.00 root  offset:0, count:1",
+          "└─Projection_17 1.00 root  test.t1.a, test.t1.b",
+          "  └─IndexLookUp_16 1.00 root  ",
+          "    ├─Limit_15(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "    │ └─IndexRangeScan_13 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:true, stats:pseudo",
+          "    └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ keep_order(t, primary) */ * from t where a<10 order by a limit 1;",
+        "Plan": [
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─TableReader_15 1.00 root  data:Limit_14",
+          "  └─Limit_14 1.00 cop[tikv]  offset:0, count:1",
+          "    └─TableRangeScan_13 333.33 cop[tikv] table:t range:[-inf,10), keep order:true, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "Plan": [
+          "TopN_9 1.00 root  test.t1.a, offset:0, count:1",
+          "└─IndexLookUp_16 1.00 root  ",
+          "  ├─TopN_15(Build) 1.00 cop[tikv]  test.t1.a, offset:0, count:1",
+          "  │ └─IndexRangeScan_13 3323.33 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ no_keep_order(t, primary) */ * from t where a<10 order by a limit 1;",
+        "Plan": [
+          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
+          "└─TableReader_15 1.00 root  data:TopN_14",
+          "  └─TopN_14 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "    └─TableRangeScan_13 3333.33 cop[tikv] table:t range:[-inf,10), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 limit 1;",
+        "Plan": [
+          "IndexLookUp_13 1.00 root  limit embedded(offset:0, count:1)",
+          "├─Limit_12(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "│ └─IndexRangeScan_10 1.00 cop[tikv] table:t1, index:idx_a(a) range:[-inf,10), keep order:false, stats:pseudo",
+          "└─TableRowIDScan_11(Probe) 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ no_keep_order(t, primary) */ * from t where a<10 limit 1;",
+        "Plan": [
+          "Limit_8 1.00 root  offset:0, count:1",
+          "└─TableReader_12 1.00 root  data:Limit_11",
+          "  └─Limit_11 1.00 cop[tikv]  offset:0, count:1",
+          "    └─TableRangeScan_10 333.33 cop[tikv] table:t range:[-inf,10), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
     "Name": "TestViewHint",
     "Cases": [
       {
@@ -7520,6 +7588,41 @@
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.b1, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.b1))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMppFineGrainedJoinAndAgg",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)",
+        "Plan": [
+          "TableReader 7992.00 root  data:ExchangeSender",
+          "└─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, equal:[eq(test.tt.b1, test.t.c3)], stream_count: 8",
+          "    ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  stream_count: 8",
+          "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c3, collate: binary], stream_count: 8",
+          "    │   └─Projection 8000.00 mpp[tiflash]  test.t.c3",
+          "    │     └─Selection 8000.00 mpp[tiflash]  lt(test.t.c1, test.t.c2)",
+          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.b1, collate: binary]",
+          "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.b1))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) from tt group by b1",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#3",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:sum(Column#7)->Column#3, stream_count: 8",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.b1, collate: binary], stream_count: 8",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.b1, funcs:count(1)->Column#7",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:tt keep order:false, stats:pseudo"
         ]
       }
     ]

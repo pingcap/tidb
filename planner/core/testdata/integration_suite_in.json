@@ -654,6 +654,17 @@
     ]
   },
   {
+    "name": "TestKeepOrderHint",
+    "cases": [
+      "explain select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ keep_order(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 limit 1;",
+      "explain select /*+ no_keep_order(t, primary) */ * from t where a<10 limit 1;"
+    ]
+  },
+  {
     "name": "TestViewHint",
     "cases": [
       // Hint for view v
@@ -958,6 +969,13 @@
     "name": "TestMppJoinExchangeColumnPrune",
     "cases": [
       "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)"
+    ]
+  },
+  {
+    "name": "TestMppFineGrainedJoinAndAgg",
+    "cases": [
+      "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)",
+      "desc format = 'brief' select count(*) from tt group by b1"
     ]
   },
   {

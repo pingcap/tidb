@@ -1324,6 +1324,43 @@ func TestReadFromStorageHint(t *testing.T) {
 	}
 }
 
+func TestKeepOrderHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(a int, b int, primary key(a));")
+	tk.MustExec("create table t1(a int, b int, index idx_a(a), index idx_b(b));")
+
+	// If the optimizer can not generate the keep order plan, it will report error
+	err := tk.ExecToErr("explain select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 limit 1;")
+	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+
+	err = tk.ExecToErr("explain select /*+ keep_order(t, primary) */ * from t where a<10 limit 1;")
+	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
 func TestViewHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4914,6 +4951,64 @@ func TestMppJoinExchangeColumnPrune(t *testing.T) {
 	}
 }
 
+func TestMppFineGrainedJoinAndAgg(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int NOT NULL, c4 int NOT NULL, c5 int)")
+	tk.MustExec("create table tt (b1 int)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table tt")
+
+	instances := []string{
+		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
+		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
+	}
+	fpName := "github.com/pingcap/tidb/infoschema/mockStoreServerInfo"
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	require.NoError(t, failpoint.Enable(fpName, fpExpr))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+	fpName2 := "github.com/pingcap/tidb/planner/core/mockTiFlashStreamCountUsingMinLogicalCores"
+	require.NoError(t, failpoint.Enable(fpName2, `return("8")`))
+	defer func() { require.NoError(t, failpoint.Disable(fpName2)) }()
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" || tblInfo.Name.L == "tt" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_allow_mpp=1;")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func TestMppAggTopNWithJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -8160,4 +8255,12 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 		CHECK (id IN (0, 1)),
 		KEY idx_autoinc_id (id)
 	)`)
+}
+
+func TestIssue40285(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t(col1 enum('p5', '9a33x') NOT NULL DEFAULT 'p5',col2 tinyblob DEFAULT NULL) ENGINE = InnoDB DEFAULT CHARSET = latin1 COLLATE = latin1_bin;")
+	tk.MustQuery("(select last_value(col1) over () as r0 from t) union all (select col2 as r0 from t);")
 }
