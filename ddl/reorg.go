@@ -738,17 +738,19 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	return &info, nil
 }
 
+// UpdateReorgMeta creates a new transaction and updates tidb_ddl_reorg table,
+// so the reorg can restart in case of issues.
 func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err error) {
 	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
-	se, err := pool.get()
+	sctx, err := pool.get()
 	if err != nil {
 		return
 	}
-	defer pool.put(se)
+	defer pool.put(sctx)
 
-	sess := newSession(se)
+	sess := newSession(sctx)
 	err = sess.begin()
 	if err != nil {
 		return
