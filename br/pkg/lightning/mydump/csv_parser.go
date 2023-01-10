@@ -34,7 +34,8 @@ var (
 	errUnterminatedQuotedField = errors.NewNoStackError("syntax error: unterminated quoted field")
 	errDanglingBackslash       = errors.NewNoStackError("syntax error: no character after backslash")
 	errUnexpectedQuoteField    = errors.NewNoStackError("syntax error: cannot have consecutive fields without separator")
-	LargestEntryLimit          int
+	// max size for reading file to buf
+	LargestEntryLimit int
 )
 
 func init() {
