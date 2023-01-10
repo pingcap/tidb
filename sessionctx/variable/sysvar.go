@@ -1825,6 +1825,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlanCacheWithDynamicPruneMode, Value: BoolToOnOff(DefTiDBPlanCacheWithDynamicPruneMode), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PlanCacheWithDynamicPruneMode = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableRedactLog = TiDBOptOn(val)
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)

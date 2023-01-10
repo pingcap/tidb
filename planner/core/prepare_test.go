@@ -1008,8 +1008,12 @@ func TestPrepareCacheForPartition(t *testing.T) {
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
-	for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
-		tk.MustExec("set @@tidb_partition_prune_mode = '" + pruneMode + "'")
+	for _, sysVar := range []string{
+		"set @@session.tidb_enable_plan_cache_with_dynamic_prune_mode = 1 ; set @@session.tidb_partition_prune_mode = " + string(variable.Static),
+		"set @@session.tidb_enable_plan_cache_with_dynamic_prune_mode = 1 ; set @@session.tidb_partition_prune_mode = " + string(variable.Dynamic),
+		"set @@session.tidb_enable_plan_cache_with_dynamic_prune_mode = 0 ; set @@session.tidb_partition_prune_mode = " + string(variable.Static),
+		"set @@session.tidb_enable_plan_cache_with_dynamic_prune_mode = 0 ; set @@session.tidb_partition_prune_mode = " + string(variable.Dynamic)} {
+		tk.MustExec(sysVar)
 		// Test for PointGet and IndexRead.
 		tk.MustExec("drop table if exists t_index_read")
 		tk.MustExec("create table t_index_read (id int, k int, c varchar(10), primary key (id, k)) partition by hash(id+k) partitions 10")
@@ -1112,6 +1116,8 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows())
 
 		// https://github.com/pingcap/tidb/issues/33031
+		planCache := tk.MustQuery(`select @@tidb_enable_plan_cache_with_dynamic_prune_mode`).Rows()[0][0]
+		pruneMode := tk.MustQuery(`select @@tidb_partition_prune_mode`).Rows()[0][0]
 		tk.MustExec(`drop table if exists Issue33031`)
 		tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1)) PARTITION BY RANGE (COL1) (PARTITION P0 VALUES LESS THAN (0))`)
 		tk.MustExec(`insert into Issue33031 values(-5, 7)`)
@@ -1120,9 +1126,12 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
 		tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
 		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
-		if pruneMode == string(variable.Dynamic) {
+		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
+		if pruneMode.(string) == string(variable.Dynamic) && planCache.(string) == "1" {
 			// When the temporary disabling of prepared plan cache for dynamic partition prune mode is disabled, change this to 1!
-			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+			tk.MustQuery(`select @@last_plan_from_cache /* pruneMode = ` + pruneMode.(string) + ` planCache = ` + planCache.(string) + ` */`).Check(testkit.Rows("1"))
+		} else {
+			tk.MustQuery(`select @@last_plan_from_cache /* pruneMode = ` + pruneMode.(string) + ` planCache = ` + planCache.(string) + ` */`).Check(testkit.Rows("0"))
 		}
 	}
 }
