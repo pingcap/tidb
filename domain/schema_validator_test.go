@@ -55,31 +55,31 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 		item.oldVer,
 		item.schemaVer,
 		&transaction.RelatedSchemaChange{PhyTblIDS: []int64{10}, ActionTypes: []uint64{10}})
-	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
 	require.Equal(t, ResultSucc, valid)
 
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
 	require.False(t, validator.IsStarted())
-	_, isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
+	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	require.True(t, isTablesChanged)
-	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
 	require.Equal(t, ResultUnknown, valid)
 	validator.Restart()
 
 	// Increase the current time by 2 leases, check schema is invalid.
 	after2LeaseTime := time.Now().Add(2 * lease)
 	ts := uint64(after2LeaseTime.UnixNano()) // Make sure that ts has timed out a lease.
-	_, valid = validator.Check(ts, item.schemaVer, []int64{10})
+	_, valid = validator.Check(ts, item.schemaVer, []int64{10}, true)
 	require.Equalf(t, ResultUnknown, valid, "validator latest schema ver %v, time %v, item schema ver %v, ts %v", validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts))
 
 	// Make sure newItem's version is greater than item.schema.
 	newItem := getGreaterVersionItem(t, leaseGrantCh, item.schemaVer)
 	currVer := newItem.schemaVer
 	validator.Update(newItem.leaseGrantTS, newItem.oldVer, currVer, nil)
-	_, valid = validator.Check(ts, item.schemaVer, nil)
+	_, valid = validator.Check(ts, item.schemaVer, nil, true)
 	require.Equalf(t, ResultFail, valid, "currVer %d, newItem %v", currVer, item)
-	_, valid = validator.Check(ts, item.schemaVer, []int64{0})
+	_, valid = validator.Check(ts, item.schemaVer, []int64{0}, true)
 	require.Equalf(t, ResultFail, valid, "currVer %d, newItem %v", currVer, item)
 
 	// Check the latest schema version must changed.
@@ -91,17 +91,17 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	validator.Update(ts, currVer, newItem.schemaVer, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3}, ActionTypes: []uint64{1, 2, 3}})
 	// Make sure the updated table IDs don't be covered with the same schema version.
 	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, nil)
-	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
 	require.False(t, isTablesChanged)
-	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
 	require.Truef(t, isTablesChanged, "currVer %d, newItem %v", currVer, newItem)
 	// The current schema version is older than the oldest schema version.
-	_, isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
+	isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
 	require.Truef(t, isTablesChanged, "currVer %d, newItem %v", currVer, newItem)
 
 	// All schema versions is expired.
 	ts = uint64(after2LeaseTime.Add(2 * lease).UnixNano())
-	_, valid = validator.Check(ts, newItem.schemaVer, nil)
+	_, valid = validator.Check(ts, newItem.schemaVer, nil, true)
 	require.Equal(t, ResultUnknown, valid, "schemaVer %v, validator %#v", newItem.schemaVer, validator)
 
 	close(exit)
@@ -214,10 +214,8 @@ func subTestEnqueueActionType(t *testing.T) {
 
 	// Check the flag set by schema diff, note tableID = 3 has been set flag 0x3 in schema version 9, and flag 0x4
 	// in schema version 10, so the resActions for tableID = 3 should be 0x3 & 0x4 = 0x7.
-	relatedChanges, isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
+	isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
 	require.True(t, isTablesChanged)
-	require.Equal(t, []int64{1, 2, 3, 4}, relatedChanges.PhyTblIDS)
-	require.Equal(t, []uint64{15, 2, 7, 4}, relatedChanges.ActionTypes)
 }
 
 type leaseGrantItem struct {

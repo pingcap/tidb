@@ -23,10 +23,11 @@ import (
 
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/tidb/ddl"
-	. "github.com/pingcap/tidb/ddl/syncer"
+	"github.com/pingcap/tidb/ddl/syncer"
 	util2 "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -42,15 +43,16 @@ const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 const testLease = 5 * time.Millisecond
 
 func TestSyncerSimple(t *testing.T) {
+	variable.EnableMDL.Store(false)
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
-	origin := CheckVersFirstWaitTime
-	CheckVersFirstWaitTime = 0
+	origin := syncer.CheckVersFirstWaitTime
+	syncer.CheckVersFirstWaitTime = 0
 	defer func() {
-		CheckVersFirstWaitTime = origin
+		syncer.CheckVersFirstWaitTime = origin
 	}()
 
 	store, err := mockstore.NewMockStore()
@@ -84,7 +86,7 @@ func TestSyncerSimple(t *testing.T) {
 	defer d.SchemaSyncer().Close()
 
 	key := util2.DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
-	checkRespKV(t, 1, key, InitialVersion, resp.Kvs...)
+	checkRespKV(t, 1, key, syncer.InitialVersion, resp.Kvs...)
 
 	ic2 := infoschema.NewCache(2)
 	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
@@ -130,25 +132,25 @@ func TestSyncerSimple(t *testing.T) {
 
 	// for CheckAllVersions
 	childCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-	require.Error(t, d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer))
+	require.Error(t, d.SchemaSyncer().OwnerCheckAllVersions(childCtx, 0, currentVer))
 	cancel()
 
 	// for UpdateSelfVersion
-	require.NoError(t, d.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer))
-	require.NoError(t, d1.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer))
+	require.NoError(t, d.SchemaSyncer().UpdateSelfVersion(context.Background(), 0, currentVer))
+	require.NoError(t, d1.SchemaSyncer().UpdateSelfVersion(context.Background(), 0, currentVer))
 
 	childCtx, cancel = context.WithTimeout(ctx, minInterval)
 	defer cancel()
-	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
+	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, 0, currentVer)
 	require.True(t, isTimeoutError(err))
 
 	// for CheckAllVersions
-	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer-1))
-	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer))
+	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), 0, currentVer-1))
+	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), 0, currentVer))
 
 	childCtx, cancel = context.WithTimeout(ctx, minInterval)
 	defer cancel()
-	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
+	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, 0, currentVer)
 	require.True(t, isTimeoutError(err))
 
 	// for Close

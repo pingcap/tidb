@@ -778,7 +778,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 
 // outOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
-// The maximum row count it can get is the increaseCount. It reaches the maximum when out-of-range width reaches histogram range width.
+// The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
 // Note that we assume histL-boundL == histR-histL == boundR-histR here.
 /*
@@ -795,7 +795,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCount int64) float64 {
+func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount int64) float64 {
 	if hg.Len() == 0 {
 		return 0
 	}
@@ -879,8 +879,14 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 		totalPercent = 1
 	}
 	rowCount := totalPercent * hg.notNullCount()
-	if rowCount > float64(increaseCount) {
-		return float64(increaseCount)
+
+	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
+	// a rather loose upper bound.
+	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
+	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
+	// can produce a reasonable results in this scenario.
+	if rowCount > float64(modifyCount) {
+		return float64(modifyCount)
 	}
 	return rowCount
 }
@@ -997,7 +1003,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 		Columns:       make(map[int64]*Column),
 		Indices:       make(map[int64]*Index),
 		Idx2ColumnIDs: coll.Idx2ColumnIDs,
-		ColID2IdxID:   coll.ColID2IdxID,
+		ColID2IdxIDs:  coll.ColID2IdxIDs,
 		Count:         coll.Count,
 	}
 	for _, node := range statsNodes {
@@ -1567,6 +1573,16 @@ func NewStatsFullLoadStatus() StatsLoadedStatus {
 	return StatsLoadedStatus{
 		statsInitialized: true,
 		evictedStatus:    allLoaded,
+	}
+}
+
+// NewStatsAllEvictedStatus returns the status that only loads count/nullCount/NDV and doesn't load CMSketch/TopN/Histogram.
+// When we load table stats, column stats is in allEvicted status by default. CMSketch/TopN/Histogram of column is only
+// loaded when we really need column stats.
+func NewStatsAllEvictedStatus() StatsLoadedStatus {
+	return StatsLoadedStatus{
+		statsInitialized: true,
+		evictedStatus:    allEvicted,
 	}
 }
 

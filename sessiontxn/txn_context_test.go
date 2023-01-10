@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -39,6 +40,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
@@ -150,6 +152,7 @@ func TestTxnContextInExplicitTxn(t *testing.T) {
 	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	se := tk.Session()
 
@@ -192,7 +195,7 @@ func TestTxnContextInExplicitTxn(t *testing.T) {
 	})
 
 	doWithCheckPath(t, se, normalPathRecords, func() {
-		tk.MustExec("commit")
+		tk.MustGetErrCode("commit", errno.ErrInfoSchemaChanged)
 	})
 
 	// the info schema in new txn should use the newest one
@@ -251,6 +254,7 @@ func TestTxnContextWithAutocommitFalse(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	se := tk.Session()
 
 	tk2 := testkit.NewTestKit(t, store)
@@ -676,6 +680,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	se := tk.Session()
 

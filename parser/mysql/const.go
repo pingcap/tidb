@@ -81,6 +81,8 @@ const (
 	MaxKeyParts = 16
 	// MaxIndexIdentifierLen is max length of index identifier.
 	MaxIndexIdentifierLen = 64
+	// MaxForeignKeyIdentifierLen is max length of foreign key identifier.
+	MaxForeignKeyIdentifierLen = 64
 	// MaxConstraintIdentifierLen is max length of constrain identifier.
 	MaxConstraintIdentifierLen = 64
 	// MaxViewIdentifierLen is max length of view identifier.
@@ -176,8 +178,11 @@ const (
 const (
 	AuthNativePassword      = "mysql_native_password" // #nosec G101
 	AuthCachingSha2Password = "caching_sha2_password" // #nosec G101
+	AuthTiDBSM3Password     = "tidb_sm3_password"     // #nosec G101
+	AuthMySQLClearPassword  = "mysql_clear_password"
 	AuthSocket              = "auth_socket"
 	AuthTiDBSessionToken    = "tidb_session_token"
+	AuthTiDBAuthToken       = "tidb_auth_token"
 )
 
 // MySQL database and tables.
@@ -204,6 +209,8 @@ const (
 	RoleEdgeTable = "role_edges"
 	// DefaultRoleTable is the table contain default active role info
 	DefaultRoleTable = "default_roles"
+	// PasswordHistoryTable is the table in system db contains password history.
+	PasswordHistoryTable = "password_history"
 )
 
 // MySQL type maximum length.
@@ -242,8 +249,12 @@ const MaxTypeSetMembers = 64
 
 // PWDHashLen is the length of mysql_native_password's hash.
 const PWDHashLen = 40 // excluding the '*'
+
 // SHAPWDHashLen is the length of sha256_password's hash.
 const SHAPWDHashLen = 70
+
+// SM3PWDHashLen is the length of tidb_sm3_password's hash.
+const SM3PWDHashLen = 70
 
 // Command2Str is the command information to command name.
 var Command2Str = map[byte]string{

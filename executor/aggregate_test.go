@@ -1088,6 +1088,14 @@ func TestIssue10608(t *testing.T) {
 	tk.MustExec("insert into t values(508931), (508932)")
 	tk.MustQuery("select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
 	tk.MustQuery("select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
+
+	tk.MustExec("CREATE TABLE `t49`(`c0` char(1) DEFAULT '1',  `c2` char(1) DEFAULT NULL,  UNIQUE KEY `c2` (`c2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t49` VALUES ('0','0'),('0','1');")
+	tk.MustExec("CREATE TABLE `t0` (`c0` blob DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t0` VALUES (_binary ']'),(_binary '777926278'),(_binary '0.2136404982804636'),(_binary '1901362489'),(_binary '1558203848'),(''),(_binary '1830406335'),(''),(_binary '0'),(NULL),(_binary '601930250'),(_binary '1558203848'),(_binary '-122008948'),(_binary '-2053608489'),(_binary 'hb/vt  <7'),(_binary 'RC&2*'),(_binary '1'),(_binary '-1722334316'),(_binary '1830406335'),(_binary '1372126029'),(_binary '882291196'),(NULL),(_binary '-399693596');")
+	tk.MustExec("CREATE ALGORITHM=TEMPTABLE DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v0` (`c0`, `c1`, `c2`) AS SELECT NULL AS `NULL`,`t49`.`c2` AS `c2`,(((CASE _UTF8MB4'I되EkfIO퀶' WHEN NULL THEN `t49`.`c0` WHEN `t49`.`c2` THEN `t0`.`c0` ELSE (CASE `t49`.`c0` WHEN _UTF8MB4'%' THEN 1035293362 ELSE _UTF8MB4',' END) END))<<(`t49`.`c0`)) AS `(((CASE 'I되EkfIO퀶' WHEN NULL THEN t49.c0 WHEN t49.c2 THEN t0.c0 ELSE (CASE t49.c0 WHEN '%' THEN 1035293362 ELSE ',' END ) END ))<<(t49.c0))` FROM (`t0`) JOIN `t49` WHERE TRUE;")
+	tk.MustQuery("SELECT /*+ STREAM_AGG()*/v0.c0 FROM t49, v0 LEFT OUTER JOIN t0 ON ('Iw') GROUP BY true;").
+		Check(testkit.Rows("<nil>"))
 }
 
 func TestIssue12759HashAggCalledByApply(t *testing.T) {
@@ -1495,16 +1503,23 @@ func TestAggInDisk(t *testing.T) {
 	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
 }
 
-func TestRandomPanicAggConsume(t *testing.T) {
+func TestRandomPanicConsume(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_max_chunk_size=32")
 	tk.MustExec("set @@tidb_init_chunk_size=1")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(pk bigint primary key auto_random,a int, index idx(a));")
+	tk.MustExec("SPLIT TABLE t BETWEEN (-9223372036854775808) AND (9223372036854775807) REGIONS 50;") // Split 50 regions to simulate many requests
 	for i := 0; i <= 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v),(%v),(%v)", i, i, i))
+		tk.MustExec(fmt.Sprintf("insert into t(a) values(%v),(%v),(%v)", i, i, i))
+	}
+	tk.MustExec("drop table if exists s;")
+	tk.MustExec("create table s(pk bigint primary key auto_random,a int, b int, index idx(a));")
+	tk.MustExec("SPLIT TABLE s BETWEEN (-9223372036854775808) AND (9223372036854775807) REGIONS 50;") // Split 50 regions to simulate many requests
+	for i := 0; i <= 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into s(a,b) values(%v,%v),(%v,%v),(%v,%v)", i, i, i, i, i, i))
 	}
 
 	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
@@ -1512,42 +1527,60 @@ func TestRandomPanicAggConsume(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
+	fpName2 := "github.com/pingcap/tidb/store/copr/ConsumeRandomPanic"
+	require.NoError(t, failpoint.Enable(fpName2, "3%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName2))
+	}()
 
-	// Test 10 times panic for each AggExec.
+	sqls := []string{
+		// Without index
+		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t) */ count(a) from t group by a",                                  // HashAgg Paralleled
+		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t) */ count(distinct a) from t",                                    // HashAgg Unparalleled
+		"select /*+ STREAM_AGG() */ /*+ USE_INDEX(t) */ count(a) from t group by a",                                // Shuffle+StreamAgg
+		"select /*+ USE_INDEX(t) */ a * a, a / a, a + a , a - a from t",                                            // Projection
+		"select /*+ HASH_JOIN(t1) */ /*+ USE_INDEX(t1) */ /*+ USE_INDEX(t2) */* from t t1 join t t2 on t1.a=t2.a",  // HashJoin
+		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1) */ /*+ USE_INDEX(t2) */* from t t1 join t t2 on t1.a=t2.a", // Shuffle+MergeJoin
+		"select /*+ USE_INDEX(t) */ * from t",                                                                      // TableScan
+
+		// With index
+		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t,idx) */ count(a) from t group by a",                                       // HashAgg Paralleled
+		"select /*+ HASH_AGG() */ /*+ USE_INDEX(t,idx) */ count(distinct a) from t",                                         // HashAgg Unparalleled
+		"select /*+ STREAM_AGG() */ /*+ USE_INDEX(t,idx) */ count(a) from t group by a",                                     // Shuffle+StreamAgg
+		"select /*+ USE_INDEX(t,idx) */ a * a, a / a, a + a , a - a from t",                                                 // Projection
+		"select /*+ HASH_JOIN(t1) */ /*+ USE_INDEX(t1,idx) */ /*+ USE_INDEX(t2,idx) */ * from t t1 join t t2 on t1.a=t2.a",  // HashJoin
+		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1,idx) */ /*+ USE_INDEX(t2,idx) */ * from t t1 join t t2 on t1.a=t2.a", // Shuffle+MergeJoin
+		"select /*+ INL_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",                                                    // Index Join
+		"select /*+ INL_HASH_JOIN(t2) */ * from t t1 join t t2 on t1.a=t2.a;",                                               // Index Hash Join
+		"select /*+ USE_INDEX(t, idx) */ * from t",                                                                          // IndexScan
+
+		// With IndexLookUp
+		"select /*+ MERGE_JOIN(t1) */ /*+ USE_INDEX(t1,idx) */ /*+ USE_INDEX(t2,idx) */ * from s t1 join s t2 on t1.a=t2.a", // Shuffle+MergeJoin
+		"select /*+ INL_JOIN(t2) */ * from s t1 join s t2 on t1.a=t2.a;",                                                    // Index Join
+		"select /*+ INL_HASH_JOIN(t2) */ * from s t1 join s t2 on t1.a=t2.a;",                                               // Index Hash Join
+		"select /*+ USE_INDEX(s, idx) */ * from s",                                                                          // IndexLookUp
+	}
+
+	// Test 10 times panic for each Executor.
 	var res sqlexec.RecordSet
-	for i := 1; i <= 10; i++ {
-		var err error
-		for err == nil {
-			// Test paralleled hash agg.
-			res, err = tk.Exec("select /*+ HASH_AGG() */ count(a) from t group by a")
-			if err == nil {
-				_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
-				require.NoError(t, res.Close())
+	for _, sql := range sqls {
+		for i := 1; i <= 10; i++ {
+			concurrency := rand.Int31n(4) + 1 // test 1~5 concurrency randomly
+			tk.MustExec(fmt.Sprintf("set @@tidb_executor_concurrency=%v", concurrency))
+			tk.MustExec(fmt.Sprintf("set @@tidb_merge_join_concurrency=%v", concurrency))
+			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%v", concurrency))
+			distConcurrency := rand.Int31n(15) + 1
+			tk.MustExec(fmt.Sprintf("set @@tidb_distsql_scan_concurrency=%v", distConcurrency))
+			var err error
+			for err == nil {
+				res, err = tk.Exec(sql)
+				if err == nil {
+					_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
+					require.NoError(t, res.Close())
+				}
 			}
+			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 		}
-		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
-
-		err = nil
-		for err == nil {
-			// Test unparalleled hash agg.
-			res, err = tk.Exec("select /*+ HASH_AGG() */ count(distinct a) from t")
-			if err == nil {
-				_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
-				require.NoError(t, res.Close())
-			}
-		}
-		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
-
-		err = nil
-		for err == nil {
-			// Test stream agg.
-			res, err = tk.Exec("select /*+ STREAM_AGG() */ count(a) from t")
-			if err == nil {
-				_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
-				require.NoError(t, res.Close())
-			}
-		}
-		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
 }
 
@@ -1617,11 +1650,11 @@ func TestIssue26885(t *testing.T) {
 	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
 	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "", "a", "", ""))
-	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("select c1 + 0 from t1").Sort().Check(testkit.Rows("0", "1", "2", "2", "3"))
 	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
 
 	tk.MustExec("alter table t1 add index idx(c1); ")
-	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("select c1 + 0 from t1").Sort().Check(testkit.Rows("0", "1", "2", "2", "3"))
 	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
 
 	tk.MustExec(`DROP TABLE IF EXISTS t1;`)

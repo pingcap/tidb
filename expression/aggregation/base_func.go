@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -119,7 +120,7 @@ func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	case ast.AggFuncJsonArrayagg:
 		a.typeInfer4JsonArrayAgg(ctx)
 	case ast.AggFuncJsonObjectAgg:
-		a.typeInfer4JsonObjectAgg(ctx)
+		return a.typeInfer4JsonObjectAgg(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -270,7 +271,8 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 	}
 	a.RetTp = a.Args[0].GetType()
-	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin {
+	if a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin ||
+		a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag {
 		a.RetTp = a.Args[0].GetType().Clone()
 		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
@@ -294,10 +296,11 @@ func (a *baseFuncDesc) typeInfer4JsonArrayAgg(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-func (a *baseFuncDesc) typeInfer4JsonObjectAgg(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4JsonObjectAgg(ctx sessionctx.Context) error {
 	a.RetTp = types.NewFieldType(mysql.TypeJSON)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.Args[0] = expression.WrapWithCastAsString(ctx, a.Args[0])
+	return nil
 }
 
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {
@@ -428,4 +431,20 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		}
 		a.Args[i] = castFunc(ctx, a.Args[i])
 	}
+}
+
+// MemoryUsage return the memory usage of baseFuncDesc
+func (a *baseFuncDesc) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = size.SizeOfString + int64(len(a.Name))
+	if a.RetTp != nil {
+		sum += a.RetTp.MemoryUsage()
+	}
+	for _, expr := range a.Args {
+		sum += expr.MemoryUsage()
+	}
+	return
 }

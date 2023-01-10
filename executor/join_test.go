@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
@@ -66,7 +65,7 @@ func TestJoinInDisk(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	tk.MustExec("use test")
 
-	sm := &testutil.MockSessionManager{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -199,9 +198,9 @@ func TestJoin2(t *testing.T) {
 	tk.MustQuery("select /*+ INL_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Sort().Check(testkit.Rows("2", "3"))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
-	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
 	tk.MustQuery("select /*+ INL_JOIN(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
@@ -1223,6 +1222,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("DROP TABLE IF EXISTS t")
 	tk.MustExec("CREATE TABLE `t` (`a` int, pk integer auto_increment,`b` char (20),primary key (pk))")
@@ -1362,9 +1362,9 @@ func TestIndexLookupJoin(t *testing.T) {
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
 		"  │   └─TableFullScan 64.00 cop[tikv] table:t keep order:false",
-		"  └─IndexReader(Probe) 1.00 root  index:Selection",
-		"    └─Selection 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
+		"  └─IndexReader(Probe) 64.00 root  index:Selection",
+		"    └─Selection 64.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
+		"      └─IndexRangeScan 64.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
@@ -1375,9 +1375,9 @@ func TestIndexLookupJoin(t *testing.T) {
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
 		"  │   └─TableFullScan 64.00 cop[tikv] table:t keep order:false",
-		"  └─IndexReader(Probe) 1.00 root  index:Selection",
-		"    └─Selection 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:true",
+		"  └─IndexReader(Probe) 64.00 root  index:Selection",
+		"    └─Selection 64.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
+		"      └─IndexRangeScan 64.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:true",
 	))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
@@ -1389,9 +1389,9 @@ func TestIndexLookupJoin(t *testing.T) {
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
 		"  │   └─TableFullScan 64.00 cop[tikv] table:t keep order:false",
-		"  └─IndexReader(Probe) 1.00 root  index:Selection",
-		"    └─Selection 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false",
+		"  └─IndexReader(Probe) 64.00 root  index:Selection",
+		"    └─Selection 64.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
+		"      └─IndexRangeScan 64.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false",
 	))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
@@ -1412,6 +1412,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
@@ -1435,8 +1436,8 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 		"IndexHashJoin 100.00 root  left outer join, inner:TableReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
 		"├─TableReader(Build) 100.00 root  data:TableFullScan",
 		"│ └─TableFullScan 100.00 cop[tikv] table:t keep order:true",
-		"└─TableReader(Probe) 1.00 root  data:TableRangeScan",
-		"  └─TableRangeScan 1.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false",
+		"└─TableReader(Probe) 100.00 root  data:TableRangeScan",
+		"  └─TableRangeScan 100.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false",
 	))
 	rs := tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
 	for i, row := range rs.Rows() {
@@ -1472,10 +1473,10 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 		"  ├─TableReader(Build) 9.00 root  data:Selection",
 		"  │ └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"  │   └─TableFullScan 9.00 cop[tikv] table:l1 keep order:false",
-		"  └─IndexLookUp(Probe) 3.00 root  ",
-		"    ├─IndexRangeScan(Build) 3.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
-		"    └─Selection(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
-		"      └─TableRowIDScan 3.00 cop[tikv] table:l2 keep order:false"))
+		"  └─IndexLookUp(Probe) 27.00 root  ",
+		"    ├─IndexRangeScan(Build) 27.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
+		"    └─Selection(Probe) 27.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"      └─TableRowIDScan 27.00 cop[tikv] table:l2 keep order:false"))
 	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
 	tk.MustQuery("desc format = 'brief' select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows(
 		"StreamAgg 1.00 root  funcs:count(1)->Column#11",
@@ -1483,10 +1484,10 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 		"  ├─TableReader(Build) 9.00 root  data:Selection",
 		"  │ └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"  │   └─TableFullScan 9.00 cop[tikv] table:l1 keep order:false",
-		"  └─IndexLookUp(Probe) 3.00 root  ",
-		"    ├─IndexRangeScan(Build) 3.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
-		"    └─Selection(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
-		"      └─TableRowIDScan 3.00 cop[tikv] table:l2 keep order:false"))
+		"  └─IndexLookUp(Probe) 27.00 root  ",
+		"    ├─IndexRangeScan(Build) 27.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
+		"    └─Selection(Probe) 27.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"      └─TableRowIDScan 27.00 cop[tikv] table:l2 keep order:false"))
 	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
 
@@ -1580,9 +1581,9 @@ func TestIssue13449(t *testing.T) {
 		"IndexHashJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
 		"├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
 		"│ └─IndexFullScan 9990.00 cop[tikv] table:t, index:a(a) keep order:true, stats:pseudo",
-		"└─IndexReader(Probe) 1.25 root  index:Selection",
-		"  └─Selection 1.25 cop[tikv]  not(isnull(test.s.a))",
-		"    └─IndexRangeScan 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo"))
+		"└─IndexReader(Probe) 12487.50 root  index:Selection",
+		"  └─Selection 12487.50 cop[tikv]  not(isnull(test.s.a))",
+		"    └─IndexRangeScan 12500.00 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows("1 1", "128 128"))
 }
 
@@ -2178,11 +2179,11 @@ func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 		"IndexHashJoin 12475.01 root  left outer join, inner:IndexLookUp, outer key:test.t.b, inner key:test.s.b, equal cond:eq(test.t.b, test.s.b), other cond:lt(test.s.a, test.t.a)",
 		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
 		"│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-		"└─IndexLookUp(Probe) 1.25 root  ",
-		"  ├─Selection(Build) 1.25 cop[tikv]  not(isnull(test.s.b))",
-		"  │ └─IndexRangeScan 1.25 cop[tikv] table:s, index:b(b) range: decided by [eq(test.s.b, test.t.b)], keep order:false, stats:pseudo",
-		"  └─Selection(Probe) 1.25 cop[tikv]  not(isnull(test.s.a))",
-		"    └─TableRowIDScan 1.25 cop[tikv] table:s keep order:false, stats:pseudo"))
+		"└─IndexLookUp(Probe) 12475.01 root  ",
+		"  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.s.b))",
+		"  │ └─IndexRangeScan 12500.00 cop[tikv] table:s, index:b(b) range: decided by [eq(test.s.b, test.t.b)], keep order:false, stats:pseudo",
+		"  └─Selection(Probe) 12475.01 cop[tikv]  not(isnull(test.s.a))",
+		"    └─TableRowIDScan 12487.50 cop[tikv] table:s keep order:false, stats:pseudo"))
 }
 
 func TestIssue13177(t *testing.T) {
@@ -2306,16 +2307,14 @@ func TestIssue18070(t *testing.T) {
 	tk.MustExec("insert into t1 values(1),(2)")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
 	tk.MustExec("set @@tidb_mem_quota_query=1000")
-	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 
 	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 }
 
 func TestIssue18564(t *testing.T) {
@@ -2768,6 +2767,88 @@ func TestIssue31129(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), "IndexHashJoinBuildHashTablePanic"))
 	require.NoError(t, failpoint.Disable(fpName1))
 	require.NoError(t, failpoint.Disable(fpName2))
+}
+
+func TestIssue37932(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("create table tbl_1 ( col_1 set ( 'Alice','Bob','Charlie','David' )   not null default 'Alice' ,col_2 tinyint  unsigned ,col_3 decimal ( 34 , 3 )   not null default 79 ,col_4 bigint  unsigned not null ,col_5 bit ( 12 )   not null , unique key idx_1 ( col_2 ) ,unique key idx_2 ( col_2 ) ) charset utf8mb4 collate utf8mb4_bin ;")
+	tk1.MustExec("create table tbl_2 ( col_6 text ( 52 ) collate utf8_unicode_ci  not null ,col_7 int  unsigned not null ,col_8 blob ( 369 ) ,col_9 bit ( 51 ) ,col_10 decimal ( 38 , 16 ) , unique key idx_3 ( col_7 ) ,unique key idx_4 ( col_7 ) ) charset utf8 collate utf8_unicode_ci ;")
+	tk1.MustExec("create table tbl_3 ( col_11 set ( 'Alice','Bob','Charlie','David' )   not null ,col_12 bigint  unsigned not null default 1678891638492596595 ,col_13 text ( 18 ) ,col_14 set ( 'Alice','Bob','Charlie','David' )   not null default 'Alice' ,col_15 mediumint , key idx_5 ( col_12 ) ,unique key idx_6 ( col_12 ) ) charset utf8mb4 collate utf8mb4_general_ci ;")
+	tk1.MustExec("create table tbl_4 ( col_16 set ( 'Alice','Bob','Charlie','David' )   not null ,col_17 tinyint  unsigned ,col_18 int  unsigned not null default 4279145838 ,col_19 varbinary ( 210 )   not null ,col_20 timestamp , primary key  ( col_18 ) /*T![clustered_index] nonclustered */ ,key idx_8 ( col_19 ) ) charset utf8mb4 collate utf8mb4_unicode_ci ;")
+	tk1.MustExec("create table tbl_5 ( col_21 bigint ,col_22 set ( 'Alice','Bob','Charlie','David' ) ,col_23 blob ( 311 ) ,col_24 bigint  unsigned not null default 3415443099312152509 ,col_25 time , unique key idx_9 ( col_21 ) ,unique key idx_10 ( col_21 ) ) charset gbk collate gbk_bin ;")
+	tk1.MustExec("insert into tbl_1 values ( 'Bob',null,0.04,2650749963804575036,4044 );")
+	tk1.MustExec("insert into tbl_1 values ( 'Alice',171,1838.2,6452757231340518222,1190 );")
+	tk1.MustExec("insert into tbl_1 values ( 'Bob',202,2.962,4304284252076747481,2112 );")
+	tk1.MustExec("insert into tbl_1 values ( 'David',155,32610.05,5899651588546531414,104 );")
+	tk1.MustExec("insert into tbl_1 values ( 'Charlie',52,4219.7,6151233689319516187,1246 );")
+	tk1.MustExec("insert into tbl_1 values ( 'Bob',55,3963.11,3614977408465893392,1188 );")
+	tk1.MustExec("insert into tbl_1 values ( 'Alice',203,72.01,1553550133494908281,1658 );")
+	tk1.MustExec("insert into tbl_1 values ( 'Bob',40,871.569,8114062926218465773,1397 );")
+	tk1.MustExec("insert into tbl_1 values ( 'Alice',165,7765,4481202107781982005,2089 );")
+	tk1.MustExec("insert into tbl_1 values ( 'David',79,7.02,993594504887208796,514 );")
+	tk1.MustExec("insert into tbl_2 values ( 'iB_%7c&q!6-gY4bkvg',2064909882,'dLN52t1YZSdJ',2251679806445488,32 );")
+	tk1.MustExec("insert into tbl_2 values ( 'h_',1478443689,'EqP+iN=',180492371752598,0.1 );")
+	tk1.MustExec("insert into tbl_2 values ( 'U@U&*WKfPzil=6YaDxp',4271201457,'QWuo24qkSSo',823931105457505,88514 );")
+	tk1.MustExec("insert into tbl_2 values ( 'FR4GA=',505128825,'RpEmV6ph5Z7',568030123046798,609381 );")
+	tk1.MustExec("insert into tbl_2 values ( '3GsU',166660047,'',1061132816887762,6.4605 );")
+	tk1.MustExec("insert into tbl_2 values ( 'BA4hPRD0lm*pbg#NE',3440634757,'7gUPe2',288001159469205,6664.9 );")
+	tk1.MustExec("insert into tbl_2 values ( '+z',2117152318,'WTkD(N',215697667226264,7.88 );")
+	tk1.MustExec("insert into tbl_2 values ( 'x@SPhy9lOomPa4LF',2881759652,'ETUXQQ0b4HnBSKgTWIU',153379720424625,null );")
+	tk1.MustExec("insert into tbl_2 values ( '',2075177391,'MPae!9%ufd',115899580476733,341.23 );")
+	tk1.MustExec("insert into tbl_2 values ( '~udi',1839363347,'iQj$$YsZc5ULTxG)yH',111454353417190,6.6 );")
+	tk1.MustExec("insert into tbl_3 values ( 'Alice',7032411265967085555,'P7*KBZ159','Alice',7516989 );")
+	tk1.MustExec("insert into tbl_3 values ( 'David',486417871670147038,'','Charlie',-2135446 );")
+	tk1.MustExec("insert into tbl_3 values ( 'Charlie',5784081664185069254,'7V_&YzKM~Q','Charlie',5583839 );")
+	tk1.MustExec("insert into tbl_3 values ( 'David',6346366522897598558,')Lp&$2)SC@','Bob',2522913 );")
+	tk1.MustExec("insert into tbl_3 values ( 'Charlie',224922711063053272,'gY','David',6624398 );")
+	tk1.MustExec("insert into tbl_3 values ( 'Alice',4678579167560495958,'fPIXY%R8WyY(=u&O','David',-3267160 );")
+	tk1.MustExec("insert into tbl_3 values ( 'David',8817108026311573677,'Cs0dZW*SPnKhV1','Alice',2359718 );")
+	tk1.MustExec("insert into tbl_3 values ( 'Bob',3177426155683033662,'o2=@zv2qQDhKUs)4y','Bob',-8091802 );")
+	tk1.MustExec("insert into tbl_3 values ( 'Bob',2543586640437235142,'hDa*CsOUzxmjf2m','Charlie',-8091935 );")
+	tk1.MustExec("insert into tbl_3 values ( 'Charlie',6204182067887668945,'DX-!=)dbGPQO','David',-1954600 );")
+	tk1.MustExec("insert into tbl_4 values ( 'David',167,576262750,'lX&x04W','2035-09-28' );")
+	tk1.MustExec("insert into tbl_4 values ( 'Charlie',236,2637776757,'92OhsL!w%7','2036-02-08' );")
+	tk1.MustExec("insert into tbl_4 values ( 'Bob',68,1077999933,'M0l','1997-09-16' );")
+	tk1.MustExec("insert into tbl_4 values ( 'Charlie',184,1280264753,'FhjkfeXsK1Q(','2030-03-16' );")
+	tk1.MustExec("insert into tbl_4 values ( 'Alice',10,2150711295,'Eqip)^tr*MoL','2032-07-02' );")
+	tk1.MustExec("insert into tbl_4 values ( 'Bob',108,2421602476,'Eul~~Df_Q8s&I3Y-7','2019-06-10' );")
+	tk1.MustExec("insert into tbl_4 values ( 'Alice',36,2811198561,'%XgRou0#iKtn*','2022-06-13' );")
+	tk1.MustExec("insert into tbl_4 values ( 'Charlie',115,330972286,'hKeJS','2000-11-15' );")
+	tk1.MustExec("insert into tbl_4 values ( 'Alice',6,2958326555,'c6+=1','2001-02-11' );")
+	tk1.MustExec("insert into tbl_4 values ( 'Alice',99,387404826,'figc(@9R*k3!QM_Vve','2036-02-17' );")
+	tk1.MustExec("insert into tbl_5 values ( -401358236474313609,'Charlie','4J$',701059766304691317,'08:19:10.00' );")
+	tk1.MustExec("insert into tbl_5 values ( 2759837898825557143,'Bob','E',5158554038674310466,'11:04:03.00' );")
+	tk1.MustExec("insert into tbl_5 values ( 273910054423832204,'Alice',null,8944547065167499612,'08:02:30.00' );")
+	tk1.MustExec("insert into tbl_5 values ( 2875669873527090798,'Alice','4^SpR84',4072881341903432150,'18:24:55.00' );")
+	tk1.MustExec("insert into tbl_5 values ( -8446590100588981557,'David','yBj8',8760380566452862549,'09:01:10.00' );")
+	tk1.MustExec("insert into tbl_5 values ( -1075861460175889441,'Charlie','ti11Pl0lJ',9139997565676405627,'08:30:14.00' );")
+	tk1.MustExec("insert into tbl_5 values ( 95663565223131772,'Alice','6$',8467839300407531400,'23:31:42.00' );")
+	tk1.MustExec("insert into tbl_5 values ( -5661709703968335255,'Charlie','',8122758569495329946,'19:36:24.00' );")
+	tk1.MustExec("insert into tbl_5 values ( 3338588216091909518,'Bob','',6558557574025196860,'15:22:56.00' );")
+	tk1.MustExec("insert into tbl_5 values ( 8918630521194612922,'David','I$w',5981981639362947650,'22:03:24.00' );")
+	tk1.MustExec("begin pessimistic;")
+	tk1.MustExec("insert ignore into tbl_1 set col_1 = 'David', col_2 = 110, col_3 = 37065, col_4 = 8164500960513474805, col_5 = 1264 on duplicate key update col_3 = 22151.5, col_4 = 6266058887081523571, col_5 = 3254, col_2 = 59, col_1 = 'Bob';")
+	tk1.MustExec("insert  into tbl_4 (col_16,col_17,col_18,col_19,col_20) values ( 'Charlie',34,2499970462,'Z','1978-10-27' ) ,( 'David',217,1732485689,'*)~@@Q8ryi','2004-12-01' ) ,( 'Charlie',40,1360558255,'H(Y','1998-06-25' ) ,( 'Alice',108,2973455447,'%CcP4$','1979-03-28' ) ,( 'David',9,3835209932,'tdKXUzLmAzwFf$','2009-03-03' ) ,( 'David',68,163270003,'uimsclz@FQJN','1988-09-11' ) ,( 'Alice',76,297067264,'BzFF','1989-01-05' ) on duplicate key update col_16 = 'Charlie', col_17 = 14, col_18 = 4062155275, col_20 = '2002-03-07', col_19 = 'tmvchLzp*o8';")
+	tk2.MustExec("delete from tbl_3 where tbl_3.col_13 in ( null ,'' ,'g8EEzUU7LQ' ,'~fC3&B*cnOOx_' ,'%RF~AFto&x' ,'NlWkMWG^00' ,'e^4o2Ji^q_*Fa52Z' ) ;")
+	tk2.MustExec("delete from tbl_5 where not( tbl_5.col_21 between -1075861460175889441 and 3338588216091909518 ) ;")
+	tk1.MustExec("replace into tbl_1 (col_1,col_2,col_3,col_4,col_5) values ( 'Alice',83,8.33,4070808626051569664,455 ) ,( 'Alice',53,2.8,2763362085715461014,1912 ) ,( 'David',178,4242.8,962727993466011464,1844 ) ,( 'Alice',16,650054,5638988670318229867,565 ) ,( 'Alice',76,89783.1,3968605744540056024,2563 ) ,( 'Bob',120,0.89,1003144931151245839,2670 );")
+	tk1.MustExec("delete from tbl_5 where col_24 is null ;")
+	tk1.MustExec("delete from tbl_3 where tbl_3.col_11 in ( 'Alice' ,'Bob' ,'Alice' ) ;")
+	tk2.MustExec("insert  into tbl_3 set col_11 = 'Bob', col_12 = 5701982550256146475, col_13 = 'Hhl)yCsQ2K3cfc^', col_14 = 'Alice', col_15 = -3718868 on duplicate key update col_15 = 7210750, col_12 = 6133680876296985245, col_14 = 'Alice', col_11 = 'David', col_13 = 'F+RMGE!_2^Cfr3Fw';")
+	tk2.MustExec("insert ignore into tbl_5 set col_21 = 2439343116426563397, col_22 = 'Charlie', col_23 = '~Spa2YzRFFom16XD', col_24 = 5571575017340582365, col_25 = '13:24:38.00' ;")
+	err := tk1.ExecToErr("update tbl_4 set tbl_4.col_20 = '2006-01-24' where tbl_4.col_18 in ( select col_11 from tbl_3 where IsNull( tbl_4.col_16 ) or not( tbl_4.col_19 in ( select col_3 from tbl_1 where tbl_4.col_16 between 'Alice' and 'David' and tbl_4.col_19 <= '%XgRou0#iKtn*' ) ) ) ;")
+	if err != nil {
+		print(err.Error())
+		if strings.Contains(err.Error(), "Truncated incorrect DOUBLE value") {
+			t.Log("Truncated incorrect DOUBLE value is within expectations, skipping")
+			return
+		}
+	}
+	require.NoError(t, err)
 }
 
 func TestOuterJoin(t *testing.T) {

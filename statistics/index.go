@@ -216,7 +216,7 @@ func (idx *Index) QueryBytes(d []byte) uint64 {
 
 // GetRowCount returns the row count of the given ranges.
 // It uses the modifyCount to adjust the influence of modifications on the table.
-func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount int64) (float64, error) {
+func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	idx.checkStats()
 	sc := sctx.GetSessionVars().StmtCtx
 	totalCount := float64(0)
@@ -309,11 +309,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 
 		// handling the out-of-range part
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			increaseCount := realtimeRowCount - int64(idx.TotalRowCount())
-			if increaseCount < 0 {
-				increaseCount = 0
-			}
-			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
+			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, modifyCount)
 		}
 	}
 	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
@@ -346,14 +342,30 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 		}
 		colID := colsIDs[i]
 		var (
-			count float64
-			err   error
+			count      float64
+			err        error
+			foundStats bool
 		)
-		if anotherIdxID, ok := coll.ColID2IdxID[colID]; ok && anotherIdxID != idx.Histogram.ID {
-			count, err = coll.GetRowCountByIndexRanges(sctx, anotherIdxID, tmpRan)
-		} else if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
+		if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
+			foundStats = true
 			count, err = coll.GetRowCountByColumnRanges(sctx, colID, tmpRan)
-		} else {
+		}
+		if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
+			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
+			// `GetRowCountByIndexRanges()` when the input `indexRange` is a multi-column range. This
+			// check avoids infinite recursion.
+			for _, idxID := range idxIDs {
+				if idxID == idx.Histogram.ID {
+					continue
+				}
+				foundStats = true
+				count, err = coll.GetRowCountByIndexRanges(sctx, idxID, tmpRan)
+				if err == nil {
+					break
+				}
+			}
+		}
+		if !foundStats {
 			continue
 		}
 		if err != nil {

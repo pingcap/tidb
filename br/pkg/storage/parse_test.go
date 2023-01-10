@@ -213,3 +213,49 @@ func TestFormatBackendURL(t *testing.T) {
 	})
 	require.Equal(t, "azure://bucket/some%20prefix/", backendURL.String())
 }
+
+func TestParseRawURL(t *testing.T) {
+	cases := []struct {
+		url             string
+		schema          string
+		host            string
+		path            string
+		accessKey       string
+		secretAccessKey string
+	}{
+		{
+			url:             `s3://bucket/prefix/path?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7DtPaIbYKrKlEEMMF/ExCiJEX=XMLPUANw`,
+			schema:          "s3",
+			host:            "bucket",
+			path:            "/prefix/path",
+			accessKey:       "NXN7IPIOSAAKDEEOLMAF",                    // fake ak/sk
+			secretAccessKey: "nREY/7DtPaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", // w/o "+"
+		},
+		{
+			url:             `s3://bucket/prefix/path?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw`,
+			schema:          "s3",
+			host:            "bucket",
+			path:            "/prefix/path",
+			accessKey:       "NXN7IPIOSAAKDEEOLMAF",                     // fake ak/sk
+			secretAccessKey: "nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", // with "+"
+		},
+	}
+
+	for _, c := range cases {
+		storageRawURL := c.url
+		storageURL, err := ParseRawURL(storageRawURL)
+		require.NoError(t, err)
+
+		require.Equal(t, c.schema, storageURL.Scheme)
+		require.Equal(t, c.host, storageURL.Host)
+		require.Equal(t, c.path, storageURL.Path)
+
+		require.Equal(t, 1, len(storageURL.Query()["access-key"]))
+		accessKey := storageURL.Query()["access-key"][0]
+		require.Equal(t, c.accessKey, accessKey)
+
+		require.Equal(t, 1, len(storageURL.Query()["secret-access-key"]))
+		secretAccessKey := storageURL.Query()["secret-access-key"][0]
+		require.Equal(t, c.secretAccessKey, secretAccessKey)
+	}
+}

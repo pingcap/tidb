@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -62,7 +61,11 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 		return nil
 	}
 
-	chk.AppendJSON(e.ordinal, json.CreateBinary(p.entries))
+	bj, err := types.CreateBinaryJSONWithCheck(p.entries)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	chk.AppendJSON(e.ordinal, bj)
 	return nil
 }
 
@@ -76,7 +79,11 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		key = strings.Clone(key)
 
 		if keyIsNull {
-			return 0, json.ErrJSONDocumentNULLKey
+			return 0, types.ErrJSONDocumentNULLKey
+		}
+
+		if e.args[0].GetType().GetCharset() == charset.CharsetBin {
+			return 0, types.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType().GetCharset())
 		}
 
 		value, err := e.args[1].Eval(row)
@@ -90,7 +97,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		}
 
 		switch x := realVal.(type) {
-		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, json.Opaque:
+		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
 			if _, ok := p.entries[key]; !ok {
 				memDelta += int64(len(key)) + getValMemDelta(realVal)
 				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
@@ -101,7 +108,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			p.entries[key] = realVal
 
 		default:
-			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
+			return 0, types.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
 	return memDelta, nil
@@ -112,7 +119,7 @@ func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, erro
 	switch value.Kind() {
 	case types.KindBinaryLiteral, types.KindMysqlBit, types.KindBytes:
 		buf := value.GetBytes()
-		realVal = json.Opaque{
+		realVal = types.Opaque{
 			TypeCode: ft.GetType(),
 			Buf:      buf,
 		}
@@ -125,7 +132,7 @@ func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, erro
 				resultBuf = make([]byte, ft.GetFlen())
 				copy(resultBuf, buf)
 			}
-			realVal = json.Opaque{
+			realVal = types.Opaque{
 				TypeCode: ft.GetType(),
 				Buf:      resultBuf,
 			}
@@ -142,7 +149,7 @@ func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, erro
 			return nil, errors.Trace(err)
 		}
 		realVal = float64Val
-	case []uint8, types.Time, types.Duration:
+	case []uint8:
 		strVal, err := types.ToString(x)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -166,11 +173,11 @@ func getValMemDelta(val interface{}) (memDelta int64) {
 		memDelta += DefFloat64Size
 	case string:
 		memDelta += int64(len(v))
-	case json.BinaryJSON:
-		// +1 for the memory usage of the TypeCode of json
+	case types.BinaryJSON:
+		// +1 for the memory usage of the JSONTypeCode of json
 		memDelta += int64(len(v.Value) + 1)
-	case json.Opaque:
-		// +1 for the memory usage of the TypeCode of opaque value
+	case types.Opaque:
+		// +1 for the memory usage of the JSONTypeCode of opaque value
 		memDelta += int64(len(v.Buf) + 1)
 	case *types.MyDecimal:
 		memDelta += DefMyDecimalSize

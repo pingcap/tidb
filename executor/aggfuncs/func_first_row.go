@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -103,7 +102,7 @@ type partialResult4FirstRowDuration struct {
 type partialResult4FirstRowJSON struct {
 	basePartialResult4FirstRow
 
-	val json.BinaryJSON
+	val types.BinaryJSON
 }
 
 type partialResult4FirstRowEnum struct {

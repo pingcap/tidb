@@ -5,14 +5,19 @@ package streamhelper
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
 type EventType int
@@ -36,10 +41,11 @@ func (t EventType) String() string {
 }
 
 type TaskEvent struct {
-	Type EventType
-	Name string
-	Info *backuppb.StreamBackupTaskInfo
-	Err  error
+	Type   EventType
+	Name   string
+	Info   *backuppb.StreamBackupTaskInfo
+	Ranges []kv.KeyRange
+	Err    error
 }
 
 func (t *TaskEvent) String() string {
@@ -60,7 +66,7 @@ func errorEvent(err error) TaskEvent {
 	}
 }
 
-func toTaskEvent(event *clientv3.Event) (TaskEvent, error) {
+func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
 	if !bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
 		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task path (%s)", string(event.Kv.Key))
 	}
@@ -78,13 +84,18 @@ func toTaskEvent(event *clientv3.Event) (TaskEvent, error) {
 	if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
 		return TaskEvent{}, err
 	}
+	var err error
+	te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
+	if err != nil {
+		return TaskEvent{}, err
+	}
 	return te, nil
 }
 
-func eventFromWatch(resp clientv3.WatchResponse) ([]TaskEvent, error) {
+func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResponse) ([]TaskEvent, error) {
 	result := make([]TaskEvent, 0, len(resp.Events))
 	for _, event := range resp.Events {
-		te, err := toTaskEvent(event)
+		te, err := t.toTaskEvent(ctx, event)
 		if err != nil {
 			te.Type = EventErr
 			te.Err = err
@@ -97,7 +108,7 @@ func eventFromWatch(resp clientv3.WatchResponse) ([]TaskEvent, error) {
 func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskEvent) {
 	c := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
 	handleResponse := func(resp clientv3.WatchResponse) bool {
-		events, err := eventFromWatch(resp)
+		events, err := t.eventFromWatch(ctx, resp)
 		if err != nil {
 			ch <- errorEvent(err)
 			return false
@@ -146,10 +157,15 @@ func (t AdvancerExt) getFullTasksAsEvent(ctx context.Context) ([]TaskEvent, int6
 	}
 	events := make([]TaskEvent, 0, len(tasks))
 	for _, task := range tasks {
+		ranges, err := task.Ranges(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
 		te := TaskEvent{
-			Type: EventAdd,
-			Name: task.Info.Name,
-			Info: &(task.Info),
+			Type:   EventAdd,
+			Name:   task.Info.Name,
+			Info:   &(task.Info),
+			Ranges: ranges,
 		}
 		events = append(events, te)
 	}
@@ -169,11 +185,43 @@ func (t AdvancerExt) Begin(ctx context.Context, ch chan<- TaskEvent) error {
 	return nil
 }
 
+func (t AdvancerExt) getGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
+	key := GlobalCheckpointOf(taskName)
+	resp, err := t.KV.Get(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(resp.Kvs) == 0 {
+		return 0, nil
+	}
+
+	firstKV := resp.Kvs[0]
+	value := firstKV.Value
+	if len(value) != 8 {
+		return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+			"the global checkpoint isn't 64bits (it is %d bytes, value = %s)",
+			len(value),
+			redact.Key(value))
+	}
+
+	return binary.BigEndian.Uint64(value), nil
+}
+
 func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error {
 	key := GlobalCheckpointOf(taskName)
 	value := string(encodeUint64(checkpoint))
-	_, err := t.KV.Put(ctx, key, value)
+	oldValue, err := t.getGlobalCheckpointForTask(ctx, taskName)
+	if err != nil {
+		return err
+	}
 
+	if checkpoint < oldValue {
+		log.Warn("[log backup advancer] skipping upload global checkpoint", zap.Uint64("old", oldValue), zap.Uint64("new", checkpoint))
+		return nil
+	}
+
+	_, err = t.KV.Put(ctx, key, value)
 	if err != nil {
 		return err
 	}

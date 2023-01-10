@@ -39,6 +39,7 @@ go_library(
         "//util/collate",
         "//util/mathutil",
         "//util/mvmap",
+        "//util/size",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_tipb//go-tipb",
     ],

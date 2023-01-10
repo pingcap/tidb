@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/assert"
+	"go.opencensus.io/stats/view"
 )
 
 func TestDecodeKey(t *testing.T) {
+	defer view.Stop()
 	table.MockTableFromMeta = tables.MockTableFromMeta
 	tableInfo1 := &model.TableInfo{
 		ID:   1,

@@ -1308,6 +1308,8 @@ func buildMockNewRows(mock sqlmock.Sqlmock, columns []string, driverValues [][]d
 }
 
 func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
+	t.Helper()
+
 	csvFilename := "region_results.csv"
 	file, err := os.Open(csvFilename)
 	require.NoError(t, err)
@@ -1345,7 +1347,7 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 	defer func() {
 		openDBFunc = oldOpenFunc
 	}()
-	openDBFunc = func(_, _ string) (*sql.DB, error) {
+	openDBFunc = func(*mysql.Config) (*sql.DB, error) {
 		return db, nil
 	}
 
@@ -1846,4 +1848,85 @@ func TestGetCharsetAndDefaultCollation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4_0900_ai_ci", charsetAndDefaultCollation["utf8mb4"])
 	require.Equal(t, "latin1_swedish_ci", charsetAndDefaultCollation["latin1"])
+}
+
+func TestGetSpecifiedColumnValueAndClose(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SHOW BINARY LOGS").
+		WillReturnRows(sqlmock.NewRows([]string{"Log_name", "File_size"}).
+			AddRow("mysql-bin.000001", 52119).
+			AddRow("mysql-bin.000002", 114))
+
+	query := "SHOW BINARY LOGS"
+	rows, err := conn.QueryContext(ctx, query)
+	require.NoError(t, err)
+	defer rows.Close()
+	var rowsResult []string
+	rowsResult, err = GetSpecifiedColumnValueAndClose(rows, "Log_name")
+	require.NoError(t, err)
+	require.Equal(t, 2, len(rowsResult))
+	require.Equal(t, "mysql-bin.000001", rowsResult[0])
+	require.Equal(t, "mysql-bin.000002", rowsResult[1])
+
+	err = mock.ExpectationsWereMet()
+	require.NoError(t, err)
+}
+
+func TestGetSpecifiedColumnValuesAndClose(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SHOW BINARY LOGS").
+		WillReturnRows(sqlmock.NewRows([]string{"Log_name", "File_size"}).
+			AddRow("mysql-bin.000001", 52119).
+			AddRow("mysql-bin.000002", 114))
+
+	query := "SHOW BINARY LOGS"
+	rows, err := conn.QueryContext(ctx, query)
+	require.NoError(t, err)
+	defer rows.Close()
+	var rowsResult [][]string
+	rowsResult, err = GetSpecifiedColumnValuesAndClose(rows, "Log_name", "File_size")
+	require.NoError(t, err)
+	require.Equal(t, 2, len(rowsResult))
+	require.Equal(t, 2, len(rowsResult[0]))
+	require.Equal(t, "mysql-bin.000001", rowsResult[0][0])
+	require.Equal(t, "52119", rowsResult[0][1])
+	require.Equal(t, "mysql-bin.000002", rowsResult[1][0])
+	require.Equal(t, "114", rowsResult[1][1])
+
+	mock.ExpectQuery("SHOW BINARY LOGS").
+		WillReturnRows(sqlmock.NewRows([]string{"Log_name", "File_size", "Encrypted"}).
+			AddRow("mysql-bin.000001", 52119, "No").
+			AddRow("mysql-bin.000002", 114, "No"))
+
+	rows2, err := conn.QueryContext(ctx, query)
+	require.NoError(t, err)
+	defer rows2.Close()
+	var rowsResult2 [][]string
+	rowsResult2, err = GetSpecifiedColumnValuesAndClose(rows2, "Log_name", "File_size")
+	require.NoError(t, err)
+	require.Equal(t, 2, len(rowsResult2))
+	require.Equal(t, 2, len(rowsResult2[0]))
+	require.Equal(t, "mysql-bin.000001", rowsResult2[0][0])
+	require.Equal(t, "52119", rowsResult2[0][1])
+	require.Equal(t, "mysql-bin.000002", rowsResult2[1][0])
+	require.Equal(t, "114", rowsResult2[1][1])
+
+	err = mock.ExpectationsWereMet()
+	require.NoError(t, err)
 }

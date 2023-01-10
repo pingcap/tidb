@@ -120,14 +120,6 @@ func (rc *Controller) HasLargeCSV(ctx context.Context) error {
 	return rc.doPreCheckOnItem(ctx, CheckLargeDataFile)
 }
 
-func (rc *Controller) estimateSourceData(ctx context.Context) (int64, int64, bool, error) {
-	result, err := rc.preInfoGetter.EstimateSourceDataSize(ctx)
-	if err != nil {
-		return 0, 0, false, errors.Trace(err)
-	}
-	return result.SizeWithIndex, result.SizeWithoutIndex, result.HasUnsortedBigTables, nil
-}
-
 // localResource checks the local node has enough resources for this import when local backend enabled;
 func (rc *Controller) localResource(ctx context.Context) error {
 	if rc.isSourceInLocal() {
@@ -162,4 +154,11 @@ func (rc *Controller) checkSourceSchema(ctx context.Context) error {
 		return nil
 	}
 	return rc.doPreCheckOnItem(ctx, CheckSourceSchemaValid)
+}
+
+func (rc *Controller) checkCDCPiTR(ctx context.Context) error {
+	if rc.cfg.TikvImporter.Backend == config.BackendTiDB {
+		return nil
+	}
+	return rc.doPreCheckOnItem(ctx, CheckTargetUsingCDCPITR)
 }

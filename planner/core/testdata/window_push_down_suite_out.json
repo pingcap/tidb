@@ -144,10 +144,10 @@
           "              └─TableFullScan_22 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `sum` is not supported now.",
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
-          "MPP mode may be blocked because window function `sum` is not supported now."
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       }
     ]
@@ -199,26 +199,26 @@
       {
         "SQL": "explain select *, lead(empid) over () FROM employee",
         "Plan": [
-          "Window_8 10000.00 root  lead(test.employee.empid)->Column#6 over()",
-          "└─TableReader_12 10000.00 root  data:TableFullScan_11",
-          "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader_21 10000.00 root  data:ExchangeSender_20",
+          "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_19 10000.00 mpp[tiflash]  lead(test.employee.empid)->Column#6 over()",
+          "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because window function `lead` is not supported now.",
-          "MPP mode may be blocked because window function `lead` is not supported now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select *, lag(empid) over () FROM employee",
         "Plan": [
-          "Window_8 10000.00 root  lag(test.employee.empid)->Column#6 over()",
-          "└─TableReader_12 10000.00 root  data:TableFullScan_11",
-          "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader_21 10000.00 root  data:ExchangeSender_20",
+          "└─ExchangeSender_20 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_19 10000.00 mpp[tiflash]  lag(test.employee.empid)->Column#6 over()",
+          "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
+          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because window function `lag` is not supported now.",
-          "MPP mode may be blocked because window function `lag` is not supported now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain select *, sum(empid) over () FROM employee -- 2. agg functions",
@@ -228,8 +228,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `sum` is not supported now.",
-          "MPP mode may be blocked because window function `sum` is not supported now."
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       },
       {
@@ -240,8 +240,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `count` is not supported now.",
-          "MPP mode may be blocked because window function `count` is not supported now."
+          "MPP mode may be blocked because window function `count` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `count` or its arguments are not supported now."
         ]
       },
       {
@@ -252,8 +252,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `min` is not supported now.",
-          "MPP mode may be blocked because window function `min` is not supported now."
+          "MPP mode may be blocked because window function `min` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `min` or its arguments are not supported now."
         ]
       },
       {
@@ -264,8 +264,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `max` is not supported now.",
-          "MPP mode may be blocked because window function `max` is not supported now."
+          "MPP mode may be blocked because window function `max` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `max` or its arguments are not supported now."
         ]
       },
       {
@@ -276,8 +276,8 @@
           "  └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `avg` is not supported now.",
-          "MPP mode may be blocked because window function `avg` is not supported now."
+          "MPP mode may be blocked because window function `avg` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `avg` or its arguments are not supported now."
         ]
       },
       {
@@ -305,8 +305,8 @@
           "      └─TableFullScan_11 10000.00 cop[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because window function `sum` is not supported now.",
-          "MPP mode may be blocked because window function `sum` is not supported now."
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now.",
+          "MPP mode may be blocked because window function `sum` or its arguments are not supported now."
         ]
       }
     ]
@@ -322,15 +322,18 @@
       {
         "SQL": "explain select *, row_number() over () from (select count(distinct empid) from employee) t",
         "Plan": [
-          "TableReader_53 1.00 root  data:ExchangeSender_52",
-          "└─ExchangeSender_52 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_51 1.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "TableReader_61 1.00 root  data:ExchangeSender_60",
+          "└─ExchangeSender_60 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_59 1.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
           "    └─Projection_15 1.00 mpp[tiflash]  Column#5",
-          "      └─HashAgg_16 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#5",
-          "        └─ExchangeReceiver_18 1.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_17 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "            └─HashAgg_12 1.00 mpp[tiflash]  group by:test.employee.empid, ",
-          "              └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "      └─HashAgg_16 1.00 mpp[tiflash]  funcs:sum(Column#8)->Column#5",
+          "        └─ExchangeReceiver_20 1.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_19 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg_16 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#8",
+          "              └─ExchangeReceiver_18 1.00 mpp[tiflash]  ",
+          "                └─ExchangeSender_17 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.empid, collate: binary]",
+          "                  └─HashAgg_12 1.00 mpp[tiflash]  group by:test.employee.empid, ",
+          "                    └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -340,29 +343,33 @@
           "TableReader_84 8000.00 root  data:ExchangeSender_83",
           "└─ExchangeSender_83 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_82 8000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
-          "    └─Projection_19 8000.00 mpp[tiflash]  Column#5",
-          "      └─HashAgg_12 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#5",
-          "        └─ExchangeReceiver_18 10000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "            └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "    └─Projection_21 8000.00 mpp[tiflash]  Column#5",
+          "      └─HashAgg_22 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:sum(Column#8)->Column#5",
+          "        └─ExchangeReceiver_24 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_23 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "            └─HashAgg_13 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#8",
+          "              └─TableFullScan_20 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select *, row_number() over (partition by a) from (select count(distinct empid) a from employee) t",
         "Plan": [
-          "TableReader_45 1.00 root  data:ExchangeSender_44",
-          "└─ExchangeSender_44 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_43 1.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#5 rows between current row and current row), stream_count: 8",
-          "    └─Sort_20 1.00 mpp[tiflash]  Column#5, stream_count: 8",
-          "      └─ExchangeReceiver_19 1.00 mpp[tiflash]  stream_count: 8",
-          "        └─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#5, collate: binary], stream_count: 8",
+          "TableReader_49 1.00 root  data:ExchangeSender_48",
+          "└─ExchangeSender_48 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_47 1.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#5 rows between current row and current row), stream_count: 8",
+          "    └─Sort_22 1.00 mpp[tiflash]  Column#5, stream_count: 8",
+          "      └─ExchangeReceiver_21 1.00 mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender_20 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#5, collate: binary], stream_count: 8",
           "          └─Projection_14 1.00 mpp[tiflash]  Column#5",
-          "            └─HashAgg_15 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#5",
-          "              └─ExchangeReceiver_17 1.00 mpp[tiflash]  ",
-          "                └─ExchangeSender_16 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "                  └─HashAgg_12 1.00 mpp[tiflash]  group by:test.employee.empid, ",
-          "                    └─TableFullScan_13 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "            └─HashAgg_15 1.00 mpp[tiflash]  funcs:sum(Column#8)->Column#5",
+          "              └─ExchangeReceiver_19 1.00 mpp[tiflash]  ",
+          "                └─ExchangeSender_18 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "                  └─HashAgg_15 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#8",
+          "                    └─ExchangeReceiver_17 1.00 mpp[tiflash]  ",
+          "                      └─ExchangeSender_16 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.empid, collate: binary]",
+          "                        └─HashAgg_12 1.00 mpp[tiflash]  group by:test.employee.empid, ",
+          "                          └─TableFullScan_13 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -372,12 +379,13 @@
           "TableReader_61 8000.00 root  data:ExchangeSender_60",
           "└─ExchangeSender_60 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Window_59 8000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row)",
-          "    └─Sort_18 8000.00 mpp[tiflash]  test.employee.deptid",
-          "      └─Projection_17 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
-          "        └─HashAgg_12 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#5, funcs:firstrow(test.employee.deptid)->test.employee.deptid",
-          "          └─ExchangeReceiver_16 10000.00 mpp[tiflash]  ",
-          "            └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "              └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "    └─Sort_24 8000.00 mpp[tiflash]  test.employee.deptid",
+          "      └─Projection_20 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
+          "        └─HashAgg_21 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:sum(Column#8)->Column#5, funcs:firstrow(test.employee.deptid)->test.employee.deptid",
+          "          └─ExchangeReceiver_23 8000.00 mpp[tiflash]  ",
+          "            └─ExchangeSender_22 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "              └─HashAgg_13 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#8",
+          "                └─TableFullScan_19 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -398,18 +406,21 @@
       {
         "SQL": "explain select count(distinct empid) from (select *, row_number() over (partition by deptid) from employee) t",
         "Plan": [
-          "TableReader_45 1.00 root  data:ExchangeSender_44",
-          "└─ExchangeSender_44 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_40 1.00 mpp[tiflash]  Column#7",
-          "    └─HashAgg_41 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#7",
-          "      └─ExchangeReceiver_43 1.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_42 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "          └─HashAgg_39 1.00 mpp[tiflash]  group by:test.employee.empid, ",
-          "            └─Window_27 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
-          "              └─Sort_18 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
-          "                └─ExchangeReceiver_17 10000.00 mpp[tiflash]  stream_count: 8",
-          "                  └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
-          "                    └─TableFullScan_15 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader_49 1.00 root  data:ExchangeSender_48",
+          "└─ExchangeSender_48 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_42 1.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg_43 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#7",
+          "      └─ExchangeReceiver_47 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender_46 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg_43 1.00 mpp[tiflash]  funcs:count(distinct test.employee.empid)->Column#9",
+          "            └─ExchangeReceiver_45 1.00 mpp[tiflash]  ",
+          "              └─ExchangeSender_44 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.empid, collate: binary]",
+          "                └─HashAgg_41 1.00 mpp[tiflash]  group by:test.employee.empid, , stream_count: 8",
+          "                  └─Window_27 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
+          "                    └─Sort_18 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
+          "                      └─ExchangeReceiver_17 10000.00 mpp[tiflash]  stream_count: 8",
+          "                        └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
+          "                          └─TableFullScan_15 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -432,15 +443,16 @@
         "Plan": [
           "TableReader_54 10000.00 root  data:ExchangeSender_53",
           "└─ExchangeSender_53 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_48 10000.00 mpp[tiflash]  Column#7",
-          "    └─HashAgg_46 10000.00 mpp[tiflash]  group by:Column#6, funcs:count(test.employee.empid)->Column#7",
-          "      └─ExchangeReceiver_32 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_31 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: binary]",
-          "          └─Window_30 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
-          "            └─Sort_21 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
-          "              └─ExchangeReceiver_20 10000.00 mpp[tiflash]  stream_count: 8",
-          "                └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
-          "                  └─TableFullScan_18 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "  └─Projection_49 10000.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg_50 10000.00 mpp[tiflash]  group by:Column#6, funcs:sum(Column#10)->Column#7",
+          "      └─ExchangeReceiver_52 10000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender_51 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: binary]",
+          "          └─HashAgg_47 10000.00 mpp[tiflash]  group by:Column#6, funcs:count(test.employee.empid)->Column#10, stream_count: 8",
+          "            └─Window_36 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
+          "              └─Sort_21 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
+          "                └─ExchangeReceiver_20 10000.00 mpp[tiflash]  stream_count: 8",
+          "                  └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
+          "                    └─TableFullScan_18 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },

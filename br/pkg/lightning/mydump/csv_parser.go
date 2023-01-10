@@ -75,6 +75,7 @@ type CSVParser struct {
 	shouldParseHeader bool
 }
 
+// NewCSVParser creates a CSV parser.
 func NewCSVParser(
 	ctx context.Context,
 	cfg *config.CSVConfig,
@@ -540,6 +541,7 @@ func (parser *CSVParser) ReadRow() error {
 	return nil
 }
 
+// ReadColumns reads the columns of this CSV file.
 func (parser *CSVParser) ReadColumns() error {
 	columns, err := parser.readRecord(nil)
 	if err != nil {

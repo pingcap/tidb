@@ -7,6 +7,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 )
 
 type CheckItemID string
@@ -24,6 +25,7 @@ const (
 	CheckTargetClusterVersion     CheckItemID = "CHECK_TARGET_CLUSTER_VERSION"
 	CheckLocalDiskPlacement       CheckItemID = "CHECK_LOCAL_DISK_PLACEMENT"
 	CheckLocalTempKVDir           CheckItemID = "CHECK_LOCAL_TEMP_KV_DIR"
+	CheckTargetUsingCDCPITR       CheckItemID = "CHECK_TARGET_USING_CDC_PITR"
 )
 
 type CheckResult struct {
@@ -48,28 +50,6 @@ func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) conte
 	return context.WithValue(ctx, key, val)
 }
 
-type PrecheckItemBuilderConfig struct {
-	PreInfoGetterOptions []GetPreInfoOption
-}
-
-type PrecheckItemBuilderOption interface {
-	Apply(c *PrecheckItemBuilderConfig)
-}
-
-type preInfoGetterOptsForBuilder struct {
-	opts []GetPreInfoOption
-}
-
-func (o *preInfoGetterOptsForBuilder) Apply(c *PrecheckItemBuilderConfig) {
-	c.PreInfoGetterOptions = append([]GetPreInfoOption{}, o.opts...)
-}
-
-func WithPreInfoGetterOptions(opts ...GetPreInfoOption) PrecheckItemBuilderOption {
-	return &preInfoGetterOptsForBuilder{
-		opts: opts,
-	}
-}
-
 type PrecheckItemBuilder struct {
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
@@ -77,10 +57,11 @@ type PrecheckItemBuilder struct {
 	checkpointsDB checkpoints.DB
 }
 
-func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
-	builderCfg := new(PrecheckItemBuilderConfig)
+func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+	var gerr error
+	builderCfg := new(ropts.PrecheckItemBuilderConfig)
 	for _, o := range opts {
-		o.Apply(builderCfg)
+		o(builderCfg)
 	}
 	targetDB, err := DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
@@ -90,9 +71,13 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	mdl, err := mydump.NewMyDumpLoader(ctx, cfg)
+	mdl, err := mydump.NewMyDumpLoader(ctx, cfg, builderCfg.MDLoaderSetupOptions...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		if mdl == nil {
+			return nil, errors.Trace(err)
+		}
+		// here means the partial result is returned, so we can continue on processing
+		gerr = err
 	}
 	dbMetas := mdl.GetDatabases()
 	srcStorage := mdl.GetStore()
@@ -112,7 +97,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb), nil
+	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb), gerr
 }
 
 func NewPrecheckItemBuilder(
@@ -154,8 +139,15 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 	case CheckLocalDiskPlacement:
 		return NewLocalDiskPlacementCheckItem(b.cfg), nil
 	case CheckLocalTempKVDir:
-		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter), nil
+		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
+	case CheckTargetUsingCDCPITR:
+		return NewCDCPITRCheckItem(b.cfg), nil
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}
+}
+
+// GetPreInfoGetter gets the pre restore info getter from the builder.
+func (b *PrecheckItemBuilder) GetPreInfoGetter() PreRestoreInfoGetter {
+	return b.preInfoGetter
 }

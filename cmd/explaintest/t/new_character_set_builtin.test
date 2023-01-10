@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 set names utf8mb4;
 set @@sql_mode = '';
 -- test for builtin function hex(), length(), ascii(), octet_length()

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/set"
@@ -166,7 +165,7 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
-						ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
 				}
@@ -673,7 +672,7 @@ func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 			hasNull = true
 			continue
 		}
-		result := json.CompareBinary(evaledArg, arg0)
+		result := types.CompareBinaryJSON(evaledArg, arg0)
 		if result == 0 {
 			return 1, false, nil
 		}
@@ -1389,18 +1388,18 @@ func (b *builtinValuesJSONSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinValuesJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesJSONSig) evalJSON(_ chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinValuesJSONSig) evalJSON(_ chunk.Row) (types.BinaryJSON, bool, error) {
 	row := b.ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
-		return json.BinaryJSON{}, true, nil
+		return types.BinaryJSON{}, true, nil
 	}
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
-			return json.BinaryJSON{}, true, nil
+			return types.BinaryJSON{}, true, nil
 		}
 		return row.GetJSON(b.offset), false, nil
 	}
-	return json.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+	return types.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type bitCountFunctionClass struct {

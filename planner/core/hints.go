@@ -35,7 +35,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 		nodeTp = utilhint.TypeDelete
 	}
 	var hints []*ast.TableOptimizerHint
-	selectPlan := flat.Main.GetSelectPlan()
+	selectPlan, _ := flat.Main.GetSelectPlan()
 	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return nil
 	}
@@ -206,24 +206,24 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
 	case *PhysicalIndexMergeReader:
-		Indexs := make([]model.CIStr, 0, 2)
+		indexs := make([]model.CIStr, 0, 2)
 		var tableName model.CIStr
 		var tableAsName *model.CIStr
 		for _, partialPlan := range pp.PartialPlans {
 			if index, ok := partialPlan[0].(*PhysicalIndexScan); ok {
-				Indexs = append(Indexs, index.Index.Name)
+				indexs = append(indexs, index.Index.Name)
 				tableName = index.Table.Name
 				tableAsName = index.TableAsName
 			} else {
 				indexName := model.NewCIStr("PRIMARY")
-				Indexs = append(Indexs, indexName)
+				indexs = append(indexs, indexName)
 			}
 		}
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: model.NewCIStr(HintIndexMerge),
 			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
-			Indexes:  Indexs,
+			Indexes:  indexs,
 		})
 	case *PhysicalHashAgg:
 		res = append(res, &ast.TableOptimizerHint{
@@ -238,6 +238,7 @@ func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.T
 	case *PhysicalMergeJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
+		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
 		res = append(res, getJoinHints(p.SCtx(), HintHJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalIndexJoin:
 		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)

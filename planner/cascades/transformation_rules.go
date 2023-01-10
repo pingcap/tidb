@@ -259,7 +259,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		copy(conditions, sel.Conditions)
 		copy(conditions[len(sel.Conditions):], is.AccessConds)
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), conditions, is.IdxCols, is.IdxColLens)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), conditions, is.IdxCols, is.IdxColLens, is.SCtx().GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -550,8 +550,9 @@ func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	for _, cond := range sel.Conditions {
-		if !expression.HasGetSetVarFunc(cond) {
-			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, projSchema, proj.Exprs))
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, projSchema, proj.Exprs, true)
+		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
+			canBePushed = append(canBePushed, newFilter)
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)
 		}

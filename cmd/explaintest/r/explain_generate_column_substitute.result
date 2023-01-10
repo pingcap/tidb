@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 set names utf8mb4;
 use test;
 drop table if exists t;
@@ -531,7 +532,7 @@ a
 b
 select @@tidb_allow_function_for_expression_index;
 @@tidb_allow_function_for_expression_index
-lower, md5, reverse, tidb_shard, upper, vitess_hash
+json_array, json_array_append, json_array_insert, json_contains, json_contains_path, json_depth, json_extract, json_insert, json_keys, json_length, json_merge_patch, json_merge_preserve, json_object, json_pretty, json_quote, json_remove, json_replace, json_search, json_set, json_storage_size, json_type, json_unquote, json_valid, lower, md5, reverse, tidb_shard, upper, vitess_hash
 CREATE TABLE `PK_S_MULTI_30_tmp` (
 `COL1` double NOT NULL,
 `COL2` double NOT NULL,
@@ -642,3 +643,87 @@ HashJoin	9.99	root		inner join, equal:[eq(test.t2.c_decimal, test.t1.c_decimal)]
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table t1;
 drop table t2;
+set @@tidb_enable_unsafe_substitute=1;
+CREATE TABLE person (id INT PRIMARY KEY,address_info JSON,city VARCHAR(2) AS (JSON_UNQUOTE(address_info->"$.city")),KEY (city));
+INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}');
+SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id
+1
+desc format = 'brief' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection	8000.00	root		test.person.id
+└─TableReader	8000.00	root		data:Selection
+  └─Selection	8000.00	cop[tikv]		eq(json_unquote(cast(json_extract(test.person.address_info, "$.city"), var_string(16777216))), "Beijing")
+    └─TableFullScan	10000.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id
+desc format = 'brief' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection	10.00	root		test.person.id
+└─IndexReader	10.00	root		index:IndexRangeScan
+  └─IndexRangeScan	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+drop table person;
+create table t(a char(5), b char(6) as (concat(a, a)), index bx(b));
+insert into t(a) values ('aaaaa');
+select * from t;
+a	b
+aaaaa	aaaaaa
+select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+a	b
+aaaaa	aaaaaa
+desc format = 'brief' select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+TableReader	8000.00	root		data:Selection
+└─Selection	8000.00	cop[tikv]		eq(concat(test.t.a, test.t.a), "aaaaaaaaaa")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+a	b
+desc format = 'brief' select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:bx(b)	range:["aaaaaaaaaa","aaaaaaaaaa"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table t;
+CREATE TABLE person (id INT PRIMARY KEY,address_info JSON,city VARCHAR(64) AS (JSON_UNQUOTE(address_info->"$.city")),KEY (city));
+INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}');
+SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id
+1
+desc format = 'brief' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection	8000.00	root		test.person.id
+└─TableReader	8000.00	root		data:Selection
+  └─Selection	8000.00	cop[tikv]		eq(json_unquote(cast(json_extract(test.person.address_info, "$.city"), var_string(16777216))), "Beijing")
+    └─TableFullScan	10000.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id
+1
+desc format = 'brief' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+id	estRows	task	access object	operator info
+Projection	10.00	root		test.person.id
+└─IndexReader	10.00	root		index:IndexRangeScan
+  └─IndexRangeScan	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+drop table person;
+create table t(a char(5), b char(10) as (concat(a, a)), index bx(b));
+insert into t(a) values ('aaaaa');
+select * from t;
+a	b
+aaaaa	aaaaaaaaaa
+select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+a	b
+aaaaa	aaaaaaaaaa
+desc format = 'brief' select * from t ignore index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+TableReader	8000.00	root		data:Selection
+└─Selection	8000.00	cop[tikv]		eq(concat(test.t.a, test.t.a), "aaaaaaaaaa")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+a	b
+aaaaa	aaaaaaaaaa
+desc format = 'brief' select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:bx(b)	range:["aaaaaaaaaa","aaaaaaaaaa"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table t;
+set @@tidb_enable_unsafe_substitute=0;

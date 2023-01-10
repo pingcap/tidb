@@ -16,6 +16,7 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -248,6 +250,10 @@ const (
 	OpReloadBindings
 	// OpSetBindingStatus is used to set binding status.
 	OpSetBindingStatus
+	// OpSQLBindDropByDigest is used to drop SQL binds by digest
+	OpSQLBindDropByDigest
+	// OpSetBindingStatusByDigest represents the operation to set SQL binding status by sql digest.
+	OpSetBindingStatusByDigest
 )
 
 // SQLBindPlan represents a plan for SQL bind.
@@ -263,6 +269,9 @@ type SQLBindPlan struct {
 	Charset      string
 	Collation    string
 	NewStatus    string
+	Source       string // Source indicate how this binding was created, eg: bindinfo.Manual or bindinfo.History
+	SQLDigest    string
+	PlanDigest   string
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.
@@ -280,6 +289,16 @@ type Simple struct {
 	StaleTxnStartTS uint64
 }
 
+// MemoryUsage return the memory usage of Simple
+func (s *Simple) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = s.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool + size.SizeOfUint64
+	return
+}
+
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
 //
 //	Used for simple statements executing in coprocessor.
@@ -288,12 +307,38 @@ type PhysicalSimpleWrapper struct {
 	Inner Simple
 }
 
+// MemoryUsage return the memory usage of PhysicalSimpleWrapper
+func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.basePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	return
+}
+
 // InsertGeneratedColumns is for completing generated columns in Insert.
 // We resolve generation expressions in plan, and eval those in executor.
 type InsertGeneratedColumns struct {
 	Columns      []*ast.ColumnName
 	Exprs        []expression.Expression
 	OnDuplicates []*expression.Assignment
+}
+
+// MemoryUsage return the memory usage of InsertGeneratedColumns
+func (i *InsertGeneratedColumns) MemoryUsage() (sum int64) {
+	if i == nil {
+		return
+	}
+	sum = size.SizeOfSlice*3 + int64(cap(i.Columns)+cap(i.OnDuplicates))*size.SizeOfPointer + int64(cap(i.Exprs))*size.SizeOfInterface
+
+	for _, expr := range i.Exprs {
+		sum += expr.MemoryUsage()
+	}
+	for _, as := range i.OnDuplicates {
+		sum += as.MemoryUsage()
+	}
+	return
 }
 
 // Insert represents an insert plan.
@@ -323,6 +368,53 @@ type Insert struct {
 	AllAssignmentsAreConstant bool
 
 	RowLen int
+
+	FKChecks   []*FKCheck
+	FKCascades []*FKCascade
+}
+
+// MemoryUsage return the memory usage of Insert
+func (p *Insert) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+
+		cap(p.Columns)+cap(p.SetList)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
+		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*3 + size.SizeOfInt
+	if p.tableSchema != nil {
+		sum += p.tableSchema.MemoryUsage()
+	}
+	if p.Schema4OnDuplicate != nil {
+		sum += p.Schema4OnDuplicate.MemoryUsage()
+	}
+	if p.SelectPlan != nil {
+		sum += p.SelectPlan.MemoryUsage()
+	}
+
+	for _, name := range p.tableColNames {
+		sum += name.MemoryUsage()
+	}
+	for _, exprs := range p.Lists {
+		sum += size.SizeOfSlice + int64(cap(exprs))*size.SizeOfInterface
+		for _, expr := range exprs {
+			sum += expr.MemoryUsage()
+		}
+	}
+	for _, as := range p.SetList {
+		sum += as.MemoryUsage()
+	}
+	for _, as := range p.OnDuplicate {
+		sum += as.MemoryUsage()
+	}
+	for _, name := range p.names4OnDuplicate {
+		sum += name.MemoryUsage()
+	}
+	for _, fkC := range p.FKChecks {
+		sum += fkC.MemoryUsage()
+	}
+
+	return
 }
 
 // Update represents Update plan.
@@ -344,6 +436,37 @@ type Update struct {
 	PartitionedTable []table.PartitionedTable
 
 	tblID2Table map[int64]table.Table
+
+	FKChecks   map[int64][]*FKCheck
+	FKCascades map[int64][]*FKCascade
+}
+
+// MemoryUsage return the memory usage of Update
+func (p *Update) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.OrderedList))*size.SizeOfPointer +
+		size.SizeOfBool + size.SizeOfInt + size.SizeOfInterface + int64(cap(p.PartitionedTable))*size.SizeOfInterface +
+		int64(len(p.tblID2Table))*(size.SizeOfInt64+size.SizeOfInterface)
+	if p.SelectPlan != nil {
+		sum += p.SelectPlan.MemoryUsage()
+	}
+
+	for _, as := range p.OrderedList {
+		sum += as.MemoryUsage()
+	}
+	for _, colInfo := range p.TblColPosInfos {
+		sum += colInfo.MemoryUsage()
+	}
+	for _, v := range p.FKChecks {
+		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(v))*size.SizeOfPointer
+		for _, fkc := range v {
+			sum += fkc.MemoryUsage()
+		}
+	}
+	return
 }
 
 // Delete represents a delete plan.
@@ -355,6 +478,25 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+
+	FKChecks   map[int64][]*FKCheck
+	FKCascades map[int64][]*FKCascade
+}
+
+// MemoryUsage return the memory usage of Delete
+func (p *Delete) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfBool + size.SizeOfInterface + size.SizeOfSlice
+	if p.SelectPlan != nil {
+		sum += p.SelectPlan.MemoryUsage()
+	}
+	for _, colInfo := range p.TblColPosInfos {
+		sum += colInfo.MemoryUsage()
+	}
+	return
 }
 
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
@@ -431,6 +573,20 @@ type LoadStats struct {
 	Path string
 }
 
+// LockStats represents a lock stats for table
+type LockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
+// UnlockStats represents a unlock stats for table
+type UnlockStats struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
 // PlanReplayer represents a plan replayer plan.
 type PlanReplayer struct {
 	baseSchemaProducer
@@ -438,6 +594,10 @@ type PlanReplayer struct {
 	Analyze  bool
 	Load     bool
 	File     string
+
+	Capture    bool
+	SQLDigest  string
+	PlanDigest string
 }
 
 // IndexAdvise represents a index advise plan.
@@ -476,8 +636,9 @@ type SplitRegionStatus struct {
 type CompactTable struct {
 	baseSchemaProducer
 
-	ReplicaKind ast.CompactReplicaKind
-	TableInfo   *model.TableInfo
+	ReplicaKind    ast.CompactReplicaKind
+	TableInfo      *model.TableInfo
+	PartitionNames []model.CIStr
 }
 
 // DDL represents a DDL statement plan.
@@ -493,6 +654,37 @@ type SelectInto struct {
 
 	TargetPlan Plan
 	IntoOpt    *ast.SelectIntoOption
+}
+
+// ExplainInfoForEncode store explain info for JSON encode
+type ExplainInfoForEncode struct {
+	ID                  string                  `json:"id"`
+	EstRows             string                  `json:"estRows"`
+	ActRows             string                  `json:"actRows,omitempty"`
+	TaskType            string                  `json:"taskType"`
+	AccessObject        string                  `json:"accessObject,omitempty"`
+	ExecuteInfo         string                  `json:"executeInfo,omitempty"`
+	OperatorInfo        string                  `json:"operatorInfo,omitempty"`
+	EstCost             string                  `json:"estCost,omitempty"`
+	CostFormula         string                  `json:"costFormula,omitempty"`
+	MemoryInfo          string                  `json:"memoryInfo,omitempty"`
+	DiskInfo            string                  `json:"diskInfo,omitempty"`
+	TotalMemoryConsumed string                  `json:"totalMemoryConsumed,omitempty"`
+	SubOperators        []*ExplainInfoForEncode `json:"subOperators,omitempty"`
+}
+
+// JSONToString convert json to string
+func JSONToString(j []*ExplainInfoForEncode) (string, error) {
+	byteBuffer := bytes.NewBuffer([]byte{})
+	encoder := json.NewEncoder(byteBuffer)
+	// avoid wrongly embedding
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "    ")
+	err := encoder.Encode(j)
+	if err != nil {
+		return "", err
+	}
+	return byteBuffer.String(), nil
 }
 
 // Explain represents a explain plan.
@@ -522,6 +714,17 @@ func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 	return explain.Rows
 }
 
+// GetExplainAnalyzeRowsForPlan get explain rows for plan.
+func GetExplainAnalyzeRowsForPlan(plan *Explain) (rows [][]string) {
+	if err := plan.prepareSchema(); err != nil {
+		return rows
+	}
+	if err := plan.RenderResult(); err != nil {
+		return rows
+	}
+	return plan.Rows
+}
+
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
@@ -533,11 +736,19 @@ func (e *Explain) prepareSchema() error {
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost:
+	case format == types.ExplainFormatVerbose:
 		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
 			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
+		}
+	case format == types.ExplainFormatTrueCardCost:
+		fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+	case format == types.ExplainFormatCostTrace:
+		if e.Analyze || e.RuntimeStatsColl != nil {
+			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+		} else {
+			fieldNames = []string{"id", "estRows", "estCost", "costFormula", "task", "access object", "operator info"}
 		}
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief) && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
@@ -547,6 +758,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"hint"}
 	case format == types.ExplainFormatBinary:
 		fieldNames = []string{"binary plan"}
+	case format == types.ExplainFormatTiDBJSON:
+		fieldNames = []string{"TiDB_JSON"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -571,19 +784,55 @@ func (e *Explain) RenderResult() error {
 	}
 
 	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		// true_card_cost mode is used to calibrate the cost model.
 		pp, ok := e.TargetPlan.(PhysicalPlan)
 		if ok {
-			if _, err := pp.GetPlanCost(property.RootTaskType,
-				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagUseTrueCardinality)); err != nil {
+			if _, err := getPlanCost(pp, property.RootTaskType,
+				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagUseTrueCardinality|CostFlagTrace)); err != nil {
 				return err
+			}
+			if pp.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
+				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
+				cost, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
+				trace := cost.trace
+				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("cost formula: %v", trace.formula))
+				data, err := json.Marshal(trace.factorCosts)
+				if err != nil {
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal factor costs error %v", err))
+				}
+				pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor costs: %v", string(data)))
+
+				// output cost factor weights for cost calibration
+				factors := defaultVer2Factors.tolist()
+				weights := make(map[string]float64)
+				for _, factor := range factors {
+					if factorCost, ok := trace.factorCosts[factor.Name]; ok && factor.Value > 0 {
+						weights[factor.Name] = factorCost / factor.Value // cost = [factors] * [weights]
+					}
+				}
+				if wstr, err := json.Marshal(weights); err != nil {
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("marshal weights error %v", err))
+				} else {
+					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("factor weights: %v", string(wstr)))
+				}
 			}
 		} else {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
 
+	if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
+		if pp, ok := e.TargetPlan.(PhysicalPlan); ok {
+			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
+			if _, err := getPlanCost(pp, property.RootTaskType,
+				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagTrace)); err != nil {
+				return err
+			}
+		}
+	}
+
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.explainFlatPlanInRowFormat(flat)
@@ -591,7 +840,7 @@ func (e *Explain) RenderResult() error {
 				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
 				row := e.Rows[0]
-				tracker := e.SCtx().GetSessionVars().StmtCtx.MemTracker
+				tracker := e.SCtx().GetSessionVars().MemTracker
 				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
 			}
 		}
@@ -608,6 +857,21 @@ func (e *Explain) RenderResult() error {
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
 		str := BinaryPlanStrFromFlatPlan(e.ctx, flat)
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatTiDBJSON:
+		flat := FlattenPhysicalPlan(e.TargetPlan, true)
+		encodes := e.explainFlatPlanInJSONFormat(flat)
+		if e.Analyze && len(encodes) > 0 &&
+			e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
+			e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
+			encodeRoot := encodes[0]
+			tracker := e.SCtx().GetSessionVars().MemTracker
+			encodeRoot.TotalMemoryConsumed = tracker.FormatBytes(tracker.MaxConsumed())
+		}
+		if str, err := JSONToString(encodes); err == nil {
+			e.Rows = append(e.Rows, []string{str})
+		} else {
+			return err
+		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -628,6 +892,38 @@ func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 	}
 }
 
+func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes []*ExplainInfoForEncode) {
+	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
+		return
+	}
+	// flat.Main[0] must be the root node of tree
+	encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(flat.Main[0], flat.Main))
+
+	for _, cte := range flat.CTEs {
+		encodes = append(encodes, e.explainOpRecursivelyInJSONFormat(cte[0], cte))
+	}
+	return
+}
+
+func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats FlatPlanTree) *ExplainInfoForEncode {
+	taskTp := ""
+	if flatOp.IsRoot {
+		taskTp = "root"
+	} else {
+		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
+	}
+	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
+	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
+
+	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
+
+	for _, idx := range flatOp.ChildrenIdx {
+		cur.SubOperators = append(cur.SubOperators,
+			e.explainOpRecursivelyInJSONFormat(flats[idx], flats))
+	}
+	return cur
+}
+
 func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
 	taskTp := ""
 	if flatOp.IsRoot {
@@ -639,11 +935,6 @@ func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
 		flatOp.TextTreeIndent,
 		flatOp.IsLastChild)
 	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
-	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
-		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
-			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
-		}
-	}
 }
 
 func getRuntimeInfoStr(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
@@ -707,49 +998,85 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, id string) {
 		return
 	}
 
-	estRows, estCost, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost || strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
+		}
+		if strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost || strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
+			row = append(row, costFormula)
 		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost ||
+			strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
+		}
+		if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
+			row = append(row, costFormula)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
 	}
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string) {
+func (e *Explain) prepareOperatorInfoForJSONFormat(p Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
+	if p.ExplainID().String() == "_0" {
+		return nil
+	}
+
+	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
+	jsonRow := &ExplainInfoForEncode{
+		ID:           explainID,
+		EstRows:      estRows,
+		TaskType:     taskType,
+		AccessObject: accessObject,
+		OperatorInfo: operatorInfo,
+		SubOperators: make([]*ExplainInfoForEncode, 0),
+	}
+
+	if e.Analyze || e.RuntimeStatsColl != nil {
+		jsonRow.ActRows, jsonRow.ExecuteInfo, jsonRow.MemoryInfo, jsonRow.DiskInfo = getRuntimeInfoStr(e.ctx, p, e.RuntimeStatsColl)
+	}
+	return jsonRow
+}
+
+func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, string, string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
 	for _, row := range e.ExplainRows {
 		if len(row) < 5 {
 			panic("should never happen")
 		}
 		if row[0] == id {
-			return row[1], "N/A", row[3], row[4]
+			return row[1], "N/A", "N/A", row[3], row[4]
 		}
 	}
+
+	pp, isPhysicalPlan := p.(PhysicalPlan)
 	estRows := "N/A"
-	if si := p.statsInfo(); si != nil {
+	estCost := "N/A"
+	costFormula := "N/A"
+	if isPhysicalPlan {
+		estRows = strconv.FormatFloat(pp.getEstRowCountForDisplay(), 'f', 2, 64)
+		if e.ctx != nil && e.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+			costVer2, _ := pp.getPlanCostVer2(property.RootTaskType, NewDefaultPlanCostOption())
+			estCost = strconv.FormatFloat(costVer2.cost, 'f', 2, 64)
+			if costVer2.trace != nil {
+				costFormula = costVer2.trace.formula
+			}
+		} else {
+			planCost, _ := getPlanCost(pp, property.RootTaskType, NewDefaultPlanCostOption())
+			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
+		}
+	} else if si := p.statsInfo(); si != nil {
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
-	estCost := "N/A"
-	if pp, ok := p.(PhysicalPlan); ok {
-		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			planCost, _ := pp.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
-			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
-		} else {
-			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
-		}
-	}
+
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
 		accessObject = plan.AccessObject().String()
@@ -760,7 +1087,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 		}
 		operatorInfo = p.ExplainInfo()
 	}
-	return estRows, estCost, accessObject, operatorInfo
+	return estRows, estCost, costFormula, accessObject, operatorInfo
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
@@ -846,22 +1173,21 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 		}
 	}
 
-	// Runtime info
-	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, op.Origin, nil)
-	if statsInfo := op.Origin.statsInfo(); statsInfo != nil {
-		out.EstRows = statsInfo.RowCount
-	}
 	if op.IsPhysicalPlan {
 		p := op.Origin.(PhysicalPlan)
-		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			out.Cost, _ = p.GetPlanCost(property.RootTaskType, NewDefaultPlanCostOption())
-		} else {
-			out.Cost = p.Cost()
-		}
+		out.Cost, _ = getPlanCost(p, property.RootTaskType, NewDefaultPlanCostOption())
+		out.EstRows = p.getEstRowCountForDisplay()
+	} else if statsInfo := op.Origin.statsInfo(); statsInfo != nil {
+		out.EstRows = statsInfo.RowCount
 	}
+
+	// Runtime info
+	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(explainCtx, op.Origin, nil)
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()
-		out.RootBasicExecInfo = basic.String()
+		if basic != nil {
+			out.RootBasicExecInfo = basic.String()
+		}
 		for _, group := range groups {
 			str := group.String()
 			if len(str) > 0 {

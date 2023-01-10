@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -185,7 +184,7 @@ func (b *builtinCastTimeAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 		if tp == mysql.TypeDatetime || tp == mysql.TypeTimestamp {
 			tms[i].SetFsp(types.MaxFsp)
 		}
-		result.AppendJSON(json.CreateBinary(tms[i].String()))
+		result.AppendJSON(types.CreateBinaryJSON(tms[i]))
 	}
 	return nil
 }
@@ -427,7 +426,7 @@ func (b *builtinCastRealAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 		if buf.IsNull(i) {
 			result.AppendNull()
 		} else {
-			result.AppendJSON(json.CreateBinary(f64s[i]))
+			result.AppendJSON(types.CreateBinaryJSON(f64s[i]))
 		}
 	}
 	return nil
@@ -482,28 +481,73 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf)
 	times := result.Times()
+
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	ts, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		ts = gotime.Now()
+	}
 	fsp := b.tp.GetDecimal()
+
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		s, err := buf.GetJSON(i).Unquote()
+		val := buf.GetJSON(i)
 		if err != nil {
 			return err
 		}
-		tm, err := types.ParseTime(stmtCtx, s, b.tp.GetType(), fsp)
-		if err != nil {
+
+		switch val.TypeCode {
+		case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
+			tm := val.GetTime()
+			times[i] = tm
+			times[i].SetType(b.tp.GetType())
+			if b.tp.GetType() == mysql.TypeDate {
+				// Truncate hh:mm:ss part if the type is Date.
+				times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			}
+		case types.JSONTypeCodeDuration:
+			duration := val.GetDuration()
+
+			sc := b.ctx.GetSessionVars().StmtCtx
+			tm, err := duration.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				}
+				result.SetNull(i, true)
+				continue
+			}
+			tm, err = tm.RoundFrac(stmtCtx, fsp)
+			if err != nil {
+				return err
+			}
+			times[i] = tm
+		case types.JSONTypeCodeString:
+			s, err := val.Unquote()
+			if err != nil {
+				return err
+			}
+			tm, err := types.ParseTime(stmtCtx, s, b.tp.GetType(), fsp)
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				}
+				result.SetNull(i, true)
+				continue
+			}
+			times[i] = tm
+			if b.tp.GetType() == mysql.TypeDate {
+				// Truncate hh:mm:ss part if the type is Date.
+				times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			}
+		default:
+			err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), val.String())
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
 			result.SetNull(i, true)
-			continue
-		}
-		times[i] = tm
-		if b.tp.GetType() == mysql.TypeDate {
-			// Truncate hh:mm:ss part if the type is Date.
-			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
 		}
 	}
 	return nil
@@ -539,7 +583,7 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			times[i] = types.ZeroTime
 			continue
 		}
-		tm, err := types.ParseTime(stmt, fv, b.tp.GetType(), fsp)
+		tm, err := types.ParseTimeFromFloatString(stmt, fv, b.tp.GetType(), fsp)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -790,7 +834,7 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chu
 	result.ReserveJSON(n)
 	typ := b.args[0].GetType()
 	if types.IsBinaryStr(typ) {
-		var res json.BinaryJSON
+		var res types.BinaryJSON
 		for i := 0; i < n; i++ {
 			if buf.IsNull(i) {
 				result.AppendNull()
@@ -805,20 +849,20 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chu
 				copy(resultBuf, val)
 			}
 
-			res = json.CreateBinary(json.Opaque{
+			res = types.CreateBinaryJSON(types.Opaque{
 				TypeCode: b.args[0].GetType().GetType(),
 				Buf:      resultBuf,
 			})
 			result.AppendJSON(res)
 		}
 	} else if mysql.HasParseToJSONFlag(b.tp.GetFlag()) {
-		var res json.BinaryJSON
+		var res types.BinaryJSON
 		for i := 0; i < n; i++ {
 			if buf.IsNull(i) {
 				result.AppendNull()
 				continue
 			}
-			res, err = json.ParseBinaryFromString(buf.GetString(i))
+			res, err = types.ParseBinaryJSONFromString(buf.GetString(i))
 			if err != nil {
 				return err
 			}
@@ -830,7 +874,7 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chu
 				result.AppendNull()
 				continue
 			}
-			result.AppendJSON(json.CreateBinary(buf.GetString(i)))
+			result.AppendJSON(types.CreateBinaryJSON(buf.GetString(i)))
 		}
 	}
 	return nil
@@ -1089,7 +1133,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 			if buf.IsNull(i) {
 				result.AppendNull()
 			} else {
-				result.AppendJSON(json.CreateBinary(nums[i] != 0))
+				result.AppendJSON(types.CreateBinaryJSON(nums[i] != 0))
 			}
 		}
 	} else if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
@@ -1097,7 +1141,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 			if buf.IsNull(i) {
 				result.AppendNull()
 			} else {
-				result.AppendJSON(json.CreateBinary(uint64(nums[i])))
+				result.AppendJSON(types.CreateBinaryJSON(uint64(nums[i])))
 			}
 		}
 	} else {
@@ -1105,7 +1149,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 			if buf.IsNull(i) {
 				result.AppendNull()
 			} else {
-				result.AppendJSON(json.CreateBinary(nums[i]))
+				result.AppendJSON(types.CreateBinaryJSON(nums[i]))
 			}
 		}
 	}
@@ -1142,7 +1186,11 @@ func (b *builtinCastJSONAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(buf.GetJSON(i).String())
+		s, err := types.ProduceStrWithSpecifiedTp(buf.GetJSON(i).String(), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+		if err != nil {
+			return err
+		}
+		result.AppendString(s)
 	}
 	return nil
 }
@@ -1893,7 +1941,8 @@ func (b *builtinCastJSONAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 		return err
 	}
 
-	ctx := b.ctx.GetSessionVars().StmtCtx
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+
 	result.ResizeGoDuration(n, false)
 	result.MergeNulls(buf)
 	var dur types.Duration
@@ -1902,18 +1951,46 @@ func (b *builtinCastJSONAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
-		s, err := buf.GetJSON(i).Unquote()
-		if err != nil {
-			return nil
+		val := buf.GetJSON(i)
+
+		switch val.TypeCode {
+		case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
+			time := val.GetTime()
+			d, err := time.ConvertToDuration()
+			if err != nil {
+				return err
+			}
+			d, err = d.RoundFrac(b.tp.GetDecimal(), b.ctx.GetSessionVars().Location())
+			if err != nil {
+				return err
+			}
+			ds[i] = d.Duration
+		case types.JSONTypeCodeDuration:
+			dur = val.GetDuration()
+			ds[i] = dur.Duration
+		case types.JSONTypeCodeString:
+			s, err := buf.GetJSON(i).Unquote()
+			if err != nil {
+				return err
+			}
+			dur, _, err = types.ParseDuration(stmtCtx, s, b.tp.GetDecimal())
+			if types.ErrTruncatedWrongVal.Equal(err) {
+				err = stmtCtx.HandleTruncate(err)
+			}
+			if err != nil {
+				return err
+			}
+			ds[i] = dur.Duration
+		default:
+			err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), val.String())
+			err = stmtCtx.HandleTruncate(err)
+			if err != nil {
+				return err
+			}
+
+			result.SetNull(i, true)
+			continue
 		}
-		dur, _, err = types.ParseDuration(ctx, s, b.tp.GetDecimal())
-		if types.ErrTruncatedWrongVal.Equal(err) {
-			err = ctx.HandleTruncate(err)
-		}
-		if err != nil {
-			return err
-		}
-		ds[i] = dur.Duration
 	}
 	return nil
 }
@@ -1946,7 +2023,7 @@ func (b *builtinCastDecimalAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *ch
 		if err != nil {
 			return err
 		}
-		result.AppendJSON(json.CreateBinary(f))
+		result.AppendJSON(types.CreateBinaryJSON(f))
 	}
 	return nil
 }
@@ -1976,7 +2053,7 @@ func (b *builtinCastDurationAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *c
 			continue
 		}
 		dur.Duration = ds[i]
-		result.AppendJSON(json.CreateBinary(dur.String()))
+		result.AppendJSON(types.CreateBinaryJSON(dur))
 	}
 	return nil
 }

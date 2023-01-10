@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -357,8 +358,7 @@ func TestForUpdateRetry(t *testing.T) {
 	tk2.MustExec("use test")
 	tk2.MustExec("update t set c = c + 1 where pk = 1")
 	tk.MustExec("update t set c = c + 1 where pk = 2")
-	_, err = tk.Exec("commit")
-	require.True(t, session.ErrForUpdateCantRetry.Equal(err))
+	tk.MustGetErrCode("commit", errno.ErrForUpdateCantRetry)
 }
 
 func TestPointGetByRowID(t *testing.T) {
@@ -824,4 +824,21 @@ func TestPointGetIssue25167(t *testing.T) {
 	tk.MustExec("set @a=(select current_timestamp(3))")
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery("select * from t as of timestamp @a where a = 1").Check(testkit.Rows())
+}
+
+func TestPointGetIssue40194(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("insert into t1 values(1, 10)")
+	tk.MustExec("prepare s from 'select * from t1 where id=1'")
+	tk.MustExec("set @@tidb_enable_plan_replayer_capture=1")
+	tk.MustQuery("execute s").Check(testkit.Rows("1 10"))
+	tk.MustQuery("execute s").Check(testkit.Rows("1 10"))
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("update t1 set v=v+1")
+	tk.MustQuery("execute s").Check(testkit.Rows("1 11"))
 }
