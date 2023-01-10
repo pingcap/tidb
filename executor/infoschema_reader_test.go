@@ -419,6 +419,13 @@ func TestDataForTableStatsField(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 18 54 6"))
+
+	// from https://github.com/pingcap/tidb/issues/40424
+	tk.MustExec("drop table if exists test")
+	tk.MustExec("create table test(id varchar(32))")
+	tk.MustQuery("select table_name from information_schema.tables where table_name = 'TEST';").Check(testkit.Rows("test"))
+	tk.MustExec("use information_schema")
+	tk.MustQuery("select table_name from tables where table_name = 'TEST';").Check(testkit.Rows("test"))
 }
 
 func TestPartitionsTable(t *testing.T) {

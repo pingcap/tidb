@@ -80,6 +80,7 @@ const (
 )
 
 var optRuleList = []logicalOptRule{
+	&informationSchemaRules{},
 	&gcSubstituter{},
 	&columnPruner{},
 	&resultReorder{},

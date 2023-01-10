@@ -464,6 +464,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
 			er.tryFoldCounter++
 		}
+		er.handleInformationSchemaBinaryOperationExpr(v)
 	case *ast.SetCollationExpr:
 		// Do nothing
 	default:
@@ -515,6 +516,36 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r e
 		return
 	}
 	er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, not, false, markNoDecorrelate)
+}
+
+func (er *expressionRewriter) handleInformationSchemaBinaryOperationExpr(v *ast.BinaryOperationExpr) {
+	switch cn := v.L.(type) {
+	case *ast.ColumnNameExpr:
+		switch x := v.R.(type) {
+		case *driver.ValueExpr:
+			if x.Datum.Kind() == types.KindString {
+				var name *types.FieldName
+				for i := len(er.b.allNames) - 1; i >= 0; i-- {
+					idx, err := expression.FindFieldName(er.b.allNames[i], cn.Name)
+					if err != nil {
+						er.err = err
+						return
+					}
+					if idx >= 0 {
+						name = er.b.allNames[i][idx]
+						break
+					}
+				}
+				if name != nil {
+					if name.DBName.L == "information_schema" {
+						x.Datum.SetString(strings.ToLower(x.Datum.GetString()), x.Datum.Collation())
+					}
+				}
+			}
+		}
+	default:
+
+	}
 }
 
 func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.CompareSubqueryExpr) (ast.Node, bool) {
