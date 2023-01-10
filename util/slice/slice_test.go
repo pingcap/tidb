@@ -43,3 +43,19 @@ func TestSlice(t *testing.T) {
 		})
 	}
 }
+
+func TestCopy(t *testing.T) {
+	type T int
+	v0, v1, v2, v3 := T(0), T(1), T(2), T(3)
+	s := []*T{&v0, &v1, &v2, &v3, nil}
+	e := Copy(s)
+	require.Equal(t, len(s), len(e))
+	for i := range s {
+		if s[i] == nil {
+			require.Nil(t, e[i])
+		} else {
+			require.Equal(t, *s[i], *e[i])
+			require.True(t, s[i] != e[i])
+		}
+	}
+}

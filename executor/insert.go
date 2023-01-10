@@ -345,8 +345,6 @@ func (e *InsertExec) Close() error {
 		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	defer e.memTracker.ReplaceBytesUsed(0)
-	e.ctx.GetSessionVars().CurrInsertValues = chunk.Row{}
-	e.ctx.GetSessionVars().CurrInsertBatchExtraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[0:0:0]
 	e.setMessage()
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
