@@ -127,7 +127,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	statsTbl := h.GetTableStats(table.Meta())
 	sctx := mock.NewContext()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.Count, false)
+	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.Count, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
 	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
 	// so we use a range here.
@@ -146,8 +146,9 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	statsSuiteData := statistics.GetStatsSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
+	modifyCount := int64(float64(statsTbl.Count) * 0.5)
 	for i, ran := range input {
-		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, false)
+		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -156,6 +157,42 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		})
 		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
 		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+	}
+}
+
+// TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
+// The test result doesn't perfectly reflect the actual data distribution, but this is the expected behavior for now.
+func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int unsigned)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
+	}
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("delete from t where a < 500")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
@@ -543,6 +580,7 @@ func TestSelectivity(t *testing.T) {
 		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
 
 		histColl.Count *= 10
+		histColl.ModifyCount = histColl.Count * 9
 		ratio, _, err = histColl.Selectivity(sctx, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
@@ -748,7 +786,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	statsSuiteData := statistics.GetStatsSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, ran := range input {
-		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, false)
+		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, statsTbl.ModifyCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -990,4 +1028,50 @@ func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outp
 type outputType struct {
 	SQL    string
 	Result []string
+}
+
+func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int unsigned) " +
+		"partition by range (a) " +
+		"(partition p0 values less than (400), " +
+		"partition p1 values less than (600), " +
+		"partition p2 values less than (800)," +
+		"partition p3 values less than (1000)," +
+		"partition p4 values less than (1200))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
+	}
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("delete from t where a < 500")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+	testKit.MustExec("analyze table t partition p4 with 1 samplerate, 0 topn")
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	for i := range input {
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
 }
