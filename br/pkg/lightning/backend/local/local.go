@@ -1040,8 +1040,6 @@ func (local *local) WriteToTiKV(
 	defer iter.Close()
 
 	for iter.First(); iter.Valid(); iter.Next() {
-		log.FromContext(ctx).Debug("lance test", zap.Int("count", count))
-
 		kvSize := int64(len(iter.Key()) + len(iter.Value()))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
 		if count < len(pairs) {

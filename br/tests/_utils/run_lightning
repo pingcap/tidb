@@ -28,6 +28,5 @@ bin/tidb-lightning.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out" DEV
     -d "tests/$TEST_NAME/data" \
     --sorted-kv-dir "$TEST_DIR/$TEST_NAME.sorted" \
     --enable-checkpoint=0 \
-    -L debug \
     --check-requirements=0 \
     "$@"
