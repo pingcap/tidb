@@ -43,7 +43,7 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 	switch ft.GetType() {
 	case mysql.TypeBit, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeTinyBlob:
 		return writeHex(restoreCtx.In, d)
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeEnum, mysql.TypeSet:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
 			return writeHex(restoreCtx.In, d)
 		}
