@@ -82,6 +82,26 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
+func TestIssue40296(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database test_40296`)
+	tk.MustExec(`use test_40296`)
+	tk.MustExec(`CREATE TABLE IDT_MULTI15880STROBJSTROBJ (
+  COL1 enum('aa','bb','cc','dd','ff','gg','kk','ll','mm','ee') DEFAULT NULL,
+  COL2 decimal(20,0) DEFAULT NULL,
+  COL3 date DEFAULT NULL,
+  KEY U_M_COL4 (COL1,COL2),
+  KEY U_M_COL5 (COL3,COL2))`)
+	tk.MustExec(`insert into IDT_MULTI15880STROBJSTROBJ values("ee", -9605492323393070105, "0850-03-15")`)
+	tk.MustExec(`set session tidb_enable_non_prepared_plan_cache=on`)
+	tk.MustQuery(`select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("dd", "dd") or col2 = 9923875910817805958 or col3 = "9994-11-11"`).Check(
+		testkit.Rows())
+	tk.MustQuery(`select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("aa", "aa") or col2 = -9605492323393070105 or col3 = "0005-06-22"`).Check(
+		testkit.Rows("ee -9605492323393070105 0850-03-15"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // unary operator '-' is not supported now.
+}
+
 func TestNonPreparedPlanCacheWithExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
