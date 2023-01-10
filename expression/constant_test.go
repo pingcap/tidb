@@ -217,6 +217,15 @@ func TestConstantFolding(t *testing.T) {
 			condition: newFunction(ast.LT, newColumn(0), newFunction(ast.Plus, newColumn(1), newFunction(ast.Plus, newLonglong(2), newLonglong(1)))),
 			result:    "lt(Column#0, plus(Column#1, 3))",
 		},
+		{
+			condition: func() Expression {
+				expr := newFunction(ast.ConcatWS, newColumn(0), NewNull())
+				function := expr.(*ScalarFunction)
+				function.GetCtx().GetSessionVars().StmtCtx.InNullRejectCheck = true
+				return function
+			}(),
+			result: "concat_ws(cast(Column#0, var_string(20)), <nil>)",
+		},
 	}
 	for _, tt := range tests {
 		newConds := FoldConstant(tt.condition)
