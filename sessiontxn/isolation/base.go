@@ -513,7 +513,7 @@ func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx con
 	if err := p.baseTxnContextProvider.OnHandlePessimisticStmtStart(ctx); err != nil {
 		return err
 	}
-	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking {
+	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking && p.txn != nil {
 		p.txn.StartAggressiveLocking()
 	}
 	return nil
@@ -524,7 +524,7 @@ func (p *basePessimisticTxnContextProvider) OnStmtRetry(ctx context.Context) err
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
-	if p.txn.IsInAggressiveLockingMode() {
+	if p.txn.IsInAggressiveLockingMode() && p.txn != nil {
 		p.txn.RetryAggressiveLocking(ctx)
 	}
 	return nil
@@ -535,7 +535,7 @@ func (p *basePessimisticTxnContextProvider) OnStmtCommit(ctx context.Context) er
 	if err := p.baseTxnContextProvider.OnStmtCommit(ctx); err != nil {
 		return err
 	}
-	if p.txn.IsInAggressiveLockingMode() {
+	if p.txn.IsInAggressiveLockingMode() && p.txn != nil {
 		p.txn.DoneAggressiveLocking(ctx)
 	}
 	return nil
@@ -546,7 +546,7 @@ func (p *basePessimisticTxnContextProvider) OnStmtRollback(ctx context.Context, 
 	if err := p.baseTxnContextProvider.OnStmtRollback(ctx, isForPessimisticRetry); err != nil {
 		return err
 	}
-	if !isForPessimisticRetry && p.txn.IsInAggressiveLockingMode() {
+	if !isForPessimisticRetry && p.txn != nil && p.txn.IsInAggressiveLockingMode() {
 		p.txn.CancelAggressiveLocking(ctx)
 	}
 	return nil

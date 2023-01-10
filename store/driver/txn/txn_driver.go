@@ -73,44 +73,22 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
-	if len(keys) > 1 && txn.IsInAggressiveLockingMode() {
-		// Only allow aggressive locking if it only needs to lock one key. Considering that it's possible that a
-		// statement causes multiple calls to `LockKeys` (which means some keys may have been locked in aggressive
-		// locking mode), here we exit aggressive locking mode by calling DoneAggressiveLocking instead of cancelling.
-		// Then the previously-locked keys during execution in this statement (if any) will be turned into the state
-		// as if they were locked in normal way.
-		// Note that the issue https://github.com/pingcap/tidb/issues/35682 also exists here.
-		txn.DoneAggressiveLocking(ctx)
-	}
+	txn.exitAggressiveLockingIfInapplicable(ctx, keys)
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
 	if err != nil {
 		return txn.extractKeyErr(err)
 	}
-	if lockCtx.MaxLockedWithConflictTS != 0 {
-		var bufTableID, bufRest bytes.Buffer
-		foundKey := false
-		for k, v := range lockCtx.Values {
-			if v.LockedWithConflictTS >= lockCtx.MaxLockedWithConflictTS {
-				foundKey = true
-				prettyWriteKey(&bufTableID, &bufRest, []byte(k))
-				break
-			}
-		}
-		if !foundKey {
-			bufTableID.WriteString("<unknown>")
-		}
-		// TODO: Primary is not exported here.
-		primary := " primary=<unknown>"
-		primaryRest := ""
-		return kv.ErrWriteConflict.FastGenByArgs(txn.StartTS(), 0, lockCtx.MaxLockedWithConflictTS, bufTableID.String(), bufRest.String(), primary, primaryRest, "LockedWithConflict")
-	}
-	return nil
+	return txn.generateWriteConflictForLockedWithConflict(lockCtx)
 }
 
 func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
+	txn.exitAggressiveLockingIfInapplicable(ctx, keys)
 	err := txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
-	return txn.extractKeyErr(err)
+	if err != nil {
+		return txn.extractKeyErr(err)
+	}
+	return txn.generateWriteConflictForLockedWithConflict(lockCtx)
 }
 
 func (txn *tikvTxn) Commit(ctx context.Context) error {
@@ -368,6 +346,40 @@ func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 
 func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...kv.FlagsOp) {
 	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(flags)...)
+}
+
+func (txn *tikvTxn) exitAggressiveLockingIfInapplicable(ctx context.Context, keys [][]byte) {
+	if len(keys) > 1 && txn.IsInAggressiveLockingMode() {
+		// Only allow aggressive locking if it only needs to lock one key. Considering that it's possible that a
+		// statement causes multiple calls to `LockKeys` (which means some keys may have been locked in aggressive
+		// locking mode), here we exit aggressive locking mode by calling DoneAggressiveLocking instead of cancelling.
+		// Then the previously-locked keys during execution in this statement (if any) will be turned into the state
+		// as if they were locked in normal way.
+		// Note that the issue https://github.com/pingcap/tidb/issues/35682 also exists here.
+		txn.DoneAggressiveLocking(ctx)
+	}
+}
+
+func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {
+	if lockCtx.MaxLockedWithConflictTS != 0 {
+		var bufTableID, bufRest bytes.Buffer
+		foundKey := false
+		for k, v := range lockCtx.Values {
+			if v.LockedWithConflictTS >= lockCtx.MaxLockedWithConflictTS {
+				foundKey = true
+				prettyWriteKey(&bufTableID, &bufRest, []byte(k))
+				break
+			}
+		}
+		if !foundKey {
+			bufTableID.WriteString("<unknown>")
+		}
+		// TODO: Primary is not exported here.
+		primary := " primary=<unknown>"
+		primaryRest := ""
+		return kv.ErrWriteConflict.FastGenByArgs(txn.StartTS(), 0, lockCtx.MaxLockedWithConflictTS, bufTableID.String(), bufRest.String(), primary, primaryRest, "LockedWithConflict")
+	}
+	return nil
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.
