@@ -259,5 +259,41 @@
         "End": 0
       }
     ]
+  },
+  {
+    "name": "TestOutOfRangeEstimationAfterDelete",
+    "cases": [
+      "explain format = 'brief' select * from t where a <= 300",
+      "explain format = 'brief' select * from t where a < 300",
+      "explain format = 'brief' select * from t where a <= 500",
+      "explain format = 'brief' select * from t where a >= 300 and a <= 900",
+      "explain format = 'brief' select * from t where a >= 900",
+      "explain format = 'brief' select * from t where a > 900",
+      "explain format = 'brief' select * from t where a >= 300",
+      "explain format = 'brief' select * from t where a <= 900",
+      "explain format = 'brief' select * from t where a > 800 and a < 1000",
+      "explain format = 'brief' select * from t where a > 900 and a < 1000",
+      "explain format = 'brief' select * from t where a > 900 and a < 1100",
+      "explain format = 'brief' select * from t where a > 200 and a < 300",
+      "explain format = 'brief' select * from t where a > 100 and a < 300"
+    ]
+  },
+  {
+    "name": "TestGlobalStatsOutOfRangeEstimationAfterDelete",
+    "cases": [
+      "explain format = 'brief' select * from t where a <= 300",
+      "explain format = 'brief' select * from t where a < 300",
+      "explain format = 'brief' select * from t where a <= 500",
+      "explain format = 'brief' select * from t where a >= 300 and a <= 900",
+      "explain format = 'brief' select * from t where a >= 900",
+      "explain format = 'brief' select * from t where a > 900",
+      "explain format = 'brief' select * from t where a >= 300",
+      "explain format = 'brief' select * from t where a <= 900",
+      "explain format = 'brief' select * from t where a > 800 and a < 1000",
+      "explain format = 'brief' select * from t where a > 900 and a < 1000",
+      "explain format = 'brief' select * from t where a > 900 and a < 1100",
+      "explain format = 'brief' select * from t where a > 200 and a < 300",
+      "explain format = 'brief' select * from t where a > 100 and a < 300"
+    ]
   }
 ]
