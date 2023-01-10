@@ -421,5 +421,4 @@ func TestSetEtcdCliByNamespace(t *testing.T) {
 	getResp, err := unprefixedKV.Get(ctx, namespacePrefix+key)
 	require.NoError(t, err)
 	require.Len(t, getResp.Kvs, 1)
-
 }
