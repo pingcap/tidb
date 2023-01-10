@@ -1008,6 +1008,9 @@ type Writer struct {
 	engine            *Engine
 	memtableSizeLimit int64
 
+	regionSplitSize int64
+	regionSplitKeys int
+
 	// if the KVs are append in order, we can directly write the into SST file,
 	// else we must first store them in writeBatch and then batch flush into SST file.
 	isKVSorted bool
@@ -1092,7 +1095,8 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	}
 	w.batchCount = cnt
 
-	if w.batchSize > w.memtableSizeLimit {
+	if (w.isKVSorted && (w.batchSize > w.regionSplitSize || w.batchCount > w.regionSplitKeys)) ||
+		(!w.isKVSorted && w.batchSize > w.memtableSizeLimit) {
 		if err := w.flushKVs(ctx); err != nil {
 			return err
 		}
@@ -1122,9 +1126,9 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 		}
 	}
 
-	if w.isKVSorted {
-		return w.appendRowsSorted(kvs)
-	}
+	//if w.isKVSorted {
+	//	return w.appendRowsSorted(kvs)
+	//}
 	return w.appendRowsUnsorted(ctx, kvs)
 }
 
@@ -1350,30 +1354,36 @@ func (w *Writer) IsSynced() bool {
 }
 
 func (w *Writer) flushKVs(ctx context.Context) error {
-	writer, err := w.createSSTWriter()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !w.isWriteBatchSorted {
-		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
-			return bytes.Compare(i.Key, j.Key) < 0
-		})
-		w.isWriteBatchSorted = true
-	}
+	if !w.isKVSorted {
+		writer, err := w.createSSTWriter()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !w.isWriteBatchSorted {
+			slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
+				return bytes.Compare(i.Key, j.Key) < 0
+			})
+			w.isWriteBatchSorted = true
+		}
 
-	err = writer.writeKVs(w.writeBatch[:w.batchCount])
-	if err != nil {
-		return errors.Trace(err)
+		err = writer.writeKVs(w.writeBatch[:w.batchCount])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		meta, err := writer.close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = w.addSST(ctx, meta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		err := w.writeToTiKV(ctx, w.writeBatch[:w.batchCount])
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	meta, err := writer.close()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = w.addSST(ctx, meta)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	w.batchSize = 0
 	w.batchCount = 0
 	w.kvBuffer.Reset()

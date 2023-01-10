@@ -21,6 +21,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/multierr"
@@ -291,3 +292,54 @@ func newDupDBIter(dupDB *pebble.DB, keyAdapter KeyAdapter, opts *pebble.IterOpti
 		keyAdapter: keyAdapter,
 	}
 }
+
+type memDBIter struct {
+	cursor int
+	kvs    []common.KvPair
+}
+
+func (m memDBIter) Seek(key []byte) bool {
+	panic("implement me")
+}
+
+func (m memDBIter) Error() error {
+	return nil
+}
+
+func (m memDBIter) First() bool {
+	m.cursor = 0
+	return true
+}
+
+func (m memDBIter) Last() bool {
+	m.cursor = len(m.kvs) - 1
+	return true
+}
+
+func (m memDBIter) Valid() bool {
+	return m.cursor >= 0 && m.cursor < len(m.kvs)
+}
+
+func (m memDBIter) Next() bool {
+	m.cursor++
+	return m.Valid()
+}
+
+func (m memDBIter) Key() []byte {
+	return m.kvs[m.cursor].Key
+}
+
+func (m memDBIter) Value() []byte {
+	return m.kvs[m.cursor].Val
+}
+
+func (m memDBIter) Close() error {
+	m.kvs = nil
+	return nil
+}
+
+func (m memDBIter) OpType() sst.Pair_OP {
+	panic("implement me")
+}
+
+var _ Iter = &memDBIter{}
