@@ -11,7 +11,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/gpool/spmc",
     visibility = ["//visibility:public"],
     deps = [
+        "//resourcemanager",
         "//resourcemanager/pooltask",
+        "//resourcemanager/util",
         "//util/gpool",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
@@ -33,6 +35,7 @@ go_test(
     race = "on",
     deps = [
         "//resourcemanager/pooltask",
+        "//resourcemanager/util",
         "//testkit/testsetup",
         "//util",
         "//util/gpool",
