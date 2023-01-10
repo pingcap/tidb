@@ -1330,15 +1330,27 @@ func TestKeepOrderHint(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("drop table if exists t, t1, th")
+	tk.MustExec("drop view if exists v, v1")
 	tk.MustExec("create table t(a int, b int, primary key(a));")
-	tk.MustExec("create table t1(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t1(a int, b int, index idx_a(a));")
+	tk.MustExec("create table th (a int, key(a)) partition by hash(a) partitions 4;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select * from t where a<10 order by a limit 1;")
 
 	// If the optimizer can not generate the keep order plan, it will report error
 	err := tk.ExecToErr("explain select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 limit 1;")
 	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 
 	err = tk.ExecToErr("explain select /*+ keep_order(t, primary) */ * from t where a<10 limit 1;")
+	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+
+	// The partition table can not keep order
+	tk.MustExec("analyze table th;")
+	err = tk.ExecToErr("select a from th where a<1 order by a limit 1;")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("select /*+ keep_order(th, a) */ a from th where a<1 order by a limit 1;")
 	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 
 	var input []string
@@ -1359,6 +1371,46 @@ func TestKeepOrderHint(t *testing.T) {
 		res.Check(testkit.Rows(output[i].Plan...))
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
+}
+
+func TestKeepOrderHintWithBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx_a(a));")
+
+	// create binding for keep_order hint
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res := tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from `test` . `t1` where `a` < ? order by `a` limit ?")
+	require.Equal(t, res[0][1], "SELECT /*+ keep_order(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
+
+	tk.MustExec("drop global binding for select * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, len(res), 0)
+
+	// create binding for no_keep_order hint
+	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from `test` . `t1` where `a` < ? order by `a` limit ?")
+	require.Equal(t, res[0][1], "SELECT /*+ no_keep_order(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
+
+	tk.MustExec("drop global binding for select * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, len(res), 0)
 }
 
 func TestViewHint(t *testing.T) {
@@ -8257,6 +8309,19 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 	)`)
 }
 
+// https://github.com/pingcap/tidb/issues/36888.
+func TestIssue36888(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+
+	tk.MustExec("INSERT INTO t0 VALUES (NULL);")
+	tk.MustQuery("SELECT t0.c0 FROM t0 LEFT JOIN t1 ON t0.c0>=t1.c0 WHERE (CONCAT_WS(t0.c0, t1.c0) IS NULL);").Check(testkit.Rows("<nil>"))
+}
+
+// https://github.com/pingcap/tidb/issues/40285.
 func TestIssue40285(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
