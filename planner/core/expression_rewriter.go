@@ -544,7 +544,6 @@ func (er *expressionRewriter) handleInformationSchemaBinaryOperationExpr(v *ast.
 			}
 		}
 	default:
-
 	}
 }
 
