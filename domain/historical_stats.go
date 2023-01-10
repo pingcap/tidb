@@ -77,5 +77,10 @@ func (w *HistoricalStatsWorker) DumpHistoricalStats(tableID int64, statsHandle *
 
 // GetOneHistoricalStatsTable gets one tableID from channel, only used for test
 func (w *HistoricalStatsWorker) GetOneHistoricalStatsTable() int64 {
-	return <-w.tblCH
+	select {
+	case tblID := <-w.tblCH:
+		return tblID
+	default:
+		return -1
+	}
 }
