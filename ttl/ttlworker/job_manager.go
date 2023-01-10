@@ -129,6 +129,7 @@ func (m *JobManager) jobLoop() error {
 	defer func() {
 		err = multierr.Combine(err, multierr.Combine(m.resizeScanWorkers(0), m.resizeDelWorkers(0)))
 		se.Close()
+		logutil.Logger(m.ctx).Info("ttlJobManager loop exited.")
 	}()
 
 	scheduleTicker := time.Tick(jobManagerLoopTickerInterval)
@@ -378,7 +379,8 @@ func (m *JobManager) resizeWorkers(workers []worker, count int, factory func() w
 		}
 
 		var errs error
-		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+		// don't use `m.ctx` here, because when shutdown the server, `m.ctx` has already been cancelled
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		for _, w := range workers[count:] {
 			err := w.WaitStopped(ctx, 30*time.Second)
 			if err != nil {
