@@ -93,7 +93,7 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
-	if err := p.baseTxnContextProvider.OnStmtStart(ctx, node); err != nil {
+	if err := p.basePessimisticTxnContextProvider.OnStmtStart(ctx, node); err != nil {
 		return err
 	}
 
@@ -125,13 +125,13 @@ func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point session
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		return p.handleAfterPessimisticLockError(err)
 	default:
-		return p.baseTxnContextProvider.OnStmtErrorForNextAction(point, err)
+		return p.basePessimisticTxnContextProvider.OnStmtErrorForNextAction(point, err)
 	}
 }
 
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *PessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
+	if err := p.basePessimisticTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
 	failpoint.Inject("CallOnStmtRetry", func() {
@@ -322,7 +322,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 
 // GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
-	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
+	snapshot, err := p.basePessimisticTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +334,7 @@ func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.S
 
 // GetSnapshotWithStmtReadTS gets snapshot with read ts
 func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
-	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
+	snapshot, err := p.basePessimisticTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
 	if err != nil {
 		return nil, err
 	}
