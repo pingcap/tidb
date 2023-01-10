@@ -99,9 +99,11 @@ const (
 	ActionFlashbackCluster              ActionType = 62
 	ActionRecoverSchema                 ActionType = 63
 	ActionReorganizePartition           ActionType = 64
-
-	ActionAlterTTLInfo   ActionType = 65
-	ActionAlterTTLRemove ActionType = 67
+	ActionAlterTTLInfo                  ActionType = 65
+	ActionAlterTTLRemove                ActionType = 67
+	ActionCreateResourceGroup           ActionType = 68
+	ActionAlterResourceGroup            ActionType = 69
+	ActionDropResourceGroup             ActionType = 70
 )
 
 var actionMap = map[ActionType]string{
@@ -167,6 +169,10 @@ var actionMap = map[ActionType]string{
 	ActionReorganizePartition:           "alter table reorganize partition",
 	ActionAlterTTLInfo:                  "alter table ttl",
 	ActionAlterTTLRemove:                "alter table no_ttl",
+	ActionCreateResourceGroup:           "create resource group",
+	ActionAlterResourceGroup:            "alter resource group",
+	ActionDropResourceGroup:             "drop resource group",
+
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
@@ -350,6 +356,7 @@ type SubJob struct {
 	Warning     *terror.Error   `json:"warning"`
 	CtxVars     []interface{}   `json:"-"`
 	SchemaVer   int64           `json:"schema_version"`
+	ReorgTp     ReorgType       `json:"reorg_tp"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -412,6 +419,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
+	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 }
 
 // JobMeta is meta info of Job.
