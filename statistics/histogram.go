@@ -883,18 +883,18 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
 // Note that we assume histL-boundL == histR-histL == boundR-histR here.
 //
-//               /│             │\
-//             /  │             │  \
-//           /x│  │◄─histogram─►│    \
-//         / xx│  │    range    │      \
-//       / │xxx│  │             │        \
-//     /   │xxx│  │             │          \
-//────┴────┴───┴──┴─────────────┴───────────┴─────
-//    ▲    ▲   ▲  ▲             ▲           ▲
-//    │    │   │  │             │           │
-// boundL  │   │histL         histR       boundR
-//         │   │
-//    lDatum  rDatum
+//	               /│             │\
+//	             /  │             │  \
+//	           /x│  │◄─histogram─►│    \
+//	         / xx│  │    range    │      \
+//	       / │xxx│  │             │        \
+//	     /   │xxx│  │             │          \
+//	────┴────┴───┴──┴─────────────┴───────────┴─────
+//	    ▲    ▲   ▲  ▲             ▲           ▲
+//	    │    │   │  │             │           │
+//	 boundL  │   │histL         histR       boundR
+//	         │   │
+//	    lDatum  rDatum
 func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount int64) float64 {
 	if hg.Len() == 0 {
 		return 0
