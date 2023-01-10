@@ -318,7 +318,6 @@ func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 
 // GetFlashbackKeyRanges get keyRanges for flashback cluster.
 // It contains all non system table key ranges and meta data key ranges.
-// The returned KeyRanges will order by startKey.
 // The time complexity is O(nlogn).
 func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
 	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
