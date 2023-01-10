@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -1393,21 +1394,22 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		p = explain.TargetPlan
 	}
 	pi := util.ProcessInfo{
-		ID:               s.sessionVars.ConnectionID,
-		Port:             s.sessionVars.Port,
-		DB:               s.sessionVars.CurrentDB,
-		Command:          command,
-		Plan:             p,
-		PlanExplainRows:  plannercore.GetExplainRowsForPlan(p),
-		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
-		Time:             t,
-		State:            s.Status(),
-		Info:             sql,
-		CurTxnStartTS:    curTxnStartTS,
-		StmtCtx:          s.sessionVars.StmtCtx,
-		StatsInfo:        plannercore.GetStatsInfo,
-		MaxExecutionTime: maxExecutionTime,
-		RedactSQL:        s.sessionVars.EnableRedactLog,
+		ID:                s.sessionVars.ConnectionID,
+		Port:              s.sessionVars.Port,
+		DB:                s.sessionVars.CurrentDB,
+		Command:           command,
+		Plan:              p,
+		PlanExplainRows:   plannercore.GetExplainRowsForPlan(p),
+		RuntimeStatsColl:  s.sessionVars.StmtCtx.RuntimeStatsColl,
+		Time:              t,
+		State:             s.Status(),
+		Info:              sql,
+		CurTxnStartTS:     curTxnStartTS,
+		StmtCtx:           s.sessionVars.StmtCtx,
+		RefCountOfStmtCtx: &s.sessionVars.RefCountOfStmtCtx,
+		StatsInfo:         plannercore.GetStatsInfo,
+		MaxExecutionTime:  maxExecutionTime,
+		RedactSQL:         s.sessionVars.EnableRedactLog,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1615,10 +1617,11 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 		lock.IncrReferences()
 		return nil
 	}
-	sess, err := createSession(s.GetStore())
+	sess, err := createSession(s.store)
 	if err != nil {
 		return err
 	}
+	infosync.StoreInternalSession(sess)
 	lock := &advisoryLock{session: sess, ctx: context.TODO()}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
@@ -1640,6 +1643,7 @@ func (s *session) ReleaseAdvisoryLock(lockName string) (released bool) {
 		if lock.ReferenceCount() <= 0 {
 			lock.Close()
 			delete(s.advisoryLocks, lockName)
+			infosync.DeleteInternalSession(lock.session)
 		}
 		return true
 	}
@@ -1656,6 +1660,7 @@ func (s *session) ReleaseAllAdvisoryLocks() int {
 		lock.Close()
 		count += lock.ReferenceCount()
 		delete(s.advisoryLocks, lockName)
+		infosync.DeleteInternalSession(lock.session)
 	}
 	return count
 }
@@ -2976,6 +2981,10 @@ func createSessions(store kv.Storage, cnt int) ([]*session, error) {
 	return ses, nil
 }
 
+// createSession creates a new session.
+// Please note that such a session is not tracked by the internal session list.
+// This means the min ts reporter is not aware of it and may report a wrong min start ts.
+// In most cases you should use a session pool in domain instead.
 func createSession(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, nil)
 }
