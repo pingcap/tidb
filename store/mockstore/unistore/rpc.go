@@ -265,11 +265,21 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				failpoint.Return(nil, errors.New("rpc error"))
 			}
 		})
+		failpoint.Inject("MppVersionError", func(val failpoint.Value) {
+			if v := int64(val.(int)); v > req.EstablishMPPConn().GetReceiverMeta().GetMppVersion() || v > req.EstablishMPPConn().GetSenderMeta().GetMppVersion() {
+				failpoint.Return(nil, context.Canceled)
+			}
+		})
 		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout, storeID)
 	case tikvrpc.CmdMPPTask:
 		failpoint.Inject("mppDispatchTimeout", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
+		failpoint.Inject("MppVersionError", func(val failpoint.Value) {
+			if v := int64(val.(int)); v > req.DispatchMPPTask().GetMeta().GetMppVersion() {
+				failpoint.Return(nil, context.Canceled)
 			}
 		})
 		resp.Resp, err = c.handleDispatchMPPTask(ctx, req.DispatchMPPTask(), storeID)
