@@ -14,24 +14,23 @@
 
 package util
 
-import "time"
+import (
+	"time"
+
+	"go.uber.org/atomic"
+)
+
+var (
+	// MinSchedulerInterval is the minimum interval between two scheduling.
+	MinSchedulerInterval = atomic.NewDuration(200 * time.Millisecond)
+)
 
 // GorotinuePool is a pool interface
 type GorotinuePool interface {
-	Release()
+	ReleaseAndWait()
 	Tune(size int)
 	LastTunerTs() time.Time
-	MaxInFlight() int64
-	InFlight() int64
-	MinRT() uint64
-	MaxPASS() uint64
 	Cap() int
-	// LongRTT is to represent the baseline latency by tracking a measurement of the long term, less volatile RTT.
-	LongRTT() float64
-	UpdateLongRTT(f func(float64) float64)
-	// ShortRTT is to represent the current system latency by tracking a measurement of the short time, and more volatile RTT.
-	ShortRTT() uint64
-	GetQueueSize() int64
 	Running() int
 	Name() string
 }

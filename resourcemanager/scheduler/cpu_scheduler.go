@@ -31,7 +31,7 @@ func NewCPUScheduler() *CPUScheduler {
 
 // Tune is to tune the goroutine pool
 func (*CPUScheduler) Tune(_ util.Component, pool util.GorotinuePool) Command {
-	if time.Since(pool.LastTunerTs()) < minCPUSchedulerInterval.Load() {
+	if time.Since(pool.LastTunerTs()) < util.MinSchedulerInterval.Load() {
 		return Hold
 	}
 	if cpu.GetCPUUsage() < 0.5 {

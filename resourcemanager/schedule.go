@@ -47,7 +47,7 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
 	if cmd == scheduler.Hold {
 		return
 	}
-	if time.Since(pool.Pool.LastTunerTs()) > 200*time.Millisecond {
+	if time.Since(pool.Pool.LastTunerTs()) > util.MinSchedulerInterval.Load() {
 		con := pool.Pool.Cap()
 		switch cmd {
 		case scheduler.Downclock:
