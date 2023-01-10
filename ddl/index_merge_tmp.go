@@ -69,7 +69,6 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxR
 					idxRecords[i].skip = true
 				}
 			}
-
 		} else if idxRecords[i].distinct {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
