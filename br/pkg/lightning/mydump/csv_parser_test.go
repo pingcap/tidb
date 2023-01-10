@@ -26,6 +26,12 @@ import (
 
 var ioWorkers = worker.NewPool(context.Background(), 5, "test_csv")
 
+var largestEntryLimit int
+
+func init() {
+	largestEntryLimit = tidbconfig.MaxTxnEntrySizeLimit
+}
+
 func assertPosEqual(t *testing.T, parser mydump.Parser, expectPos, expectRowID int64) {
 	pos, rowID := parser.Pos()
 	require.Equal(t, expectPos, pos)
@@ -692,7 +698,7 @@ func TestTooLargeRow(t *testing.T) {
 	var testCase bytes.Buffer
 	testCase.WriteString("a,b,c,d")
 	// WARN: will take up 120MB memory here.
-	for i := 0; i < tidbconfig.MaxTxnEntrySizeLimit; i++ {
+	for i := 0; i < largestEntryLimit; i++ {
 		testCase.WriteByte('d')
 	}
 	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
