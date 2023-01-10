@@ -515,7 +515,7 @@ func TestAlterUserStmt(t *testing.T) {
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3")
 	tk.MustExec("GRANT SYSTEM_USER ON *.* to semuser3") // user is both restricted + has SYSTEM_USER (or super)
 
-	tk.MustExec(`ALTER USER 'semuser1' RESOURCE GROUP 'rg1'`)
+	tk.MustExec(`ALTER USER 'semuser1' RESOURCE GROUP rg1`)
 	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "semuser1"`).Check(testkit.Rows("{\"resource_group\": \"rg1\"}"))
 
 	tk.MustExec(`ALTER USER 'semuser1' COMMENT 'comment1'`)
@@ -1135,7 +1135,7 @@ func TestCreateDropUser(t *testing.T) {
 	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{\"resource_group\": \"default\"}"))
 	tk.MustExec(`DROP USER usr1`)
 
-	tk.MustExec(`CREATE USER usr1 RESOURCE GROUP 'rg1'`)
+	tk.MustExec(`CREATE USER usr1 RESOURCE GROUP rg1`)
 	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{\"resource_group\": \"rg1\"}"))
 	tk.MustExec(`DROP USER usr1`)
 }
