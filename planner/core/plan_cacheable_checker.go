@@ -16,8 +16,6 @@ package core
 
 import (
 	"fmt"
-	"reflect"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
@@ -26,6 +24,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"reflect"
 )
 
 // Cacheable checks whether the input ast is cacheable with empty session context, which is mainly for testing.
@@ -253,12 +252,15 @@ type nonPreparedPlanCacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join:
+	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join,
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *driver.ValueExpr, *ast.PatternInExpr:
+		return in, false
 	case *ast.BinaryOperationExpr:
 		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
 			return in, true
 		}
+		return in, false
 	case *ast.TableName:
 		if checker.schema != nil {
 			if isPartitionTable(checker.schema, node) {
@@ -274,11 +276,10 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 				return in, true
 			}
 		}
-	default:
-		fmt.Println(">>>>>>>>>>>>>> unexpected >>> ", reflect.TypeOf(in))
-		checker.cacheable = false // unexpected cases
-		return in, true
+		return in, false
 	}
+	fmt.Println(">>>>>>>>>>>>>> unexpected >>> ", reflect.TypeOf(in))
+	checker.cacheable = false // unexpected cases
 	return in, false
 }
 
