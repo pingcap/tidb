@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -42,8 +43,10 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -55,9 +58,11 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
+	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -1757,7 +1762,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				}
 			}
 			rh := newReorgHandler(t, w.sess)
-			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, physicalTableIDs, elements)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
@@ -2152,6 +2157,346 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
 	return ver, nil
+}
+
+func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, physTblIDs []int64) (done bool, ver int64, err error) {
+	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+	rh := newReorgHandler(t, w.sess)
+	elements := BuildElements(tbl.Meta().Columns[0], tbl.Meta().Indices)
+	partTbl, ok := tbl.(table.PartitionedTable)
+	if !ok {
+		return false, ver, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+	}
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, partTbl, physTblIDs, elements)
+	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
+		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
+			func() {
+				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
+			}, false)
+		return w.reorgPartitionDataAndIndex(tbl, reorgInfo)
+	})
+	if err != nil {
+		if dbterror.ErrWaitReorgTimeout.Equal(err) {
+			// If timeout, we should return, check for the owner and re-wait job done.
+			return false, ver, nil
+		}
+		if kv.IsTxnRetryableError(err) {
+			return false, ver, errors.Trace(err)
+		}
+		// TODO: Create tests for this!
+		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			logutil.BgLogger().Warn("[ddl] reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err1))
+		}
+		logutil.BgLogger().Warn("[ddl] reorg partition job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+		job.State = model.JobStateRollingback
+		return false, ver, errors.Trace(err)
+	}
+	return true, ver, err
+}
+
+type reorgPartitionWorker struct {
+	*backfillCtx
+	metricCounter prometheus.Counter
+
+	// Static allocated to limit memory allocations
+	rowRecords        []*rowRecord
+	rowDecoder        *decoder.RowDecoder
+	rowMap            map[int64]types.Datum
+	writeColOffsetMap map[int64]int
+	maxOffset         int
+	reorgedTbl        table.PartitionedTable
+
+	// SQL MODE should be ignored for reorganize partition?
+	// TODO: Test with zero date? and NULL timestamp?
+	// Test with generated/virtual stored columns.
+	// Can indexes be affected?
+
+	jobContext *JobContext
+}
+
+func newReorgPartitionWorker(sessCtx sessionctx.Context, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
+	reorgedTbl, err := tables.GetReorganizedPartitionedTable(t)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	pt := t.GetPartitionedTable()
+	if pt == nil {
+		return nil, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+	}
+	partColIDs := pt.GetPartitionColumnIDs()
+	writeColOffsetMap := make(map[int64]int, len(partColIDs))
+	maxOffset := 0
+	for _, col := range pt.Cols() {
+		found := false
+		for _, id := range partColIDs {
+			if col.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		writeColOffsetMap[col.ID] = col.Offset
+		maxOffset = mathutil.Max[int](maxOffset, col.Offset)
+	}
+	return &reorgPartitionWorker{
+		backfillCtx:       newBackfillCtx(reorgInfo.d, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
+		metricCounter:     metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("reorg_partition_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
+		rowDecoder:        decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap),
+		rowMap:            make(map[int64]types.Datum, len(decodeColMap)),
+		jobContext:        jc,
+		writeColOffsetMap: writeColOffsetMap,
+		maxOffset:         maxOffset,
+		reorgedTbl:        reorgedTbl,
+	}, nil
+}
+
+func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+	oprStartTime := time.Now()
+	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		taskCtx.addedCount = 0
+		taskCtx.scanCount = 0
+		txn.SetOption(kv.Priority, handleRange.priority)
+		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
+			txn.SetOption(kv.ResourceGroupTagger, tagger)
+		}
+
+		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		taskCtx.nextKey = nextKey
+		taskCtx.done = taskDone
+
+		warningsMap := make(map[errors.ErrorID]*terror.Error)
+		warningsCountMap := make(map[errors.ErrorID]int64)
+		for _, prr := range rowRecords {
+			taskCtx.scanCount++
+
+			err = txn.Set(prr.key, prr.vals)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			taskCtx.addedCount++
+			if prr.warning != nil {
+				if _, ok := warningsCountMap[prr.warning.ID()]; ok {
+					warningsCountMap[prr.warning.ID()]++
+				} else {
+					warningsCountMap[prr.warning.ID()] = 1
+					warningsMap[prr.warning.ID()] = prr.warning
+				}
+			}
+			// TODO: Future optimization: also write the indexes here?
+			// What if the transaction limit is just enough for a single row, without index?
+			// Hmm, how could that be in the first place?
+			// For now, implement the batch-txn w.addTableIndex,
+			// since it already exists and is in use
+		}
+
+		// Collect the warnings.
+		taskCtx.warnings, taskCtx.warningsCount = warningsMap, warningsCountMap
+
+		// also add the index entries here? And make sure they are not added somewhere else
+
+		return nil
+	})
+	logSlowOperations(time.Since(oprStartTime), "BackfillDataInTxn", 3000)
+
+	return
+}
+
+func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
+	w.rowRecords = w.rowRecords[:0]
+	startTime := time.Now()
+
+	// taskDone means that the added handle is out of taskRange.endHandle.
+	taskDone := false
+	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
+
+	tmpRow := make([]types.Datum, w.maxOffset+1)
+	var lastAccessedHandle kv.Key
+	oprStartTime := startTime
+	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
+		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
+			oprEndTime := time.Now()
+			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in reorgPartitionWorker fetchRowColVals", 0)
+			oprStartTime = oprEndTime
+
+			if taskRange.endInclude {
+				taskDone = recordKey.Cmp(taskRange.endKey) > 0
+			} else {
+				taskDone = recordKey.Cmp(taskRange.endKey) >= 0
+			}
+
+			if taskDone || len(w.rowRecords) >= w.batchCnt {
+				return false, nil
+			}
+
+			_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+
+			// Set the partitioning columns and calculate which partition to write to
+			for colID, offset := range w.writeColOffsetMap {
+				if d, ok := w.rowMap[colID]; ok {
+					tmpRow[offset] = d
+				} else {
+					return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+				}
+			}
+			p, err := w.reorgedTbl.GetPartitionByRow(w.sessCtx, tmpRow)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			pid := p.GetPhysicalID()
+			newKey := tablecodec.EncodeTablePrefix(pid)
+			newKey = append(newKey, recordKey[len(newKey):]...)
+			w.rowRecords = append(w.rowRecords, &rowRecord{
+				key: newKey, vals: rawRow,
+			})
+
+			w.cleanRowMap()
+			lastAccessedHandle = recordKey
+			if recordKey.Cmp(taskRange.endKey) == 0 {
+				taskDone = true
+				return false, nil
+			}
+			return true, nil
+		})
+
+	if len(w.rowRecords) == 0 {
+		taskDone = true
+	}
+
+	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
+}
+
+func (w *reorgPartitionWorker) cleanRowMap() {
+	for id := range w.rowMap {
+		delete(w.rowMap, id)
+	}
+}
+
+func (w *reorgPartitionWorker) AddMetricInfo(cnt float64) {
+	w.metricCounter.Add(cnt)
+}
+
+func (w *reorgPartitionWorker) String() string {
+	return typeReorgPartitionWorker.String()
+}
+
+func (w *reorgPartitionWorker) GetTask() (*BackfillJob, error) {
+	panic("[ddl] partition reorg worker does not implement GetTask function")
+}
+
+func (w *reorgPartitionWorker) UpdateTask(*BackfillJob) error {
+	panic("[ddl] partition reorg worker does not implement UpdateTask function")
+}
+
+func (w *reorgPartitionWorker) FinishTask(*BackfillJob) error {
+	panic("[ddl] partition reorg worker does not implement FinishTask function")
+}
+
+func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
+	return w.backfillCtx
+}
+
+func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo) error {
+	// First copy all table data to the new partitions
+	// from each of the DroppingDefinitions partitions.
+	// Then create all indexes on the AddingDefinitions partitions
+	// for each new index, one partition at a time.
+
+	// Copy the data from the DroppingDefinitions to the AddingDefinitions
+	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+		err := w.updatePhysicalTableRow(t, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// Rewrite this to do all indexes at once in addTableIndex
+	// instead of calling it once per index (meaning reading the table multiple times)
+	// But for now, try to understand how it works...
+	firstNewPartitionID := t.Meta().Partition.AddingDefinitions[0].ID
+	startElementOffset := 0
+	//startElementOffsetToResetHandle := -1
+	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
+	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
+		// First run, have not yet started backfilling index data
+		// Restart with the first new partition.
+		// TODO: handle remove partitioning
+		reorgInfo.PhysicalTableID = firstNewPartitionID
+	} else {
+		// The job was interrupted and has been restarted,
+		// reset and start from where it was done
+		for i, element := range reorgInfo.elements[1:] {
+			if reorgInfo.currElement.ID == element.ID {
+				startElementOffset = i
+				//startElementOffsetToResetHandle = i
+				break
+			}
+		}
+	}
+
+	for i := startElementOffset; i < len(reorgInfo.elements[1:]); i++ {
+		// Now build the indexes in the new partitions
+		var physTbl table.PhysicalTable
+		if tbl, ok := t.(table.PartitionedTable); ok {
+			physTbl = tbl.GetPartition(reorgInfo.PhysicalTableID)
+		} else if tbl, ok := t.(table.PhysicalTable); ok {
+			// This may be used when partitioning a non-partitioned table
+			physTbl = tbl
+		}
+		// Get the original start handle and end handle.
+		currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// TODO: Can we improve this in case of a crash?
+		// like where the regInfo PhysicalTableID and element is the same,
+		// and the tableid in the key-prefix regInfo.StartKey and regInfo.EndKey matches with PhysicalTableID
+		// do not change the reorgInfo start/end key
+		startHandle, endHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job.ID), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// Always (re)start with the full PhysicalTable range
+		reorgInfo.StartKey, reorgInfo.EndKey = startHandle, endHandle
+
+		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
+		w.getReorgCtx(reorgInfo.Job.ID).setCurrentElement(reorgInfo.elements[i+1])
+
+		// Update the element in the reorgInfo for updating the reorg meta below.
+		reorgInfo.currElement = reorgInfo.elements[i+1]
+		// Write the reorg info to store so the whole reorganize process can recover from panic.
+		err = reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
+		logutil.BgLogger().Info("[ddl] update column and indexes",
+			zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.String("startHandle", hex.EncodeToString(reorgInfo.StartKey)),
+			zap.String("endHandle", hex.EncodeToString(reorgInfo.EndKey)))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = w.addTableIndex(t, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		reorgInfo.PhysicalTableID = firstNewPartitionID
+	}
+	return nil
 }
 
 func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {

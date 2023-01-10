@@ -59,6 +59,7 @@ const (
 	typeUpdateColumnWorker     backfillerType = 1
 	typeCleanUpIndexWorker     backfillerType = 2
 	typeAddIndexMergeTmpWorker backfillerType = 3
+	typeReorgPartitionWorker   backfillerType = 4
 
 	// InstanceLease is the instance lease.
 	InstanceLease       = 1 * time.Minute
@@ -80,6 +81,8 @@ func (bT backfillerType) String() string {
 		return "clean up index"
 	case typeAddIndexMergeTmpWorker:
 		return "merge temporary index"
+	case typeReorgPartitionWorker:
+		return "reorganize partition"
 	default:
 		return "unknown"
 	}
@@ -141,6 +144,7 @@ func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
 // 1: add-index
 // 2: modify-column-type
 // 3: clean-up global index
+// 4: reorganize partition
 //
 // They all have a write reorganization state to back fill data into the rows existed.
 // Backfilling is time consuming, to accelerate this process, TiDB has built some sub
@@ -670,7 +674,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 }
 
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
+func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.PhysicalTable,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := getBatchTasks(t, scheduler.reorgInfo, kvRanges, backfillTaskChanSize)
 	if len(batchTasks) == 0 {
@@ -861,6 +865,12 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 			idxWorker := newCleanUpIndexWorker(sessCtx, b.tbl, b.decodeColMap, reorgInfo, jc)
 			runner = newBackfillWorker(jc.ddlJobCtx, i, idxWorker)
 			worker = idxWorker
+		case typeReorgPartitionWorker:
+			partWorker, err := newReorgPartitionWorker(sessCtx, b.tbl, b.decodeColMap, reorgInfo, jc)
+			if err != nil {
+				return err
+			}
+			runner = newBackfillWorker(jc.ddlJobCtx, i, partWorker)
 		default:
 			return errors.New("unknown backfill type")
 		}
