@@ -1462,13 +1462,7 @@ func ContainHiddenConfig(s string) bool {
 }
 
 // GetGlobalKeyspaceName is used to get global keyspace name
-// from config file or environment variable.
+// from config file or command line.
 func GetGlobalKeyspaceName() string {
-	// The cfg.keyspaceName get higher priority than KEYSPACE_NAME in system env.
-	keyspaceName := GetGlobalConfig().KeyspaceName
-	if keyspaceName != "" {
-		return keyspaceName
-	}
-
-	return os.Getenv(EnvVarKeyspaceName)
+	return GetGlobalConfig().KeyspaceName
 }
