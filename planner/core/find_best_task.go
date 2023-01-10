@@ -1275,8 +1275,9 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 // `remaining`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
 // Why do we need this func?
 // IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
-// 	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
-// 	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
+//
+//	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
+//	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
 func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
 	for _, expr := range filters {
 		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.TiKV) {
@@ -1457,11 +1458,12 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 
 // initSchema is used to set the schema of PhysicalIndexScan. Before calling this,
 // make sure the following field of PhysicalIndexScan are initialized:
-//   PhysicalIndexScan.Table         *model.TableInfo
-//   PhysicalIndexScan.Index         *model.IndexInfo
-//   PhysicalIndexScan.Index.Columns []*IndexColumn
-//   PhysicalIndexScan.IdxCols       []*expression.Column
-//   PhysicalIndexScan.Columns       []*model.ColumnInfo
+//
+//	PhysicalIndexScan.Table         *model.TableInfo
+//	PhysicalIndexScan.Index         *model.IndexInfo
+//	PhysicalIndexScan.Index.Columns []*IndexColumn
+//	PhysicalIndexScan.IdxCols       []*expression.Column
+//	PhysicalIndexScan.Columns       []*model.ColumnInfo
 func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
 	copy(indexCols, is.IdxCols)
@@ -1872,6 +1874,19 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
 	if ts.KeepOrder && ts.Desc && ts.StoreType == kv.TiFlash {
 		return invalidTask, nil
+	}
+	if ts.StoreType == kv.TiFlash {
+		for _, col := range ts.schema.Columns {
+			// In theory, TiFlash does not support virtual expr, but in non-mpp mode, if the cop request only contain table scan, then
+			// TiDB will fill the virtual column after decoding the cop response(executor.FillVirtualColumnValue), that is to say, the virtual
+			// columns in Cop request is just a placeholder, so TiFlash can support virtual column in cop request mode. However, virtual column
+			// with TiDBShard is special, it can be added using create index statement, TiFlash's ddl does not handle create index statement, so
+			// there is a chance that the TiDBShard's virtual column is not seen by TiFlash, in this case, TiFlash will throw column not found error
+			if ds.containExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr) {
+				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
+				return invalidTask, nil
+			}
+		}
 	}
 	if prop.TaskTp == property.MppTaskType {
 		if ts.KeepOrder {

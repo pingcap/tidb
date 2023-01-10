@@ -213,7 +213,8 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("CREATE TABLE t(a DECIMAL(4,2));")
 	tk.MustExec("INSERT INTO t VALUES (1.000001);")
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '1.000001'"))
+	// TODO: MySQL8.0 reports Note 1265 Data truncated for column 'a' at row 1
+	r.Check(testkit.Rows("Warning 1366 Incorrect decimal value: '1.000001' for column 'a' at row 1"))
 	tk.MustExec("INSERT INTO t VALUES (1.000000);")
 	r = tk.MustQuery("SHOW WARNINGS;")
 	r.Check(testkit.Rows())
@@ -250,15 +251,14 @@ func TestInsert(t *testing.T) {
 	require.True(t, types.ErrWarnDataOutOfRange.Equal(err))
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t value (-1);")
-	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t select -1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t select cast(-1 as unsigned);")
 	tk.MustExec("insert into t value (-1.111);")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("insert into t value ('-1.111');")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustExec("update t set a = -1 limit 1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	r = tk.MustQuery("select * from t;")
@@ -281,8 +281,8 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("create table t(a float unsigned, b double unsigned)")
 	tk.MustExec("insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1)")
 	tk.MustQuery("show warnings").
-		Check(testkit.Rows("Warning 1690 constant -1.1 overflows float", "Warning 1690 constant -1.1 overflows double",
-			"Warning 1690 constant -2.1 overflows float", "Warning 1690 constant -2.1 overflows double"))
+		Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1", "Warning 1264 Out of range value for column 'b' at row 1",
+			"Warning 1264 Out of range value for column 'a' at row 2", "Warning 1264 Out of range value for column 'b' at row 2"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
 
 	// issue 7061
@@ -531,7 +531,8 @@ func TestInsertIgnore(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("SHOW WARNINGS")
-	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '1a'"))
+	// TODO: MySQL8.0 reports Warning 1265 Data truncated for column 'a' at row 1
+	r.Check(testkit.Rows("Warning 1366 Incorrect bigint value: '1a' for column 'a' at row 1"))
 
 	// for duplicates with warning
 	testSQL = `drop table if exists t;
@@ -1972,6 +1973,44 @@ func TestIssue18681(t *testing.T) {
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 	require.Equal(t, uint16(0), sc.WarningCount())
+}
+
+func TestIssue34358(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test")
+	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
+
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ( @v1, @v2 ) set a = @v1, b = @v2")
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	require.NotNil(t, ld)
+	checkCases([]testCase{
+		{nil, []byte("\\N\n"), []string{"<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
+}
+
+func TestIssue33298(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists load_data_test")
+	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
+
+	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields
+	// terminated by '' and enclosed by ''. However, tidb doesn't support it yet and empty terminator leads to infinite
+	// loop in `indexOfTerminator` (see https://github.com/pingcap/tidb/issues/33298).
+	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"))
+	require.Error(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"))
 }
 
 func TestLoadData(t *testing.T) {

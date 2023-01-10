@@ -272,7 +272,8 @@ func TestListInDiskWithChecksumAndEncrypt(t *testing.T) {
 // 8 B: all columns' length, in the following example, we will only have one column.
 // 1012 B: data in file. because max length of each segment is 1024, so we only have 1020B for user payload.
 //
-//           Data in File                                    Data in mem cache
+//	Data in File                                    Data in mem cache
+//
 // +------+------------------------------------------+ +-----------------------------+
 // |      |    1020B payload                         | |                             |
 // |4Bytes| +---------+----------------------------+ | |                             |

@@ -43,6 +43,8 @@ import (
 
 // TiFlashPlacementManager manages placement settings for TiFlash.
 type TiFlashPlacementManager interface {
+	// SetTiFlashGroupConfig sets the group index of the tiflash placement rule
+	SetTiFlashGroupConfig(ctx context.Context) error
 	// SetPlacementRule is a helper function to set placement rule.
 	SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error
 	// DeletePlacementRule is to delete placement rule for certain group.
@@ -51,8 +53,8 @@ type TiFlashPlacementManager interface {
 	GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error)
 	// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
 	PostAccelerateSchedule(ctx context.Context, tableID int64) error
-	// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-	GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error
+	// GetRegionCountFromPD is a helper function calling `/stats/region`.
+	GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error
 	// GetStoresStat gets the TiKV store information by accessing PD's api.
 	GetStoresStat(ctx context.Context) (*helper.StoresStat, error)
 	// Close is to close TiFlashPlacementManager
@@ -69,8 +71,63 @@ func (m *TiFlashPDPlacementManager) Close(ctx context.Context) {
 
 }
 
+// SetTiFlashGroupConfig sets the tiflash's rule group config
+func (m *TiFlashPDPlacementManager) SetTiFlashGroupConfig(ctx context.Context) error {
+	res, err := doRequest(ctx,
+		"GetRuleGroupConfig",
+		m.etcdCli.Endpoints(),
+		path.Join(pdapi.Config, "rule_group", placement.TiFlashRuleGroupID),
+		"GET",
+		nil,
+	)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var groupConfig placement.RuleGroupConfig
+	shouldUpdate := res == nil
+	if res != nil {
+		if err = json.Unmarshal(res, &groupConfig); err != nil {
+			return errors.Trace(err)
+		}
+
+		if groupConfig.Index != placement.RuleIndexTiFlash || groupConfig.Override {
+			shouldUpdate = true
+		}
+	}
+
+	if shouldUpdate {
+		groupConfig.ID = placement.TiFlashRuleGroupID
+		groupConfig.Index = placement.RuleIndexTiFlash
+		groupConfig.Override = false
+
+		body, err := json.Marshal(&groupConfig)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		_, err = doRequest(ctx,
+			"SetRuleGroupConfig",
+			m.etcdCli.Endpoints(),
+			path.Join(pdapi.Config, "rule_group"),
+			"POST",
+			bytes.NewBuffer(body),
+		)
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // SetPlacementRule is a helper function to set placement rule.
 func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
+	if err := m.SetTiFlashGroupConfig(ctx); err != nil {
+		return err
+	}
+
 	if rule.Count == 0 {
 		return m.DeletePlacementRule(ctx, rule.GroupID, rule.ID)
 	}
@@ -143,14 +200,14 @@ func (m *TiFlashPDPlacementManager) PostAccelerateSchedule(ctx context.Context, 
 	return nil
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+// GetRegionCountFromPD is a helper function calling `/stats/region`.
+func (m *TiFlashPDPlacementManager) GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	startKey := tablecodec.GenTableRecordPrefix(tableID)
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	p := fmt.Sprintf("/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+	p := fmt.Sprintf("/pd/api/v1/stats/region?start_key=%s&end_key=%s&count",
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
 	res, err := doRequest(ctx, "GetPDRegionStats", m.etcdCli.Endpoints(), p, "GET", nil)
@@ -158,13 +215,14 @@ func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, 
 		return errors.Trace(err)
 	}
 	if res == nil {
-		return fmt.Errorf("TiFlashPDPlacementManager returns error in GetPDRegionRecordStats")
+		return fmt.Errorf("TiFlashPDPlacementManager returns error in GetRegionCountFromPD")
 	}
-
-	err = json.Unmarshal(res, stats)
+	var stats helper.PDRegionStats
+	err = json.Unmarshal(res, &stats)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	*regionCount = stats.Count
 	return nil
 }
 
@@ -195,7 +253,7 @@ type mockTiFlashPlacementManager struct {
 
 func makeBaseRule() placement.TiFlashRule {
 	return placement.TiFlashRule{
-		GroupID:  "tiflash",
+		GroupID:  placement.TiFlashRuleGroupID,
 		ID:       "",
 		Index:    placement.RuleIndexTiFlash,
 		Override: false,
@@ -248,6 +306,7 @@ func (m *mockTiFlashTableInfo) String() string {
 // MockTiFlash mocks a TiFlash, with necessary Pd support.
 type MockTiFlash struct {
 	sync.Mutex
+	GroupIndex                  int
 	StatusAddr                  string
 	StatusServer                *httptest.Server
 	SyncStatus                  map[int]mockTiFlashTableInfo
@@ -255,6 +314,7 @@ type MockTiFlash struct {
 	PdEnabled                   bool
 	TiflashDelay                time.Duration
 	StartTime                   time.Time
+	NotAvailable                bool
 }
 
 func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
@@ -277,6 +337,10 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 			return
 		}
 		table, ok := tiflash.SyncStatus[tableID]
+		if tiflash.NotAvailable {
+			// No region is available, so the table is not available.
+			table.Regions = []int{}
+		}
 		if !ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("0\n\n"))
@@ -306,6 +370,7 @@ func NewMockTiFlash() *MockTiFlash {
 		PdEnabled:                   true,
 		TiflashDelay:                0,
 		StartTime:                   time.Now(),
+		NotAvailable:                false,
 	}
 	tiflash.setUpMockTiFlashHTTPServer()
 	return tiflash
@@ -315,6 +380,7 @@ func NewMockTiFlash() *MockTiFlash {
 func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) error {
 	tiflash.Lock()
 	defer tiflash.Unlock()
+	tiflash.GroupIndex = placement.RuleIndexTiFlash
 	if !tiflash.PdEnabled {
 		logutil.BgLogger().Info("pd server is manually disabled, just quit")
 		return nil
@@ -392,16 +458,11 @@ func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	return nil
 }
 
-// HandleGetPDRegionRecordStats is mock function for GetPDRegionRecordStats.
+// HandleGetPDRegionRecordStats is mock function for GetRegionCountFromPD.
 // It currently always returns 1 Region for convenience.
 func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) helper.PDRegionStats {
 	return helper.PDRegionStats{
-		Count:            1,
-		EmptyCount:       1,
-		StorageSize:      1,
-		StorageKeys:      1,
-		StoreLeaderCount: map[uint64]int{1: 1},
-		StorePeerCount:   map[uint64]int{1: 1},
+		Count: 1,
 	}
 }
 
@@ -525,6 +586,17 @@ func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
 	tiflash.PdEnabled = enabled
 }
 
+// SetTiFlashGroupConfig sets the tiflash's rule group config
+func (m *mockTiFlashPlacementManager) SetTiFlashGroupConfig(_ context.Context) error {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil
+	}
+	m.tiflash.GroupIndex = placement.RuleIndexTiFlash
+	return nil
+}
+
 // SetPlacementRule is a helper function to set placement rule.
 func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	m.Lock()
@@ -569,14 +641,15 @@ func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context
 	return m.tiflash.HandlePostAccelerateSchedule(hex.EncodeToString(endKey))
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+// GetRegionCountFromPD is a helper function calling `/stats/region`.
+func (m *mockTiFlashPlacementManager) GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
 		return nil
 	}
-	*stats = m.tiflash.HandleGetPDRegionRecordStats(tableID)
+	stats := m.tiflash.HandleGetPDRegionRecordStats(tableID)
+	*regionCount = stats.Count
 	return nil
 }
 

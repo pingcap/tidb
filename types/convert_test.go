@@ -389,7 +389,7 @@ func TestConvertToString(t *testing.T) {
 		sc := new(stmtctx.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if tt.input != tt.output {
-			require.True(t, ErrDataTooLong.Equal(err))
+			require.True(t, ErrDataTooLong.Equal(err), "flen: %d, charset: %s, input: %s, output: %s", tt.flen, tt.charset, tt.input, tt.output)
 		} else {
 			require.NoError(t, err)
 		}

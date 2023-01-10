@@ -1,3 +1,4 @@
+set @@tidb_enable_outer_join_reorder=true;
 DROP TABLE IF EXISTS t;
 
 CREATE TABLE t (
@@ -279,3 +280,4 @@ create table t3(a char(10), primary key (a));
 insert into t3 values ('a');
 --error 1105
 select * from t3 where a > 0x80;
+set @@tidb_enable_outer_join_reorder=false;

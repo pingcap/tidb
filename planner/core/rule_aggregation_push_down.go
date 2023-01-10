@@ -288,8 +288,8 @@ func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.
 }
 
 // TODO:
-//   1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
-//   2. remove this method and use splitPartialAgg instead for clean code.
+//  1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
+//  2. remove this method and use splitPartialAgg instead for clean code.
 func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc,
 	gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
@@ -404,6 +404,16 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 	if pushedAgg == nil {
 		return nil
 	}
+
+	// Update the agg mode for the pushed down aggregation.
+	for _, aggFunc := range pushedAgg.AggFuncs {
+		if aggFunc.Mode == aggregation.CompleteMode {
+			aggFunc.Mode = aggregation.Partial1Mode
+		} else if aggFunc.Mode == aggregation.FinalMode {
+			aggFunc.Mode = aggregation.Partial2Mode
+		}
+	}
+
 	newChildren := make([]LogicalPlan, 0, len(union.Children()))
 	for _, child := range union.Children() {
 		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)

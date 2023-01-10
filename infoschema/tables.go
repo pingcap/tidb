@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -1469,10 +1471,11 @@ var tablePlacementPoliciesCols = []columnInfo{
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
-//  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
-//  - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
-//  - "PK_AUTO_RANDOM_BITS={bit_number}": for tables of which primary key is sharded row id.
-//  - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+//   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
+//   - "NOT_SHARDED(PK_IS_HANDLE)": for tables of which primary key is row id.
+//   - "PK_AUTO_RANDOM_BITS={bit_number}": for tables of which primary key is sharded row id.
+//   - "SHARD_BITS={bit_number}": for tables that with SHARD_ROW_ID_BITS.
+//
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
 func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface{} {
@@ -1645,18 +1648,33 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var servers = make([]ServerInfo, 0, len(members))
+	// TODO: maybe we should unify the PD API request interface.
+	var (
+		memberNum = len(members)
+		servers   = make([]ServerInfo, 0, memberNum)
+		errs      = make([]error, 0, memberNum)
+	)
+	if memberNum == 0 {
+		return servers, nil
+	}
+	// Try on each member until one succeeds or all fail.
 	for _, addr := range members {
 		// Get PD version, git_hash
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("create pd server info request error", zap.String("url", url), zap.Error(err))
+			errs = append(errs, err)
+			continue
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("request pd server info error", zap.String("url", url), zap.Error(err))
+			errs = append(errs, err)
+			continue
 		}
 		var content = struct {
 			Version        string `json:"version"`
@@ -1666,7 +1684,10 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		err = json.NewDecoder(resp.Body).Decode(&content)
 		terror.Log(resp.Body.Close())
 		if err != nil {
-			return nil, errors.Trace(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("close pd server info request error", zap.String("url", url), zap.Error(err))
+			errs = append(errs, err)
+			continue
 		}
 		if len(content.Version) > 0 && content.Version[0] == 'v' {
 			content.Version = content.Version[1:]
@@ -1680,6 +1701,17 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			GitHash:        content.GitHash,
 			StartTimestamp: content.StartTimestamp,
 		})
+	}
+	// Return the errors if all members' requests fail.
+	if len(errs) == memberNum {
+		errorMsg := ""
+		for idx, err := range errs {
+			errorMsg += err.Error()
+			if idx < memberNum-1 {
+				errorMsg += "; "
+			}
+		}
+		return nil, errors.Trace(fmt.Errorf("%s", errorMsg))
 	}
 	return servers, nil
 }

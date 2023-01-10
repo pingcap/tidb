@@ -186,11 +186,10 @@ func NewParquetParser(
 
 	columns := make([]string, 0, len(reader.Footer.Schema)-1)
 	columnMetas := make([]*parquet.SchemaElement, 0, len(reader.Footer.Schema)-1)
-	for _, c := range reader.SchemaHandler.SchemaElements {
+	for i, c := range reader.SchemaHandler.SchemaElements {
 		if c.GetNumChildren() == 0 {
-			// NOTE: the SchemaElement.Name is capitalized, SchemaHandler.Infos.ExName is the raw column name
-			// though in this context, there is no difference between these two fields
-			columns = append(columns, strings.ToLower(c.Name))
+			// we need to use the raw name, SchemaElement.Name might be prefixed with PARGO_PERFIX_
+			columns = append(columns, strings.ToLower(reader.SchemaHandler.GetExName(i)))
 			// transfer old ConvertedType to LogicalType
 			columnMeta := c
 			if c.ConvertedType != nil && c.LogicalType == nil {
@@ -431,7 +430,7 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 	if meta.LogicalType != nil && meta.LogicalType.DECIMAL != nil {
 		v = binaryToDecimalStr([]byte(v), int(meta.LogicalType.DECIMAL.Scale))
 	}
-	d.SetString(v, "")
+	d.SetString(v, "utf8mb4_bin")
 }
 
 func binaryToDecimalStr(rawBytes []byte, scale int) string {
@@ -488,20 +487,20 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 		}
 		val := fmt.Sprintf("%0*d", minLen, v)
 		dotIndex := len(val) - int(*meta.Scale)
-		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "")
+		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "utf8mb4_bin")
 	case logicalType.DATE != nil:
 		dateStr := time.Unix(v*86400, 0).Format("2006-01-02")
-		d.SetString(dateStr, "")
+		d.SetString(dateStr, "utf8mb4_bin")
 	case logicalType.TIMESTAMP != nil:
 		// convert all timestamp types (datetime/timestamp) to string
 		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, "2006-01-02 15:04:05.999999",
 			"2006-01-02 15:04:05.999999Z", logicalType.TIMESTAMP.IsAdjustedToUTC)
-		d.SetString(timeStr, "")
+		d.SetString(timeStr, "utf8mb4_bin")
 	case logicalType.TIME != nil:
 		// convert all timestamp types (datetime/timestamp) to string
 		timeStr := formatTime(v, logicalType.TIME.Unit, "15:04:05.999999", "15:04:05.999999Z",
 			logicalType.TIME.IsAdjustedToUTC)
-		d.SetString(timeStr, "")
+		d.SetString(timeStr, "utf8mb4_bin")
 	default:
 		d.SetInt64(v)
 	}

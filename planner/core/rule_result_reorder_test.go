@@ -166,6 +166,7 @@ func TestOrderedResultModeOnJoin(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1 (a int primary key, b int, c int, d int, key(b))")
 	tk.MustExec("create table t2 (a int primary key, b int, c int, d int, key(b))")
+	tk.MustExec("set @@tidb_enable_outer_join_reorder=true")
 	runTestData(t, tk, "TestOrderedResultModeOnJoin")
 }
 

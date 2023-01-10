@@ -775,7 +775,7 @@ const (
 	DefBroadcastJoinThresholdCount               = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel             = 0
 	DefTiDBOptimizerEnableNewOFGB                = false
-	DefTiDBEnableOuterJoinReorder                = true
+	DefTiDBEnableOuterJoinReorder                = false
 	DefTiDBAllowBatchCop                         = 1
 	DefTiDBAllowMPPExecution                     = true
 	DefTiDBHashExchangeWithNewCollation          = true

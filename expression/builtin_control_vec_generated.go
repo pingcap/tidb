@@ -802,6 +802,7 @@ func (b *builtinCaseWhenJSONSig) vectorized() bool {
 
 func (b *builtinIfNullIntSig) fallbackEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeInt64(n, false)
 	x := result.Int64s()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalInt(input.GetRow(i))
@@ -856,6 +857,7 @@ func (b *builtinIfNullIntSig) vectorized() bool {
 
 func (b *builtinIfNullRealSig) fallbackEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeFloat64(n, false)
 	x := result.Float64s()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalReal(input.GetRow(i))
@@ -910,6 +912,7 @@ func (b *builtinIfNullRealSig) vectorized() bool {
 
 func (b *builtinIfNullDecimalSig) fallbackEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeDecimal(n, false)
 	x := result.Decimals()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalDecimal(input.GetRow(i))
@@ -1024,6 +1027,7 @@ func (b *builtinIfNullStringSig) vectorized() bool {
 
 func (b *builtinIfNullTimeSig) fallbackEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeTime(n, false)
 	x := result.Times()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalTime(input.GetRow(i))
@@ -1078,6 +1082,7 @@ func (b *builtinIfNullTimeSig) vectorized() bool {
 
 func (b *builtinIfNullDurationSig) fallbackEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
 	x := result.GoDurations()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalDuration(input.GetRow(i))
@@ -1192,6 +1197,7 @@ func (b *builtinIfNullJSONSig) vectorized() bool {
 
 func (b *builtinIfIntSig) fallbackEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeInt64(n, false)
 	x := result.Int64s()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalInt(input.GetRow(i))
@@ -1270,6 +1276,7 @@ func (b *builtinIfIntSig) vectorized() bool {
 
 func (b *builtinIfRealSig) fallbackEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeFloat64(n, false)
 	x := result.Float64s()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalReal(input.GetRow(i))
@@ -1348,6 +1355,7 @@ func (b *builtinIfRealSig) vectorized() bool {
 
 func (b *builtinIfDecimalSig) fallbackEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeDecimal(n, false)
 	x := result.Decimals()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalDecimal(input.GetRow(i))
@@ -1510,6 +1518,7 @@ func (b *builtinIfStringSig) vectorized() bool {
 
 func (b *builtinIfTimeSig) fallbackEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeTime(n, false)
 	x := result.Times()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalTime(input.GetRow(i))
@@ -1588,6 +1597,7 @@ func (b *builtinIfTimeSig) vectorized() bool {
 
 func (b *builtinIfDurationSig) fallbackEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
+	result.ResizeGoDuration(n, false)
 	x := result.GoDurations()
 	for i := 0; i < n; i++ {
 		res, isNull, err := b.evalDuration(input.GetRow(i))

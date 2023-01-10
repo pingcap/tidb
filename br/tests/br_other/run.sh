@@ -52,7 +52,7 @@ run_br debug backupmeta validate -s "local://$TEST_DIR/$DB" --offset 100
 run_br validate checksum -s "local://$TEST_DIR/$DB"
 
 # Test validate checksum
-for sst in $TEST_DIR/$DB/*.sst; do
+for sst in $TEST_DIR/$DB/*/*.sst; do
     echo "corrupted!" >> $sst
     echo "$sst corrupted!"
     break

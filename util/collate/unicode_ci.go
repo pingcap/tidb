@@ -85,7 +85,11 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 
 // Key implements Collator interface.
 func (uc *unicodeCICollator) Key(str string) []byte {
-	str = truncateTailingSpace(str)
+	return uc.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
+// KeyWithoutTrimRightSpace implements Collator interface.
+func (uc *unicodeCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
 	r := rune(0)
 	si := 0                        // decode index of s

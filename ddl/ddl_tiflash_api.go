@@ -419,11 +419,11 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 
 			logutil.BgLogger().Debug("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica), zap.Int64("tableID", tb.ID))
 
-			var stats helper.PDRegionStats
-			if err := infosync.GetTiFlashPDRegionRecordStats(context.Background(), tb.ID, &stats); err != nil {
+			var regionCount int
+			if err := infosync.GetTiFlashRegionCountFromPD(context.Background(), tb.ID, &regionCount); err != nil {
+				logutil.BgLogger().Error("Fail to get regionCount from PD.", zap.Int64("tableID", tb.ID))
 				return allReplicaReady, err
 			}
-			regionCount := stats.Count
 			flashRegionCount := len(regionReplica)
 			avail := regionCount == flashRegionCount
 			failpoint.Inject("PollTiFlashReplicaStatusReplaceCurAvailableValue", func(val failpoint.Value) {
@@ -572,6 +572,9 @@ func (d *ddl) PollTiFlashRoutine() {
 	if err != nil {
 		logutil.BgLogger().Fatal("TiFlashManagement init failed", zap.Error(err))
 	}
+
+	hasSetTiFlashGroup := false
+	nextSetTiFlashGroupTime := time.Now()
 	for {
 		select {
 		case <-d.ctx.Done():
@@ -586,6 +589,18 @@ func (d *ddl) PollTiFlashRoutine() {
 			failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
 				failpoint.Continue()
 			})
+
+			if !hasSetTiFlashGroup && !time.Now().Before(nextSetTiFlashGroupTime) {
+				// We should set tiflash rule group a higher index than other placement groups to forbid override by them.
+				// Once `SetTiFlashGroupConfig` succeed, we do not need to invoke it again. If failed, we should retry it util success.
+				if err = infosync.SetTiFlashGroupConfig(d.ctx); err != nil {
+					logutil.BgLogger().Warn("SetTiFlashGroupConfig failed", zap.Error(err))
+					nextSetTiFlashGroupTime = time.Now().Add(time.Minute)
+				} else {
+					hasSetTiFlashGroup = true
+				}
+			}
+
 			sctx, err := d.sessPool.get()
 			if err == nil {
 				if d.ownerManager.IsOwner() {

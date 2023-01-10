@@ -3600,3 +3600,18 @@ func TestPartitionTableExplain(t *testing.T) {
 		"  └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
 		"    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false"))
 }
+
+func TestIssue35181(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database TestIssue35181")
+	tk.MustExec("use TestIssue35181")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL) PARTITION BY RANGE (`a`) (PARTITION `p0` VALUES LESS THAN (2021), PARTITION `p1` VALUES LESS THAN (3000))")
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`insert into t select * from t where a=3000`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`insert into t select * from t where a=3000`)
+}

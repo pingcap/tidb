@@ -267,7 +267,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, nil, statistics.Version2, 1, false, false)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, nil, statistics.Version2, 1, false, false)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 
@@ -400,7 +400,7 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(3) collate utf8mb4_unicode_ci)")
-	tk.MustExec("insert into t value(1, 'aaa'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc')")
+	tk.MustExec("insert into t value(1, 'aaa'), (1, 'aaa'), (3, 'aab'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc'), (7, 'Ste')")
 	// mark column stats as needed
 	tk.MustExec("select * from t where a = 3")
 	tk.MustExec("select * from t where b = 'bbb'")

@@ -973,6 +973,16 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
+// SetTiFlashGroupConfig is a helper function to set tiflash rule group config
+func SetTiFlashGroupConfig(ctx context.Context) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("SetTiFlashGroupConfig")
+	return is.tiflashPlacementManager.SetTiFlashGroupConfig(ctx)
+}
+
 // SetTiFlashPlacementRule is a helper function to set placement rule.
 // It is discouraged to use SetTiFlashPlacementRule directly,
 // use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.
@@ -1014,13 +1024,13 @@ func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
 }
 
-// GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
-func GetTiFlashPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+// GetTiFlashRegionCountFromPD is a helper function calling `/stats/region`.
+func GetTiFlashRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetPDRegionRecordStats(ctx, tableID, stats)
+	return is.tiflashPlacementManager.GetRegionCountFromPD(ctx, tableID, regionCount)
 }
 
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
@@ -1103,4 +1113,24 @@ func DeleteInternalSession(se interface{}) {
 		return
 	}
 	sm.DeleteInternalSession(se)
+}
+
+// SetEtcdClient is only used for test.
+func SetEtcdClient(etcdCli *clientv3.Client) {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return
+	}
+	is.etcdCli = etcdCli
+}
+
+// GetEtcdClient is only used for test.
+func GetEtcdClient() *clientv3.Client {
+	is, err := getGlobalInfoSyncer()
+
+	if err != nil {
+		return nil
+	}
+	return is.etcdCli
 }

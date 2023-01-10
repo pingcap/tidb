@@ -1556,6 +1556,11 @@ func (t *TableCommon) Type() table.Type {
 }
 
 func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
+	failpoint.Inject("forceWriteBinlog", func() {
+		// Just to cover binlog related code in this package, since the `BinlogClient` is
+		// still nil, mutations won't be written to pump on commit.
+		failpoint.Return(true)
+	})
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}

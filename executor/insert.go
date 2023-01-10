@@ -193,13 +193,13 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 	if err != nil {
 		return err
 	}
-	// get the extra columns from the SELECT clause and get the final `oldRow`.
+	// get the extra columns from the SELECT clause.
+	var extraCols []types.Datum
 	if len(e.ctx.GetSessionVars().CurrInsertBatchExtraCols) > 0 {
-		extraCols := e.ctx.GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
-		oldRow = append(oldRow, extraCols...)
+		extraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
 	}
 
-	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, e.OnDuplicate)
+	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch)
 	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
@@ -374,20 +374,24 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 
 // doDupRowUpdate updates the duplicate row.
 func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
-	cols []*expression.Assignment) error {
+	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
 	e.ctx.GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
 	// NOTE: In order to execute the expression inside the column assignment,
-	// we have to put the value of "oldRow" before "newRow" in "row4Update" to
-	// be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
+	// we have to put the value of "oldRow" and "extraCols" before "newRow" in
+	// "row4Update" to be consistent with "Schema4OnDuplicate" in the "Insert"
+	// PhysicalPlan.
 	e.row4Update = e.row4Update[:0]
 	e.row4Update = append(e.row4Update, oldRow...)
+	e.row4Update = append(e.row4Update, extraCols...)
 	e.row4Update = append(e.row4Update, newRow...)
 
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
 	for _, col := range cols {
 		if col.LazyErr != nil {
 			return col.LazyErr
@@ -396,9 +400,19 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 		if err1 != nil {
 			return err1
 		}
-		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo(), false, false)
+		c := col.Col.ToInfo()
+		c.Name = col.ColName
+		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, c, false, false)
 		if err1 != nil {
 			return err1
+		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				// Use `idxInBatch` here for simplicity, since the offset of the batch is unknown under the current context.
+				newWarnings[k].Err = completeInsertErr(c, &val, idxInBatch, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
 		}
 		e.evalBuffer4Dup.SetDatum(col.Col.Index, e.row4Update[col.Col.Index])
 		assignFlag[col.Col.Index] = true

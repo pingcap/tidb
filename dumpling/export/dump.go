@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-var openDBFunc = sql.Open
+var openDBFunc = openDB
 
 var emptyHandleValsErr = errors.New("empty handleVals for TiDB table")
 
@@ -499,7 +499,6 @@ func adjustTableCollation(tctx *tcontext.Context, collationCompatible string, pa
 	}
 
 	if collation == "" && charset != "" {
-		// get db collation
 		collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
 		if !ok {
 			tctx.L().Warn("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
@@ -528,11 +527,12 @@ func adjustTableCollation(tctx *tcontext.Context, collationCompatible string, pa
 
 // adjustColumnsCollation adds column's collation.
 func adjustColumnsCollation(tctx *tcontext.Context, createStmt *ast.CreateTableStmt, charsetAndDefaultCollationMap map[string]string) {
+ColumnLoop:
 	for _, col := range createStmt.Cols {
 		for _, options := range col.Options {
 			// already have 'Collation'
 			if options.Tp == ast.ColumnOptionCollate {
-				continue
+				continue ColumnLoop
 			}
 		}
 		fieldType := col.Tp
@@ -1223,6 +1223,9 @@ func (d *Dumper) Close() error {
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
 	}
+	if d.conf.Security.DriveTLSName != "" {
+		mysql.DeregisterTLSConfig(d.conf.Security.DriveTLSName)
+	}
 	return nil
 }
 
@@ -1290,11 +1293,11 @@ func startHTTPService(d *Dumper) error {
 // openSQLDB is an initialization step of Dumper.
 func openSQLDB(d *Dumper) error {
 	conf := d.conf
-	pool, err := sql.Open("mysql", conf.GetDSN(""))
+	c, err := mysql.NewConnector(conf.GetDriverConfig(""))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	d.dbHandle = pool
+	d.dbHandle = sql.OpenDB(c)
 	return nil
 }
 
@@ -1467,10 +1470,18 @@ func setSessionParam(d *Dumper) error {
 			}
 		}
 	}
-	if d.dbHandle, err = resetDBWithSessionParams(d.tctx, pool, conf.GetDSN(""), conf.SessionParams); err != nil {
+	if d.dbHandle, err = resetDBWithSessionParams(d.tctx, pool, conf.GetDriverConfig(""), conf.SessionParams); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func openDB(cfg *mysql.Config) (*sql.DB, error) {
+	c, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return sql.OpenDB(c), nil
 }
 
 func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) error {
@@ -1489,7 +1500,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 	d.selectTiDBTableRegionFunc = func(_ *tcontext.Context, _ *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error) {
 		return nil, nil, errors.Annotatef(emptyHandleValsErr, "table: `%s`.`%s`", escapeString(meta.DatabaseName()), escapeString(meta.TableName()))
 	}
-	dbHandle, err := openDBFunc("mysql", conf.GetDSN(""))
+	dbHandle, err := openDBFunc(conf.GetDriverConfig(""))
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -158,8 +158,12 @@ func TestColumnsTables(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (bit bit(10) DEFAULT b'100')")
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't'").Check(testkit.Rows(
-		"def test t bit 1 b'100' YES bit <nil> <nil> 10 0 <nil> <nil> <nil> bit(10) unsigned   select,insert,update,references  "))
+		"def test t bit 1 b'100' YES bit <nil> <nil> 10 0 <nil> <nil> <nil> bit(10)   select,insert,update,references  "))
+
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (`COL3` bit(1) NOT NULL,b year) ;")
+	tk.MustQuery("select column_type from  information_schema.columns where TABLE_SCHEMA = 'test' and TABLE_NAME = 't';").
+		Check(testkit.Rows("bit(1)", "year(4)"))
 }
 
 func TestEngines(t *testing.T) {
@@ -709,4 +713,23 @@ SELECT
 ;
 `).Check(testkit.Rows("t a b"))
 	}
+}
+
+// https://github.com/pingcap/tidb/issues/36426.
+func TestShowColumnsWithSubQueryView(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE added (`id` int(11), `name` text, `some_date` timestamp);")
+	tk.MustExec("CREATE TABLE incremental (`id` int(11), `name`text, `some_date` timestamp);")
+	tk.MustExec("create view temp_view as (select * from `added` where id > (select max(id) from `incremental`));")
+	// Show columns should not send coprocessor request to the storage.
+	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`))
+	tk.MustQuery("show columns from temp_view;").Check(testkit.Rows(
+		"id int(11) YES  <nil> ",
+		"name text YES  <nil> ",
+		"some_date timestamp YES  <nil> "))
+	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
 }
