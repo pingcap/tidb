@@ -755,7 +755,7 @@ func (er *expressionRewriter) handleInformationSchemaBinaryOperationExpr(v *ast.
 					}
 				}
 				if name != nil {
-					if name.DBName.L == "information_schema" {
+					if name.DBName.L == "information_schema" && (name.OrigTblName.L == "columns") {
 						x.Datum.SetString(strings.ToLower(x.Datum.GetString()), x.Datum.Collation())
 					}
 				}
