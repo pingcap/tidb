@@ -195,7 +195,6 @@ func (e *RevokeExec) revokePriv(internalSession sessionctx.Context, priv *ast.Pr
 }
 
 func (e *RevokeExec) revokeDynamicPriv(internalSession sessionctx.Context, privName string, user, host string) error {
-	privName = strings.ToUpper(privName)
 	if !privilege.GetPrivilegeManager(e.ctx).IsDynamicPrivilege(privName) { // for MySQL compatibility
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrDynamicPrivilegeNotRegistered.GenWithStackByArgs(privName))
 	}
@@ -204,27 +203,35 @@ func (e *RevokeExec) revokeDynamicPriv(internalSession sessionctx.Context, privN
 	return err
 }
 
-func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) (err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	privName := strings.ToUpper(priv.Priv.String())
+	defer func() {
+		if err == nil && user == e.ctx.GetSessionVars().User.AuthUsername && host == e.ctx.GetSessionVars().User.AuthHostname {
+			e.ctx.GetSessionVars().RevokedGlobalPrivileges[privName] = struct{}{}
+		}
+	}()
 	if priv.Priv == mysql.ExtendedPriv {
-		return e.revokeDynamicPriv(internalSession, priv.Name, user, host)
+		privName = strings.ToUpper(priv.Name)
+		err = e.revokeDynamicPriv(internalSession, privName, user, host)
+		return
 	}
 	if priv.Priv == mysql.AllPriv { // If ALL, also revoke dynamic privileges
-		_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "DELETE FROM mysql.global_grants WHERE user = %? AND host = %?", user, host)
+		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "DELETE FROM mysql.global_grants WHERE user = %? AND host = %?", user, host)
 		if err != nil {
-			return err
+			return
 		}
 	}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
-	err := composeGlobalPrivUpdate(sql, priv.Priv, "N")
+	err = composeGlobalPrivUpdate(sql, priv.Priv, "N")
 	if err != nil {
-		return err
+		return
 	}
 	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%?", user, strings.ToLower(host))
 
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
-	return err
+	return
 }
 
 func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.PrivElem, userName, host string) error {

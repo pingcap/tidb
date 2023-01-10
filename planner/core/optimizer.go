@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
@@ -155,7 +155,8 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 }
 
 // CheckPrivilege checks the privilege for a user.
-func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
+func CheckPrivilege(sctx sessionctx.Context, pm privilege.Manager, vs []visitInfo) error {
+	activeRoles := sctx.GetSessionVars().ActiveRoles
 	for _, v := range vs {
 		if v.privilege == mysql.ExtendedPriv {
 			if !pm.RequestDynamicVerification(activeRoles, v.dynamicPriv, v.dynamicWithGrant) {
@@ -166,6 +167,15 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 			}
 		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
+				// If the global privilege is just been revoked from current user in current session, we can use it.
+				// Ref: https://github.com/pingcap/tidb/issues/39356
+				if revokedPrivs := sctx.GetSessionVars().RevokedGlobalPrivileges; len(revokedPrivs) > 0 {
+					if len(v.db) == 0 && len(v.table) == 0 && len(v.column) == 0 {
+						if _, ok := revokedPrivs[strings.ToUpper(v.privilege.String())]; ok {
+							continue
+						}
+					}
+				}
 				return ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}
 			return v.err

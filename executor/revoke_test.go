@@ -19,7 +19,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
@@ -270,4 +272,47 @@ func TestRevokeOnNonExistTable(t *testing.T) {
 	// REVOKE ON non-existent table success
 	tk.MustExec("DROP TABLE t1;")
 	tk.MustExec("REVOKE ALTER ON d1.t1 FROM issue28533;")
+}
+
+func TestIssue39356(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// If a user revokes a privilege from itself, in the current session it can grant the revoked privilege to itself again.
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("CREATE USER testuser")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"))
+	tk.MustExec("REVOKE ALTER ON *.* FROM 'root'@'%'")
+	tk.MustExec("REVOKE SYSTEM_USER ON *.* FROM 'root'@'%'")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,PROCESS,REFERENCES," +
+		"SHOW DATABASES,SUPER,EXECUTE,INDEX,CREATE USER,CREATE TABLESPACE,TRIGGER,CREATE VIEW,SHOW VIEW," +
+		"CREATE ROLE,DROP ROLE,CREATE TEMPORARY TABLES,LOCK TABLES,CREATE ROUTINE,ALTER ROUTINE,EVENT,SHUTDOWN,RELOAD," +
+		"FILE,CONFIG,REPLICATION CLIENT,REPLICATION SLAVE ON *.* TO 'root'@'%' WITH GRANT OPTION"))
+	tk.MustExec("GRANT ALTER ON *.* TO 'root'@'%'")
+	tk.MustExec("GRANT ALTER ON *.* TO 'testuser'@'%'")
+	tk.MustExec("GRANT SYSTEM_USER ON *.* TO 'testuser'@'%'")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"))
+	tk.MustQuery("SHOW GRANTS FOR 'testuser'@'%'").
+		Check(testkit.Rows("GRANT ALTER ON *.* TO 'testuser'@'%'", "GRANT SYSTEM_USER ON *.* TO 'testuser'@'%'"))
+
+	// After disconnect the current session, the user can not grant the revoked privilege.
+	tk.MustExec("REVOKE ALTER ON *.* FROM 'root'@'%'")
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk2.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,PROCESS,REFERENCES," +
+		"SHOW DATABASES,SUPER,EXECUTE,INDEX,CREATE USER,CREATE TABLESPACE,TRIGGER,CREATE VIEW,SHOW VIEW," +
+		"CREATE ROLE,DROP ROLE,CREATE TEMPORARY TABLES,LOCK TABLES,CREATE ROUTINE,ALTER ROUTINE,EVENT,SHUTDOWN,RELOAD," +
+		"FILE,CONFIG,REPLICATION CLIENT,REPLICATION SLAVE ON *.* TO 'root'@'%' WITH GRANT OPTION"))
+	tk2.MustGetErrCode("GRANT ALTER ON *.* TO 'root'@'%'", errno.ErrPrivilegeCheckFail)
+
+	// Only global privileges have such *CACHE* mechanism. DB privileges don't have.
+	tk.MustExec("USE test; CREATE TABLE t (c int)")
+	tk.MustExec("REVOKE ALL ON *.* FROM testuser")
+	tk.MustQuery("SHOW GRANTS FOR testuser").Check(testkit.Rows("GRANT USAGE ON *.* TO 'testuser'@'%'"))
+	tk.MustExec("GRANT SELECT ON test.t TO testuser WITH GRANT OPTION")
+	tk2.RefreshSession()
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "%"}, nil, nil))
+	tk2.MustExec("REVOKE SELECT ON test.t FROM 'testuser'@'%'")
+	tk2.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT USAGE ON *.* TO 'testuser'@'%'", "GRANT USAGE ON test.t TO 'testuser'@'%' WITH GRANT OPTION"))
+	tk2.MustGetErrCode("GRANT SELECT ON test.t TO 'testuser'@'%'", errno.ErrPrivilegeCheckFail)
 }
