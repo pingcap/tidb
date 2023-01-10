@@ -1865,16 +1865,25 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
+	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize, local.bufferPool.NewBuffer(), local.tikvCli, local.importClientFactory)
 }
 
-func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+func openLocalWriter(
+	cfg *backend.LocalWriterConfig,
+	engine *Engine,
+	cacheSize int64,
+	kvBuffer *membuf.Buffer,
+	kvStore *tikvclient.KVStore,
+	importClientFactory ImportClientFactory,
+) (*Writer, error) {
 	w := &Writer{
-		engine:             engine,
-		memtableSizeLimit:  cacheSize,
-		kvBuffer:           kvBuffer,
-		isKVSorted:         cfg.IsKVSorted,
-		isWriteBatchSorted: true,
+		engine:              engine,
+		memtableSizeLimit:   cacheSize,
+		kvBuffer:            kvBuffer,
+		isKVSorted:          cfg.IsKVSorted,
+		isWriteBatchSorted:  true,
+		kvStore:             kvStore,
+		ImportClientFactory: importClientFactory,
 	}
 	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
 	// this can help save about 3% of CPU.
