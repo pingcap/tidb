@@ -3587,7 +3587,12 @@ DefaultValueExpr:
 BuiltinFunction:
 	'(' BuiltinFunction ')'
 	{
-		$$ = $2.(*ast.FuncCallExpr)
+		expr := $2
+		if _, isFuncCallExpr := expr.(*ast.FuncCallExpr); isFuncCallExpr {
+			$$ = expr.(*ast.FuncCallExpr)
+		} else {
+			$$ = expr.(*ast.FuncCastExpr)
+		}
 	}
 |	identifier '(' ')'
 	{
