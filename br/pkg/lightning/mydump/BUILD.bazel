@@ -70,6 +70,7 @@ go_test(
         "//br/pkg/lightning/worker",
         "//br/pkg/mock/storage",
         "//br/pkg/storage",
+        "//config",
         "//parser/mysql",
         "//testkit/testsetup",
         "//types",
