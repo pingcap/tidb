@@ -17,10 +17,8 @@ package statistics_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"math"
 	"os"
-	"regexp"
 	"runtime/pprof"
 	"testing"
 	"time"
@@ -166,7 +164,8 @@ func TestOutOfRangeEstimation(t *testing.T) {
 // TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
 // The test result doesn't perfectly reflect the actual data distribution, but this is the expected behavior for now.
 func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	testKit := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
 	testKit.MustExec("use test")
@@ -189,7 +188,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 		}
 	)
 	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.LoadTestCases(t, &input, &output)
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
@@ -932,11 +931,6 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 	usedSets = statistics.GetUsableSetsByGreedy(nodes)
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
-}
-
-type outputType struct {
-	SQL    string
-	Result []string
 }
 
 func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
