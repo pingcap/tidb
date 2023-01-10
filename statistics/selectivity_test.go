@@ -1060,16 +1060,15 @@ func TestIssue39593(t *testing.T) {
 	}
 	generateMapsForMockStatsTbl(statsTbl)
 
-
 	sctx := testKit.Session()
 	idxID := tblInfo.Indices[0].ID
-	vals := []int64{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20}
-	count, err := statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals,vals))
+	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	count, err := statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count without any changes
 	require.Equal(t, float64(360), count)
 	statsTbl.Count *= 10
-	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals,vals))
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
 	require.Equal(t, float64(3870), count)
