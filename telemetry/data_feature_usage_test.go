@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -143,7 +144,7 @@ func TestAutoIDNoCache(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.True(t, usage.AutoIDNoCache)
-	tk.MustExec("alter table tele_autoid auto_id_cache=0")
+	tk.MustExec("drop table tele_autoid")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.False(t, usage.AutoIDNoCache)
@@ -286,6 +287,12 @@ func TestTablePartition(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.ExchangePartition.ExchangePartitionCnt)
+
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionComactCnt)
+	tk.MustExec(`alter table pt2 compact partition p0 tiflash replica;`)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionComactCnt)
 }
 
 func TestPlacementPolicies(t *testing.T) {
@@ -373,12 +380,18 @@ func TestNonTransactionalUsage(t *testing.T) {
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(0), usage.NonTransactionalUsage.DeleteCount)
+	require.Equal(t, int64(0), usage.NonTransactionalUsage.UpdateCount)
+	require.Equal(t, int64(0), usage.NonTransactionalUsage.InsertCount)
 
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("batch limit 1 delete from t")
+	tk.MustExec("batch limit 1 update t set a = 1")
+	tk.MustExec("batch limit 1 insert into t select * from t")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.NonTransactionalUsage.DeleteCount)
+	require.Equal(t, int64(1), usage.NonTransactionalUsage.UpdateCount)
+	require.Equal(t, int64(1), usage.NonTransactionalUsage.InsertCount)
 }
 
 func TestGlobalKillUsageInfo(t *testing.T) {
@@ -422,7 +435,7 @@ func TestCostModelVer2UsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.False(t, usage.EnableCostModelVer2)
+	require.Equal(t, usage.EnableCostModelVer2, variable.DefTiDBCostModelVer == 2)
 
 	tk.Session().GetSessionVars().CostModelVersion = 2
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -487,10 +500,6 @@ func TestFlashbackCluster(t *testing.T) {
 }
 
 func TestAddIndexAccelerationAndMDL(t *testing.T) {
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skipf("test requires concurrent ddl")
-	}
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
@@ -498,7 +507,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	require.NoError(t, err)
 
 	allow := ddl.IsEnableFastReorg()
-	require.Equal(t, false, allow)
+	require.Equal(t, true, allow)
 	tk.MustExec("set global tidb_enable_metadata_lock = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tele_t")
@@ -507,7 +516,7 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	tk.MustExec("alter table tele_t add index idx_org(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
@@ -516,11 +525,11 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
 	tk.MustExec("alter table tele_t add index idx_new(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, int64(2), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
 }
 
@@ -541,4 +550,33 @@ func TestGlobalMemoryControl(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.False(t, usage.EnableGlobalMemoryControl)
+}
+
+func TestIndexMergeUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 int, c2 int, index idx1(c1), index idx2(c2))")
+	res := tk.MustQuery("explain select /*+ use_index_merge(t1, idx1, idx2) */ * from t1 where c1 = 1 and c2 = 1").Rows()
+	require.Contains(t, res[0][0], "IndexMerge")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.IndexMergeUsageCounter.IndexMergeUsed, int64(0))
+
+	tk.MustExec("select /*+ use_index_merge(t1, idx1, idx2) */ * from t1 where c1 = 1 and c2 = 1")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.IndexMergeUsageCounter.IndexMergeUsed)
+
+	tk.MustExec("select /*+ use_index_merge(t1, idx1, idx2) */ * from t1 where c1 = 1 or c2 = 1")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
+
+	tk.MustExec("select /*+ no_index_merge() */ * from t1 where c1 = 1 or c2 = 1")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
 }

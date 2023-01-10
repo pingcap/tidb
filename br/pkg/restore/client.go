@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -446,7 +448,7 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
-	log.Debug("new worker pool", zap.Uint("currency-count", c))
+	log.Info("new worker pool", zap.Uint("currency-count", c))
 	rc.workerPool = utils.NewWorkerPool(c, "file")
 }
 
@@ -938,7 +940,9 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
 		}
 		backupTi := table.Info
-		if len(ti.Columns) != len(backupTi.Columns) {
+		// skip checking the number of columns in mysql.user table,
+		// because higher versions of TiDB may add new columns.
+		if len(ti.Columns) != len(backupTi.Columns) && backupTi.Name.L != sysUserTableName {
 			log.Error("column count mismatch",
 				zap.Stringer("table", table.Info.Name),
 				zap.Int("col in cluster", len(ti.Columns)),
@@ -957,6 +961,13 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
+				// skip when the backed up mysql.user table is missing columns.
+				if backupTi.Name.L == sysUserTableName {
+					log.Warn("missing column in backup data",
+						zap.Stringer("table", table.Info.Name),
+						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					continue
+				}
 				log.Error("missing column in backup data",
 					zap.Stringer("table", table.Info.Name),
 					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
@@ -975,6 +986,29 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 					table.Info.Name.O,
 					col.Name, col.FieldType.String(),
 					backupCol.Name, backupCol.FieldType.String())
+			}
+		}
+
+		if backupTi.Name.L == sysUserTableName {
+			// check whether the columns of table in cluster are less than the backup data
+			clusterColMap := make(map[string]*model.ColumnInfo)
+			for i := range ti.Columns {
+				col := ti.Columns[i]
+				clusterColMap[col.Name.L] = col
+			}
+			// order can be different
+			for i := range backupTi.Columns {
+				col := backupTi.Columns[i]
+				clusterCol := clusterColMap[col.Name.L]
+				if clusterCol == nil {
+					log.Error("missing column in cluster data",
+						zap.Stringer("table", table.Info.Name),
+						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+						"missing column in cluster data, table: %s, col: %s %s",
+						table.Info.Name.O,
+						col.Name, col.FieldType.String())
+				}
 			}
 		}
 	}
@@ -1427,7 +1461,7 @@ func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *Crea
 			}
 
 			// Not need to return err when failed because of update analysis-meta
-			restoreTS, err := rc.GetTS(ctx)
+			restoreTS, err := rc.GetTSWithRetry(ctx)
 			if err != nil {
 				log.Error("getTS failed", zap.Error(err))
 			} else {
@@ -1807,19 +1841,179 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 	return nil
 }
 
+type FilesInRegion struct {
+	defaultSize    uint64
+	defaultKVCount int64
+	writeSize      uint64
+	writeKVCount   int64
+
+	defaultFiles []*backuppb.DataFileInfo
+	writeFiles   []*backuppb.DataFileInfo
+	deleteFiles  []*backuppb.DataFileInfo
+}
+
+type FilesInTable struct {
+	regionMapFiles map[int64]*FilesInRegion
+}
+
+func ApplyKVFilesWithBatchMethod(
+	ctx context.Context,
+	iter LogIter,
+	batchCount int,
+	batchSize uint64,
+	applyFunc func(files []*backuppb.DataFileInfo, kvCount int64, size uint64),
+) error {
+	var (
+		tableMapFiles        = make(map[int64]*FilesInTable)
+		tmpFiles             = make([]*backuppb.DataFileInfo, 0, batchCount)
+		tmpSize       uint64 = 0
+		tmpKVCount    int64  = 0
+	)
+	for r := iter.TryNext(ctx); !r.Finished; r = iter.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+
+		f := r.Item
+		if f.GetType() == backuppb.FileType_Put && f.GetLength() >= batchSize {
+			applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+			continue
+		}
+
+		fit, exist := tableMapFiles[f.TableId]
+		if !exist {
+			fit = &FilesInTable{
+				regionMapFiles: make(map[int64]*FilesInRegion),
+			}
+			tableMapFiles[f.TableId] = fit
+		}
+		fs, exist := fit.regionMapFiles[f.RegionId]
+		if !exist {
+			fs = &FilesInRegion{}
+			fit.regionMapFiles[f.RegionId] = fs
+		}
+
+		if f.GetType() == backuppb.FileType_Delete {
+			if fs.defaultFiles == nil {
+				fs.deleteFiles = make([]*backuppb.DataFileInfo, 0)
+			}
+			fs.deleteFiles = append(fs.deleteFiles, f)
+		} else {
+			if f.GetCf() == stream.DefaultCF {
+				if fs.defaultFiles == nil {
+					fs.defaultFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				}
+				fs.defaultFiles = append(fs.defaultFiles, f)
+				fs.defaultSize += f.Length
+				fs.defaultKVCount += f.GetNumberOfEntries()
+				if len(fs.defaultFiles) >= batchCount || fs.defaultSize >= batchSize {
+					applyFunc(fs.defaultFiles, fs.defaultKVCount, fs.defaultSize)
+					fs.defaultFiles = nil
+					fs.defaultSize = 0
+					fs.defaultKVCount = 0
+				}
+			} else {
+				if fs.writeFiles == nil {
+					fs.writeFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				}
+				fs.writeFiles = append(fs.writeFiles, f)
+				fs.writeSize += f.GetLength()
+				fs.writeKVCount += f.GetNumberOfEntries()
+				if len(fs.writeFiles) >= batchCount || fs.writeSize >= batchSize {
+					applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
+					fs.writeFiles = nil
+					fs.writeSize = 0
+					fs.writeKVCount = 0
+				}
+			}
+		}
+	}
+
+	for _, fwt := range tableMapFiles {
+		for _, fs := range fwt.regionMapFiles {
+			if len(fs.defaultFiles) > 0 {
+				applyFunc(fs.defaultFiles, fs.defaultKVCount, fs.defaultSize)
+			}
+			if len(fs.writeFiles) > 0 {
+				applyFunc(fs.writeFiles, fs.writeKVCount, fs.writeSize)
+			}
+		}
+	}
+
+	for _, fwt := range tableMapFiles {
+		for _, fs := range fwt.regionMapFiles {
+			for _, d := range fs.deleteFiles {
+				tmpFiles = append(tmpFiles, d)
+				tmpSize += d.GetLength()
+				tmpKVCount += d.GetNumberOfEntries()
+
+				if len(tmpFiles) >= batchCount || tmpSize >= batchSize {
+					applyFunc(tmpFiles, tmpKVCount, tmpSize)
+					tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+					tmpSize = 0
+					tmpKVCount = 0
+				}
+			}
+			if len(tmpFiles) > 0 {
+				applyFunc(tmpFiles, tmpKVCount, tmpSize)
+				tmpFiles = make([]*backuppb.DataFileInfo, 0, batchCount)
+				tmpSize = 0
+				tmpKVCount = 0
+			}
+		}
+	}
+
+	return nil
+}
+
+func ApplyKVFilesWithSingelMethod(
+	ctx context.Context,
+	files LogIter,
+	applyFunc func(file []*backuppb.DataFileInfo, kvCount int64, size uint64),
+) error {
+	deleteKVFiles := make([]*backuppb.DataFileInfo, 0)
+
+	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+
+		f := r.Item
+		if f.GetType() == backuppb.FileType_Delete {
+			deleteKVFiles = append(deleteKVFiles, f)
+			continue
+		}
+		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+	}
+
+	log.Info("restore delete files", zap.Int("count", len(deleteKVFiles)))
+	for _, file := range deleteKVFiles {
+		f := file
+		applyFunc([]*backuppb.DataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+	}
+
+	return nil
+}
+
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
-	files LogIter,
+	iter LogIter,
+	pitrBatchCount uint32,
+	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
-	onProgress func(),
+	onProgress func(cnt int64),
 ) error {
-	var err error
-	fileCount := 0
-	start := time.Now()
+	var (
+		err          error
+		fileCount    = 0
+		start        = time.Now()
+		supportBatch = version.CheckPITRSupportBatchKVFiles()
+		skipFile     = 0
+	)
 	defer func() {
-		elapsed := time.Since(start)
 		if err == nil {
+			elapsed := time.Since(start)
 			log.Info("Restore KV files", zap.Duration("take", elapsed))
 			summary.CollectSuccessUnit("files", fileCount, elapsed)
 		}
@@ -1832,60 +2026,52 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	skipFile := 0
-	deleteFiles := make([]*backuppb.DataFileInfo, 0)
-
-	applyFunc := func(file *backuppb.DataFileInfo) {
-		// get rewrite rule from table id
-		rule, ok := rules[file.TableId]
+	applyFunc := func(files []*backuppb.DataFileInfo, kvCount int64, size uint64) {
+		if len(files) == 0 {
+			return
+		}
+		// get rewrite rule from table id.
+		// because the tableID of files is the same.
+		rule, ok := rules[files[0].TableId]
 		if !ok {
 			// TODO handle new created table
 			// For this version we do not handle new created table after full backup.
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
-			onProgress()
-			summary.CollectInt("FileSkip", 1)
-			log.Debug("skip file due to table id not matched", zap.String("file", file.Path), zap.Int64("tableId", file.TableId))
-			skipFile++
+			onProgress(int64(len(files)))
+			summary.CollectInt("FileSkip", len(files))
+			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
+			skipFile += len(files)
 		} else {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				fileStart := time.Now()
 				defer func() {
-					onProgress()
-					updateStats(uint64(file.NumberOfEntries), file.Length)
-					summary.CollectInt("File", 1)
-					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+					onProgress(int64(len(files)))
+					updateStats(uint64(kvCount), size)
+					summary.CollectInt("File", len(files))
+
+					filenames := make([]string, 0, len(files))
+					for _, f := range files {
+						filenames = append(filenames, f.Path+", ")
+					}
+					log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+						zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 				}()
-				startTS := rc.startTS
-				if file.Cf == stream.DefaultCF {
-					startTS = rc.shiftStartTS
-				}
-				return rc.fileImporter.ImportKVFiles(ectx, file, rule, startTS, rc.restoreTS)
+
+				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
 			})
 		}
 	}
-	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
-		if r.Err != nil {
-			return err
-		}
-		file := r.Item
-		if file.Type == backuppb.FileType_Delete {
-			// collect delete type file and apply it later.
-			deleteFiles = append(deleteFiles, file)
-			continue
-		}
-		fileReplica := file
-		// applyFunc blocks once there aren't enough workers.
-		// this would help us don't load too many DML file info.
-		applyFunc(fileReplica)
+
+	if supportBatch {
+		err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+	} else {
+		err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
 	}
-	if len(deleteFiles) > 0 {
-		log.Info("restore delete files", zap.Int("count", len(deleteFiles)))
+	if err != nil {
+		return errors.Trace(err)
 	}
-	for _, file := range deleteFiles {
-		fileReplica := file
-		applyFunc(fileReplica)
-	}
+
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
 	if skipFile > 0 {
 		log.Debug("table id in full backup storage", zap.Any("tables", rules))
@@ -1893,13 +2079,9 @@ func (rc *Client) RestoreKVFiles(
 
 	if err = eg.Wait(); err != nil {
 		summary.CollectFailureUnit("file", err)
-		log.Error(
-			"restore files failed",
-			zap.Error(err),
-		)
-		return errors.Trace(err)
+		log.Error("restore files failed", zap.Error(err))
 	}
-	return nil
+	return errors.Trace(err)
 }
 
 func (rc *Client) CleanUpKVFiles(
@@ -2399,7 +2581,7 @@ func (rc *Client) RunGCRowsLoader(ctx context.Context) {
 func (rc *Client) InsertGCRows(ctx context.Context) error {
 	close(rc.deleteRangeQueryCh)
 	rc.deleteRangeQueryWaitGroup.Wait()
-	ts, err := rc.GetTS(ctx)
+	ts, err := rc.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2433,7 +2615,7 @@ func (rc *Client) SaveSchemas(
 
 	schemas := TidyOldSchemas(sr)
 	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
-	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
+	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2462,6 +2644,74 @@ func (rc *Client) IsFullClusterRestore() bool {
 
 func (rc *Client) SetWithSysTable(withSysTable bool) {
 	rc.withSysTable = withSysTable
+}
+
+func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	allSchema := info.AllSchemas()
+	recorder := tiflashrec.New()
+
+	expectTiFlashStoreCount := uint64(0)
+	needTiFlash := false
+	for _, s := range allSchema {
+		for _, t := range s.Tables {
+			if t.TiFlashReplica != nil {
+				expectTiFlashStoreCount = mathutil.Max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
+				recorder.AddTable(t.ID, *t.TiFlashReplica)
+				needTiFlash = true
+			}
+		}
+	}
+	if !needTiFlash {
+		log.Info("no need to set tiflash replica, since there is no tables enable tiflash replica")
+		return nil
+	}
+	// we wait for ten minutes to wait tiflash starts.
+	// since tiflash only starts when set unmark recovery mode finished.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	err = utils.WithRetry(timeoutCtx, func() error {
+		tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
+		log.Info("get tiflash store count for resetting TiFlash Replica",
+			zap.Uint64("count", tiFlashStoreCount))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tiFlashStoreCount < expectTiFlashStoreCount {
+			log.Info("still waiting for enough tiflash store start",
+				zap.Uint64("expect", expectTiFlashStoreCount),
+				zap.Uint64("actual", tiFlashStoreCount),
+			)
+			return errors.New("tiflash store count is less than expected")
+		}
+		return nil
+	}, &waitTiFlashBackoffer{
+		Attempts:    30,
+		BaseBackoff: 4 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+
+	sqls := recorder.GenerateResetAlterTableDDLs(info)
+	log.Info("Generating SQLs for resetting tiflash replica",
+		zap.Strings("sqls", sqls))
+
+	return g.UseOneShotSession(storage, false, func(se glue.Session) error {
+		for _, sql := range sqls {
+			if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(errExec),
+					zap.String("sql", sql),
+				)
+			}
+		}
+		return nil
+	})
 }
 
 // MockClient create a fake client used to test.
@@ -2494,4 +2744,72 @@ func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
 		}
 	}
 	return schemas
+}
+
+func CheckNewCollationEnable(
+	backupNewCollationEnable string,
+	g glue.Glue,
+	storage kv.Storage,
+	CheckRequirements bool,
+) error {
+	if backupNewCollationEnable == "" {
+		if CheckRequirements {
+			return errors.Annotatef(berrors.ErrUnknown,
+				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
+					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
+					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
+					"use --check-requirements=false to skip this check")
+		}
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		return nil
+	}
+
+	se, err := g.CreateSession(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	newCollationEnable, err := se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
+		return errors.Annotatef(berrors.ErrUnknown,
+			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
+			backupNewCollationEnable, newCollationEnable)
+	}
+
+	// collate.newCollationEnabled is set to 1 when the collate package is initialized,
+	// so we need to modify this value according to the config of the cluster
+	// before using the collate package.
+	enabled := newCollationEnable == "True"
+	// modify collate.newCollationEnabled according to the config of the cluster
+	collate.SetNewCollationEnabledForTest(enabled)
+	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
+	return nil
+}
+
+type waitTiFlashBackoffer struct {
+	Attempts    int
+	BaseBackoff time.Duration
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *waitTiFlashBackoffer) NextBackoff(error) time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
+		return 0
+	}
+	b.BaseBackoff *= 2
+	if b.BaseBackoff > 32*time.Second {
+		b.BaseBackoff = 32 * time.Second
+	}
+	return bo
+}
+
+// Attempt returns the remain attempt times
+func (b *waitTiFlashBackoffer) Attempt() int {
+	return b.Attempts
 }

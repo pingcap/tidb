@@ -170,6 +170,10 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
 		// replica only -> public
+		failpoint.Inject("sleepBeforeReplicaOnly", func(val failpoint.Value) {
+			sleepSecond := val.(int)
+			time.Sleep(time.Duration(sleepSecond) * time.Second)
+		})
 		// Here need do some tiflash replica complement check.
 		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
@@ -193,6 +197,15 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			for _, d := range partInfo.Definitions {
 				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
+				err = infosync.UpdateTiFlashProgressCache(d.ID, 1)
+				if err != nil {
+					// just print log, progress will be updated in `refreshTiFlashTicker`
+					logutil.BgLogger().Error("update tiflash sync progress cache failed",
+						zap.Error(err),
+						zap.Int64("tableID", tblInfo.ID),
+						zap.Int64("partitionID", d.ID),
+					)
+				}
 			}
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
@@ -1362,7 +1375,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *
 		return nil
 	}
 
-	e, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, expr)
+	e, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, expr, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1730,6 +1743,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		dbInfo, err := t.GetDatabase(job.SchemaID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// If table has global indexes, we need reorg to clean up them.
 		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
 			// Build elements for compatible with modify column type. elements will not be used when reorganizing.
@@ -1739,8 +1756,8 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
-			rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, tbl, physicalTableIDs, elements)
+			rh := newReorgHandler(t, w.sess)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
@@ -2064,7 +2081,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				failpoint.Return(ver, err)
 			}
 			sess := newSession(se)
-			_, err = sess.execute(context.Background(), "insert into test.pt values (40000000)", "exchange_partition_test")
+			_, err = sess.execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
 			if err != nil {
 				failpoint.Return(ver, err)
 			}

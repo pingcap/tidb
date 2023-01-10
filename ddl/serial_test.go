@@ -112,6 +112,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("use ctwl_db")
 	tk.MustExec("create table tt(id int primary key)")
 	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, constraint cc foreign key (c2) references tt(id), primary key(c1)) auto_increment = 10")
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("insert into t set c2=1")
 	tk.MustExec("create table t1 like ctwl_db.t")
 	tk.MustExec("insert into t1 set c2=11")
@@ -297,7 +298,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 
 	// Test foreign key.
 	tk.MustExec("drop table if exists test_foreign_key, t1")
-	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t1 (a int, b int, index(b))")
 	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b))")
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
@@ -382,7 +383,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists partition_table, tmp_partition_table")
 
 	tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp")
-	tk.MustExec("create table foreign_key_table1 (a int, b int)")
+	tk.MustExec("create table foreign_key_table1 (a int, b int, index(b))")
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
@@ -459,6 +460,70 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	require.Error(t, err)
 	errMsg := err.Error()
 	require.Truef(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"), "%v", errMsg)
+}
+
+func TestRecoverTableWithTTL(t *testing.T) {
+	store, _ := createMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	defer func(originGC bool) {
+		if originGC {
+			util.EmulatorGCEnable()
+		} else {
+			util.EmulatorGCDisable()
+		}
+	}(util.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	util.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, time.Now().Add(-time.Hour).Format(gcTimeFormat)))
+	getDDLJobID := func(table, tp string) int64 {
+		rs, err := tk.Exec("admin show ddl jobs")
+		require.NoError(t, err)
+		rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		for _, row := range rows {
+			if row.GetString(2) == table && row.GetString(3) == tp {
+				return row.GetInt64(0)
+			}
+		}
+		require.FailNowf(t, "can't find %s table of %s", tp, table)
+		return -1
+	}
+
+	// recover table
+	tk.MustExec("create table t_recover1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop table t_recover1")
+	tk.MustExec("recover table t_recover1")
+	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	// recover table with job id
+	tk.MustExec("create table t_recover2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop table t_recover2")
+	jobID := getDDLJobID("t_recover2", "drop table")
+	tk.MustExec(fmt.Sprintf("recover table BY JOB %d", jobID))
+	tk.MustQuery("show create table t_recover2").Check(testkit.Rows("t_recover2 CREATE TABLE `t_recover2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	// flashback table
+	tk.MustExec("create table t_recover3 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop table t_recover3")
+	tk.MustExec("flashback table t_recover3")
+	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	// flashback database
+	tk.MustExec("create database if not exists test_recover2")
+	tk.MustExec("create table test_recover2.t1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("create table test_recover2.t2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop database test_recover2")
+	tk.MustExec("flashback database test_recover2")
+	tk.MustQuery("show create table test_recover2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table test_recover2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 }
 
 func TestRecoverTableByJobID(t *testing.T) {

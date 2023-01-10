@@ -151,7 +151,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
 
-	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
+	err := tables.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
 		TableId: e.table.ID,
 		IndexId: e.index.ID,
-		Columns: util.ColumnsToProto(e.cols, e.table.PKIsHandle),
+		Columns: util.ColumnsToProto(e.cols, e.table.PKIsHandle, true),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }
@@ -227,7 +227,7 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 func (e *RecoverIndexExec) constructTableScanPB(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
 	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
 	tblScan.TableId = e.physicalID
-	err := plannercore.SetPBColumnsDefaultValue(e.ctx, tblScan.Columns, colInfos)
+	err := tables.SetPBColumnsDefaultValue(e.ctx, tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
@@ -265,10 +265,11 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
-	builder.KeyRanges, err = buildRecoverIndexKeyRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalID, startHandle)
+	keyRanges, err := buildRecoverIndexKeyRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalID, startHandle)
 	if err != nil {
 		return nil, err
 	}
+	builder.KeyRanges = kv.NewNonParitionedKeyRanges(keyRanges)
 	kvReq, err := builder.
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
@@ -380,7 +381,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			}
 			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			rsData := tables.TryGetHandleRestoredDataWrapper(e.table, plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
+			rsData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: false})
 			result.scanRowCount++
 			result.currentHandle = handle
@@ -737,7 +738,16 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	sc := e.ctx.GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
 	ranges := ranger.FullRange()
-	kvReq, err := builder.SetIndexRanges(sc, e.physicalID, e.index.Meta().ID, ranges).
+	keyRanges, err := distsql.IndexRangesToKVRanges(sc, e.physicalID, e.index.Meta().ID, ranges, nil)
+	if err != nil {
+		return nil, err
+	}
+	err = keyRanges.SetToNonPartitioned()
+	if err != nil {
+		return nil, err
+	}
+	keyRanges.FirstPartitionRange()[0].StartKey = kv.Key(e.lastIdxKey).PrefixNext()
+	kvReq, err := builder.SetWrappedKeyRanges(keyRanges).
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
@@ -748,7 +758,6 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 		return nil, err
 	}
 
-	kvReq.KeyRanges[0].StartKey = kv.Key(e.lastIdxKey).PrefixNext()
 	kvReq.Concurrency = 1
 	result, err := distsql.Select(ctx, e.ctx, kvReq, e.getIdxColTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
@@ -790,7 +799,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.columns)
+	err := tables.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.columns)
 	if err != nil {
 		return nil, err
 	}
@@ -805,7 +814,7 @@ func (e *CleanupIndexExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
 		TableId:          e.physicalID,
 		IndexId:          e.index.Meta().ID,
-		Columns:          util.ColumnsToProto(e.columns, e.table.Meta().PKIsHandle),
+		Columns:          util.ColumnsToProto(e.columns, e.table.Meta().PKIsHandle, true),
 		PrimaryColumnIds: tables.TryGetCommonPkColumnIds(e.table.Meta()),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}

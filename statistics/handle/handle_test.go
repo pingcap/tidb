@@ -2157,11 +2157,13 @@ func TestPartitionPruneModeSessionVariable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set tidb_cost_model_version=1")
 	tk1.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk1.MustExec(`set @@tidb_analyze_version=2`)
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
+	tk2.MustExec("set tidb_cost_model_version=1")
 	tk2.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Static) + "'")
 	tk2.MustExec(`set @@tidb_analyze_version=2`)
 
@@ -2225,8 +2227,8 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
-		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
+		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
 }
@@ -3297,7 +3299,7 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 
 	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta())
+	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta(), tableInfo.Meta().ID, false)
 	require.NoError(t, err)
 
 	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()
@@ -3540,4 +3542,36 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	require.Equal(t, int64(2), tbl1Stats2.Count)
 	tbl2Stats2 := handle.GetTableStats(tbl2.Meta())
 	require.Equal(t, int64(2), tbl2Stats2.Count)
+}
+
+func TestIssue39336(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+create table t1 (
+    a datetime(3) default null,
+    b int
+) partition by range (b) (
+    partition p0 values less than (1000),
+    partition p1 values less than (maxvalue)
+)`)
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`
+insert into t1 values
+('1000-00-09 00:00:00.000',    1),
+('1000-00-06 00:00:00.000',    1),
+('1000-00-06 00:00:00.000',    1),
+('2022-11-23 14:24:30.000',    1),
+('2022-11-23 14:24:32.000',    1),
+('2022-11-23 14:24:33.000',    1),
+('2022-11-23 14:24:35.000',    1),
+('2022-11-23 14:25:08.000', 1001),
+('2022-11-23 14:25:09.000', 1001)`)
+	tk.MustExec("analyze table t1 with 0 topn")
+	rows := tk.MustQuery("show analyze status where job_info like 'merge global stats%'").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "finished", rows[0][7])
 }

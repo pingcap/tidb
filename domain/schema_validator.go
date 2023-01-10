@@ -149,11 +149,10 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 			actionTypes = change.ActionTypes
 		}
 		for idx, ac := range actionTypes {
-			// NOTE: ac is not an action type, it is (1 << action type).
-			if ac == 1<<model.ActionUnlockTable {
+			if ac == uint64(model.ActionUnlockTable) {
 				s.do.Store().GetMemCache().Delete(tblIDs[idx])
 			}
-			if ac == 1<<model.ActionFlashbackCluster {
+			if ac == uint64(model.ActionFlashbackCluster) {
 				s.do.InfoSyncer().GetSessionManager().KillNonFlashbackClusterConn()
 			}
 		}
@@ -165,19 +164,18 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 // isRelatedTablesChanged returns the result whether relatedTableIDs is changed
 // from usedVer to the latest schema version.
 // NOTE, this function should be called under lock!
-func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) (transaction.RelatedSchemaChange, bool) {
-	res := transaction.RelatedSchemaChange{}
+func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if len(s.deltaSchemaInfos) == 0 {
 		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheEmpty).Inc()
 		logutil.BgLogger().Info("schema change history is empty", zap.Int64("currVer", currVer))
-		return res, true
+		return true
 	}
 	newerDeltas := s.findNewerDeltas(currVer)
 	if len(newerDeltas) == len(s.deltaSchemaInfos) {
 		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheMiss).Inc()
 		logutil.BgLogger().Info("the schema version is much older than the latest version", zap.Int64("currVer", currVer),
 			zap.Int64("latestSchemaVer", s.latestSchemaVer), zap.Reflect("deltas", newerDeltas))
-		return res, true
+		return true
 	}
 
 	changedTblMap := make(map[int64]uint64)
@@ -186,8 +184,9 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 		affected := false
 		for i, tblID := range item.relatedIDs {
 			for _, relatedTblID := range tableIDs {
-				if tblID == relatedTblID {
-					changedTblMap[tblID] |= item.relatedActions[i]
+				if tblID == relatedTblID || relatedTblID == -1 {
+					// if actionType >= 64, the value of left shift equals 0, and it will not impact amend txn
+					changedTblMap[tblID] |= 1 << item.relatedActions[i]
 					affected = true
 				}
 			}
@@ -198,22 +197,15 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 	}
 	if len(changedTblMap) > 0 {
 		tblIds := make([]int64, 0, len(changedTblMap))
-		actionTypes := make([]uint64, 0, len(changedTblMap))
 		for id := range changedTblMap {
 			tblIds = append(tblIds, id)
 		}
 		slices.Sort(tblIds)
-		for _, tblID := range tblIds {
-			actionTypes = append(actionTypes, changedTblMap[tblID])
-		}
-		res.PhyTblIDS = tblIds
-		res.ActionTypes = actionTypes
-		res.Amendable = true
 		logutil.BgLogger().Info("schema of tables in the transaction are changed", zap.Int64s("conflicted table IDs", tblIds),
 			zap.Int64("transaction schema", currVer), zap.Int64s("schema versions that changed the tables", changedSchemaVers))
-		return res, true
+		return true
 	}
-	return res, false
+	return false
 }
 
 func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
@@ -251,12 +243,8 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 		// When disabling MDL -> enabling MDL, the old transaction's needCheckSchema is true, we need to check it.
 		// When enabling MDL -> disabling MDL, the old transaction's needCheckSchema is false, so still need to check it, and variable EnableMDL is false now.
 		if needCheckSchema || !variable.EnableMDL.Load() {
-			relatedChanges, changed := s.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
+			changed := s.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
 			if changed {
-				if relatedChanges.Amendable {
-					relatedChanges.LatestInfoSchema = s.latestInfoSchema
-					return &relatedChanges, ResultFail
-				}
 				return nil, ResultFail
 			}
 		}

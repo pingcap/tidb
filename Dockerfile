@@ -13,16 +13,24 @@
 # limitations under the License.
 
 # Builder image
-FROM alpine:edge as builder
+FROM rockylinux:9 as builder
 
-ADD . https://raw.githubusercontent.com/njhallett/apk-fastest-mirror/c4ca44caef3385d830fea34df2dbc2ba4a17e021/apk-fastest-mirror.sh ./proxy
-RUN sh ./proxy/apk-fastest-mirror.sh -t 50 && apk add --no-cache git build-base go
+ENV GOLANG_VERSION 1.19.3
+ENV ARCH amd64
+ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
+ENV GOPATH /go
+ENV GOROOT /usr/local/go
+ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
+RUN yum update -y && yum groupinstall 'Development Tools' -y \
+    && curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
+	&& tar -C /usr/local -xzf golang.tar.gz \
+	&& rm golang.tar.gz
 
 COPY . /tidb
 ARG GOPROXY
 RUN export GOPROXY=${GOPROXY} && cd /tidb && make server
 
-FROM alpine:latest
+FROM rockylinux:9-minimal
 
 COPY --from=builder /tidb/bin/tidb-server /tidb-server
 

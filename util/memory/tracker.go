@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -84,14 +86,16 @@ type Tracker struct {
 		parent *Tracker // The parent memory tracker.
 		sync.Mutex
 	}
-	label               int              // Label of this "Tracker".
+	label int // Label of this "Tracker".
+	// following fields are used with atomic operations, so make them 64-byte aligned.
 	bytesConsumed       int64            // Consumed bytes.
 	bytesReleased       int64            // Released bytes.
 	maxConsumed         atomicutil.Int64 // max number of bytes consumed during execution.
 	SessionID           uint64           // SessionID indicates the sessionID the tracker is bound.
 	NeedKill            atomic.Bool      // NeedKill indicates whether this session need kill because OOM
-	IsRootTrackerOfSess bool             // IsRootTrackerOfSess indicates whether this tracker is bound for session
-	isGlobal            bool             // isGlobal indicates whether this tracker is global tracker
+	NeedKillReceived    sync.Once
+	IsRootTrackerOfSess bool // IsRootTrackerOfSess indicates whether this tracker is bound for session
+	isGlobal            bool // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
@@ -306,7 +310,7 @@ func (t *Tracker) Detach() {
 		t.DetachFromGlobalTracker()
 		return
 	}
-	if parent.IsRootTrackerOfSess {
+	if parent.IsRootTrackerOfSess && t.label == LabelForSQLText {
 		parent.actionMuForHardLimit.Lock()
 		parent.actionMuForHardLimit.actionOnExceed = nil
 		parent.actionMuForHardLimit.Unlock()
@@ -315,6 +319,7 @@ func (t *Tracker) Detach() {
 		parent.actionMuForSoftLimit.actionOnExceed = nil
 		parent.actionMuForSoftLimit.Unlock()
 		parent.NeedKill.Store(false)
+		parent.NeedKillReceived = sync.Once{}
 	}
 	parent.remove(t)
 	t.mu.Lock()
@@ -412,7 +417,7 @@ func (t *Tracker) Consume(bs int64) {
 		for {
 			maxNow := tracker.maxConsumed.Load()
 			consumed := atomic.LoadInt64(&tracker.bytesConsumed)
-			if consumed > maxNow && !tracker.maxConsumed.CAS(maxNow, consumed) {
+			if consumed > maxNow && !tracker.maxConsumed.CompareAndSwap(maxNow, consumed) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
@@ -448,6 +453,11 @@ func (t *Tracker) Consume(bs int64) {
 	if bs > 0 && sessionRootTracker != nil {
 		// Kill the Top1 session
 		if sessionRootTracker.NeedKill.Load() {
+			sessionRootTracker.NeedKillReceived.Do(
+				func() {
+					logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
+						zap.Uint64("connID", sessionRootTracker.SessionID))
+				})
 			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)
 		}
 		// Update the Top1 session
@@ -752,6 +762,17 @@ func (t *Tracker) CountAllChildrenMemUse() map[string]int64 {
 	return trackerMemUseMap
 }
 
+// GetChildrenForTest returns children trackers
+func (t *Tracker) GetChildrenForTest() []*Tracker {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	trackers := make([]*Tracker, 0)
+	for _, list := range t.mu.children {
+		trackers = append(trackers, list...)
+	}
+	return trackers
+}
+
 func countChildMem(t *Tracker, familyTreeName string, trackerMemUseMap map[string]int64) {
 	if len(familyTreeName) > 0 {
 		familyTreeName += " <- "
@@ -822,6 +843,8 @@ const (
 	LabelForPreparedPlanCache int = -26
 	// LabelForSession represents the label of a session.
 	LabelForSession int = -27
+	// LabelForMemDB represents the label of the MemDB
+	LabelForMemDB int = -28
 )
 
 // MetricsTypes is used to get label for metrics

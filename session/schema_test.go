@@ -132,16 +132,6 @@ func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
 	tk1.MustExec("delete from t")
 	tk1.MustExec("insert into t1 values (1)")
 	tk1.MustExec("commit")
-
-	// TODO remove this enable after fixing table delta map.
-	tk1.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
-	tk1.MustExec("begin pessimistic")
-	tk2.MustExec("alter table t add k int")
-	tk1.MustExec("select * from t for update")
-	tk1.MustExec("update t set i = -i")
-	tk1.MustExec("delete from t")
-	tk1.MustExec("insert into t1 values (1)")
-	tk1.MustExec("commit")
 }
 
 func TestRetrySchemaChange(t *testing.T) {

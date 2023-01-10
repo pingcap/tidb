@@ -52,6 +52,13 @@ func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }
 
+func (t *mockTxn) LockKeysFunc(_ context.Context, _ *LockCtx, fn func(), _ ...Key) error {
+	if fn != nil {
+		fn()
+	}
+	return nil
+}
+
 func (t *mockTxn) SetOption(opt int, val interface{}) {
 	t.opts[opt] = val
 }
@@ -159,6 +166,14 @@ func (t *mockTxn) ClearDiskFullOpt() {
 
 func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
 
+}
+
+func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
+
+}
+
+func (t *mockTxn) Mem() uint64 {
+	return 0
 }
 
 // newMockTxn new a mockTxn.

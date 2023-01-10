@@ -17,7 +17,6 @@ package core
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const (
@@ -51,7 +50,7 @@ type columnStatsUsageCollector struct {
 	visitedtbls map[int64]struct{}
 }
 
-func newColumnStatsUsageCollector(collectMode uint64) *columnStatsUsageCollector {
+func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *columnStatsUsageCollector {
 	collector := &columnStatsUsageCollector{
 		collectMode: collectMode,
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
@@ -64,7 +63,7 @@ func newColumnStatsUsageCollector(collectMode uint64) *columnStatsUsageCollector
 	if collectMode&collectHistNeededColumns != 0 {
 		collector.histNeededCols = make(map[model.TableItemID]struct{})
 	}
-	if variable.EnablePlanReplayerCapture.Load() {
+	if enabledPlanCapture {
 		collector.collectVisitedTable = true
 		collector.visitedtbls = map[int64]struct{}{}
 	}
@@ -300,7 +299,7 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]mode
 	if histNeeded {
 		mode |= collectHistNeededColumns
 	}
-	collector := newColumnStatsUsageCollector(mode)
+	collector := newColumnStatsUsageCollector(mode, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(lp)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)

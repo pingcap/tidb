@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/engine"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -32,6 +31,10 @@ var (
 	compatibleTiFlashMajor4 = semver.New("4.0.0")
 
 	versionHash = regexp.MustCompile("-[0-9]+-g[0-9a-f]{7,}")
+
+	checkpointSupportError error = nil
+	// pitrSupportBatchKVFiles specifies whether TiKV-server supports batch PITR.
+	pitrSupportBatchKVFiles bool = false
 )
 
 // NextMajorVersion returns the next major version.
@@ -134,6 +137,12 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use PiTR, please update tikv's version to at least v6.1.0(v6.2.0+ recommanded)",
 			s.Address, tikvVersion)
 	}
+	// If tikv version < 6.5, PITR do not support restoring batch kv files.
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
+		pitrSupportBatchKVFiles = false
+	} else {
+		pitrSupportBatchKVFiles = true
+	}
 
 	// The versions of BR and TiKV should be the same when use BR 6.1.0
 	if BRVersion.Major == 6 && BRVersion.Minor == 1 {
@@ -148,7 +157,6 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 				s.Address, tikvVersion, build.ReleaseVersion)
 		}
 	}
-
 	return nil
 }
 
@@ -157,9 +165,7 @@ func CheckVersionForDDL(s *metapb.Store, tikvVersion *semver.Version) error {
 	// use tikvVersion instead of tidbVersion since br doesn't have mysql client to connect tidb.
 	requireVersion := semver.New("6.2.0-alpha")
 	if tikvVersion.Compare(*requireVersion) < 0 {
-		log.Info("detected the old version of tidb cluster. set enable concurrent ddl to false")
-		variable.EnableConcurrentDDL.Store(false)
-		return nil
+		return errors.Errorf("detected the old version of tidb cluster, require: >= 6.2.0, but got %s", tikvVersion.String())
 	}
 	return nil
 }
@@ -197,6 +203,14 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch, please use the same version of BR",
 				s.Address, tikvVersion, build.ReleaseVersion)
 		}
+	}
+
+	// reset the checkpoint support error
+	checkpointSupportError = nil
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor < 5) {
+		// checkpoint mode only support after v6.5.0
+		checkpointSupportError = errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use checkpoint, please update tikv's version to at least v6.5.0",
+			s.Address, tikvVersion)
 	}
 
 	// don't warn if we are the master build, which always have the version v4.0.0-beta.2-*
@@ -304,6 +318,14 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 		return "", errors.Annotatef(err, "sql: %s", query)
 	}
 	return versionInfo, nil
+}
+
+func CheckCheckpointSupport() error {
+	return checkpointSupportError
+}
+
+func CheckPITRSupportBatchKVFiles() bool {
+	return pitrSupportBatchKVFiles
 }
 
 type ServerType int

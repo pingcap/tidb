@@ -912,6 +912,10 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 		// skip physical resolve locks for it.
 		return false, nil
 
+	case placement.EngineLabelTiFlashCompute:
+		logutil.BgLogger().Debug("[gc worker] will ignore gc tiflash_compute node")
+		return false, nil
+
 	case placement.EngineLabelTiKV, "":
 		// If no engine label is set, it should be a TiKV node.
 		return true, nil
@@ -2028,7 +2032,6 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 			zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
 		ruleID := fmt.Sprintf("table-%v-r", id)
 		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
-			// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
 			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc",
 				zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))
 		} else {

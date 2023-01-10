@@ -747,7 +747,7 @@ func TestUser(t *testing.T) {
 	alterUserSQL = `ALTER USER 'test1'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
 	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
-	result.Check(testkit.Rows(auth.EncodePassword("222")))
+	result.Check(testkit.Rows(auth.EncodePassword("111")))
 	alterUserSQL = `ALTER USER 'test4'@'localhost' IDENTIFIED WITH 'auth_socket';`
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT plugin FROM mysql.User WHERE User="test4" and Host="localhost"`)
@@ -1000,6 +1000,7 @@ partition by range (a) (
 	checkPartitionStats("global", "p0", "p1", "global")
 
 	tk.MustExec("drop stats test_drop_gstats partition p0")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1681|'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release."))
 	checkPartitionStats("global", "p1", "global")
 
 	err := tk.ExecToErr("drop stats test_drop_gstats partition abcde")
@@ -1010,6 +1011,7 @@ partition by range (a) (
 	checkPartitionStats("global", "p1")
 
 	tk.MustExec("drop stats test_drop_gstats global")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1287|'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead"))
 	checkPartitionStats("p1")
 
 	tk.MustExec("analyze table test_drop_gstats")
@@ -1054,5 +1056,52 @@ func TestDropStats(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo)
+	h.SetLease(0)
+}
+
+func TestDropStatsForMultipleTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t1 (c1 int, c2 int)")
+	testKit.MustExec("create table t2 (c1 int, c2 int)")
+
+	is := dom.InfoSchema()
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tableInfo1 := tbl1.Meta()
+
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tableInfo2 := tbl2.Meta()
+
+	h := dom.StatsHandle()
+	h.Clear()
+	testKit.MustExec("analyze table t1, t2")
+	statsTbl1 := h.GetTableStats(tableInfo1)
+	require.False(t, statsTbl1.Pseudo)
+	statsTbl2 := h.GetTableStats(tableInfo2)
+	require.False(t, statsTbl2.Pseudo)
+
+	testKit.MustExec("drop stats t1, t2")
+	require.Nil(t, h.Update(is))
+	statsTbl1 = h.GetTableStats(tableInfo1)
+	require.True(t, statsTbl1.Pseudo)
+	statsTbl2 = h.GetTableStats(tableInfo2)
+	require.True(t, statsTbl2.Pseudo)
+
+	testKit.MustExec("analyze table t1, t2")
+	statsTbl1 = h.GetTableStats(tableInfo1)
+	require.False(t, statsTbl1.Pseudo)
+	statsTbl2 = h.GetTableStats(tableInfo2)
+	require.False(t, statsTbl2.Pseudo)
+
+	h.SetLease(1)
+	testKit.MustExec("drop stats t1, t2")
+	require.Nil(t, h.Update(is))
+	statsTbl1 = h.GetTableStats(tableInfo1)
+	require.True(t, statsTbl1.Pseudo)
+	statsTbl2 = h.GetTableStats(tableInfo2)
+	require.True(t, statsTbl2.Pseudo)
 	h.SetLease(0)
 }
