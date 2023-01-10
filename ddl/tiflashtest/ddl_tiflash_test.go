@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -1333,4 +1334,42 @@ func TestTiFlashAvailableAfterAddPartition(t *testing.T) {
 	pi := tb.Meta().GetPartitionInfo()
 	require.NotNil(t, pi)
 	require.Equal(t, len(pi.Definitions), 2)
+}
+
+func TestTiflashReorgPartition(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	fCancel := TempDisableEmulatorGC()
+	defer fCancel()
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists reorgPartTiFlash")
+
+	tk.MustExec(`create table reorgPartTiFlash (id int, vc varchar(255), i int, key (vc), key(i,vc))` +
+		` partition by range (id)` +
+		` (partition p0 values less than (1000000), partition p1 values less than (2000000))`)
+	tk.MustExec(`alter table reorgPartTiFlash set tiflash replica 1`)
+	tb := external.GetTableByName(t, tk, "test", "reorgPartTiFlash")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	firstPartitionID := tb.Meta().Partition.Definitions[0].ID
+	ruleName := fmt.Sprintf("table-%v-r", firstPartitionID)
+	_, ok := s.tiflash.GetPlacementRule(ruleName)
+	require.True(t, ok)
+
+	tk.MustExec(`insert into reorgPartTiFlash values (1,"1",1), (500500, "500500", 2), (1000001, "1000001", 3)`)
+	tk.MustQuery("select /*+ read_from_storage(tiflash[reorgPartTiFlash]) */  count(*) from reorgPartTiFlash partition(p0, p1)").Check(testkit.Rows("3"))
+	tk.MustQuery("select /*+ read_from_storage(tiflash[reorgPartTiFlash]) */  count(*) from reorgPartTiFlash partition(p0)").Check(testkit.Rows("2"))
+	tk.MustExec(`alter table reorgPartTiFlash reorganize partition p0 into (partition p0 values less than (500000), partition p500k values less than (1000000))`)
+	_, ok = s.tiflash.GetPlacementRule(ruleName)
+	require.True(t, ok)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	_, ok = s.tiflash.GetPlacementRule(ruleName)
+	require.False(t, ok)
+	tk.MustQuery("select /*+ read_from_storage(tiflash[reorgPartTiFlash]) */  count(*) from reorgPartTiFlash").Check(testkit.Rows("3"))
+	tk.MustQuery("select /*+ read_from_storage(tiflash[reorgPartTiFlash]) */  count(*) from reorgPartTiFlash partition(p0, p1)").Check(testkit.Rows("2"))
+	tk.MustQuery("select /*+ read_from_storage(tiflash[reorgPartTiFlash]) */  count(*) from reorgPartTiFlash partition(p0)").Check(testkit.Rows("1"))
+	tk.MustExec(`drop table reorgPartTiFlash`)
 }
