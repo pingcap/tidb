@@ -17,7 +17,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
-	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,12 +24,6 @@ import (
 )
 
 var ioWorkers = worker.NewPool(context.Background(), 5, "test_csv")
-
-var largestEntryLimit int
-
-func init() {
-	largestEntryLimit = tidbconfig.MaxTxnEntrySizeLimit
-}
 
 func assertPosEqual(t *testing.T, parser mydump.Parser, expectPos, expectRowID int64) {
 	pos, rowID := parser.Pos()
@@ -697,8 +690,9 @@ func TestTooLargeRow(t *testing.T) {
 	}
 	var testCase bytes.Buffer
 	testCase.WriteString("a,b,c,d")
-	// WARN: will take up 120MB memory here.
-	for i := 0; i < largestEntryLimit; i++ {
+	// WARN: will take up 10KB memory here.
+	mydump.LargestEntryLimit = 10 * 1024
+	for i := 0; i < mydump.LargestEntryLimit; i++ {
 		testCase.WriteByte('d')
 	}
 	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
