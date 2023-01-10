@@ -1911,7 +1911,7 @@ func openLocalWriter(
 		isKVSorted:          cfg.IsKVSorted,
 		isWriteBatchSorted:  true,
 		kvStore:             kvStore,
-		ImportClientFactory: importClientFactory,
+		importClientFactory: importClientFactory,
 	}
 	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
 	// this can help save about 3% of CPU.

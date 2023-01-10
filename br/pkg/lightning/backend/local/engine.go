@@ -28,17 +28,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
-
-	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -50,6 +46,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -1030,7 +1028,7 @@ type Writer struct {
 	lastMetaSeq int32
 
 	kvStore             *tikv.KVStore
-	ImportClientFactory ImportClientFactory
+	importClientFactory ImportClientFactory
 }
 
 func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
@@ -1219,7 +1217,7 @@ func (w *Writer) writeToRegion(ctx context.Context, region *pd.Region, kvs []com
 
 	for i := 0; i < len(region.Meta.Peers); i++ {
 		peer := region.Meta.Peers[i]
-		importClient, err := w.ImportClientFactory.Create(ctx, peer.StoreId)
+		importClient, err := w.importClientFactory.Create(ctx, peer.StoreId)
 		if err != nil {
 			closeAll()
 			return err
@@ -1379,7 +1377,18 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	} else {
-		err := w.writeToTiKV(ctx, w.writeBatch[:w.batchCount])
+		var err error
+		for i := 0; i < 60; i++ {
+			err = w.writeToTiKV(ctx, w.writeBatch[:w.batchCount])
+			if err == nil {
+				break
+			}
+			log.FromContext(ctx).Warn("write to tikv fail", zap.Error(err))
+			select {
+			case <-time.After(time.Second * 5):
+			case <-ctx.Done():
+			}
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
