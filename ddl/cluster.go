@@ -322,8 +322,9 @@ func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
 // The time complexity is O(nlogn).
 func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
 	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
+
 	// The semantic of keyRanges(output).
-	var keyRanges []kv.KeyRange
+	keyRanges := make([]kv.KeyRange, 0)
 
 	// get snapshot schema IDs.
 	flashbackSnapshotMeta := meta.NewSnapshotMeta(sess.GetStore().GetSnapshot(kv.NewVersion(flashbackTS)))
