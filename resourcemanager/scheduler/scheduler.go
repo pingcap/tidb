@@ -15,14 +15,7 @@
 package scheduler
 
 import (
-	"time"
-
 	"github.com/pingcap/tidb/resourcemanager/util"
-	"go.uber.org/atomic"
-)
-
-var (
-	minCPUSchedulerInterval = atomic.NewDuration(time.Minute)
 )
 
 // Command is the command for scheduler
