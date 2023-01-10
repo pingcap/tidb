@@ -81,19 +81,13 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	case ast.UnaryNot:
 		// TODO: support "not like" convert to access conditions.
 		if s, ok := scalar.GetArgs()[0].(*expression.ScalarFunction); ok {
-			if s.FuncName.L == ast.Like {
+			if s.FuncName.L == ast.Like || s.FuncName.L == ast.NullEQ {
 				return false
 			}
 		} else {
 			// "not column" or "not constant" can't lead to a range.
 			return false
 		}
-<<<<<<< HEAD
-=======
-		if s.FuncName.L == ast.Like || s.FuncName.L == ast.NullEQ {
-			return false
-		}
->>>>>>> a32941cedd (expression: let nulleq has strict condition check (#38369))
 		return c.check(scalar.GetArgs()[0])
 	case ast.In:
 		if !c.checkColumn(scalar.GetArgs()[0]) {
