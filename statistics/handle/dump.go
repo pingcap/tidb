@@ -175,7 +175,9 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 	if isDynamicMode {
 		tbl, err := h.tableHistoricalStatsToJSON(tableInfo.ID, snapshot)
 		if err != nil {
-			logutil.BgLogger().Warn("dump global historical stats failed", zap.Int64("table-id", tableInfo.ID))
+			logutil.BgLogger().Warn("dump global historical stats failed",
+				zap.Int64("table-id", tableInfo.ID),
+				zap.String("table-name", tableInfo.Name.String()))
 		} else if tbl != nil {
 			jsonTbl.Partitions["global"] = tbl
 		}
