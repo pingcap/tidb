@@ -223,6 +223,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 	planTree = getPlanTree()
 	require.Contains(t, planTree, "Shuffle")
 	require.Contains(t, planTree, "ShuffleReceiver")
+	require.Contains(t, planTree, "TableFullScan")
 }
 
 func TestNormalizedDigest(t *testing.T) {
