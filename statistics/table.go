@@ -466,11 +466,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		}
 		return result, nil
 	}
-<<<<<<< HEAD
-	result, err := c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
-=======
-	result, err = c.GetColumnRowCount(sctx, intRanges, coll.Count, coll.ModifyCount, true)
->>>>>>> 3cb091ba18 (statistics: change the upper bound of the out-of-range estimation to modify count | tidb-test=pr/2012 (#39011))
+	result, err := c.GetColumnRowCount(sctx, intRanges, coll.Count, coll.ModifyCount, true)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
