@@ -361,7 +361,6 @@ func TestFormatSQLDatum(t *testing.T) {
 			d := rows[0].GetDatum(0, &col.FieldType)
 			s, err := sqlbuilder.FormatSQLDatum(d, &col.FieldType)
 			require.NoError(t, err)
-			//fmt.Printf("%s: %s\n", c.ft, s)
 			tk.MustQuery("select id from t where " + colName + "=" + s).Check(testkit.Rows(rowID))
 			if c.hex {
 				require.True(t, strings.HasPrefix(s, "x'"), "ft: %s, got: %s", c.ft, s)
