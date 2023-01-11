@@ -201,6 +201,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		}
 		err = ir.Start(tctx, conn)
 		if err != nil {
+			tctx.L().Warn("failed to start table chunk", zap.Error(err))
 			return
 		}
 		if conf.SQL != "" {
