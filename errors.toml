@@ -1236,6 +1236,11 @@ error = '''
 Set TTL for a table referenced by foreign key is not allowed
 '''
 
+["ddl:8153"]
+error = '''
+Unsupported clustered primary key type FLOAT/DOUBLE for TTL
+'''
+
 ["ddl:8200"]
 error = '''
 Unsupported shard_row_id_bits for table with primary key as row id

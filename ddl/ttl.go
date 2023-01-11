@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
@@ -143,6 +144,10 @@ func checkTTLTableSuitable(ctx sessionctx.Context, schema model.CIStr, tblInfo *
 		return dbterror.ErrTempTableNotAllowedWithTTL
 	}
 
+	if err := checkPrimaryKeyForTTLTable(tblInfo); err != nil {
+		return err
+	}
+
 	// checks even when the foreign key check is not enabled, to keep safe
 	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tblInfo.Name.L, nil, true); referredFK != nil {
@@ -156,6 +161,31 @@ func checkDropColumnWithTTLConfig(tblInfo *model.TableInfo, colName string) erro
 	if tblInfo.TTLInfo != nil {
 		if tblInfo.TTLInfo.ColumnName.L == colName {
 			return dbterror.ErrTTLColumnCannotDrop.GenWithStackByArgs(colName)
+		}
+	}
+
+	return nil
+}
+
+// We should forbid creating a TTL table with clustered primary key that contains a column with type float/double.
+// This is because currently we are using SQL to delete expired rows and when the primary key contains float/double column,
+// it is hard to use condition `WHERE PK in (...)` to delete specified rows because some precision will be lost when comparing.
+func checkPrimaryKeyForTTLTable(tblInfo *model.TableInfo) error {
+	if !tblInfo.IsCommonHandle {
+		// only check the primary keys when it is common handle
+		return nil
+	}
+
+	pk := tblInfo.GetPrimaryKey()
+	if pk == nil {
+		return nil
+	}
+
+	for _, colDef := range pk.Columns {
+		col := tblInfo.Columns[colDef.Offset]
+		switch col.GetType() {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			return dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL
 		}
 	}
 
