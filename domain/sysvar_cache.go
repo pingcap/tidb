@@ -17,13 +17,13 @@ package domain
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -36,10 +36,10 @@ import (
 
 // sysVarCache represents the cache of system variables broken up into session and global scope.
 type sysVarCache struct {
-	sync.RWMutex // protects global and session maps
-	global       map[string]string
-	session      map[string]string
-	rebuildLock  sync.Mutex // protects concurrent rebuild
+	syncutil.RWMutex // protects global and session maps
+	global           map[string]string
+	session          map[string]string
+	rebuildLock      syncutil.Mutex // protects concurrent rebuild
 }
 
 func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {

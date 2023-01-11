@@ -1216,6 +1216,7 @@ type addIndexWorker struct {
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
+	batchCheckValues   [][]byte
 	distinctCheckFlags []bool
 }
 
@@ -1468,6 +1469,7 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	}
 
 	w.batchCheckKeys = w.batchCheckKeys[:0]
+	w.batchCheckValues = w.batchCheckValues[:0]
 	w.distinctCheckFlags = w.distinctCheckFlags[:0]
 }
 
@@ -1517,16 +1519,28 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 
 	w.initBatchCheckBufs(len(idxRecords))
 	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
+	cnt := 0
 	for i, record := range idxRecords {
-		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, record.vals, record.handle, w.idxKeyBufs[i])
-		if err != nil {
-			return errors.Trace(err)
+		iter := w.index.GenIndexKVIter(stmtCtx, record.vals, record.handle, idxRecords[i].rsData)
+		for iter.Valid() {
+			var buf []byte
+			if cnt < len(w.idxKeyBufs) {
+				buf = w.idxKeyBufs[cnt]
+			}
+			key, val, distinct, err := iter.Next(buf)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if cnt < len(w.idxKeyBufs) {
+				w.idxKeyBufs[cnt] = key
+			} else {
+				w.idxKeyBufs = append(w.idxKeyBufs, key)
+			}
+			cnt++
+			w.batchCheckKeys = append(w.batchCheckKeys, key)
+			w.batchCheckValues = append(w.batchCheckValues, val)
+			w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
 		}
-		// save the buffer to reduce memory allocations.
-		w.idxKeyBufs[i] = idxKey
-
-		w.batchCheckKeys = append(w.batchCheckKeys, idxKey)
-		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
 	}
 
 	batchVals, err := txn.BatchGet(context.Background(), w.batchCheckKeys)
@@ -1548,12 +1562,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 		} else if w.distinctCheckFlags[i] {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
-			needRsData := tables.NeedRestoredData(w.index.Meta().Columns, w.table.Meta().Columns)
-			val, err := tablecodec.GenIndexValuePortal(stmtCtx, w.table.Meta(), w.index.Meta(), needRsData, w.distinctCheckFlags[i], false, idxRecords[i].vals, idxRecords[i].handle, 0, idxRecords[i].rsData)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			batchVals[string(key)] = val
+			batchVals[string(key)] = w.batchCheckValues[i]
 		}
 	}
 	// Constrains is already checked.
@@ -1641,19 +1650,18 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			} else { // The lightning environment is ready.
 				vars := w.sessCtx.GetSessionVars()
 				sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
-				key, distinct, err := w.index.GenIndexKey(sCtx, idxRecord.vals, idxRecord.handle, writeBufs.IndexKeyBuf)
-				if err != nil {
-					return errors.Trace(err)
+				iter := w.index.GenIndexKVIter(sCtx, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
+				for iter.Valid() {
+					key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					err = w.writerCtx.WriteRow(key, idxVal)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					writeBufs.IndexKeyBuf = key
 				}
-				idxVal, err := w.index.GenIndexValue(sCtx, distinct, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				err = w.writerCtx.WriteRow(key, idxVal)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				writeBufs.IndexKeyBuf = key
 			}
 			taskCtx.addedCount++
 		}

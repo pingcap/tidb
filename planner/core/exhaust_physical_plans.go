@@ -2530,7 +2530,7 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]
 }
 
 // canPushToCop checks if it can be pushed to some stores. For TiKV, it only checks datasource.
-// For TiFlash, it will check whether the operator is supported, but note that the check might be inaccrute.
+// For TiFlash, it will check whether the operator is supported, but note that the check might be inaccrate.
 func (p *baseLogicalPlan) canPushToCop(storeTp kv.StoreType) bool {
 	return p.canPushToCopImpl(storeTp, false)
 }
