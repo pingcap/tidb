@@ -82,8 +82,8 @@ func (p *partition) GetPartitionedTable() table.PartitionedTable {
 }
 
 // GetPartitionedTable implements table.Table GetPartitionedTable interface.
-func (p *partitionedTable) GetPartitionedTable() table.PartitionedTable {
-	return p
+func (t *partitionedTable) GetPartitionedTable() table.PartitionedTable {
+	return t
 }
 
 // partitionedTable implements the table.PartitionedTable interface.
@@ -1131,18 +1131,18 @@ func (t *partitionedTable) locatePartitionCommon(ctx sessionctx.Context, pi *mod
 	return idx, nil
 }
 
-func (p *partitionedTable) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
-	pi := p.Meta().GetPartitionInfo()
-	idx, err := p.locatePartitionCommon(ctx, pi, p.partitionExpr, r)
+func (t *partitionedTable) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
+	pi := t.Meta().GetPartitionInfo()
+	idx, err := t.locatePartitionCommon(ctx, pi, t.partitionExpr, r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	return pi.Definitions[idx].ID, nil
 }
 
-func (p *partitionedTable) locateReorgPartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
-	pi := p.Meta().GetPartitionInfo()
-	idx, err := p.locatePartitionCommon(ctx, pi, p.reorgPartitionExpr, r)
+func (t *partitionedTable) locateReorgPartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
+	pi := t.Meta().GetPartitionInfo()
+	idx, err := t.locatePartitionCommon(ctx, pi, t.reorgPartitionExpr, r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1152,11 +1152,11 @@ func (p *partitionedTable) locateReorgPartition(ctx sessionctx.Context, r []type
 	return pi.AddingDefinitions[idx].ID, nil
 }
 
-func (p *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, partitionExpr *PartitionExpr, r []types.Datum) (int, error) {
+func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, partitionExpr *PartitionExpr, r []types.Datum) (int, error) {
 	upperBounds := partitionExpr.UpperBounds
 	var lastError error
-	evalBuffer := p.evalBufferPool.Get().(*chunk.MutRow)
-	defer p.evalBufferPool.Put(evalBuffer)
+	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
+	defer t.evalBufferPool.Put(evalBuffer)
 	idx := sort.Search(len(upperBounds), func(i int) bool {
 		evalBuffer.SetDatums(r...)
 		ret, isNull, err := upperBounds[i].EvalInt(ctx, evalBuffer.ToRow())
@@ -1177,8 +1177,8 @@ func (p *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pa
 	if idx >= len(upperBounds) {
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
 		var valueMsg string
-		if p.meta.Partition.Expr != "" {
-			e, err := expression.ParseSimpleExprWithTableInfo(ctx, p.meta.Partition.Expr, p.meta)
+		if t.meta.Partition.Expr != "" {
+			e, err := expression.ParseSimpleExprWithTableInfo(ctx, t.meta.Partition.Expr, t.meta)
 			if err == nil {
 				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
@@ -1295,10 +1295,10 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 }
 
 // GetPartition returns a Table, which is actually a partition.
-func (p *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
+func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	// Attention, can't simply use `return p.partitions[pid]` here.
 	// Because A nil of type *partition is a kind of `table.PhysicalTable`
-	part, ok := p.partitions[pid]
+	part, ok := t.partitions[pid]
 	if !ok {
 		// TODO: remove and just keep return nil
 		panic("MJONSS: How did we get here?")
@@ -1445,10 +1445,10 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 	return nil
 }
 
-func (p *partitionedTable) GetAllPartitionIDs() []int64 {
-	ptIDs := make([]int64, 0, len(p.partitions))
-	for id := range p.partitions {
-		if _, ok := p.doubleWritePartitions[id]; ok {
+func (t *partitionedTable) GetAllPartitionIDs() []int64 {
+	ptIDs := make([]int64, 0, len(t.partitions))
+	for id := range t.partitions {
+		if _, ok := t.doubleWritePartitions[id]; ok {
 			continue
 		}
 		ptIDs = append(ptIDs, id)
