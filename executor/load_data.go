@@ -72,7 +72,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.loadDataInfo.Path == "" {
 		return errors.New("Load Data: infile path is empty")
 	}
-	if e.loadDataInfo.Table.Meta().IsBaseTable() {
+	if !e.loadDataInfo.Table.Meta().IsBaseTable() {
 		return errors.New("can only load data into base tables")
 	}
 
