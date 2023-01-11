@@ -1605,13 +1605,13 @@ ResourceGroupOptionList:
 	}
 
 DirectResourceGroupOption:
-	"RRU_PER_SEC" EqOpt stringLit
+	"RRU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, UintValue: $3.(uint64)}
 	}
-|	"WRU_PER_SEC" EqOpt stringLit
+|	"WRU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, UintValue: $3.(uint64)}
 	}
 |	"CPU" EqOpt stringLit
 	{
@@ -1619,11 +1619,11 @@ DirectResourceGroupOption:
 	}
 |	"IO_READ_BANDWIDTH" EqOpt stringLit
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadRate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadBandwidth, StrValue: $3}
 	}
 |	"IO_WRITE_BANDWIDTH" EqOpt stringLit
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteRate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteBandwidth, StrValue: $3}
 	}
 
 PlacementOptionList:
