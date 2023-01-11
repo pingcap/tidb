@@ -370,6 +370,8 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		}
 		slices.Sort(s)
 		return strings.Join(s, ",")
+	case model.ActionTruncateTable:
+		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(job.Args[0].(int64), 10)
 	}
 	if schema {
 		return strconv.FormatInt(job.SchemaID, 10)
