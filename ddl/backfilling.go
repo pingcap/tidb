@@ -655,13 +655,11 @@ func getBatchTasks(t table.PhysicalTable, reorgInfo *reorgInfo, kvRanges []kv.Ke
 			endKey = prefix.PrefixNext()
 		}
 
-		//nolint:forcetypeassert
-		phyTbl := t.(table.PhysicalTable)
 		task := &reorgBackfillTask{
 			id:              i,
 			jobID:           reorgInfo.Job.ID,
 			physicalTableID: physicalTableID,
-			physicalTable:   phyTbl,
+			physicalTable:   t,
 			priority:        reorgInfo.Priority,
 			startKey:        startKey,
 			endKey:          endKey,
