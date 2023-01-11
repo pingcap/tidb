@@ -284,10 +284,10 @@ type AssertionProto interface {
 
 // AggressiveLockingController is the interface that defines aggressive locking related operations.
 type AggressiveLockingController interface {
-	StartAggressiveLocking()
-	RetryAggressiveLocking(ctx context.Context)
-	CancelAggressiveLocking(ctx context.Context)
-	DoneAggressiveLocking(ctx context.Context)
+	StartAggressiveLocking() error
+	RetryAggressiveLocking(ctx context.Context) error
+	CancelAggressiveLocking(ctx context.Context) error
+	DoneAggressiveLocking(ctx context.Context) error
 	IsInAggressiveLockingMode() bool
 }
 

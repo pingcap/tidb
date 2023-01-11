@@ -356,7 +356,7 @@ func (txn *tikvTxn) exitAggressiveLockingIfInapplicable(ctx context.Context, key
 		// Then the previously-locked keys during execution in this statement (if any) will be turned into the state
 		// as if they were locked in normal way.
 		// Note that the issue https://github.com/pingcap/tidb/issues/35682 also exists here.
-		txn.DoneAggressiveLocking(ctx)
+		txn.KVTxn.DoneAggressiveLocking(ctx)
 	}
 }
 
@@ -379,6 +379,31 @@ func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockC
 		primaryRest := ""
 		return kv.ErrWriteConflict.FastGenByArgs(txn.StartTS(), 0, lockCtx.MaxLockedWithConflictTS, bufTableID.String(), bufRest.String(), primary, primaryRest, "LockedWithConflict")
 	}
+	return nil
+}
+
+// StartAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
+// TODO: Update the methods' signatures in client-go to avoid this adaptor functions.
+func (txn *tikvTxn) StartAggressiveLocking() error {
+	txn.KVTxn.StartAggressiveLocking()
+	return nil
+}
+
+// RetryAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
+func (txn *tikvTxn) RetryAggressiveLocking(ctx context.Context) error {
+	txn.KVTxn.RetryAggressiveLocking(ctx)
+	return nil
+}
+
+// CancelAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
+func (txn *tikvTxn) CancelAggressiveLocking(ctx context.Context) error {
+	txn.KVTxn.CancelAggressiveLocking(ctx)
+	return nil
+}
+
+// DoneAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
+func (txn *tikvTxn) DoneAggressiveLocking(ctx context.Context) error {
+	txn.KVTxn.DoneAggressiveLocking(ctx)
 	return nil
 }
 

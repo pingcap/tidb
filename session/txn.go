@@ -291,7 +291,10 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 
 	if txn.enterAggressiveLockingOnValid {
 		txn.enterAggressiveLockingOnValid = false
-		txn.Transaction.StartAggressiveLocking()
+		err = txn.Transaction.StartAggressiveLocking()
+		if err != nil {
+			return err
+		}
 	}
 
 	// The txnInfo may already recorded the first statement (usually "begin") when it's pending, so keep them.
@@ -471,64 +474,80 @@ func (txn *LazyTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn fu
 }
 
 // StartAggressiveLocking wraps the inner transaction to support using aggressive locking with lazy initialization.
-func (txn *LazyTxn) StartAggressiveLocking() {
+func (txn *LazyTxn) StartAggressiveLocking() error {
 	if txn.Valid() {
-		txn.Transaction.StartAggressiveLocking()
+		return txn.Transaction.StartAggressiveLocking()
 	} else if txn.pending() {
 		txn.enterAggressiveLockingOnValid = true
 	} else {
-		panic("trying to start aggressive locking on a transaction in invalid state")
+		err := errors.New("trying to start aggressive locking on a transaction in invalid state")
+		logutil.BgLogger().Error("unexpected error when starting aggressive locking", zap.Error(err), zap.Stringer("txn", txn))
+		return err
 	}
+	return nil
 }
 
 // RetryAggressiveLocking wraps the inner transaction to support using aggressive locking with lazy initialization.
-func (txn *LazyTxn) RetryAggressiveLocking(ctx context.Context) {
+func (txn *LazyTxn) RetryAggressiveLocking(ctx context.Context) error {
 	if txn.Valid() {
-		txn.Transaction.RetryAggressiveLocking(ctx)
+		return txn.Transaction.RetryAggressiveLocking(ctx)
 	} else if !txn.pending() {
-		panic("trying to retry aggressive locking on a transaction in invalid state")
+		err := errors.New("trying to retry aggressive locking on a transaction in invalid state")
+		logutil.BgLogger().Error("unexpected error when retrying aggressive locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
+		return err
 	}
+	return nil
 }
 
 // CancelAggressiveLocking wraps the inner transaction to support using aggressive locking with lazy initialization.
-func (txn *LazyTxn) CancelAggressiveLocking(ctx context.Context) {
+func (txn *LazyTxn) CancelAggressiveLocking(ctx context.Context) error {
 	if txn.Valid() {
-		txn.Transaction.CancelAggressiveLocking(ctx)
+		return txn.Transaction.CancelAggressiveLocking(ctx)
 	} else if txn.pending() {
 		if txn.enterAggressiveLockingOnValid {
 			txn.enterAggressiveLockingOnValid = false
 		} else {
-			panic("trying to cancel aggressive locking when it's not started")
+			err := errors.New("trying to cancel aggressive locking when it's not started")
+			logutil.BgLogger().Error("unexpected error when cancelling aggressive locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
+			return err
 		}
 	} else {
-		panic("trying to cancel aggressive locking on a transaction in invalid state")
+		err := errors.New("trying to cancel aggressive locking on a transaction in invalid state")
+		logutil.BgLogger().Error("unexpected error when cancelling aggressive locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
+		return err
 	}
+	return nil
 }
 
 // DoneAggressiveLocking wraps the inner transaction to support using aggressive locking with lazy initialization.
-func (txn *LazyTxn) DoneAggressiveLocking(ctx context.Context) {
+func (txn *LazyTxn) DoneAggressiveLocking(ctx context.Context) error {
 	if txn.Valid() {
-		txn.Transaction.DoneAggressiveLocking(ctx)
+		return txn.Transaction.DoneAggressiveLocking(ctx)
 	} else if txn.pending() {
 		if txn.enterAggressiveLockingOnValid {
 			txn.enterAggressiveLockingOnValid = false
 		} else {
-			panic("trying to finish aggressive locking when it's not started")
+			err := errors.New("trying to finish aggressive locking when it's not started")
+			logutil.BgLogger().Error("unexpected error when finishing aggressive locking")
+			return err
 		}
 	} else {
-		panic("trying to cancel aggressive locking on a transaction in invalid state")
+		err := errors.New("trying to cancel aggressive locking on a transaction in invalid state")
+		logutil.BgLogger().Error("unexpected error when finishing aggressive locking")
+		return err
 	}
+	return nil
 }
 
 // IsInAggressiveLockingMode wraps the inner transaction to support using aggressive locking with lazy initialization.
 func (txn *LazyTxn) IsInAggressiveLockingMode() bool {
 	if txn.Valid() {
 		return txn.Transaction.IsInAggressiveLockingMode()
-	}
-	if txn.pending() {
+	} else if txn.pending() {
 		return txn.enterAggressiveLockingOnValid
+	} else {
+		return false
 	}
-	return false
 }
 
 func (txn *LazyTxn) reset() {

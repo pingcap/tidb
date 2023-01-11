@@ -176,14 +176,11 @@ func (t *mockTxn) Mem() uint64 {
 	return 0
 }
 
-func (t *mockTxn) StartAggressiveLocking()                   {}
-func (t *mockTxn) RetryAggressiveLocking(_ context.Context)  {}
-func (t *mockTxn) CancelAggressiveLocking(_ context.Context) {}
-func (t *mockTxn) DoneAggressiveLocking(_ context.Context)   {}
-
-func (t *mockTxn) IsInAggressiveLockingMode() bool {
-	return false
-}
+func (t *mockTxn) StartAggressiveLocking() error                   { return nil }
+func (t *mockTxn) RetryAggressiveLocking(_ context.Context) error  { return nil }
+func (t *mockTxn) CancelAggressiveLocking(_ context.Context) error { return nil }
+func (t *mockTxn) DoneAggressiveLocking(_ context.Context) error   { return nil }
+func (t *mockTxn) IsInAggressiveLockingMode() bool                 { return false }
 
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
