@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestCollationColumnEstimate(t *testing.T) {
@@ -882,13 +883,28 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 	return statsTbl, nil
 }
 
-func getRange(start, end int64) []*ranger.Range {
+func getRange(start, end int64) ranger.Ranges {
 	ran := &ranger.Range{
 		LowVal:    []types.Datum{types.NewIntDatum(start)},
 		HighVal:   []types.Datum{types.NewIntDatum(end)},
 		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 	return []*ranger.Range{ran}
+}
+
+func getRanges(start, end []int64) (res ranger.Ranges) {
+	if len(start) != len(end) {
+		return nil
+	}
+	for i := range start {
+		ran := &ranger.Range{
+			LowVal:    []types.Datum{types.NewIntDatum(start[i])},
+			HighVal:   []types.Datum{types.NewIntDatum(end[i])},
+			Collators: collate.GetBinaryCollatorSlice(1),
+		}
+		res = append(res, ran)
+	}
+	return
 }
 
 func TestSelectivityGreedyAlgo(t *testing.T) {
@@ -908,3 +924,230 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
 }
+<<<<<<< HEAD
+=======
+
+func TestDefaultSelectivityForStrMatch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b varchar(100))")
+
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+
+	matchExplain, err := regexp.Compile("^explain")
+	require.NoError(t, err)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		ok := matchExplain.MatchString(tt)
+		if !ok {
+			testKit.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestTopNAssistedEstimationWithoutNewCollation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	collate.SetNewCollationEnabledForTest(false)
+	var (
+		input  []string
+		output []outputType
+	)
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	testTopNAssistedEstimationInner(t, input, output, store, dom)
+}
+
+func TestTopNAssistedEstimationWithNewCollation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	collate.SetNewCollationEnabledForTest(true)
+	var (
+		input  []string
+		output []outputType
+	)
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	testTopNAssistedEstimationInner(t, input, output, store, dom)
+}
+
+func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outputType, store kv.Storage, dom *domain.Domain) {
+	h := dom.StatsHandle()
+	h.Clear()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_default_string_match_selectivity = 0")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 3000")
+	tk.MustExec("create table t(" +
+		"a varchar(100) charset utf8mb4 collate utf8mb4_bin," +
+		"b varchar(100) charset utf8mb4 collate utf8mb4_general_ci," +
+		"c varchar(100) charset utf8mb4 collate utf8mb4_general_ci," +
+		"d varchar(100) charset gbk collate gbk_bin," +
+		"e varchar(100) charset gbk collate gbk_chinese_ci," +
+		"f varbinary(100))")
+	// data distribution:
+	// "111abc111", "111cba111", "111234111": 10 rows for each value
+	// null: 3 rows
+	// "tttttt", "uuuuuu", "vvvvvv", "wwwwww", "xxxxxx", "yyyyyy", "zzzzzz": 1 rows for each value
+	// total: 40 rows
+	for i := 0; i < 10; i++ {
+		tk.MustExec(`insert into t value("111abc111", "111abc111", "111abc111", "111abc111", "111abc111", "111abc111")`)
+		tk.MustExec(`insert into t value("111cba111", "111cba111", "111cba111", "111cba111", "111cba111", "111cba111")`)
+		tk.MustExec(`insert into t value("111234111", "111234111", "111234111", "111234111", "111234111", "111234111")`)
+	}
+	for i := 0; i < 3; i++ {
+		tk.MustExec(`insert into t value(null, null, null, null, null, null)`)
+	}
+	tk.MustExec(`insert into t value("tttttt", "tttttt", "tttttt", "tttttt", "tttttt", "tttttt")`)
+	tk.MustExec(`insert into t value("uuuuuu", "uuuuuu", "uuuuuu", "uuuuuu", "uuuuuu", "uuuuuu")`)
+	tk.MustExec(`insert into t value("vvvvvv", "vvvvvv", "vvvvvv", "vvvvvv", "vvvvvv", "vvvvvv")`)
+	tk.MustExec(`insert into t value("wwwwww", "wwwwww", "wwwwww", "wwwwww", "wwwwww", "wwwwww")`)
+	tk.MustExec(`insert into t value("xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx")`)
+	tk.MustExec(`insert into t value("yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy")`)
+	tk.MustExec(`insert into t value("zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz")`)
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec(`analyze table t with 3 topn`)
+
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+type outputType struct {
+	SQL    string
+	Result []string
+}
+
+func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int unsigned) " +
+		"partition by range (a) " +
+		"(partition p0 values less than (400), " +
+		"partition p1 values less than (600), " +
+		"partition p2 values less than (800)," +
+		"partition p3 values less than (1000)," +
+		"partition p4 values less than (1200))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
+	}
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
+	testKit.MustExec("delete from t where a < 500")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+	testKit.MustExec("analyze table t partition p4 with 1 samplerate, 0 topn")
+	require.Nil(t, h.Update(dom.InfoSchema()))
+	for i := range input {
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {
+	idx2Columns := make(map[int64][]int64)
+	colID2IdxIDs := make(map[int64][]int64)
+	for _, idxHist := range statsTbl.Indices {
+		ids := make([]int64, 0, len(idxHist.Info.Columns))
+		for _, idxCol := range idxHist.Info.Columns {
+			ids = append(ids, int64(idxCol.Offset))
+		}
+		colID2IdxIDs[ids[0]] = append(colID2IdxIDs[ids[0]], idxHist.ID)
+		idx2Columns[idxHist.ID] = ids
+	}
+	for _, idxIDs := range colID2IdxIDs {
+		slices.Sort(idxIDs)
+	}
+	statsTbl.Idx2ColumnIDs = idx2Columns
+	statsTbl.ColID2IdxIDs = colID2IdxIDs
+}
+
+func TestIssue39593(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, index idx(a, b))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// mock the statistics.Table
+	statsTbl := mockStatsTable(tblInfo, 540)
+	colValues, err := generateIntDatum(1, 54)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		statsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	idxValues, err := generateIntDatum(2, 3)
+	require.NoError(t, err)
+	tp := types.NewFieldType(mysql.TypeBlob)
+	statsTbl.Indices[1] = &statistics.Index{
+		Histogram: *mockStatsHistogram(1, idxValues, 60, tp),
+		Info:      tblInfo.Indices[0],
+		StatsVer:  2,
+	}
+	generateMapsForMockStatsTbl(statsTbl)
+
+	sctx := testKit.Session()
+	idxID := tblInfo.Indices[0].ID
+	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	count, err := statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals, vals))
+	require.NoError(t, err)
+	// estimated row count without any changes
+	require.Equal(t, float64(360), count)
+	statsTbl.Count *= 10
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals, vals))
+	require.NoError(t, err)
+	// estimated row count after mock modify on the table
+	require.Equal(t, float64(3600), count)
+}
+>>>>>>> 2f13578ec5 (statistics: fix estimation error when ranges are too many and modify count is large (#40472))
