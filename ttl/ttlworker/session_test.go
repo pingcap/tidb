@@ -139,6 +139,7 @@ type mockSession struct {
 	evalExpire         time.Time
 	resetTimeZoneCalls int
 	closed             bool
+	commitErr          error
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -186,9 +187,12 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interf
 	return s.rows, s.execErr
 }
 
-func (s *mockSession) RunInTxn(_ context.Context, fn func() error) (err error) {
+func (s *mockSession) RunInTxn(_ context.Context, fn func() error) error {
 	require.False(s.t, s.closed)
-	return fn()
+	if err := fn(); err != nil {
+		return err
+	}
+	return s.commitErr
 }
 
 func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
@@ -238,6 +242,13 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, int64(12), rows[0].GetInt64(0))
 	require.Equal(t, 3, s.resetTimeZoneCalls)
+
+	s.commitErr = errors.New("mockCommitErr")
+	rows, shouldRetry, err = tblSe.ExecuteSQLWithCheck(ctx, "select 1")
+	require.EqualError(t, err, "mockCommitErr")
+	require.True(t, shouldRetry)
+	require.Nil(t, rows)
+	require.Equal(t, 4, s.resetTimeZoneCalls)
 }
 
 func TestValidateTTLWork(t *testing.T) {

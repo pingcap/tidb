@@ -152,7 +152,7 @@ type ttlTableSession struct {
 	expire time.Time
 }
 
-func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (rows []chunk.Row, shouldRetry bool, err error) {
+func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (rows []chunk.Row, _ bool, err error) {
 	tracer := metrics.PhaseTracerFromCtx(ctx)
 	defer tracer.EnterPhase(tracer.Phase())
 
@@ -165,6 +165,7 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 		return nil, false, err
 	}
 
+	shouldRetry := true
 	err = s.RunInTxn(ctx, func() error {
 		tracer.EnterPhase(metrics.PhaseQuery)
 		defer tracer.EnterPhase(tracer.Phase())
@@ -178,7 +179,6 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 		}
 
 		if err != nil {
-			shouldRetry = true
 			return err
 		}
 		return nil
