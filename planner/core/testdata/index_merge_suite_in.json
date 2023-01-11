@@ -6,6 +6,12 @@
       "select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and a<10",
       "select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.XXX')) and a<10",
       "select /*+ use_index_merge(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10",
+      "select /*+ use_index(t, j0_0) */ * from t where (1 member of (j0->'$.path0'))",
+      "select /*+ use_index(t, j0_1) */ * from t where (1 member of (j0->'$.path1')) and a<10",
+      "select * from t use index(j0_0) where (1 member of (j0->'$.path0'))",
+      "select * from t use index(j0_1) where (1 member of (j0->'$.path1')) and a<10",
+      "select * from t force index(j0_0) where (1 member of (j0->'$.path0'))",
+      "select * from t force index(j0_1) where (1 member of (j0->'$.path1')) and a<10",
       "select /*+ use_index_merge(t, j1) */ * from t where (1 member of (j0->'$.path1')) and (2 member of (j1)) and a<10",
       "select /*+ use_index_merge(t, j0_0) */ * from t where json_contains((j0->'$.path0'), '[1, 2, 3]')",
       "select /*+ use_index_merge(t, j0_0) */ * from t where json_overlaps((j0->'$.path0'), '[1, 2, 3]')",
@@ -55,7 +61,13 @@
       "select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2 and ('3' member of (j->'$.str')) and c=4",
       "select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2 and ('3' member of (j->'$.str'))",
       "select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2",
-      "select /*+ use_index_merge(t, idx2) */ * from t where a=1"
+      "select /*+ use_index_merge(t, idx2) */ * from t where a=1",
+      "select /*+ use_index(t, idx) */ * from t where a=1 and b=2 and (3 member of (j)) and c=4",
+      "select * from t use index(idx) where a=1 and b=2 and (3 member of (j))",
+      "select /*+ use_index(t, idx) */ * from t where a=1 and b=2",
+      "select * from t use index(idx) where a=1",
+      "select * from t force index(idx) where a=1 and b=2 and (3 member of (j))",
+      "select * from t force index(idx) where a=1"
     ]
   },
   {
