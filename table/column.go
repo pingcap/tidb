@@ -709,21 +709,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 						castDatum.SetUint64(0)
 					}
 				case types.KindMysqlDecimal:
-					str := string(datum.GetMysqlDecimal().ToString())
-					str, _ = types.ConvertScientificNotation(str)
-
-					var intStr string
-					p := strings.Index(str, ".")
-					if p == -1 {
-						intStr = str
-					} else {
-						intStr = str[:p]
-					}
-					intStr = strings.TrimLeft(intStr, "0")
-					if intStr == "" {
-						intStr = "0"
-					}
-					if intStr[0] == '-' {
+					if datum.GetMysqlDecimal().IsNegative() {
 						castDatum.SetUint64(0)
 					}
 				}
