@@ -3626,9 +3626,9 @@ func TestIssue40114(t *testing.T) {
 	tk2.MustExec("rollback")
 
 	// tk is still in transaction.
-	tk.MustQuery("select @@tidb_current_ts == 0").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("0"))
 	// This will unexpectedly success in issue 40114.
-	tk.MustExec("insert into t values (1, 2)", mysql.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values (1, 2)", mysql.ErrDupEntry)
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 3"))
