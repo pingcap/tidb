@@ -11492,7 +11492,7 @@ Statement:
 |	DropSequenceStmt
 |	DropViewStmt
 |	DropUserStmt
-|   DropResourceGroupStmt
+|	DropResourceGroupStmt
 |	DropRoleStmt
 |	DropStatisticsStmt
 |	DropStatsStmt
