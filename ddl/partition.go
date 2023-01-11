@@ -1752,7 +1752,28 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
-			rh := newReorgHandler(t, w.sess, w.concurrentDDL)
+			var rh *reorgHandler
+			if w.concurrentDDL {
+				sctx, err1 := w.sessPool.get()
+				if err1 != nil {
+					return ver, err1
+				}
+				defer w.sessPool.put(sctx)
+				sess := newSession(sctx)
+				err = sess.begin()
+				if err != nil {
+					return ver, err
+				}
+				defer sess.rollback()
+				txn, err1 := sess.txn()
+				if err1 != nil {
+					return ver, err1
+				}
+				newMeta := meta.NewMeta(txn)
+				rh = newReorgHandler(newMeta, sess, w.concurrentDDL)
+			} else {
+				rh = newReorgHandler(t, w.sess, w.concurrentDDL)
+			}
 			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, tbl, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {

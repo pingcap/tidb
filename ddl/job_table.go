@@ -430,15 +430,8 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 	return
 }
 
-// updateDDLReorgStartHandle update the startKey of the handle.
-func updateDDLReorgStartHandle(sess *session, job *model.Job, element *meta.Element, startKey kv.Key) error {
-	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s where job_id = %d",
-		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), job.ID)
-	_, err := sess.execute(context.Background(), sql, "update_start_handle")
-	return err
-}
-
 // updateDDLReorgHandle update startKey, endKey physicalTableID and element of the handle.
+// Caller should wrap this in a separate transaction, to avoid conflicts.
 func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",
 		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, jobID)
@@ -447,28 +440,48 @@ func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv
 }
 
 // initDDLReorgHandle initializes the handle for ddl reorg.
-func initDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	sql := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
+func initDDLReorgHandle(s *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	del := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", jobID)
+	ins := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
 		jobID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
-	_, err := sess.execute(context.Background(), sql, "update_handle")
-	return err
+	return s.runInTxn(func(se *session) error {
+		_, err := se.execute(context.Background(), del, "init_handle")
+		if err != nil {
+			logutil.BgLogger().Info("initDDLReorgHandle failed to delete", zap.Int64("jobID", jobID), zap.Error(err))
+		}
+		_, err = se.execute(context.Background(), ins, "init_handle")
+		return err
+	})
 }
 
 // deleteDDLReorgHandle deletes the handle for ddl reorg.
-func removeDDLReorgHandle(sess *session, job *model.Job, elements []*meta.Element) error {
+func removeDDLReorgHandle(s *session, job *model.Job, elements []*meta.Element) error {
 	if len(elements) == 0 {
 		return nil
 	}
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	_, err := sess.execute(context.Background(), sql, "remove_handle")
-	return err
+	return s.runInTxn(func(se *session) error {
+		_, err := se.execute(context.Background(), sql, "remove_handle")
+		return err
+	})
 }
 
 // removeReorgElement removes the element from ddl reorg, it is the same with removeDDLReorgHandle, only used in failpoint
-func removeReorgElement(sess *session, job *model.Job) error {
+func removeReorgElement(s *session, job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	_, err := sess.execute(context.Background(), sql, "remove_handle")
-	return err
+	return s.runInTxn(func(se *session) error {
+		_, err := se.execute(context.Background(), sql, "remove_handle")
+		return err
+	})
+}
+
+// cleanDDLReorgHandles removes handles that are no longer needed.
+func cleanDDLReorgHandles(s *session, job *model.Job) error {
+	sql := "delete from mysql.tidb_ddl_reorg where job_id = " + strconv.FormatInt(job.ID, 10)
+	return s.runInTxn(func(se *session) error {
+		_, err := se.execute(context.Background(), sql, "clean_handle")
+		return err
+	})
 }
 
 func wrapKey2String(key []byte) string {
@@ -498,12 +511,13 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 
 // MoveJobFromQueue2Table move existing DDLs in queue to table.
 func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
-	sess, err := d.sessPool.get()
+	sctx, err := d.sessPool.get()
 	if err != nil {
 		return err
 	}
-	defer d.sessPool.put(sess)
-	return runInTxn(newSession(sess), func(se *session) error {
+	defer d.sessPool.put(sctx)
+	sess := newSession(sctx)
+	return sess.runInTxn(func(se *session) error {
 		txn, err := se.txn()
 		if err != nil {
 			return errors.Trace(err)
@@ -562,12 +576,13 @@ func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
 
 // MoveJobFromTable2Queue move existing DDLs in table to queue.
 func (d *ddl) MoveJobFromTable2Queue() error {
-	sess, err := d.sessPool.get()
+	sctx, err := d.sessPool.get()
 	if err != nil {
 		return err
 	}
-	defer d.sessPool.put(sess)
-	return runInTxn(newSession(sess), func(se *session) error {
+	defer d.sessPool.put(sctx)
+	sess := newSession(sctx)
+	return sess.runInTxn(func(se *session) error {
 		txn, err := se.txn()
 		if err != nil {
 			return errors.Trace(err)
@@ -613,17 +628,4 @@ func (d *ddl) MoveJobFromTable2Queue() error {
 		}
 		return t.SetConcurrentDDL(false)
 	})
-}
-
-func runInTxn(se *session, f func(*session) error) (err error) {
-	err = se.begin()
-	if err != nil {
-		return err
-	}
-	err = f(se)
-	if err != nil {
-		se.rollback()
-		return
-	}
-	return errors.Trace(se.commit())
 }
