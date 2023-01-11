@@ -26,10 +26,12 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -162,40 +164,56 @@ func TestFormatSQLDatum(t *testing.T) {
 	// invalid pk types contains the types that should not exist in primary keys of a TTL table.
 	// We do not need to check sqlbuilder.FormatSQLDatum for these types
 	invalidPKTypes := []struct {
-		types  []string
-		errMsg string
+		types []string
+		err   *terror.Error
 	}{
 		{
-			types:  []string{"json"},
-			errMsg: "[ddl:3152]JSON column 'pk0' cannot be used in key specification.",
+			types: []string{"json"},
+			err:   dbterror.ErrJSONUsedAsKey,
 		},
 		{
-			types:  []string{"blob"},
-			errMsg: "[ddl:1170]BLOB/TEXT column 'pk0' used in key specification without a key length",
+			types: []string{"blob"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
 		},
 		{
-			types:  []string{"blob(8)"},
-			errMsg: "[ddl:1170]BLOB/TEXT column 'pk0' used in key specification without a key length",
+			types: []string{"blob(8)"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
 		},
 		{
-			types:  []string{"text"},
-			errMsg: "[ddl:1170]BLOB/TEXT column 'pk0' used in key specification without a key length",
+			types: []string{"text"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
 		},
 		{
-			types:  []string{"text(8)"},
-			errMsg: "[ddl:1170]BLOB/TEXT column 'pk0' used in key specification without a key length",
+			types: []string{"text(8)"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
 		},
 		{
-			types:  []string{"int", "json"},
-			errMsg: "[ddl:3152]JSON column 'pk1' cannot be used in key specification.",
+			types: []string{"int", "json"},
+			err:   dbterror.ErrJSONUsedAsKey,
 		},
 		{
-			types:  []string{"int", "blob"},
-			errMsg: "[ddl:1170]BLOB/TEXT column 'pk1' used in key specification without a key length",
+			types: []string{"int", "blob"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
 		},
 		{
-			types:  []string{"int", "text"},
-			errMsg: "[ddl:1170]BLOB/TEXT column 'pk1' used in key specification without a key length",
+			types: []string{"int", "text"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
+		},
+		{
+			types: []string{"float"},
+			err:   dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL,
+		},
+		{
+			types: []string{"double"},
+			err:   dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL,
+		},
+		{
+			types: []string{"int", "float"},
+			err:   dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL,
+		},
+		{
+			types: []string{"int", "double"},
+			err:   dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL,
 		},
 	}
 
@@ -321,8 +339,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		sb.WriteString("primary key (")
 		sb.WriteString(strings.Join(cols, ", "))
 		sb.WriteString(")) TTL=`t` + INTERVAL 1 DAY")
-		err := tk.ExecToErr(sb.String())
-		require.Equal(t, c.errMsg, err.Error(), sb.String())
+		tk.MustGetDBError(sb.String(), c.err)
 	}
 
 	// create a table with n columns
