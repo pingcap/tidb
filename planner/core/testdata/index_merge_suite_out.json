@@ -450,7 +450,7 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx) */ * from t where a=1 and b=2",
         "Plan": [
-          "IndexMerge 0.10 root  type: intersection",
+          "IndexMerge 0.10 root  type: union",
           "├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2,1 2], keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 0.10 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
@@ -458,7 +458,7 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx) */ * from t where a=1",
         "Plan": [
-          "IndexMerge 10.00 root  type: intersection",
+          "IndexMerge 10.00 root  type: union",
           "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1,1], keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
@@ -484,7 +484,7 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx2) */ * from t where a=1 and b=2",
         "Plan": [
-          "IndexMerge 0.10 root  type: intersection",
+          "IndexMerge 0.10 root  type: union",
           "├─IndexRangeScan(Build) 0.10 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1 2,1 2], keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 0.10 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
@@ -492,7 +492,7 @@
       {
         "SQL": "select /*+ use_index_merge(t, idx2) */ * from t where a=1",
         "Plan": [
-          "IndexMerge 10.00 root  type: intersection",
+          "IndexMerge 10.00 root  type: union",
           "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx(a, b, cast(`j` as signed array), c) range:[1,1], keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
