@@ -2207,7 +2207,8 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := openReader(ctx, chunk.FileMeta, store)
+	readerCtx := context.WithValue(ctx, storage.CompressReaderBufferType, int(cfg.Mydumper.IOBufferSize))
+	reader, err := openReader(readerCtx, chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
