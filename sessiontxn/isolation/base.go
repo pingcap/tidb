@@ -524,7 +524,7 @@ func (p *basePessimisticTxnContextProvider) OnStmtRetry(ctx context.Context) err
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
-	if p.txn.IsInAggressiveLockingMode() && p.txn != nil {
+	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
 		p.txn.RetryAggressiveLocking(ctx)
 	}
 	return nil
@@ -535,7 +535,7 @@ func (p *basePessimisticTxnContextProvider) OnStmtCommit(ctx context.Context) er
 	if err := p.baseTxnContextProvider.OnStmtCommit(ctx); err != nil {
 		return err
 	}
-	if p.txn.IsInAggressiveLockingMode() && p.txn != nil {
+	if p.txn != nil && p.txn.IsInAggressiveLockingMode() {
 		p.txn.DoneAggressiveLocking(ctx)
 	}
 	return nil
