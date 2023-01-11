@@ -472,7 +472,7 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 	case *ast.Limit:
 		if node.Count != nil {
 			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-				typeExpected, val := checkLimitParamType(count)
+				typeExpected, val := CheckParamTypeInt64orUint64(count)
 				if typeExpected {
 					if val > 10000 {
 						checker.cacheable = false
@@ -488,7 +488,7 @@ func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bo
 		}
 		if node.Offset != nil {
 			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-				typeExpected, val := checkLimitParamType(offset)
+				typeExpected, val := CheckParamTypeInt64orUint64(offset)
 				if typeExpected {
 					checker.offsetAndCount = append(checker.offsetAndCount, val)
 				} else {
@@ -523,15 +523,4 @@ func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, erro
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
 	}
 	return checker.offsetAndCount, nil
-}
-
-func checkLimitParamType(node *driver.ParamMarkerExpr) (bool, uint64) {
-	val := node.GetValue()
-	switch v := val.(type) {
-	case int64:
-		return true, uint64(v)
-	case uint64:
-		return true, v
-	}
-	return false, 0
 }
