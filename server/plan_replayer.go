@@ -220,7 +220,7 @@ func isExists(path string) (bool, error) {
 }
 
 func handlePlanReplayerCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
-	if !strings.Contains(handler.filePath, "capture_replayer") {
+	if !strings.HasPrefix(handler.filePath, "capture_replayer") {
 		return content, nil
 	}
 	b := bytes.NewReader(content)
