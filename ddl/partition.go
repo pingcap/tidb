@@ -1797,6 +1797,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
+<<<<<<< HEAD
 			var rh *reorgHandler
 			if w.concurrentDDL {
 				sctx, err1 := w.sessPool.get()
@@ -1820,6 +1821,15 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				rh = newReorgHandler(t, w.sess, w.concurrentDDL)
 			}
 			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, tbl, physicalTableIDs, elements)
+=======
+			sctx, err1 := w.sessPool.get()
+			if err1 != nil {
+				return ver, err1
+			}
+			defer w.sessPool.put(sctx)
+			rh := newReorgHandler(newSession(sctx))
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, physicalTableIDs, elements)
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version

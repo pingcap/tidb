@@ -2427,6 +2427,7 @@ func TestColumnTypeChangeTimestampToInt(t *testing.T) {
 	tk.MustExec("admin check table t")
 }
 
+<<<<<<< HEAD
 func TestFixDDLTxnWillConflictWithReorgTxnNotConcurrent(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk0 := testkit.NewTestKit(t, store)
@@ -2448,6 +2449,8 @@ func TestFixDDLTxnWillConflictWithReorgTxnNotConcurrent(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 2 warnings with this error code, first warning: constant 128 overflows tinyint"))
 }
 
+=======
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 func TestFixDDLTxnWillConflictWithReorgTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2455,7 +2458,10 @@ func TestFixDDLTxnWillConflictWithReorgTxn(t *testing.T) {
 
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF")
+<<<<<<< HEAD
 	defer tk.MustExec("set global tidb_ddl_enable_fast_reorg = default")
+=======
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 	tk.MustExec("alter table t add index(a)")
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into t values(128),(129)")

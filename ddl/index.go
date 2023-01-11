@@ -899,6 +899,7 @@ func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *m
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
+<<<<<<< HEAD
 	var rh *reorgHandler
 	if w.concurrentDDL {
 		sctx, err1 := w.sessPool.get()
@@ -922,6 +923,18 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		rh = newReorgHandler(newMeta, sess, w.concurrentDDL)
 	} else {
 		rh = newReorgHandler(t, w.sess, w.concurrentDDL)
+=======
+	sctx, err1 := w.sessPool.get()
+	if err1 != nil {
+		err = err1
+		return
+	}
+	defer w.sessPool.put(sctx)
+	rh := newReorgHandler(newSession(sctx))
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 	}
 
 	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
@@ -1311,6 +1324,62 @@ func (w *baseIndexWorker) AddMetricInfo(cnt float64) {
 	w.metricCounter.Add(cnt)
 }
 
+<<<<<<< HEAD
+=======
+func (*baseIndexWorker) GetTask() (*BackfillJob, error) {
+	return nil, nil
+}
+
+func (w *baseIndexWorker) String() string {
+	return w.tp.String()
+}
+
+func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
+	s := newSession(w.backfillCtx.sessCtx)
+
+	return s.runInTxn(func(se *session) error {
+		jobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
+			bfJob.JobID, bfJob.EleID, bfJob.EleKey, bfJob.ID), "update_backfill_task")
+		if err != nil {
+			return err
+		}
+		if len(jobs) == 0 {
+			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job")
+		}
+		if jobs[0].InstanceID != bfJob.InstanceID {
+			return dbterror.ErrDDLJobNotFound.FastGenByArgs(fmt.Sprintf("get a backfill job %v, want instance ID %s", jobs[0], bfJob.InstanceID))
+		}
+
+		currTime, err := GetOracleTimeWithStartTS(se)
+		if err != nil {
+			return err
+		}
+		bfJob.InstanceLease = GetLeaseGoTime(currTime, InstanceLease)
+		return updateBackfillJob(se, BackfillTable, bfJob, "update_backfill_task")
+	})
+}
+
+func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
+	s := newSession(w.backfillCtx.sessCtx)
+	return s.runInTxn(func(se *session) error {
+		txn, err := se.txn()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		bfJob.FinishTS = txn.StartTS()
+		err = RemoveBackfillJob(se, false, bfJob)
+		if err != nil {
+			return err
+		}
+		return AddBackfillHistoryJob(se, []*BackfillJob{bfJob})
+	})
+}
+
+func (w *baseIndexWorker) GetCtx() *backfillCtx {
+	return w.backfillCtx
+}
+
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 // mockNotOwnerErrOnce uses to make sure `notOwnerErr` only mock error once.
 var mockNotOwnerErrOnce uint32
 

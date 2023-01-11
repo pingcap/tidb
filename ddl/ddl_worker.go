@@ -775,7 +775,11 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	CleanupDDLReorgHandles(job, w, t)
+=======
+	CleanupDDLReorgHandles(job, w.sess)
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 	asyncNotify(d.ddlJobDoneCh)
 	return nil
 }

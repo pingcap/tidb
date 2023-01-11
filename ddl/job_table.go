@@ -515,9 +515,21 @@ func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	defer d.sessPool.put(sctx)
 	sess := newSession(sctx)
 	return sess.runInTxn(func(se *session) error {
+=======
+	_, err = sess.execute(context.Background(), sql, label)
+	return errors.Trace(err)
+}
+
+// AddBackfillJobs adds the backfill jobs to the tidb_ddl_backfill table.
+func AddBackfillJobs(s *session, backfillJobs []*BackfillJob) error {
+	label := fmt.Sprintf("add_%s_job", BackfillTable)
+	// Do runInTxn to get StartTS.
+	return s.runInTxn(func(se *session) error {
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 		txn, err := se.txn()
 		if err != nil {
 			return errors.Trace(err)
@@ -531,6 +543,7 @@ func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 		for _, tp := range []workerType{addIdxWorker, generalWorker} {
 			t := newMetaWithQueueTp(txn, tp)
 			jobs, err := t.GetAllDDLJobsInQueue()
@@ -561,6 +574,91 @@ func (d *ddl) MoveJobFromQueue2Table(inBootstrap bool) error {
 				if err != nil {
 					return errors.Trace(err)
 				}
+=======
+		_, err = se.execute(context.Background(), sql, label)
+		return errors.Trace(err)
+	})
+}
+
+// GetBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element.
+func GetBackfillJobsForOneEle(s *session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
+	eJobIDsBuilder := strings.Builder{}
+	for i, id := range excludedJobIDs {
+		if i == 0 {
+			eJobIDsBuilder.WriteString(" and ddl_job_id not in (")
+		}
+		eJobIDsBuilder.WriteString(strconv.Itoa(int(id)))
+		if i == len(excludedJobIDs)-1 {
+			eJobIDsBuilder.WriteString(")")
+		} else {
+			eJobIDsBuilder.WriteString(", ")
+		}
+	}
+
+	var err error
+	var bJobs []*BackfillJob
+	err = s.runInTxn(func(se *session) error {
+		currTime, err := GetOracleTimeWithStartTS(se)
+		if err != nil {
+			return err
+		}
+
+		bJobs, err = GetBackfillJobs(se, BackfillTable,
+			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by ddl_job_id, ele_key, ele_id limit %d",
+				currTime.Add(-lease), eJobIDsBuilder.String(), batch), "get_backfill_job")
+		return err
+	})
+	if err != nil || len(bJobs) == 0 {
+		return nil, err
+	}
+
+	validLen := 1
+	firstJobID, firstEleID, firstEleKey := bJobs[0].JobID, bJobs[0].EleID, bJobs[0].EleKey
+	for i := 1; i < len(bJobs); i++ {
+		if bJobs[i].JobID != firstJobID || bJobs[i].EleID != firstEleID || !bytes.Equal(bJobs[i].EleKey, firstEleKey) {
+			break
+		}
+		validLen++
+	}
+
+	return bJobs[:validLen], nil
+}
+
+// GetAndMarkBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element,
+// and update these jobs with instance ID and lease.
+func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid string, lease time.Duration) ([]*BackfillJob, error) {
+	var validLen int
+	var bJobs []*BackfillJob
+	err := s.runInTxn(func(se *session) error {
+		currTime, err := GetOracleTimeWithStartTS(se)
+		if err != nil {
+			return err
+		}
+
+		bJobs, err = GetBackfillJobs(se, BackfillTable,
+			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and ddl_job_id = %d order by ddl_job_id, ele_key, ele_id limit %d",
+				currTime.Add(-lease), jobID, batch), "get_mark_backfill_job")
+		if err != nil {
+			return err
+		}
+		if len(bJobs) == 0 {
+			return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job")
+		}
+
+		validLen = 0
+		firstJobID, firstEleID, firstEleKey := bJobs[0].JobID, bJobs[0].EleID, bJobs[0].EleKey
+		for i := 0; i < len(bJobs); i++ {
+			if bJobs[i].JobID != firstJobID || bJobs[i].EleID != firstEleID || !bytes.Equal(bJobs[i].EleKey, firstEleKey) {
+				break
+			}
+			validLen++
+
+			bJobs[i].InstanceID = uuid
+			bJobs[i].InstanceLease = GetLeaseGoTime(currTime, lease)
+			// TODO: batch update
+			if err = updateBackfillJob(se, BackfillTable, bJobs[i], "get_mark_backfill_job"); err != nil {
+				return err
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 			}
 		}
 

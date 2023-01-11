@@ -4556,6 +4556,7 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
 }
 
+<<<<<<< HEAD
 func TestIssue40135Ver2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4593,6 +4594,8 @@ func TestIssue40135Ver2(t *testing.T) {
 	tk.MustExec("admin check table t40135")
 }
 
+=======
+>>>>>>> eb35c773b51 (ddl: avoid commit conflicts when updating/delete from mysql.tidb_ddl_reorg. (#38738))
 func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
