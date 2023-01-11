@@ -22,7 +22,6 @@ go_test(
         "//store/mockstore/unistore",
         "//table",
         "//testkit",
-        "//testkit/external",
         "//testkit/testsetup",
         "//util",
         "//util/logutil",
