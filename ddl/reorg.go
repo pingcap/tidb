@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -789,23 +788,16 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 }
 
 // CleanupDDLReorgHandles removes the job reorganization related handles.
-func CleanupDDLReorgHandles(job *model.Job, pool *sessionPool) {
+func CleanupDDLReorgHandles(job *model.Job, s *session) {
 	if job != nil && !job.IsFinished() && !job.IsSynced() {
 		// Job is given, but it is neither finished nor synced; do nothing
 		return
 	}
-	sctx, err := pool.get()
-	if err != nil {
-		logutil.BgLogger().Info("CleanupDDLReorgHandles get sessionctx failed", zap.Error(err))
-		return
-	}
-	defer pool.put(sctx)
 
-	// Should there be any other options?
-	sctx.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	err = cleanDDLReorgHandles(newSession(sctx), job)
+	err := cleanDDLReorgHandles(s, job)
 	if err != nil {
-		logutil.BgLogger().Info("cleanDDLReorgHandles failed", zap.Error(err))
+		// ignore error, cleanup is not that critical
+		logutil.BgLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
 	}
 }
 

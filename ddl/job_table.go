@@ -477,12 +477,7 @@ func removeReorgElement(s *session, job *model.Job) error {
 
 // cleanDDLReorgHandles removes handles that are no longer needed.
 func cleanDDLReorgHandles(s *session, job *model.Job) error {
-	var sql string
-	if job != nil {
-		sql = "delete from mysql.tidb_ddl_reorg where job_id = " + strconv.FormatInt(job.ID, 10)
-	} else {
-		sql = "delete from mysql.tidb_ddl_reorg where job_id not in (select job_id from mysql.tidb_ddl_job)"
-	}
+	sql := "delete from mysql.tidb_ddl_reorg where job_id = " + strconv.FormatInt(job.ID, 10)
 	return s.runInTxn(func(se *session) error {
 		_, err := se.execute(context.Background(), sql, "clean_handle")
 		return err
