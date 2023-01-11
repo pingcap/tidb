@@ -507,7 +507,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 */
 func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
 	for idx := 0; idx < normalPathCnt; idx++ {
-		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
+		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
 			continue // not a MVIndex path
 		}
 
