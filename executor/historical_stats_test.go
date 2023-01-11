@@ -305,5 +305,4 @@ PARTITION p0 VALUES LESS THAN (6)
 	// has both global and p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
 	require.NotNil(t, jsTable.Partitions["global"])
-
 }
