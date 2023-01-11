@@ -105,6 +105,9 @@ func (e *LoadDataExec) loadFromRemote(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if b.GetLocal() != nil {
+		return errors.Errorf("Load Data: don't support load data from tidb-server when set REMOTE, path %s", e.loadDataInfo.Path)
+	}
 	s, err := storage.New(ctx, b, nil)
 	if err != nil {
 		return err
