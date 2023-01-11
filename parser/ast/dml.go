@@ -288,15 +288,17 @@ func (*TableName) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableName) restoreName(ctx *format.RestoreCtx) {
-	// restore db name
-	if n.Schema.String() != "" {
-		ctx.WriteName(n.Schema.String())
-		ctx.WritePlain(".")
-	} else if ctx.DefaultDB != "" {
-		// Try CTE, for a CTE table name, we shouldn't write the database name.
-		if !ctx.IsCTETableName(n.Name.L) {
-			ctx.WriteName(ctx.DefaultDB)
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		// restore db name
+		if n.Schema.String() != "" {
+			ctx.WriteName(n.Schema.String())
 			ctx.WritePlain(".")
+		} else if ctx.DefaultDB != "" {
+			// Try CTE, for a CTE table name, we shouldn't write the database name.
+			if !ctx.IsCTETableName(n.Name.L) {
+				ctx.WriteName(ctx.DefaultDB)
+				ctx.WritePlain(".")
+			}
 		}
 	}
 	// restore table name
@@ -356,6 +358,8 @@ const (
 	HintUse IndexHintType = iota + 1
 	HintIgnore
 	HintForce
+	HintKeepOrder
+	HintNoKeepOrder
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.
@@ -386,6 +390,10 @@ func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 		indexHintType = "IGNORE INDEX"
 	case HintForce:
 		indexHintType = "FORCE INDEX"
+	case HintKeepOrder:
+		indexHintType = "KEEP ORDER"
+	case HintNoKeepOrder:
+		indexHintType = "NO KEEP ORDER"
 	default: // Prevent accidents
 		return errors.New("IndexHintType has an error while matching")
 	}

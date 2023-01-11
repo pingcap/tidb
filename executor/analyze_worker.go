@@ -66,10 +66,6 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 			worker.errCh <- err
 		} else {
 			finishJobWithLog(worker.sctx, results.Job, nil)
-			// Dump stats to historical storage.
-			if err := recordHistoricalStats(worker.sctx, results.TableID.TableID); err != nil {
-				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
-			}
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if err != nil {

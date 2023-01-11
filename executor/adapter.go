@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
@@ -58,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -1365,6 +1367,18 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 // 4. update the `PrevStmt` in session variable.
 // 5. reset `DurationParse` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults bool) {
+	se := a.Ctx
+	if !se.GetSessionVars().InRestrictedSQL && se.GetSessionVars().IsPlanReplayerCaptureEnabled() {
+		stmtNode := a.GetStmtNode()
+		if se.GetSessionVars().EnablePlanReplayedContinuesCapture {
+			if checkPlanReplayerContinuesCaptureValidStmt(stmtNode) {
+				checkPlanReplayerContinuesCapture(se, stmtNode, txnTS)
+			}
+		} else {
+			checkPlanReplayerCaptureTask(se, stmtNode, txnTS)
+		}
+	}
+
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
@@ -1540,6 +1554,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
 		StatsLoadStatus:   convertStatusIntoString(a.Ctx, stmtCtx.StatsLoadStatus),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
+		Warnings:          collectWarningsForSlowLog(stmtCtx),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1593,6 +1608,33 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			Internal:   sessVars.InRestrictedSQL,
 		})
 	}
+}
+
+func extractMsgFromSQLWarn(SQLWarn *stmtctx.SQLWarn) string {
+	// Currently, this function is only used in collectWarningsForSlowLog.
+	// collectWarningsForSlowLog can make sure SQLWarn is not nil so no need to add a nil check here.
+	warn := errors.Cause(SQLWarn.Err)
+	if x, ok := warn.(*terror.Error); ok && x != nil {
+		sqlErr := terror.ToSQLError(x)
+		return sqlErr.Message
+	}
+	return warn.Error()
+}
+
+func collectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []variable.JSONSQLWarnForSlowLog {
+	warnings := stmtCtx.GetWarnings()
+	extraWarnings := stmtCtx.GetExtraWarnings()
+	res := make([]variable.JSONSQLWarnForSlowLog, len(warnings)+len(extraWarnings))
+	for i := range warnings {
+		res[i].Level = warnings[i].Level
+		res[i].Message = extractMsgFromSQLWarn(&warnings[i])
+	}
+	for i := range extraWarnings {
+		res[len(warnings)+i].Level = extraWarnings[i].Level
+		res[len(warnings)+i].Message = extractMsgFromSQLWarn(&extraWarnings[i])
+		res[len(warnings)+i].IsExtra = true
+	}
+	return res
 }
 
 // GetResultRowsCount gets the count of the statement result rows.
@@ -1952,4 +1994,93 @@ func convertStatusIntoString(sctx sessionctx.Context, statsLoadStatus map[model.
 		r[tableName][itemName] = status
 	}
 	return r
+}
+
+// only allow select/delete/update/insert/execute stmt captured by continues capture
+func checkPlanReplayerContinuesCaptureValidStmt(stmtNode ast.StmtNode) bool {
+	switch stmtNode.(type) {
+	case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.ExecuteStmt:
+		return true
+	default:
+		return false
+	}
+}
+
+func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
+	dom := domain.GetDomain(sctx)
+	if dom == nil {
+		return
+	}
+	handle := dom.GetPlanReplayerHandle()
+	if handle == nil {
+		return
+	}
+	tasks := handle.GetTasks()
+	if len(tasks) == 0 {
+		return
+	}
+	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	if sqlDigest == nil || planDigest == nil {
+		return
+	}
+	key := replayer.PlanReplayerTaskKey{
+		SQLDigest:  sqlDigest.String(),
+		PlanDigest: planDigest.String(),
+	}
+	for _, task := range tasks {
+		if task.SQLDigest == sqlDigest.String() {
+			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
+				sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, false)
+				return
+			}
+		}
+	}
+}
+
+func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
+	dom := domain.GetDomain(sctx)
+	if dom == nil {
+		return
+	}
+	handle := dom.GetPlanReplayerHandle()
+	if handle == nil {
+		return
+	}
+	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
+	key := replayer.PlanReplayerTaskKey{
+		SQLDigest:  sqlDigest.String(),
+		PlanDigest: planDigest.String(),
+	}
+	existed := sctx.GetSessionVars().CheckPlanReplayerFinishedTaskKey(key)
+	if existed {
+		return
+	}
+	sendPlanReplayerDumpTask(key, sctx, stmtNode, startTS, true)
+	sctx.GetSessionVars().AddPlanReplayerFinishedTaskKey(key)
+}
+
+func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode,
+	startTS uint64, isContinuesCapture bool) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	dumpTask := &domain.PlanReplayerDumpTask{
+		PlanReplayerTaskKey: key,
+		StartTS:             startTS,
+		EncodePlan:          GetEncodedPlan,
+		TblStats:            stmtCtx.TableStats,
+		SessionBindings:     handle.GetAllBindRecord(),
+		SessionVars:         sctx.GetSessionVars(),
+		ExecStmts:           []ast.StmtNode{stmtNode},
+		Analyze:             false,
+		IsCapture:           true,
+		IsContinuesCapture:  isContinuesCapture,
+	}
+	if _, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		nsql, _ := sctx.GetSessionVars().StmtCtx.SQLDigest()
+		dumpTask.InExecute = true
+		dumpTask.NormalizedSQL = nsql
+	}
+	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }

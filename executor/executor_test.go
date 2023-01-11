@@ -89,6 +89,7 @@ func checkFileName(s string) bool {
 		"global_bindings.sql",
 		"sql/sql0.sql",
 		"explain/sql0.txt",
+		"statsMem/test.t_dump_single.txt",
 		"sql_meta.toml",
 	}
 	for _, f := range files {
@@ -178,12 +179,26 @@ func TestPlanReplayer(t *testing.T) {
 }
 
 func TestPlanReplayerCapture(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustQuery("select sql_digest, plan_digest from mysql.plan_replayer_task;").Check(testkit.Rows("123 123"))
 	tk.MustGetErrMsg("plan replayer capture '123' '123';", "plan replayer capture task already exists")
+	tk.MustExec("delete from mysql.plan_replayer_task")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("prepare stmt from 'update t set id = ?  where id = ? + 1';")
+	tk.MustExec("SET @number = 5;")
+	tk.MustExec("execute stmt using @number,@number")
+	_, sqlDigest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+	tk.MustExec("SET @@tidb_enable_plan_replayer_capture = ON;")
+	tk.MustExec(fmt.Sprintf("plan replayer capture '%v' '%v'", sqlDigest.String(), planDigest.String()))
+	err := dom.GetPlanReplayerHandle().CollectPlanReplayerTask()
+	require.NoError(t, err)
+	tk.MustExec("execute stmt using @number,@number")
+	task := dom.GetPlanReplayerHandle().DrainTask()
+	require.NotNil(t, task)
 }
 
 func TestPlanReplayerContinuesCapture(t *testing.T) {
@@ -3607,10 +3622,10 @@ func TestPointGetPreparedPlan(t *testing.T) {
 
 	pspk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	pspk2Id, _, _, err := tk.Session().PrepareStmt("select * from t where ? = a ")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -3650,7 +3665,7 @@ func TestPointGetPreparedPlan(t *testing.T) {
 	// unique index
 	psuk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where b = ? ")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
 
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
@@ -3768,7 +3783,7 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 
 	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -3834,11 +3849,11 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 
 	updateID1, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	require.Equal(t, 1, pc)
 	updateID2, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 2 where ? = a`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID2].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updateID2].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	require.Equal(t, 1, pc)
 
 	ctx := context.Background()
@@ -3873,7 +3888,7 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 	// unique index
 	updUkID1, _, _, err := tk.Session().PrepareStmt(`update t set c = c + 10 where b = ?`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
@@ -3942,7 +3957,7 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 
 	ctx := context.Background()
 	updateID1, _, _, err := tk1.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
-	tk1.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	require.NoError(t, err)
 
 	// first time plan generated
