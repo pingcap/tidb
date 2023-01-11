@@ -298,7 +298,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				if expBackoffCnt > upperLimit {
 					expBackoffCnt = upperLimit
 				}
-				totalCount += expBackoffCnt
+				count += expBackoffCnt
 			}
 		}
 		if !expBackoffSuccess {
