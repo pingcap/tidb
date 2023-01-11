@@ -1677,11 +1677,11 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		}
 	}
 	for _, fk := range table.ForeignKeys {
-		fkRefCol := ""
-		if len(fk.RefCols) > 0 {
-			fkRefCol = fk.RefCols[0].O
-		}
 		for i, key := range fk.Cols {
+			fkRefCol := ""
+			if len(fk.RefCols) > i {
+				fkRefCol = fk.RefCols[i].O
+			}
 			col := nameToCol[key.L]
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // CONSTRAINT_CATALOG
