@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 func TestCollationColumnEstimate(t *testing.T) {
@@ -998,24 +997,24 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 
 func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {
 	idx2Columns := make(map[int64][]int64)
-	colID2IdxIDs := make(map[int64][]int64)
+	colID2IdxID := make(map[int64]int64)
 	for _, idxHist := range statsTbl.Indices {
 		ids := make([]int64, 0, len(idxHist.Info.Columns))
 		for _, idxCol := range idxHist.Info.Columns {
 			ids = append(ids, int64(idxCol.Offset))
 		}
-		colID2IdxIDs[ids[0]] = append(colID2IdxIDs[ids[0]], idxHist.ID)
+		if id, ok := colID2IdxID[ids[0]]; !ok || id > idxHist.ID {
+			colID2IdxID[ids[0]] = idxHist.ID
+		}
 		idx2Columns[idxHist.ID] = ids
 	}
-	for _, idxIDs := range colID2IdxIDs {
-		slices.Sort(idxIDs)
-	}
 	statsTbl.Idx2ColumnIDs = idx2Columns
-	statsTbl.ColID2IdxIDs = colID2IdxIDs
+	statsTbl.ColID2IdxID = colID2IdxID
 }
 
 func TestIssue39593(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	testKit := testkit.NewTestKit(t, store)
 
 	testKit.MustExec("use test")
@@ -1032,10 +1031,10 @@ func TestIssue39593(t *testing.T) {
 	require.NoError(t, err)
 	for i := 1; i <= 2; i++ {
 		statsTbl.Columns[int64(i)] = &statistics.Column{
-			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
-			Info:              tblInfo.Columns[i-1],
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-			StatsVer:          2,
+			Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:      tblInfo.Columns[i-1],
+			Loaded:    true,
+			StatsVer:  2,
 		}
 	}
 	idxValues, err := generateIntDatum(2, 3)
