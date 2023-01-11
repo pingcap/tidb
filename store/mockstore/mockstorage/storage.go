@@ -117,6 +117,12 @@ func (s *mockStorage) Close() error {
 	return s.KVStore.Close()
 }
 
+func (s *mockStorage) GetCodec() tikv.Codec {
+	pdClient := s.KVStore.GetPDClient()
+	pdCodecCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	return pdCodecCli.GetCodec()
+}
+
 // MockLockWaitSetter is used to set the mocked lock wait information, which helps implementing tests that uses the
 // GetLockWaits function.
 type MockLockWaitSetter interface {
