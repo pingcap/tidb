@@ -2016,6 +2016,9 @@ func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode
 		return
 	}
 	tasks := handle.GetTasks()
+	if len(tasks) == 0 {
+		return
+	}
 	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
 	_, planDigest := sctx.GetSessionVars().StmtCtx.GetPlanDigest()
 	if sqlDigest == nil || planDigest == nil {
