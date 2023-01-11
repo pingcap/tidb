@@ -376,8 +376,8 @@ After the TiDB Operator starts the Restore Worker, it starts to restore work.
          "volume_id" : "vol-0e65f40961a9f6244",
          "type" : "raft-engine.dir",
          "mount_path" : "/var/lib/tikv/raft-engine",
-         "restore_volume_id" : "vol-0e65f40961a9f0001", // Create volume from snapshot for restore
-         "snapshot_id" : "snap-1234567890abcdef0", // Keep the whole metadata intact and add snapshot-created here
+         "restore_volume_id" : "vol-0e65f40961a9f0001",
+         "snapshot_id" : "snap-1234567890abcdef0",
        },
        {
          "volume_id" : "vol-0e65f40961a9f6245",
@@ -443,7 +443,7 @@ After the TiDB Operator starts the Restore Worker, it starts to restore work.
    "pvcs" : [],
    "crd_tidb_cluster" : {},
    "options" : {}
- }，
+ }
  "options" : {} 
 }
 ```
@@ -542,7 +542,7 @@ Backup worker workflow
    "pvcs" : [],
    "crd_tidb_cluster" : {},
    "options" : {}
- }，
+ }
  "options" : {}
 }
 ```
@@ -599,8 +599,8 @@ BR command output as follows:
          "volume_id" : "vol-0e65f40961a9f6244",
          "type" : "raft-engine.dir",
          "mount_path" : "/var/lib/tikv/raft-engine",
-         "restore_volume_id" : "vol-0e65f40961a9f0001", // Create volume from snapshot for restore
-         "snapshot_id" : "snap-1234567890abcdef0" // Keep the whole metadata intact and add snapshot-created here
+         "restore_volume_id" : "vol-0e65f40961a9f0001",
+         "snapshot_id" : "snap-1234567890abcdef0"
        },
        {
          "volume_id" : "vol-0e65f40961a9f6245",
@@ -658,11 +658,11 @@ BR command output as follows:
    "replicas" : 3
  },
  "kubernetes" : {
-   "pvs" : [],  // PersistentVolume as resource native to Kubernetes
-   "pvcs" : [],  // PersistentVolumeClaim as resource native to Kubernetes
-   "crd_tidb_cluster" : {},     // CRD-TidbCluster for TiDB-Operator - Optional
-   "options" : {}   // unstructured.Unstructured uses a collection of nested map[string]interface{} values - Optional
- }，
+   "pvs" : [],
+   "pvcs" : [],
+   "crd_tidb_cluster" : {},
+   "options" : {}
+ }
  "options" : {} 
 }
 ```
