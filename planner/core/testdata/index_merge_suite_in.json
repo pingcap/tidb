@@ -59,6 +59,19 @@
     ]
   },
   {
+    "name": "TestDNFOnMVIndex",
+    "cases": [
+      "select /*+ use_index_merge(t, idx1) */ * from t where (1 member of (j)) or (2 member of (j))",
+      "select /*+ use_index_merge(t, idx1) */ * from t where ((1 member of (j)) or (2 member of (j))) and (a > 10)",
+      "select /*+ use_index_merge(t, idx1) */ * from t where (json_overlaps(j, '[1, 2]')) or (json_overlaps(j, '[3, 4]'))",
+      "select /*+ use_index_merge(t, idx1) */ * from t where ((json_overlaps(j, '[1, 2]')) or (json_overlaps(j, '[3, 4]'))) and (a > 10)",
+      "select /*+ use_index_merge(t, idx1) */ * from t where (json_contains(j, '[1, 2]')) or (json_contains(j, '[3, 4]'))",
+      "select /*+ use_index_merge(t, idx2) */ * from t where (a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)))",
+      "select /*+ use_index_merge(t, idx2) */ * from t where (a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)) and c=14)",
+      "select /*+ use_index_merge(t, idx2) */ * from t where ((a=1 and b=2 and (3 member of (j))) or (a=11 and b=12 and (13 member of (j)))) and (c > 10)"
+    ]
+  },
+  {
     "name": "TestMVIndexSelection",
     "cases": [
       "select (j->'$.int') from t where (1 member of (j->'$.int'))",
