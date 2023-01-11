@@ -46,7 +46,9 @@ func (ds *DataSource) generateIndexMergePath() error {
 	}
 
 	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
-	isPossibleIdxMerge := len(indexMergeConds) > 0 && len(ds.possibleAccessPaths) > 1
+	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
+		(len(ds.possibleAccessPaths) > 1 || // (have multiple index paths, or
+			(len(ds.possibleAccessPaths) == 1 && isMVIndexPath(ds.possibleAccessPaths[0]))) // have a MVIndex)
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
 	// We current do not consider `IndexMergePath`:
 	// 1. If there is an index path.
@@ -505,7 +507,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 */
 func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
 	for idx := 0; idx < normalPathCnt; idx++ {
-		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
+		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
 			continue // not a MVIndex path
 		}
 
@@ -587,7 +589,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 	mvIndexPaths = append(mvIndexPaths, dnfMVIndexPaths...)
 
 	for idx := 0; idx < normalPathCnt; idx++ {
-		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
+		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
 			continue // not a MVIndex path
 		}
 
@@ -893,4 +895,8 @@ func unwrapJSONCast(expr expression.Expression) (expression.Expression, bool) {
 		return nil, false
 	}
 	return sf.GetArgs()[0], true
+}
+
+func isMVIndexPath(path *util.AccessPath) bool {
+	return !path.IsTablePath() && path.Index != nil && path.Index.MVIndex
 }
