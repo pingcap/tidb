@@ -4329,7 +4329,7 @@ func TestIssue40066(t *testing.T) {
 	defer tk.MustExec("set @@sql_mode = @orig_sql_mode;")
 
 	tk.MustExec(`create table t_int(column1 int, column2 int unsigned generated always as(column1-100));`)
-	tk.MustExec("set @@sql_mode = 'TRADITIONAL';")
+	tk.MustExec("set @@sql_mode = DEFAULT;")
 	tk.MustGetErrMsg("insert into t_int(column1) values (99);", "[types:1264]Out of range value for column 'column2' at row 1")
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t_int(column1) values (99);")
@@ -4337,16 +4337,15 @@ func TestIssue40066(t *testing.T) {
 	tk.MustQuery("select * from t_int;").Check(testkit.Rows("99 0"))
 
 	tk.MustExec(`create table t_float(column1 float, column2 int unsigned generated always as(column1-100));`)
-	tk.MustExec("set @@sql_mode = 'TRADITIONAL';")
+	tk.MustExec("set @@sql_mode = DEFAULT;")
 	tk.MustGetErrMsg("insert into t_float(column1) values (12.95);", "[types:1264]Out of range value for column 'column2' at row 1")
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t_float(column1) values (12.95);")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1264 Out of range value for column 'column2' at row 1"))
 	tk.MustQuery("select * from t_float;").Check(testkit.Rows("12.95 0"))
 
-
 	tk.MustExec(`create table t_decimal(column1 decimal(20,10), column2 int unsigned generated always as(column1-100));`)
-	tk.MustExec("set @@sql_mode = 'TRADITIONAL';")
+	tk.MustExec("set @@sql_mode = DEFAULT;")
 	tk.MustGetErrMsg("insert into t_decimal(column1) values (123.456e-2);", "[types:1264]Out of range value for column 'column2' at row 1")
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t_decimal(column1) values (123.456e-2);")
@@ -4354,7 +4353,7 @@ func TestIssue40066(t *testing.T) {
 	tk.MustQuery("select * from t_decimal;").Check(testkit.Rows("1.2345600000 0"))
 
 	tk.MustExec(`create table t_varchar(column1 varchar(10), column2 int unsigned generated always as(column1-100));`)
-	tk.MustExec("set @@sql_mode = 'TRADITIONAL';")
+	tk.MustExec("set @@sql_mode = DEFAULT;")
 	tk.MustGetErrMsg("insert into t_varchar(column1) values ('87.12');", "[types:1264]Out of range value for column 'column2' at row 1")
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t_varchar(column1) values ('87.12');")

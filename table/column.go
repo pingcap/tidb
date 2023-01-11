@@ -693,12 +693,42 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			sctx.GetSessionVars().StmtCtx.InFillVirtualColumnValue = true
 			castDatum, err := CastValue(sctx, datum, colInfos[idx], false, true)
-			sctx.GetSessionVars().StmtCtx.InFillVirtualColumnValue = false
 			if err != nil {
 				return err
 			}
+
+			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !sctx.GetSessionVars().StmtCtx.ShouldClipToZero() {
+				switch datum.Kind() {
+				case types.KindInt64:
+					if datum.GetInt64() < 0 {
+						castDatum.SetUint64(0)
+					}
+				case types.KindFloat32, types.KindFloat64:
+					if types.RoundFloat(datum.GetFloat64()) < 0 {
+						castDatum.SetUint64(0)
+					}
+				case types.KindMysqlDecimal:
+					str := string(datum.GetMysqlDecimal().ToString())
+					str, _ = types.ConvertScientificNotation(str)
+
+					var intStr string
+					p := strings.Index(str, ".")
+					if p == -1 {
+						intStr = str
+					} else {
+						intStr = str[:p]
+					}
+					intStr = strings.TrimLeft(intStr, "0")
+					if intStr == "" {
+						intStr = "0"
+					}
+					if intStr[0] == '-' {
+						castDatum.SetUint64(0)
+					}
+				}
+			}
+
 			// Handle the bad null error.
 			if (mysql.HasNotNullFlag(colInfos[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(colInfos[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = GetZeroValue(colInfos[idx])

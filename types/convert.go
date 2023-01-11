@@ -181,9 +181,9 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 	return uint64(val), nil
 }
 
-// convertScientificNotation converts a decimal string with scientific notation to a normal decimal string.
+// ConvertScientificNotation converts a decimal string with scientific notation to a normal decimal string.
 // 1E6 => 1000000, .12345E+5 => 12345
-func convertScientificNotation(str string) (string, error) {
+func ConvertScientificNotation(str string) (string, error) {
 	// https://golang.org/ref/spec#Floating-point_literals
 	eIdx := -1
 	point := -1
@@ -229,7 +229,7 @@ func convertScientificNotation(str string) (string, error) {
 }
 
 func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBound uint64, tp byte) (uint64, error) {
-	str, err := convertScientificNotation(str)
+	str, err := ConvertScientificNotation(str)
 	if err != nil {
 		return 0, err
 	}

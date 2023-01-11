@@ -153,7 +153,6 @@ type StatementContext struct {
 	InDeleteStmt                  bool
 	InSelectStmt                  bool
 	InLoadDataStmt                bool
-	InFillVirtualColumnValue      bool
 	InExplainStmt                 bool
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
@@ -1018,7 +1017,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 // This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 // see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
 func (sc *StatementContext) ShouldClipToZero() bool {
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue || sc.InFillVirtualColumnValue
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
