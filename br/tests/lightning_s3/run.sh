@@ -34,8 +34,7 @@ DBPATH="$TEST_DIR/s3.mydump"
 export MINIO_ACCESS_KEY=s3accesskey
 export MINIO_SECRET_KEY=s3secretkey
 export MINIO_BROWSER=off
-# revert it!
-export S3_ENDPOINT=0.0.0.0:9900
+export S3_ENDPOINT=127.0.0.1:9900
 rm -rf "${TEST_DIR:?}/${DB:?}"
 mkdir -p "$TEST_DIR/$DB"
 bin/minio server --address $S3_ENDPOINT "$DBPATH" &
