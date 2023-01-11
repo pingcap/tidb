@@ -18,7 +18,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -58,24 +62,32 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.FileLocRef == ast.FileLocServer {
 		return errors.New("Load Data: don't support load data without local field")
 	}
-	e.loadDataInfo.OnDuplicate = e.OnDuplicate
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
 		return errors.New("Load Data: don't support load data terminated is nil")
 	}
-
-	// TODO: for FileLocRemote, do the load here
-	sctx := e.loadDataInfo.ctx
-	val := sctx.Value(LoadDataVarKey)
-	if val != nil {
-		sctx.SetValue(LoadDataVarKey, nil)
-		return errors.New("Load Data: previous load data option isn't closed normal")
-	}
 	if e.loadDataInfo.Path == "" {
 		return errors.New("Load Data: infile path is empty")
 	}
-	sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+	if e.loadDataInfo.Table.Meta().IsBaseTable() {
+		return errors.New("can only load data into base tables")
+	}
 
+	switch e.FileLocRef {
+	case ast.FileLocServer:
+		panic("should never happen")
+	case ast.FileLocClient:
+		// let caller use handleQuerySpecial to read data in this connection
+		sctx := e.loadDataInfo.ctx
+		val := sctx.Value(LoadDataVarKey)
+		if val != nil {
+			sctx.SetValue(LoadDataVarKey, nil)
+			return errors.New("Load Data: previous load data option isn't closed normal")
+		}
+		sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+	case ast.FileLocRemote:
+		// TODO implement it
+	}
 	return nil
 }
 
@@ -131,6 +143,109 @@ type LoadDataInfo struct {
 type FieldMapping struct {
 	Column  *table.Column
 	UserVar *ast.VariableExpr
+}
+
+func (e *LoadDataInfo) Load(ctx context.Context, readerFn func() ([]byte, error)) error {
+	e.InitQueues()
+	e.SetMaxRowsInBatch(uint64(e.Ctx.GetSessionVars().DMLBatchSize))
+	e.StartStopWatcher()
+	// let stop watcher goroutine quit
+	defer e.ForceQuit()
+	err := sessiontxn.NewTxn(ctx, e.Ctx)
+	if err != nil {
+		return err
+	}
+	// processStream process input data, enqueue commit task
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go processStream(ctx, readerFn, e, wg)
+	err = e.CommitWork(ctx)
+	wg.Wait()
+	return err
+}
+
+// processStream process input stream from network
+func processStream(ctx context.Context, readerFn func() ([]byte, error), loadDataInfo *LoadDataInfo, wg *sync.WaitGroup) {
+	var err error
+	var shouldBreak bool
+	var prevData, curData []byte
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("process routine panicked",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+		}
+		if err != nil || r != nil {
+			loadDataInfo.ForceQuit()
+		} else {
+			loadDataInfo.CloseTaskQueue()
+		}
+		wg.Done()
+	}()
+	for {
+		curData, err = readerFn()
+		if err != nil {
+			if terror.ErrorNotEqual(err, io.EOF) {
+				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
+				break
+			}
+		}
+		if len(curData) == 0 {
+			loadDataInfo.Drained = true
+			shouldBreak = true
+			if len(prevData) == 0 {
+				break
+			}
+		}
+		select {
+		case <-loadDataInfo.QuitCh:
+			err = errors.New("processStream forced to quit")
+		default:
+		}
+		if err != nil {
+			break
+		}
+		// prepare batch and enqueue task
+		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
+		if err != nil {
+			break
+		}
+		if shouldBreak {
+			break
+		}
+	}
+	if err != nil {
+		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+		return
+	}
+	if err = loadDataInfo.EnqOneTask(ctx); err != nil {
+		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+		return
+	}
+}
+
+func insertDataWithCommit(ctx context.Context, prevData,
+	curData []byte, loadDataInfo *LoadDataInfo) ([]byte, error) {
+	var err error
+	var reachLimit bool
+	for {
+		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
+		if err != nil {
+			return nil, err
+		}
+		if !reachLimit {
+			break
+		}
+		// push into commit task queue
+		err = loadDataInfo.EnqOneTask(ctx)
+		if err != nil {
+			return prevData, err
+		}
+		curData = prevData
+		prevData = nil
+	}
+	return prevData, nil
 }
 
 // reorderColumns reorder the e.insertColumns according to the order of columnNames
