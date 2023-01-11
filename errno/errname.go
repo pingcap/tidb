@@ -1102,7 +1102,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrColumnInChange: mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
 	// TiKV/PD errors.
-	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
+	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),
 	ErrTiKVServerBusy:            mysql.Message("TiKV server is busy", nil),
 	ErrTiFlashServerTimeout:      mysql.Message("TiFlash server timeout", nil),
