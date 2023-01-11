@@ -8309,6 +8309,19 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 	)`)
 }
 
+// https://github.com/pingcap/tidb/issues/36888.
+func TestIssue36888(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+
+	tk.MustExec("INSERT INTO t0 VALUES (NULL);")
+	tk.MustQuery("SELECT t0.c0 FROM t0 LEFT JOIN t1 ON t0.c0>=t1.c0 WHERE (CONCAT_WS(t0.c0, t1.c0) IS NULL);").Check(testkit.Rows("<nil>"))
+}
+
+// https://github.com/pingcap/tidb/issues/40285.
 func TestIssue40285(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
