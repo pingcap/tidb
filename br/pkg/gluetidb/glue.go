@@ -136,6 +136,10 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err = session.InitMDLVariable(store); err != nil {
+		return errors.Trace(err)
+	}
+
 	// because domain was created during the whole program exists.
 	// and it will register br info to info syncer.
 	// we'd better close it as soon as possible.
