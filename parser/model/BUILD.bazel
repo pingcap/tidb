@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//parser/auth",
         "//parser/charset",
+        "//parser/duration",
         "//parser/mysql",
         "//parser/terror",
         "//parser/types",

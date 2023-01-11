@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -31,8 +32,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // JSONTable is used for dumping statistics.
@@ -45,6 +48,7 @@ type JSONTable struct {
 	Count        int64                  `json:"count"`
 	ModifyCount  int64                  `json:"modify_count"`
 	Partitions   map[string]*JSONTable  `json:"partitions"`
+	Version      uint64                 `json:"version"`
 }
 
 type jsonExtendedStats struct {
@@ -131,8 +135,21 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
 	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
 }
 
+var (
+	dumpHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "success")
+	dumpHistoricalStatsFailedCounter  = metrics.HistoricalStatsCounter.WithLabelValues("dump", "fail")
+)
+
 // DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history
-func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (*JSONTable, error) {
+func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (jt *JSONTable, err error) {
+	defer func() {
+		if err == nil {
+			dumpHistoricalStatsSuccessCounter.Inc()
+		} else {
+			dumpHistoricalStatsFailedCounter.Inc()
+		}
+	}()
+
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return h.tableHistoricalStatsToJSON(tableInfo.ID, snapshot)
@@ -158,9 +175,10 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 	if isDynamicMode {
 		tbl, err := h.tableHistoricalStatsToJSON(tableInfo.ID, snapshot)
 		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if tbl != nil {
+			logutil.BgLogger().Warn("dump global historical stats failed",
+				zap.Int64("table-id", tableInfo.ID),
+				zap.String("table-name", tableInfo.Name.String()))
+		} else if tbl != nil {
 			jsonTbl.Partitions["global"] = tbl
 		}
 	}
@@ -214,6 +232,7 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		Indices:      make(map[string]*jsonColumn, len(tbl.Indices)),
 		Count:        tbl.Count,
 		ModifyCount:  tbl.ModifyCount,
+		Version:      tbl.Version,
 	}
 	for _, col := range tbl.Columns {
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}

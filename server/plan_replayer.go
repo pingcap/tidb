@@ -115,7 +115,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 			return
 		}
 		if handler.downloadedFilename == "plan_replayer" {
-			content, err = handlePlanReplayerContinuesCaptureFile(content, path, handler)
+			content, err = handlePlanReplayerCaptureFile(content, path, handler)
 			if err != nil {
 				writeError(w, err)
 				return
@@ -219,8 +219,8 @@ func isExists(path string) (bool, error) {
 	return true, nil
 }
 
-func handlePlanReplayerContinuesCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
-	if !strings.Contains(handler.filePath, "continues_replayer") {
+func handlePlanReplayerCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
+	if !strings.Contains(handler.filePath, "capture_replayer") {
 		return content, nil
 	}
 	b := bytes.NewReader(content)
@@ -331,7 +331,7 @@ func dumpJSONStatsIntoZip(tbls map[int64]*tblInfo, content []byte, path string) 
 	if err != nil {
 		return "", err
 	}
-	newPath := fmt.Sprintf("copy_%v.zip", path[0:len(path)-4])
+	newPath := strings.Replace(path, "capture_replayer", "copy_capture_replayer", 1)
 	zf, err := os.Create(newPath)
 	if err != nil {
 		return "", err

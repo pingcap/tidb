@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -67,6 +68,7 @@ const (
 	totalLockedRegionsOffset
 	startTSOffset
 	commitTSOffset
+	ttlJobEnableOffSet
 )
 
 func closePDSchedule() error {
@@ -123,6 +125,18 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
+func getTiDBTTLJobEnable(sess sessionctx.Context) (string, error) {
+	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBTTLJobEnable)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return val, nil
+}
+
+func setTiDBTTLJobEnable(ctx context.Context, sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBTTLJobEnable, value)
+}
+
 func setTiDBEnableAutoAnalyze(ctx context.Context, sess sessionctx.Context, value string) error {
 	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBEnableAutoAnalyze, value)
 }
@@ -147,6 +161,17 @@ func getTiDBSuperReadOnly(sess sessionctx.Context) (string, error) {
 	return val, nil
 }
 
+func isFlashbackSupportedDDLAction(action model.ActionType) bool {
+	switch action {
+	case model.ActionSetTiFlashReplica, model.ActionUpdateTiFlashReplicaStatus, model.ActionAlterPlacementPolicy,
+		model.ActionAlterTablePlacement, model.ActionAlterTablePartitionPlacement, model.ActionCreatePlacementPolicy,
+		model.ActionDropPlacementPolicy, model.ActionModifySchemaDefaultPlacement:
+		return false
+	default:
+		return true
+	}
+}
+
 func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
 		return err
@@ -164,25 +189,56 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	if err = setTiDBSuperReadOnly(d.ctx, sess, variable.On); err != nil {
 		return err
 	}
+	if err = setTiDBTTLJobEnable(d.ctx, sess, variable.Off); err != nil {
+		return err
+	}
 
 	nowSchemaVersion, err := t.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	flashbackSchemaVersion, err := meta.NewSnapshotMeta(d.store.GetSnapshot(kv.NewVersion(flashbackTS))).GetSchemaVersion()
+	flashbackSnapshotMeta := meta.NewSnapshotMeta(d.store.GetSnapshot(kv.NewVersion(flashbackTS)))
+	flashbackSchemaVersion, err := flashbackSnapshotMeta.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// If flashbackSchemaVersion not same as nowSchemaVersion, we've done ddl during [flashbackTs, now).
+	flashbackTSString := oracle.GetTimeFromTS(flashbackTS).String()
+
+	// Check if there is an upgrade during [flashbackTS, now)
+	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb as of timestamp '%s' where VARIABLE_NAME='tidb_server_version'", flashbackTSString)
+	rows, err := newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	if err != nil || len(rows) == 0 {
+		return errors.Errorf("Get history `tidb_server_version` failed, can't do flashback")
+	}
+	sql = fmt.Sprintf("select 1 from mysql.tidb where VARIABLE_NAME='tidb_server_version' and VARIABLE_VALUE=%s", rows[0].GetString(0))
+	rows, err = newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("Detected TiDB upgrade during [%s, now), can't do flashback", flashbackTSString)
+	}
+
+	// Check is there a DDL task at flashbackTS.
+	sql = fmt.Sprintf("select count(*) from mysql.%s as of timestamp '%s'", JobTable, flashbackTSString)
+	rows, err = newSession(sess).execute(d.ctx, sql, "check_history_job")
+	if err != nil || len(rows) == 0 {
+		return errors.Errorf("Get history ddl jobs failed, can't do flashback")
+	}
+	if rows[0].GetInt64(0) != 0 {
+		return errors.Errorf("Detected another DDL job at %s, can't do flashback", flashbackTSString)
+	}
+
+	// If flashbackSchemaVersion not same as nowSchemaVersion, we should check all schema diffs during [flashbackTs, now).
 	for i := flashbackSchemaVersion + 1; i <= nowSchemaVersion; i++ {
 		diff, err := t.GetSchemaDiff(i)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if diff != nil && diff.Type != model.ActionFlashbackCluster {
-			return errors.Errorf("Detected schema change due to another DDL job during [%s, now), can't do flashback", oracle.GetTimeFromTS(flashbackTS))
+		if diff != nil && !isFlashbackSupportedDDLAction(diff.Type) {
+			return errors.Errorf("Detected unsupported DDL job type(%s) during [%s, now), can't do flashback", diff.Type.String(), flashbackTSString)
 		}
 	}
 
@@ -211,7 +267,7 @@ type flashbackID struct {
 
 func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []flashbackID) []flashbackID {
 	var excluded bool
-	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") {
+	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") && tableName != "gc_delete_range" {
 		excluded = true
 	}
 	flashbackIDs = append(flashbackIDs, flashbackID{
@@ -269,6 +325,14 @@ func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
 			EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[len(flashbackIDs)-1].id + 1),
 		})
 	}
+
+	// The meta data key ranges.
+	metaStartKey := tablecodec.EncodeMetaKey(meta.DBkey(0), meta.TableKey(0))
+	metaEndKey := tablecodec.EncodeMetaKey(meta.DBkey(math.MaxInt64), meta.TableKey(math.MaxInt64))
+	keyRanges = append(keyRanges, kv.KeyRange{
+		StartKey: metaStartKey,
+		EndKey:   metaEndKey,
+	})
 
 	return keyRanges, nil
 }
@@ -505,9 +569,9 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue, readOnlyValue string
+	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -547,6 +611,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		job.Args[readOnlyOffset] = &readOnlyValue
+		ttlJobEnableValue, err = getTiDBTTLJobEnable(sess)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.Args[ttlJobEnableOffSet] = &ttlJobEnableValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
@@ -633,7 +703,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
-		return ver, nil
+		return updateSchemaVersion(d, t, job)
 	}
 	return ver, nil
 }
@@ -646,10 +716,10 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 
 	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue, readOnlyValue string
+	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 	var gcEnabled bool
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
@@ -670,6 +740,14 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		if err = setTiDBSuperReadOnly(w.ctx, sess, readOnlyValue); err != nil {
 			return err
 		}
+
+		if job.IsCancelled() {
+			// only restore `tidb_ttl_job_enable` when flashback failed
+			if err = setTiDBTTLJobEnable(w.ctx, sess, ttlJobEnableValue); err != nil {
+				return err
+			}
+		}
+
 		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
 	})
 	if err != nil {

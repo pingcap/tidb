@@ -944,7 +944,6 @@ const (
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
-	ErrDependentByPartitionFunctional                        = 3885
 	ErrInvalidJsonValueForFuncIndex                          = 3903 //nolint: revive
 	ErrJsonValueOutOfRangeForFuncIndex                       = 3904 //nolint: revive
 	ErrFunctionalIndexDataIsTooLong                          = 3907

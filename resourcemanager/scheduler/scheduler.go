@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,9 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !featuretag
+package scheduler
 
-package concurrencyddl
+import (
+	"github.com/pingcap/tidb/resourcemanager/util"
+)
 
-// TiDBEnableConcurrentDDL is a feature tag
-const TiDBEnableConcurrentDDL bool = true
+// Command is the command for scheduler
+type Command int
+
+const (
+	// Downclock is to reduce the number of concurrency.
+	Downclock Command = iota
+	// Hold is to hold the number of concurrency.
+	Hold
+	// Overclock is to increase the number of concurrency.
+	Overclock
+)
+
+// Scheduler is a scheduler interface
+type Scheduler interface {
+	Tune(component util.Component, p util.GorotinuePool) Command
+}
