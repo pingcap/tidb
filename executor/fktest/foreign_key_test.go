@@ -2520,3 +2520,228 @@ func TestTableLockInForeignKeyCascade(t *testing.T) {
 	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("2", "3"))
 	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("2", "3"))
 }
+<<<<<<< HEAD
+=======
+
+func TestForeignKeyIssue39732(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create user 'u1'@'%' identified by '';")
+	tk.MustExec("GRANT ALL PRIVILEGES ON *.* TO 'u1'@'%'")
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	require.NoError(t, err)
+	tk.MustExec("create table t1 (id int key, leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("insert into t1 values (1, null), (10, 1), (11, 1), (20, 10)")
+	tk.MustExec(`prepare stmt1 from 'delete from t1 where id = ?';`)
+	tk.MustExec(`set @a = 1;`)
+	tk.MustExec("execute stmt1 using @a;")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows())
+}
+
+func TestForeignKeyOnReplaceIntoChildTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t_data (id int, a int, b int)")
+	tk.MustExec("insert into t_data (id, a, b) values (1, 1, 1), (2, 2, 2);")
+	for _, ca := range foreignKeyTestCase1 {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("replace into t1 (id, a, b) values (1, 1, 1);")
+		tk.MustExec("replace into t2 (id, a, b) values (1, 1, 1)")
+		tk.MustGetDBError("replace into t1 (id, a, b) values (1, 2, 3);", plannercore.ErrRowIsReferenced2)
+		if !ca.notNull {
+			tk.MustExec("replace into t2 (id, a, b) values (2, null, 1)")
+			tk.MustExec("replace into t2 (id, a, b) values (3, 1, null)")
+			tk.MustExec("replace into t2 (id, a, b) values (4, null, null)")
+		}
+		tk.MustGetDBError("replace into t2 (id, a, b) values (5, 1, 0);", plannercore.ErrNoReferencedRow2)
+		tk.MustGetDBError("replace into t2 (id, a, b) values (6, 0, 1);", plannercore.ErrNoReferencedRow2)
+		tk.MustGetDBError("replace into t2 (id, a, b) values (7, 2, 2);", plannercore.ErrNoReferencedRow2)
+		// Test replace into from select.
+		tk.MustExec("delete from t2")
+		tk.MustExec("replace into t2 (id, a, b) select id, a, b from t_data where t_data.id=1")
+		tk.MustGetDBError("replace into t2 (id, a, b) select id, a, b from t_data where t_data.id=2", plannercore.ErrNoReferencedRow2)
+
+		// Test in txn
+		tk.MustExec("delete from t2")
+		tk.MustExec("begin")
+		tk.MustExec("delete from t1 where a=1")
+		tk.MustGetDBError("replace into t2 (id, a, b) values (1, 1, 1)", plannercore.ErrNoReferencedRow2)
+		tk.MustExec("replace into t1 (id, a, b) values (2, 2, 2)")
+		tk.MustExec("replace into t2 (id, a, b) values (2, 2, 2)")
+		tk.MustGetDBError("replace into t1 (id, a, b) values (2, 2, 3);", plannercore.ErrRowIsReferenced2)
+		tk.MustExec("rollback")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
+		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows())
+	}
+
+	// Case-10: test primary key is handle and contain foreign key column, and foreign key column has default value.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.MustExec("create table t1 (id int,a int, primary key(id));")
+	tk.MustExec("create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id));")
+	tk.MustExec("replace into t1 values (1, 1);")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustGetDBError("replace into t2 (id) values (10);", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("replace into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
+
+	// Case-11: test primary key is handle and contain foreign key column, and foreign key column doesn't have default value.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (id int key,a int, index (a), foreign key fk(a) references t1(id));")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustExec("replace into t2 (id) values (10);")
+	tk.MustGetDBError("replace into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
+}
+
+func TestForeignKeyOnReplaceInto(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int, index (a));")
+	tk.MustExec("create table t2 (id int key, a int, index (a), constraint fk_1 foreign key (a) references t1(a));")
+	tk.MustExec("replace into t1 values (1, 1);")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustExec("replace into t2 (id) values (2);")
+	tk.MustGetDBError("replace into t2 values (1, 2);", plannercore.ErrNoReferencedRow2)
+	// Test fk check on replace into parent table.
+	tk.MustGetDBError("replace into t1 values (1, 2);", plannercore.ErrRowIsReferenced2)
+	// Test fk cascade delete on replace into parent table.
+	tk.MustExec("alter table t2 drop foreign key fk_1")
+	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete cascade")
+	tk.MustExec("replace into t1 values (1, 2);")
+	tk.MustQuery("select id, a from t1").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 <nil>"))
+	// Test fk cascade delete on replace into parent table.
+	tk.MustExec("alter table t2 drop foreign key fk_1")
+	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete set null")
+	tk.MustExec("delete from t2")
+	tk.MustExec("delete from t1")
+	tk.MustExec("replace into t1 values (1, 1);")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustExec("replace into t1 values (1, 2);")
+	tk.MustQuery("select id, a from t1").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select id, a from t2").Check(testkit.Rows("1 <nil>"))
+
+	// Test cascade delete in self table by replace into statement.
+	tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (id int key, name varchar(10), leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("replace into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("replace into t1 values (100, 'l2_a1', 10), (101, 'l2_a2', 10), (102, 'l2_a3', 10)")
+	tk.MustExec("replace into t1 values (110, 'l2_b1', 11), (111, 'l2_b2', 11), (112, 'l2_b3', 11)")
+	tk.MustExec("replace into t1 values (120, 'l2_c1', 12), (121, 'l2_c2', 12), (122, 'l2_c3', 12)")
+	tk.MustExec("replace into t1 values (1000,'l3_a1', 100)")
+	tk.MustExec("replace into t1 values (1, 'new-boss', null)")
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows("1"))
+}
+
+func TestForeignKeyLargeTxnErr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
+	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890');")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t1 (name) select name from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
+	tk.MustExec("update t1 set pid=1 where id>1")
+	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
+	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	defer func() {
+		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
+	}()
+	// Set the limitation to a small value, make it easier to reach the limitation.
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 10240)
+	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
+	// foreign key cascade behaviour will cause ErrTxnTooLarge.
+	tk.MustGetDBError("update t1 set id=id+100000 where id=1", kv.ErrTxnTooLarge)
+	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
+	tk.MustGetDBError("update t1 set id=id+100000 where id=1", kv.ErrTxnTooLarge)
+	tk.MustQuery("select id,pid from t1 where id<3 order by id").Check(testkit.Rows("1 <nil>", "2 1"))
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("update t1 set id=id+100000 where id=1")
+	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
+}
+
+func TestForeignKeyAndLockView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key)")
+	tk.MustExec("create table t2 (id int key, foreign key (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("update t2 set id=2")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@foreign_key_checks=1")
+	tk2.MustExec("use test")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("update t1 set id=2 where id=1")
+		tk2.MustExec("commit")
+	}()
+	time.Sleep(time.Millisecond * 200)
+	_, digest := parser.NormalizeDigest("update t1 set id=2 where id=1")
+	tk.MustQuery("select CURRENT_SQL_DIGEST from information_schema.tidb_trx where state='LockWaiting' and db='test'").Check(testkit.Rows(digest.String()))
+	tk.MustGetErrMsg("update t1 set id=2", "[executor:1213]Deadlock found when trying to get lock; try restarting transaction")
+	wg.Wait()
+}
+
+func TestForeignKeyAndMemoryTracker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
+	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz');")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t1 (name) select name from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
+	tk.MustExec("update t1 set pid=1 where id>1")
+	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
+	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("set @@tidb_mem_quota_query=40960;")
+	// foreign key cascade behaviour will exceed memory quota.
+	err := tk.ExecToErr("update t1 set id=id+100000 where id=1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	tk.MustQuery("select id,pid from t1 where id = 1").Check(testkit.Rows("1 <nil>"))
+	tk.MustExec("set @@foreign_key_checks=0")
+	// After disable foreign_key_checks, following DML will execute successful.
+	tk.MustExec("update t1 set id=id+100000 where id=1")
+	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
+}
+
+func TestForeignKeyMetaInKeyColumnUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index(a, b));")
+	tk.MustExec("create table t2 (a int, b int, index(a, b), constraint fk foreign key(a, b) references t1(a, b));")
+	tk.MustQuery("select CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME from " +
+		"INFORMATION_SCHEMA.KEY_COLUMN_USAGE where CONSTRAINT_SCHEMA='test' and TABLE_NAME='t2' and REFERENCED_TABLE_SCHEMA is not null and REFERENCED_COLUMN_NAME is not null;").
+		Check(testkit.Rows("fk test t2 a test t1 a", "fk test t2 b test t1 b"))
+}
+>>>>>>> cefb26146b (executor: fix issue of KEY_COLUMN_USAGE table return wrong result about foreign key column (#40491))
