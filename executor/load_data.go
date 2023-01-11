@@ -229,6 +229,9 @@ func processStream(ctx context.Context, readerFn func() ([]byte, error), loadDat
 		if len(curData) == 0 {
 			loadDataInfo.Drained = true
 			shouldBreak = true
+			if terror.ErrorEqual(err, io.EOF) {
+				err = nil
+			}
 			if len(prevData) == 0 {
 				break
 			}
