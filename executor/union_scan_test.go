@@ -17,7 +17,6 @@ package executor_test
 import (
 	"encoding/hex"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -417,14 +416,6 @@ func TestForApplyAndUnionScan(t *testing.T) {
 }
 
 func TestIssue28073(t *testing.T) {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	dumpChan := make(chan struct{})
-	defer func() {
-		close(dumpChan)
-		wg.Wait()
-	}()
-	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

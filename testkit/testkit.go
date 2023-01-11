@@ -19,10 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
 	"runtime"
-	"runtime/pprof"
 	"strings"
 	"sync"
 	"testing"
@@ -537,35 +534,4 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
-}
-
-// DebugDumpOnTimeout will dump stack traces and possible blockers after given timeout.
-// wg is the WaitGroup to mark as done when finished (to avoid runaway goroutines)
-// c is the channel that will signal or close to cancel the timeout.
-func DebugDumpOnTimeout(wg *sync.WaitGroup, c chan struct{}, d time.Duration) {
-	select {
-	case <-time.After(d):
-		log.Print("Injected timeout, dumping all goroutines:")
-		_ = pprof.Lookup("goroutine").WriteTo(os.Stdout, 2)
-		log.Print("dumping all stack traces led to possible block:")
-		_ = pprof.Lookup("block").WriteTo(os.Stdout, 2)
-		log.Print("dumping all stack traces holding mutexes:")
-		_ = pprof.Lookup("mutex").WriteTo(os.Stdout, 2)
-		log.Print("dumping all stack traces led to creation of new OS threads:")
-		_ = pprof.Lookup("threadcreate").WriteTo(os.Stdout, 2)
-		log.Print("Waiting 2 seconds and to see if things changed...")
-		time.Sleep(2 * time.Second)
-		log.Print("Injected timeout, dumping all goroutines:")
-		_ = pprof.Lookup("goroutine").WriteTo(os.Stdout, 2)
-		log.Print("dumping all stack traces led to possible block:")
-		_ = pprof.Lookup("block").WriteTo(os.Stdout, 2)
-		log.Print("dumping all stack traces holding mutexes:")
-		_ = pprof.Lookup("mutex").WriteTo(os.Stdout, 2)
-		log.Print("dumping all stack traces led to creation of new OS threads:")
-		_ = pprof.Lookup("threadcreate").WriteTo(os.Stdout, 2)
-		panic("Injected timeout")
-	case <-c:
-		// Test finished
-	}
-	wg.Done()
 }
