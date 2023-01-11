@@ -1669,6 +1669,19 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	if err != nil {
 		return nil, err
 	}
+	isAllColumn := func(leftOriginPlan LogicalPlan) []bool {
+		switch lp := leftOriginPlan.(type) {
+		case *LogicalProjection:
+			result := make([]bool, 0, len(lp.Exprs))
+			for _, expr := range lp.Exprs {
+				_, ok := expr.(*expression.Column)
+				result = append(result, ok)
+			}
+			return result
+		}
+		return nil
+	}
+	leftIsColumnList := isAllColumn(leftOriginPlan)
 	joinPlan := LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(leftPlan.Schema())
@@ -1680,7 +1693,7 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		if err != nil {
 			return nil, err
 		}
-		if leftCol.RetType.GetType() != rightCol.RetType.GetType() {
+		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || (leftIsColumnList != nil && !leftIsColumnList[j]) {
 			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
 		} else {
 			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
