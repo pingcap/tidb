@@ -1611,14 +1611,13 @@ func TestMDLTruncateTable(t *testing.T) {
 	}
 
 	hook.OnJobUpdatedExported.Store(&f)
+	dom.DDL().SetHook(hook)
 
 	go func() {
 		tk2.MustExec("truncate table test.t")
 		timetk2 = time.Now()
 		wg.Done()
 	}()
-
-	dom.DDL().SetHook(hook)
 
 	time.Sleep(2 * time.Second)
 	timeMain := time.Now()
