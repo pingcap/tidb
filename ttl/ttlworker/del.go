@@ -111,6 +111,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 				zap.Error(err),
 				zap.String("table", t.tbl.Schema.O+"."+t.tbl.Name.O),
 			)
+			return
 		}
 
 		tracer.EnterPhase(metrics.PhaseWaitToken)
