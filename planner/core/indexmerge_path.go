@@ -634,6 +634,9 @@ func (ds *DataSource) buildPartialPathUp4MVIndex(partialPaths []*util.AccessPath
 	return indexMergePath
 }
 
+// buildPartialPaths4MVIndex builds partial paths by using these accessFilters upon this MVIndex.
+// The accessFilters must be corresponding to these idxCols.
+// OK indicates whether it builds successfully. These partial paths should be ignored if ok==false.
 func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expression,
 	idxCols []*expression.Column, mvIndex *model.IndexInfo) (
 	partialPaths []*util.AccessPath, isIntersection bool, ok bool, err error) {
