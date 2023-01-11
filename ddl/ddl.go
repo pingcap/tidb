@@ -1343,7 +1343,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = newReorgHandler(t, sess).GetDDLReorgHandle(reorgJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(sess).GetDDLReorgHandle(reorgJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1582,6 +1582,19 @@ func (s *session) execute(ctx context.Context, query string, label string) ([]ch
 
 func (s *session) session() sessionctx.Context {
 	return s.Context
+}
+
+func (s *session) runInTxn(f func(*session) error) (err error) {
+	err = s.begin()
+	if err != nil {
+		return err
+	}
+	err = f(s)
+	if err != nil {
+		s.rollback()
+		return
+	}
+	return errors.Trace(s.commit())
 }
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.
