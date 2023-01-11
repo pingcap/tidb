@@ -946,7 +946,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	}
 	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		IsLocal:      v.IsLocal,
+		FileLocRef:   v.FileLocRef,
 		OnDuplicate:  v.OnDuplicate,
 		loadDataInfo: loadDataInfo,
 	}

@@ -666,6 +666,8 @@ func TestDMLStmt(t *testing.T) {
 		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE `t1` FIELDS TERMINATED BY ','"},
 		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' REPLACE INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' REPLACE INTO TABLE `t1` FIELDS TERMINATED BY ','"},
 
+		{"load data remote infile 's3://bucket-name/t.csv' into table t", true, "LOAD DATA REMOTE INFILE 's3://bucket-name/t.csv' INTO TABLE `t`"},
+
 		// select for update/share
 		{"select * from t for update", true, "SELECT * FROM `t` FOR UPDATE"},
 		{"select * from t for share", true, "SELECT * FROM `t` FOR SHARE"},

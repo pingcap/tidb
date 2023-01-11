@@ -13776,17 +13776,17 @@ RevokeRoleStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocationOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
 	{
 		x := &ast.LoadDataStmt{
+			FileLocRef:         $3.(ast.FileLocRefTp),
 			Path:               $5,
 			OnDuplicate:        $6.(ast.OnDuplicateKeyHandlingType),
 			Table:              $9.(*ast.TableName),
 			ColumnsAndUserVars: $14.([]*ast.ColumnNameOrUserVar),
 			IgnoreLines:        $13.(uint64),
 		}
-		if $3 != nil {
-			x.IsLocal = true
+		if x.FileLocRef == ast.FileLocClient {
 			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
 			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
 			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
@@ -14452,12 +14452,14 @@ AlterSequenceOption:
  *	]
  *******************************************************************/
 IndexAdviseStmt:
-	"INDEX" "ADVISE" LocationOpt "INFILE" stringLit MaxMinutesOpt MaxIndexNumOpt Lines
+	"INDEX" "ADVISE" LocalOpt "INFILE" stringLit MaxMinutesOpt MaxIndexNumOpt Lines
 	{
 		x := &ast.IndexAdviseStmt{
-			FileLocRef: $3.(ast.FileLocation),
 			Path:       $5,
 			MaxMinutes: $6.(uint64),
+		}
+		if $3 != nil {
+			x.IsLocal = true
 		}
 		if $7 != nil {
 			x.MaxIndexNum = $7.(*ast.MaxIndexNumClause)

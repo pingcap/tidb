@@ -46,7 +46,7 @@ var (
 type LoadDataExec struct {
 	baseExecutor
 
-	IsLocal      bool
+	FileLocRef   ast.FileLocRefTp
 	OnDuplicate  ast.OnDuplicateKeyHandlingType
 	loadDataInfo *LoadDataInfo
 }
@@ -55,7 +55,7 @@ type LoadDataExec struct {
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	// TODO: support load data without local field.
-	if !e.IsLocal {
+	if e.FileLocRef == ast.FileLocServer {
 		return errors.New("Load Data: don't support load data without local field")
 	}
 	e.loadDataInfo.OnDuplicate = e.OnDuplicate
@@ -64,6 +64,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.New("Load Data: don't support load data terminated is nil")
 	}
 
+	// TODO: for FileLocRemote, do the load here
 	sctx := e.loadDataInfo.ctx
 	val := sctx.Value(LoadDataVarKey)
 	if val != nil {
