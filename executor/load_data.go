@@ -15,10 +15,12 @@
 package executor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -86,9 +89,36 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
 	case ast.FileLocRemote:
-		// TODO implement it
+		return e.loadFromRemote(ctx)
 	}
 	return nil
+}
+
+func (e *LoadDataExec) loadFromRemote(ctx context.Context) error {
+	u, err := storage.ParseRawURL(e.loadDataInfo.Path)
+	if err != nil {
+		return err
+	}
+	var filename string
+	u.Path, filename = filepath.Split(u.Path)
+	b, err := storage.ParseBackendFromURL(u, nil)
+	if err != nil {
+		return err
+	}
+	s, err := storage.New(ctx, b, nil)
+	if err != nil {
+		return err
+	}
+	fileReader, err := s.Open(ctx, filename)
+	if err != nil {
+		return err
+	}
+	defer fileReader.Close()
+	reader := bufio.NewReader(fileReader)
+
+	return e.loadDataInfo.Load(ctx, func() ([]byte, error) {
+		return reader.ReadBytes('\n')
+	})
 }
 
 // Close implements the Executor Close interface.
@@ -116,6 +146,7 @@ type CommitTask struct {
 }
 
 // LoadDataInfo saves the information of loading data operation.
+// TODO: rename it and remove unnecessary public methods.
 type LoadDataInfo struct {
 	*InsertValues
 
@@ -145,6 +176,7 @@ type FieldMapping struct {
 	UserVar *ast.VariableExpr
 }
 
+// Load reads from readerFn and do load data job.
 func (e *LoadDataInfo) Load(ctx context.Context, readerFn func() ([]byte, error)) error {
 	e.InitQueues()
 	e.SetMaxRowsInBatch(uint64(e.Ctx.GetSessionVars().DMLBatchSize))
