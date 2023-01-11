@@ -3342,7 +3342,7 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	if err != nil {
 		return nil, err
 	}
-	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	return &expression.Constant{Value: value, RetType: col.FieldType.Clone()}, nil
 }
 
 // resolveGeneratedColumns resolves generated columns with their generation

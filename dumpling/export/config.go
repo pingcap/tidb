@@ -17,6 +17,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/util"
@@ -209,6 +210,9 @@ func (conf *Config) GetDSN(db string) string {
 	if conf.AllowCleartextPasswords {
 		dsn += "&allowCleartextPasswords=1"
 	}
+	failpoint.Inject("SetWaitTimeout", func(val failpoint.Value) {
+		dsn += "&wait_timeout=" + strconv.Itoa(val.(int))
+	})
 	return dsn
 }
 
