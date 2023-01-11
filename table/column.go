@@ -698,7 +698,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 				return err
 			}
 
-			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !sctx.GetSessionVars().StmtCtx.ShouldClipToZero() {
+			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && castDatum.GetUint64() > 0 && !sctx.GetSessionVars().StmtCtx.ShouldClipToZero() {
 				switch datum.Kind() {
 				case types.KindInt64:
 					if datum.GetInt64() < 0 {
