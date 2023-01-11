@@ -528,6 +528,7 @@ import (
 	recover               "RECOVER"
 	redundant             "REDUNDANT"
 	reload                "RELOAD"
+	remote                "REMOTE"
 	remove                "REMOVE"
 	reorganize            "REORGANIZE"
 	repair                "REPAIR"
@@ -622,7 +623,7 @@ import (
 	truncate              "TRUNCATE"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
-	ttlJobInterval    "TTL_JOB_INTERVAL"
+	ttlJobInterval        "TTL_JOB_INTERVAL"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -1115,6 +1116,7 @@ import (
 	LoadDataSetList                        "Load data specifications"
 	LoadDataSetItem                        "Single load data specification"
 	LocalOpt                               "Local opt"
+	LocationOpt                            "Data file location of LOAD DATA"
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	MaxValPartOpt                          "MAXVALUE partition option"
@@ -6221,6 +6223,7 @@ UnReservedKeyword:
 |	"QUICK"
 |	"REBUILD"
 |	"REDUNDANT"
+|	"REMOTE"
 |	"REORGANIZE"
 |	"RESOURCE"
 |	"RESTART"
@@ -13832,6 +13835,19 @@ LocalOpt:
 		$$ = $1
 	}
 
+LocationOpt:
+	{
+		$$ = ast.FileLocServer
+	}
+|	"LOCAL"
+	{
+		$$ = ast.FileLocClient
+	}
+|	"REMOTE"
+	{
+		$$ = ast.FileLocRemote
+	}
+
 Fields:
 	{
 		escape := "\\"
@@ -14436,14 +14452,12 @@ AlterSequenceOption:
  *	]
  *******************************************************************/
 IndexAdviseStmt:
-	"INDEX" "ADVISE" LocalOpt "INFILE" stringLit MaxMinutesOpt MaxIndexNumOpt Lines
+	"INDEX" "ADVISE" LocationOpt "INFILE" stringLit MaxMinutesOpt MaxIndexNumOpt Lines
 	{
 		x := &ast.IndexAdviseStmt{
+			FileLocRef: $3.(ast.FileLocation),
 			Path:       $5,
 			MaxMinutes: $6.(uint64),
-		}
-		if $3 != nil {
-			x.IsLocal = true
 		}
 		if $7 != nil {
 			x.MaxIndexNum = $7.(*ast.MaxIndexNumClause)
