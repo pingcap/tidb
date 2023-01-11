@@ -32,8 +32,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // JSONTable is used for dumping statistics.
@@ -173,9 +175,10 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 	if isDynamicMode {
 		tbl, err := h.tableHistoricalStatsToJSON(tableInfo.ID, snapshot)
 		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if tbl != nil {
+			logutil.BgLogger().Warn("dump global historical stats failed",
+				zap.Int64("table-id", tableInfo.ID),
+				zap.String("table-name", tableInfo.Name.String()))
+		} else if tbl != nil {
 			jsonTbl.Partitions["global"] = tbl
 		}
 	}

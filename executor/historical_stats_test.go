@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
@@ -242,4 +243,66 @@ PARTITION p0 VALUES LESS THAN (6)
 	err = hsWorker.DumpHistoricalStats(tblID, h)
 	require.NoError(t, err)
 	tk.MustQuery("select count(*) from mysql.stats_history").Check(testkit.Rows("2"))
+}
+
+func TestDumpHistoricalStatsByTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (a int, b int, index idx(b))
+PARTITION BY RANGE ( a ) (
+PARTITION p0 VALUES LESS THAN (6)
+)`)
+	// dump historical stats
+	h := dom.StatsHandle()
+
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tbl)
+
+	// dump historical stats
+	hsWorker := dom.GetHistoricalStatsWorker()
+	// only partition p0 stats will be dumped in static mode
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	require.NotEqual(t, tblID, -1)
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	tblID = hsWorker.GetOneHistoricalStatsTable()
+	require.Equal(t, tblID, int64(-1))
+
+	time.Sleep(1 * time.Second)
+	snapshot := oracle.GoTimeToTS(time.Now())
+	jsTable, err := h.DumpHistoricalStatsBySnapshot("test", tbl.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	// only has p0 stats
+	require.NotNil(t, jsTable.Partitions["p0"])
+	require.Nil(t, jsTable.Partitions["global"])
+
+	// change static to dynamic then assert
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("analyze table t")
+	require.NoError(t, err)
+	// global and p0's stats will be dumped
+	tblID = hsWorker.GetOneHistoricalStatsTable()
+	require.NotEqual(t, tblID, -1)
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	tblID = hsWorker.GetOneHistoricalStatsTable()
+	require.NotEqual(t, tblID, -1)
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	time.Sleep(1 * time.Second)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, err = h.DumpHistoricalStatsBySnapshot("test", tbl.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	// has both global and p0 stats
+	require.NotNil(t, jsTable.Partitions["p0"])
+	require.NotNil(t, jsTable.Partitions["global"])
 }
