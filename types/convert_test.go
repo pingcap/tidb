@@ -1248,7 +1248,7 @@ func TestConvertScientificNotation(t *testing.T) {
 		{"123.456e", "", false},
 	}
 	for _, ca := range cases {
-		result, err := ConvertScientificNotation(ca.input)
+		result, err := convertScientificNotation(ca.input)
 		if !ca.succ {
 			require.Error(t, err)
 		} else {
