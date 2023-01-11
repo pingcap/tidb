@@ -17,7 +17,6 @@ package statistics_test
 import (
 	"context"
 	"fmt"
-	"golang.org/x/exp/slices"
 	"math"
 	"os"
 	"regexp"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestCollationColumnEstimate(t *testing.T) {
