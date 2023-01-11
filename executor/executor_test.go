@@ -1528,6 +1528,11 @@ func TestSetOperation(t *testing.T) {
 		"except ( " +
 		"select    `issue40279`.`a` as r0 , elt(2, `issue40279`.`a` , `issue40279`.`a` ) as r1 from `issue40279`);").
 		Check(testkit.Rows("2525518 <nil>"))
+	tk.MustExec("drop table if exists t2")
+
+	tk.MustExec("CREATE TABLE `t2` (   `a` varchar(20) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t2 values(0xCED2)")
+	tk.MustQuery("(select elt(2,t2.a,t2.a) from t2) except (select 0xCED2  from t2)").Check(testkit.Rows("我"))
 }
 
 func TestSetOperationOnDiffColType(t *testing.T) {
