@@ -1737,8 +1737,8 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		return nil, err
 	}
 	isAllColumn := func(leftOriginPlan LogicalPlan) []bool {
-		switch lp := leftOriginPlan.(type) {
-		case *LogicalProjection:
+		lp, ok := leftOriginPlan.(*LogicalProjection)
+		if ok {
 			result := make([]bool, 0, len(lp.Exprs))
 			for _, expr := range lp.Exprs {
 				_, ok := expr.(*expression.Column)
