@@ -433,11 +433,14 @@ func (c *castAsArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	arrayType := c.tp.ArrayType()
 	switch arrayType.GetType() {
-	case mysql.TypeYear, mysql.TypeJSON:
+	case mysql.TypeYear, mysql.TypeJSON, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeNewDecimal:
 		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", arrayType.String()))
 	}
 	if arrayType.EvalType() == types.ETString && arrayType.GetCharset() != charset.CharsetUTF8MB4 && arrayType.GetCharset() != charset.CharsetBin {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index", arrayType.String())
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index")
+	}
+	if arrayType.EvalType() == types.ETString && arrayType.GetFlen() == types.UnspecifiedLength {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs")
 	}
 
 	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
@@ -467,22 +470,30 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJS
 		return res, isNull, err
 	}
 
-	if val.TypeCode != types.JSONTypeCodeArray {
-		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing Non-JSON Array type to array")
+	if val.TypeCode == types.JSONTypeCodeObject {
+		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing JSON OBJECT type to array")
 	}
 
-	arrayVals := make([]any, 0, len(b.args))
+	arrayVals := make([]any, 0, 8)
 	ft := b.tp.ArrayType()
 	f := convertJSON2Tp(ft.EvalType())
 	if f == nil {
-		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAS-ing JSON to the target type")
+		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAS-ing data to array of %s", ft.String()))
 	}
-	for i := 0; i < val.GetElemCount(); i++ {
-		item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
+	if val.TypeCode != types.JSONTypeCodeArray {
+		item, err := f(fakeSctx, val, ft)
 		if err != nil {
 			return types.BinaryJSON{}, false, err
 		}
 		arrayVals = append(arrayVals, item)
+	} else {
+		for i := 0; i < val.GetElemCount(); i++ {
+			item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
+			if err != nil {
+				return types.BinaryJSON{}, false, err
+			}
+			arrayVals = append(arrayVals, item)
+		}
 	}
 	return types.CreateBinaryJSON(arrayVals), false, nil
 }
@@ -510,15 +521,21 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
-			return types.ConvertJSONToInt(sc, item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
-		}
-	case types.ETReal, types.ETDecimal:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
-			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 && item.TypeCode != types.JSONTypeCodeFloat64 {
-				return nil, ErrInvalidJSONForFuncIndex
+			jsonToInt, err := types.ConvertJSONToInt(sc, item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
+			if mysql.HasUnsignedFlag(tp.GetFlag()) {
+				return uint64(jsonToInt), err
 			}
-			return types.ConvertJSONToFloat(sc, item)
+			return jsonToInt, err
 		}
+	// TODO: after JSONTypeCodeDecimal supported, we can support cast to array of decimal, after float bug fixed, we can
+	// support cast to array of float/double
+	//case types.ETReal, types.ETDecimal:
+	//	return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+	//		if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 && item.TypeCode != types.JSONTypeCodeFloat64 {
+	//			return nil, ErrInvalidJSONForFuncIndex
+	//		}
+	//		return types.ConvertJSONToFloat(sc, item)
+	//	}
 	case types.ETDatetime:
 		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
 			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
