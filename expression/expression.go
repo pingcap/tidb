@@ -1262,7 +1262,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.Least, ast.Greatest:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_GreatestInt, tipb.ScalarFuncSig_GreatestReal,
-			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal:
+			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal, tipb.ScalarFuncSig_LeastString:
 			return true
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
