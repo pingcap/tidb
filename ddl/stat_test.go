@@ -129,7 +129,7 @@ func TestGetDDLInfo(t *testing.T) {
 	err = addDDLJobs(sess, txn, job)
 	require.NoError(t, err)
 
-	info, err := ddl.GetDDLInfoWithNewTxn(sess)
+	info, err := ddl.GetDDLInfo(sess)
 	require.NoError(t, err)
 	require.Len(t, info.Jobs, 1)
 	require.Equal(t, job, info.Jobs[0])
@@ -139,7 +139,7 @@ func TestGetDDLInfo(t *testing.T) {
 	err = addDDLJobs(sess, txn, job1)
 	require.NoError(t, err)
 
-	info, err = ddl.GetDDLInfoWithNewTxn(sess)
+	info, err = ddl.GetDDLInfo(sess)
 	require.NoError(t, err)
 	require.Len(t, info.Jobs, 2)
 	require.Equal(t, job, info.Jobs[0])

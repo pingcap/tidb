@@ -1305,15 +1305,16 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := getDDLInfo(sess)
+	info, err := GetDDLInfo(s)
 	sess.rollback()
 	return info, err
 }
 
 // GetDDLInfo returns DDL information.
-func getDDLInfo(sess *session) (*Info, error) {
+func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
+	sess := newSession(s)
 	txn, err := sess.txn()
 	if err != nil {
 		return nil, errors.Trace(err)

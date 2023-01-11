@@ -5565,7 +5565,7 @@ func TestAdmin(t *testing.T) {
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("begin")
 	sess := tk.Session()
-	ddlInfo, err := ddl.GetDDLInfoWithNewTxn(sess)
+	ddlInfo, err := ddl.GetDDLInfo(sess)
 	require.NoError(t, err)
 	require.Equal(t, ddlInfo.SchemaVer, row.GetInt64(0))
 	// TODO: Pass this test.
