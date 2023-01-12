@@ -596,9 +596,6 @@ const (
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
-	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
-	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
-
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
@@ -891,8 +888,6 @@ const (
 	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
 	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
 	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
-	// TiDBTTLJobRunInterval represents the schedule interval between two jobs for one TTL table
-	TiDBTTLJobRunInterval = "tidb_ttl_job_run_interval"
 	// TiDBTTLJobScheduleWindowStartTime is used to restrict the start time of the time window of scheduling the ttl jobs.
 	TiDBTTLJobScheduleWindowStartTime = "tidb_ttl_job_schedule_window_start_time"
 	// TiDBTTLJobScheduleWindowEndTime is used to restrict the end time of the time window of scheduling the ttl jobs.
@@ -907,6 +902,8 @@ const (
 	PasswordReuseTime = "password_reuse_interval"
 	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
 	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
+	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
+	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 )
 
 // TiDB intentional limits
@@ -1040,7 +1037,6 @@ const (
 	DefTiDBShardAllocateStep                       = math.MaxInt64
 	DefTiDBEnableTelemetry                         = true
 	DefTiDBEnableParallelApply                     = false
-	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
 	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
@@ -1162,7 +1158,7 @@ const (
 	DefPasswordReuseTime                             = 0
 	DefTiDBStoreBatchSize                            = 0
 	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
-	DefTiDBTTLJobRunInterval                         = "1h0m0s"
+	DefTiDBEnableHistoricalStatsForCapture           = false
 	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
@@ -1235,7 +1231,6 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
-	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
 	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
 	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
 	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
@@ -1245,6 +1240,7 @@ var (
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
 )
 
 var (

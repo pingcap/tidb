@@ -18,6 +18,8 @@ import (
 	"errors"
 	"sync/atomic"
 	"time"
+
+	atomicutil "go.uber.org/atomic"
 )
 
 const (
@@ -44,13 +46,16 @@ var (
 
 // BasePool is base class of pool
 type BasePool struct {
-	name      string
-	generator atomic.Uint64
+	name       string
+	lastTuneTs atomicutil.Time
+	generator  atomic.Uint64
 }
 
 // NewBasePool is to create a new BasePool.
 func NewBasePool() BasePool {
-	return BasePool{}
+	return BasePool{
+		lastTuneTs: *atomicutil.NewTime(time.Now()),
+	}
 }
 
 // SetName is to set name.
@@ -66,4 +71,14 @@ func (p *BasePool) Name() string {
 // NewTaskID is to get a new task ID.
 func (p *BasePool) NewTaskID() uint64 {
 	return p.generator.Add(1)
+}
+
+// LastTunerTs returns the last time when the pool was tuned.
+func (p *BasePool) LastTunerTs() time.Time {
+	return p.lastTuneTs.Load()
+}
+
+// SetLastTuneTs sets the last time when the pool was tuned.
+func (p *BasePool) SetLastTuneTs(t time.Time) {
+	p.lastTuneTs.Store(t)
 }

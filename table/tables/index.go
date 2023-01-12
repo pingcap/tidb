@@ -402,6 +402,46 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	return nil
 }
 
+func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) table.IndexIter {
+	indexedValues := c.getIndexedValue(indexedValue)
+	return &indexGenerator{
+		c:                 c,
+		sctx:              sc,
+		indexedVals:       indexedValues,
+		h:                 h,
+		handleRestoreData: handleRestoreData,
+		i:                 0,
+	}
+}
+
+type indexGenerator struct {
+	c                 *index
+	sctx              *stmtctx.StatementContext
+	indexedVals       [][]types.Datum
+	h                 kv.Handle
+	handleRestoreData []types.Datum
+
+	i int
+}
+
+func (s *indexGenerator) Next(kb []byte) ([]byte, []byte, bool, error) {
+	val := s.indexedVals[s.i]
+	key, distinct, err := s.c.GenIndexKey(s.sctx, val, s.h, kb)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	idxVal, err := s.c.GenIndexValue(s.sctx, distinct, val, s.h, s.handleRestoreData)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	s.i++
+	return key, idxVal, distinct, err
+}
+
+func (s *indexGenerator) Valid() bool {
+	return s.i < len(s.indexedVals)
+}
+
 const (
 	// TempIndexKeyTypeNone means the key is not a temporary index key.
 	TempIndexKeyTypeNone byte = 0
