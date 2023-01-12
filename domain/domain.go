@@ -2060,6 +2060,9 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle,
 }
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+	if do.statsLease <= 0 {
+		return
+	}
 	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
