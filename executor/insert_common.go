@@ -542,7 +542,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 			for i := 0; i < etlConcurrency; i++ {
 				worker := workers[i]
 				eg.Go(func() error {
-					return insertRowsFromSelectWorker(ctx, worker, batchSize, dataCh, chunkBackCh, &affectedRow, &sessVars.Killed)
+					return insertRowsFromSelectWorker(ctx, worker, etlBatchSize, dataCh, chunkBackCh, &affectedRow, &sessVars.Killed)
 				})
 			}
 		}
