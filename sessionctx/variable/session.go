@@ -1509,11 +1509,9 @@ func (s *SessionVars) AllocNewPlanID() int {
 // clearOneTimeoutCacheResult Clear one timeout CacheResult.
 func (s *SessionVars) clearOneTimeoutCacheResult() {
 	ts := ResultCacheTimeout.Load()
-	var key uint32
 	for k, v := range s.cacheRes {
 		if time.Since(v.LastUpdateTime).Milliseconds() >= ts {
-			key = k
-			delete(s.cacheRes, key)
+			delete(s.cacheRes, k)
 			break
 		}
 	}
