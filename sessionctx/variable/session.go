@@ -3227,7 +3227,8 @@ func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
 }
 
-type TmpcolumnInfo struct {
+// VarColumnInfo same as columninfo
+type VarColumnInfo struct {
 	Schema             string
 	Table              string
 	OrgTable           string
@@ -3242,8 +3243,9 @@ type TmpcolumnInfo struct {
 	DefaultValue       []byte
 }
 
+// CacheResult save select result.
 type CacheResult struct {
-	Columns        []*TmpcolumnInfo
+	Columns        []*VarColumnInfo
 	Id             int
 	Chunks         []*chunk.Chunk
 	Rows           []chunk.Row
@@ -3251,6 +3253,7 @@ type CacheResult struct {
 	LastUpdateTime time.Time
 }
 
+// AppendChunk add Chunks info.
 func (cr *CacheResult) AppendChunk(chunk *chunk.Chunk) {
 	newchun := chunk.CopyConstruct()
 	cr.Chunks = append(cr.Chunks, newchun)

@@ -659,6 +659,7 @@ func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
 	}
 }
 
+// CopyChunk copy from c to req
 func (c *Chunk) CopyChunk(req *Chunk) {
 	if c.sel != nil {
 		req.sel = make([]int, len(c.sel))
