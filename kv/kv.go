@@ -651,6 +651,8 @@ type Storage interface {
 	GetMinSafeTS(txnScope string) uint64
 	// GetLockWaits return all lock wait information
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
+	// GetCodec gets the codec of the storage.
+	GetCodec() tikv.Codec
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

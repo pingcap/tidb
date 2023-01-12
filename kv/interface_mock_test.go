@@ -187,6 +187,10 @@ func newMockTxn() Transaction {
 // mockStorage is used to start a must commit-failed txn.
 type mockStorage struct{}
 
+func (s *mockStorage) GetCodec() tikv.Codec {
+	return nil
+}
+
 func (s *mockStorage) Begin(opts ...tikv.TxnOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
