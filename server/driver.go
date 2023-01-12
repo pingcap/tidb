@@ -89,7 +89,7 @@ type fetchNotifier interface {
 
 type GetResult struct {
 	columns   []*ColumnInfo
-	Id        int
+	ID        int
 	chunks    []*chunk.Chunk
 	rows      []chunk.Row
 	CloseBool bool
@@ -100,8 +100,8 @@ func (cache *GetResult) Columns() []*ColumnInfo {
 }
 
 func (cache *GetResult) Next(ctx context.Context, req *chunk.Chunk) error {
-	cache.chunks[cache.Id].CopyChunk(req)
-	cache.Id++
+	cache.chunks[cache.ID].CopyChunk(req)
+	cache.ID++
 	return nil
 }
 
@@ -114,7 +114,7 @@ func (cache *GetResult) GetFetchedRows() []chunk.Row {
 }
 
 func (cache *GetResult) Close() error {
-	cache.Id = 0
+	cache.ID = 0
 	cache.CloseBool = true
 	return nil
 }
@@ -123,7 +123,7 @@ func (cache *GetResult) IsClosed() bool {
 	return cache.CloseBool
 }
 func (cache *GetResult) NewChunk(chunk.Allocator) *chunk.Chunk {
-	chunk := cache.chunks[cache.Id].CopyConstruct()
+	chunk := cache.chunks[cache.ID].CopyConstruct()
 	chunk.Reset()
 	return chunk
 }
@@ -135,7 +135,7 @@ func newCacheResult(rs ResultSet) *variable.CacheResult {
 		tmpcols = append(tmpcols, col.Tranfer())
 	}
 	ca := &variable.CacheResult{
-		Id:             0,
+		ID:             0,
 		Columns:        tmpcols,
 		Rows:           rs.GetFetchedRows(),
 		CloseBool:      false,
@@ -160,7 +160,7 @@ func newGetResult(cs *variable.CacheResult) *GetResult {
 	}
 	getRes := &GetResult{
 		columns:   colus,
-		Id:        0,
+		ID:        0,
 		chunks:    cs.Chunks,
 		CloseBool: false,
 		rows:      cs.Rows,

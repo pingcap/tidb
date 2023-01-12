@@ -904,7 +904,7 @@ const (
 	TiDBETLBatchSize = "tidb_etl_batch_size"
 	// TiDBResultCacheSize TiDB sessioin cache result size.
 	TiDBResultCacheSize = "result_cache_size"
-	// TiDBResultCacheSize TiDB sessioin cache result time.
+	// TiDBResultCacheTimeout TiDB sessioin cache result time.
 	TiDBResultCacheTimeout = "result_cache_timeout"
 )
 

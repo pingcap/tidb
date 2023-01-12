@@ -3244,7 +3244,7 @@ type TmpcolumnInfo struct {
 
 type CacheResult struct {
 	Columns        []*TmpcolumnInfo
-	Id             int
+	ID             int
 	Chunks         []*chunk.Chunk
 	Rows           []chunk.Row
 	CloseBool      bool
