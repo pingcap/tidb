@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -58,6 +59,8 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
+	bufChan       chan writeRes
+	wg            *errgroup.Group
 }
 
 // NewDumper returns a new Dumper
@@ -244,7 +247,10 @@ func (d *Dumper) Dump() (dumpErr error) {
 	AddGauge(d.metrics.taskChannelCapacity, float64(chanSize))
 	wg, writingCtx := errgroup.WithContext(tctx)
 	writerCtx := tctx.WithContext(writingCtx)
-	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskOut, rebuildConn)
+	bufChan := make(chan writeRes, 128)
+	d.bufChan = bufChan
+	d.wg = wg
+	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskOut, rebuildConn, bufChan)
 	if err != nil {
 		return err
 	}
@@ -296,7 +302,22 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return err
 		}
 	} else {
-		d.dumpSQL(writerCtx, baseConn, taskIn)
+		//d.dumpSQL(writerCtx, baseConn, taskIn)
+		tableInfo := &TableInfo{
+			Name: "t",
+			Type: TableTypeBase,
+		}
+		meta, err := dumpTableMeta(tctx, conf, baseConn, "test", tableInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if conf.Rows == UnspecifiedSize {
+			conf.Rows = 200000
+		}
+		err = d.dumpTableData(tctx, baseConn, meta, taskIn)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	d.metrics.progressReady.Store(true)
 	close(taskIn)
@@ -317,7 +338,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 }
 
 func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskChan <-chan Task,
-	rebuildConnFn func(*sql.Conn, bool) (*sql.Conn, error)) ([]*Writer, func(), error) {
+	rebuildConnFn func(*sql.Conn, bool) (*sql.Conn, error), bufChan chan writeRes) ([]*Writer, func(), error) {
 	conf, pool := d.conf, d.dbHandle
 	writers := make([]*Writer, conf.Threads)
 	for i := 0; i < conf.Threads; i++ {
@@ -325,7 +346,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		if err != nil {
 			return nil, func() {}, err
 		}
-		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore, d.metrics)
+		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore, d.metrics, bufChan)
 		writer.rebuildConnFn = rebuildConnFn
 		writer.setFinishTableCallBack(func(task Task) {
 			if _, ok := task.(*TaskTableData); ok {
@@ -706,6 +727,56 @@ func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 }
 
+func (d *Dumper) handleBuffer(totalChunk int) {
+	set := make(map[int]*bytes.Buffer)
+	cond := sync.NewCond(new(sync.Mutex))
+	finished := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-finished:
+				return
+			case r := <-d.bufChan:
+				cond.L.Lock()
+				set[r.idx] = r.buf
+				cond.Signal()
+				cond.L.Unlock()
+			}
+		}
+	}()
+	d.wg.Go(
+		func() error {
+			namer := newOutputFileNamer(newMockTableIR("test", "t", nil, nil, nil), 0, true, false)
+			fileName, err := namer.NextName(d.conf.OutputFileTemplate, d.conf.FileType)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			w, err := d.extStore.Create(d.tctx, fileName)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer w.Close(d.tctx)
+			for id := 0; id < totalChunk; id++ {
+				cond.L.Lock()
+				if buf, ok := set[id]; ok {
+					delete(set, id)
+					cond.L.Unlock()
+					_, err = w.Write(d.tctx, buf.Bytes())
+					if err != nil {
+						return err
+					}
+					buf.Reset()
+				} else {
+					id--
+					cond.Wait()
+					cond.L.Unlock()
+				}
+			}
+			return nil
+		},
+	)
+}
+
 // concurrentDumpTable tries to split table into several chunks to dump
 func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
 	conf := d.conf
@@ -771,6 +842,13 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	if estimatedStep == 1 {
 		totalChunks = new(big.Int).Sub(max, min).Uint64() + 1
 	}
+	totalChunk := 0
+	for max.Cmp(cutoff) >= 0 {
+		nextCutOff := new(big.Int).Add(cutoff, bigEstimatedStep)
+		cutoff = nextCutOff
+		totalChunk++
+	}
+	d.handleBuffer(totalChunk)
 
 	selectField, selectLen := meta.SelectedField(), meta.SelectedLen()
 
@@ -779,10 +857,27 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	if conf.Where == "" {
 		nullValueCondition = fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
 	}
+	cutoff = new(big.Int).Set(min)
+
 	for max.Cmp(cutoff) >= 0 {
 		nextCutOff := new(big.Int).Add(cutoff, bigEstimatedStep)
 		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), nextCutOff)
-		query := buildSelectQuery(db, tbl, selectField, "", buildWhereCondition(conf, where), orderByClause)
+		var query string
+		if len(conf.SQL) > 0 {
+			query = conf.SQL
+			if whereCond := buildWhereCondition(conf, where); whereCond != "" {
+				query += " "
+				query += whereCond
+			}
+
+			if orderByClause != "" {
+				query += " "
+				query += orderByClause
+			}
+
+		} else {
+			query = buildSelectQuery(db, tbl, selectField, "", buildWhereCondition(conf, where), orderByClause)
+		}
 		if len(nullValueCondition) > 0 {
 			nullValueCondition = ""
 		}
@@ -877,6 +972,7 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 	if err != nil {
 		return err
 	}
+	d.handleBuffer(len(handleVals) + 1)
 	return d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, handleVals, "", 0, len(handleVals)+1)
 }
 
@@ -902,6 +998,7 @@ func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn 
 		totalChunk += len(handleVals) + 1
 		cachedHandleVals[i] = handleVals
 	}
+	d.handleBuffer(totalChunk)
 	for i, partition := range partitions {
 		err := d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, cachedHandleVals[i], partition, startChunkIdx, totalChunk)
 		if err != nil {
@@ -930,7 +1027,22 @@ func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
 	orderByClause := buildOrderByClauseString(handleColNames)
 
 	for i, w := range where {
-		query := buildSelectQuery(db, tbl, selectField, partition, buildWhereCondition(conf, w), orderByClause)
+		var query string
+		if len(conf.SQL) > 0 {
+			query = conf.SQL
+			if whereCond := buildWhereCondition(conf, w); whereCond != "" {
+				query += " "
+				query += whereCond
+			}
+
+			if orderByClause != "" {
+				query += " "
+				query += orderByClause
+			}
+
+		} else {
+			query = buildSelectQuery(db, tbl, selectField, partition, buildWhereCondition(conf, w), orderByClause)
+		}
 		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), i+startChunkIdx, totalChunk)
 		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 		if ctxDone {
