@@ -1096,9 +1096,6 @@ type SessionVars struct {
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 
-	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
-	EnableAmendPessimisticTxn bool
-
 	// LastTxnInfo keeps track the info of last committed transaction.
 	LastTxnInfo string
 
@@ -1678,7 +1675,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
 		EnableParallelApply:           DefTiDBEnableParallelApply,
 		ShardAllocateStep:             DefTiDBShardAllocateStep,
-		EnableAmendPessimisticTxn:     DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                      kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
