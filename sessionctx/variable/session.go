@@ -1516,9 +1516,6 @@ func (s *SessionVars) clearOneTimeoutCacheResult() {
 			break
 		}
 	}
-	if key == 0 {
-		return
-	}
 	delete(s.cacheRes, key)
 }
 
@@ -1531,9 +1528,6 @@ func (s *SessionVars) clearEarlistCacheResult() {
 			minTime = v.LastUpdateTime
 			key = k
 		}
-	}
-	if key == 0 {
-		return
 	}
 	delete(s.cacheRes, key)
 }
