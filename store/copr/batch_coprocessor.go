@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stathat/consistent"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
@@ -545,37 +546,26 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer, store *kvStore, ran
 	if err != nil {
 		return nil, err
 	}
-	cache := store.GetRegionCache()
-	stores, err := cache.GetTiFlashComputeStores(bo.TiKVBackoffer())
+	// TODO: For now, force fetch topo from AutoScaler.
+	computeAddrs, err := tiflashcompute.GetGlobalTopoFetcher().FetchAndGetTopo()
 	if err != nil {
 		return nil, err
 	}
-	if len(stores) == 0 {
+	if len(computeAddrs) == 0 {
 		return nil, errors.New("No available tiflash_compute node")
 	}
 
 	hasher := consistent.New()
-	for _, store := range stores {
-		hasher.Add(store.GetAddr())
+	for _, addr := range computeAddrs {
+		hasher.Add(addr)
 	}
 	for _, task := range batchTasks {
 		addr, err := hasher.Get(task.storeAddr)
 		if err != nil {
 			return nil, err
 		}
-		var store *tikv.Store
-		for _, s := range stores {
-			if s.GetAddr() == addr {
-				store = s
-				break
-			}
-		}
-		if store == nil {
-			return nil, errors.New("cannot find tiflash_compute store: " + addr)
-		}
 
 		task.storeAddr = addr
-		task.ctx.Store = store
 		task.ctx.Addr = addr
 	}
 	logutil.BgLogger().Info("build batchCop tasks for disaggregated tiflash using ConsistentHash done.", zap.Int("len(tasks)", len(batchTasks)))

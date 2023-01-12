@@ -255,6 +255,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient(), m.enableCollectExecutionInfo)
 		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		if err != nil && disaggregatedTiFlash {
+			// todo: fix when use topoFetcher
 			m.store.GetRegionCache().InvalidateTiFlashComputeStoresIfGRPCError(err)
 		}
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.

@@ -35,6 +35,7 @@ import (
 	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -277,12 +278,14 @@ type Config struct {
 	OOMUseTmpStorage bool `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 
 	// These items are deprecated because they are turned into instance system variables.
-	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	EnableCollectExecutionInfo bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
-	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
-	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
-	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
-	DisaggregatedTiFlash       bool       `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
+	CheckMb4ValueInUTF8          AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	EnableCollectExecutionInfo   bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	Plugin                       Plugin     `toml:"plugin" json:"plugin"`
+	MaxServerConnections         uint32     `toml:"max-server-connections" json:"max-server-connections"`
+	RunDDL                       bool       `toml:"run-ddl" json:"run-ddl"`
+	DisaggregatedTiFlash         bool       `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
+	TiFlashComputeAutoScalerType string     `toml:"autoscaler-type" json:"autoscaler-type"`
+	TiFlashComputeAutoScalerAddr string     `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
@@ -1305,6 +1308,17 @@ func (c *Config) Valid() error {
 	}
 	if c.Performance.StatsLoadQueueSize < DefStatsLoadQueueSizeLimit || c.Performance.StatsLoadQueueSize > DefMaxOfStatsLoadQueueSizeLimit {
 		return fmt.Errorf("stats-load-queue-size should be [%d, %d]", DefStatsLoadQueueSizeLimit, DefMaxOfStatsLoadQueueSizeLimit)
+	}
+
+	// check tiflash_compute topo fetch is valid.
+	if c.DisaggregatedTiFlash {
+		if tiflashcompute.GetAutoScalerType(c.TiFlashComputeAutoScalerType) == tiflashcompute.InvalidASType {
+			return fmt.Errorf("invalid AutoScaler type, expect %s, %s or %s, got %s",
+				tiflashcompute.MockASStr, tiflashcompute.AWSASStr, tiflashcompute.GCPASStr, c.TiFlashComputeAutoScalerType)
+		}
+		if c.TiFlashComputeAutoScalerAddr == "" {
+			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")
+		}
 	}
 
 	// test log level
