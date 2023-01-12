@@ -58,9 +58,8 @@ func ToMppVersion(s string) (MppVersion, error) {
 	if err != nil {
 		if !strings.HasPrefix(strings.ToUpper(s), "UNSPECIFIED") {
 			return MppVersionV0, err
-		} else {
-			return MppVersionUnspecified, nil
 		}
+		return MppVersionUnspecified, nil
 	}
 	version := MppVersion(v)
 	if version >= MppVersionUnspecified && version <= NewestMppVersion {
