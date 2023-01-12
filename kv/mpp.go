@@ -213,12 +213,12 @@ func (t ExchangeCompressionMode) ToMppCompressionMode() tipb.CompressionMode {
 }
 
 // FmtMppExchangeCompressionMode returns the description about exchange compression mode
-func (m ExchangeCompressionMode) FmtMppExchangeCompressionMode() string {
+func (t ExchangeCompressionMode) FmtMppExchangeCompressionMode() string {
 	var res string
-	if m == ExchangeCompressionModeUnspecified {
+	if t == ExchangeCompressionModeUnspecified {
 		res = fmt.Sprintf("unspecified(use %s)", RecommendedExchangeCompressionMode.Name())
 	} else {
-		res = fmt.Sprintf("%s", m.Name())
+		res = t.Name()
 	}
 	return res
 }
