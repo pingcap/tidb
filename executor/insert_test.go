@@ -1505,9 +1505,10 @@ func TestETLInsertSelect(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1, t2")
-	tk.MustExec("create table t(id int primary key, v1 int, v2 int)")
-	tk.MustExec("create table t1(id int primary key, v int)")
+	tk.MustExec("create table t(id int primary key, v1 varchar(20), v2 int)")
+	tk.MustExec("create table t1(id int primary key, v varchar(20))")
 	tk.MustExec("create table t2(id int primary key, v int)")
+	tk.Session().GetSessionVars().MaxChunkSize = 1
 	for conc := 1; conc <= 8; conc++ {
 		for batchSize := 1; batchSize <= 8; batchSize++ {
 			tk.MustExec(fmt.Sprintf("set session tidb_etl_concurrency = %d", conc))
@@ -1520,7 +1521,7 @@ func TestETLInsertSelect(t *testing.T) {
 			require.Equal(t, int64(5), int64(tk.Session().AffectedRows()))
 			tk.MustQuery("select * from t1").Sort().Check(tk.MustQuery("select * from t2").Sort().Rows())
 
-			tk.MustExec("insert into t1 values(6, 6), (7, 70), (8, 8)")
+			tk.MustExec("insert into t1 values(6, '6'), (7, '70'), (8, '8')")
 			tk.MustExec("insert into t2 values(6, 60), (7, 7), (9, 9)")
 			executeParallelInsert("insert into t "+
 				"select tmp1.id, tmp1.v, tmp2.v from (select * from t1) tmp1 join (select * from t2) tmp2 on tmp1.id = tmp2.id", true)

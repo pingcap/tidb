@@ -465,6 +465,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 	chk := tryNewCacheChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
+	var chunkPool *sync.Pool
 
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
@@ -474,8 +475,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 	memTracker := e.memTracker
 
 	var (
-		dataBatch [][]types.Datum
-		dataCh    chan [][]types.Datum
+		dataCh chan *chunk.Chunk
 	)
 	etlConcurrency, etlBatchSize := sessVars.ETLConcurrency, sessVars.ETLBatchSize
 	if etlConcurrency <= 1 {
@@ -491,13 +491,39 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 			etlMode = false
 		} else {
 			affectedRow := uint64(0)
-			dataBatch = make([][]types.Datum, 0, etlBatchSize)
-			dataCh = make(chan [][]types.Datum, 2*etlConcurrency)
+			maxCap := e.maxChunkSize
+			approximateChannelSize := 2 * etlConcurrency * (batchSize/maxCap + 1)
+			dataCh = make(chan *chunk.Chunk, approximateChannelSize)
+			chunkBackCh := make(chan *chunk.Chunk, approximateChannelSize)
 			var eg *errgroup.Group
 			eg, ctx = errgroup.WithContext(ctx)
+
+			chunkPool = &sync.Pool{
+				New: func() any {
+					return chunk.New(fields, maxCap, maxCap)
+				},
+			}
+			go func() {
+				for {
+					select {
+					case c := <-chunkBackCh:
+						if c != nil {
+							chunkPool.Put(c)
+						} else {
+							return
+						}
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+
 			defer func() {
 				err = eg.Wait()
 				for range dataCh {
+				}
+				close(chunkBackCh)
+				for range chunkBackCh {
 				}
 				sessVars.StmtCtx.SetAffectedRows(affectedRow)
 				for _, worker := range workers {
@@ -516,7 +542,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 			for i := 0; i < etlConcurrency; i++ {
 				worker := workers[i]
 				eg.Go(func() error {
-					return insertRowsFromSelectWorker(ctx, worker, batchSize, dataCh, &affectedRow, &sessVars.Killed)
+					return insertRowsFromSelectWorker(ctx, worker, batchSize, dataCh, chunkBackCh, &affectedRow, &sessVars.Killed)
 				})
 			}
 		}
@@ -528,39 +554,34 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 	e.ctx.GetTxnWriteThroughputSLI().SetInvalid()
 LOOP:
 	for {
+		// we send the datum to other goroutine, and the datum has reference to the chunk,
+		// for safety, create a new chunk.
+		if etlMode {
+			chk = chunkPool.Get().(*chunk.Chunk)
+		}
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
+			close(dataCh)
 			return err
 		}
 		if chk.NumRows() == 0 {
-			// last batch
-			if len(dataBatch) > 0 && etlMode {
-				select {
-				// innerRow is cloned in innerChunkRow.GetDatumRow, so it's safe to send it to another goroutine.
-				case dataCh <- dataBatch:
-				case <-ctx.Done():
-				}
-			}
 			break
+		}
+		if etlMode {
+			select {
+			// innerRow is cloned in innerChunkRow.GetDatumRow, and the chunk is never reused,
+			// so it's safe to send it to another goroutine.
+			case dataCh <- chk:
+			case <-ctx.Done():
+				break LOOP
+			}
+			continue
 		}
 		chkMemUsage := chk.MemoryUsage()
 		memTracker.Consume(chkMemUsage)
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
-			if etlMode {
-				dataBatch = append(dataBatch, innerRow)
-				if len(dataBatch) >= etlBatchSize {
-					select {
-					// innerRow is cloned in innerChunkRow.GetDatumRow, so it's safe to send it to another goroutine.
-					case dataCh <- dataBatch:
-						dataBatch = make([][]types.Datum, 0, etlBatchSize)
-					case <-ctx.Done():
-						break LOOP
-					}
-				}
-				continue
-			}
 			row, err := e.getRow(ctx, innerRow)
 			if err != nil {
 				return err
@@ -669,34 +690,43 @@ func createFromSelectWorkers(ctx context.Context, base insertCommon, concurrency
 	return inserts, nil
 }
 
-func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSize int, dataCh <-chan [][]types.Datum,
-	globalAffectedRows *uint64, killed *uint32) error {
+func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSize int, dataCh <-chan *chunk.Chunk,
+	chunkBackCh chan<- *chunk.Chunk, globalAffectedRows *uint64, killed *uint32) (err error) {
 	e := base.insertCommon()
+	selectExec := e.children[0]
+	fields := retTypes(selectExec)
 	se := e.ctx
 	sessVars := se.GetSessionVars()
 	// assert no conflict, but auto retry
 	sessVars.TxnMode = "OPTIMISTIC"
 	sessVars.DisableTxnAutoRetry = false
+	currentRows := 0
 
-	rows := make([][]types.Datum, 0, batchSize)
+	var rows [][]types.Datum
 	var extraColsInSel [][]types.Datum
 	if insert, ok := base.(*InsertExec); ok && len(insert.OnDuplicate) > 0 {
 		extraColsInSel = make([][]types.Datum, 0, batchSize)
 	}
 
-	commitRows := func() error {
+	execRows := func() error {
+		if len(rows) == 0 {
+			return nil
+		}
 		defer func() {
+			currentRows += len(rows)
 			rows = rows[:0]
 			if extraColsInSel != nil {
 				extraColsInSel = extraColsInSel[:0]
 			}
 		}()
-		if err := sessiontxn.GetTxnManager(e.ctx).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
-			Type:                  sessiontxn.EnterNewTxnDefault,
-			CausalConsistencyOnly: false,
-		}); err != nil {
-			logutil.Logger(ctx).Error("parallel insert new txn error", zap.Error(err))
-			return err
+		if currentRows == 0 {
+			if err := sessiontxn.GetTxnManager(e.ctx).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+				Type:                  sessiontxn.EnterNewTxnDefault,
+				CausalConsistencyOnly: false,
+			}); err != nil {
+				logutil.Logger(ctx).Error("parallel insert new txn error", zap.Error(err))
+				return err
+			}
 		}
 		if extraColsInSel != nil {
 			e.ctx.GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
@@ -705,38 +735,50 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 			logutil.Logger(ctx).Error("parallel insert exec error", zap.Error(err))
 			return err
 		}
+		return nil
+	}
+
+	commitRows := func() error {
 		se.StmtCommit()
 		if err := se.CommitTxn(ctx); err != nil {
 			logutil.Logger(ctx).Error("parallel insert commit error", zap.Error(err))
 			return err
 		}
+		currentRows = 0
 		return nil
 	}
 
 	defer func() {
+		if err == nil && currentRows > 0 && atomic.LoadUint32(killed) == 0 {
+			err = commitRows()
+		}
 		CloseSession(se)
 		// hack here, the stmt context is not cleaned, so the affected row count is accumulated.
 		atomic.AddUint64(globalAffectedRows, sessVars.StmtCtx.AffectedRows())
 	}()
 
 	var (
-		batch [][]types.Datum
-		ok    bool
+		chk *chunk.Chunk
+		ok  bool
 	)
 	for {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil
 		}
 		select {
-		case batch, ok = <-dataCh:
+		case chk, ok = <-dataCh:
 			if !ok {
 				return nil
 			}
 		case <-ctx.Done():
 			return nil
 		}
-		for _, innerRow := range batch {
-			row, err := e.getRow(ctx, innerRow)
+		rows = make([][]types.Datum, 0, chk.NumRows())
+		iter := chunk.NewIterator4Chunk(chk)
+		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
+			innerRow := innerChunkRow.GetDatumRow(fields)
+			var row []types.Datum
+			row, err = e.getRow(ctx, innerRow)
 			if err != nil {
 				logutil.Logger(ctx).Error("parallel insert get row error", zap.Error(err))
 				return err
@@ -746,8 +788,12 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 			}
 			rows = append(rows, row)
 		}
-		if err := commitRows(); err != nil {
-			return err
+		execRows()
+		chunkBackCh <- chk
+		if currentRows > batchSize {
+			if err = commitRows(); err != nil {
+				return err
+			}
 		}
 	}
 }
