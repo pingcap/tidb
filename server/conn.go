@@ -2092,6 +2092,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	var rs ResultSet
 	var err error
+	rs, err = cc.ctx.ExecuteStmt(ctx, stmt)
 	cs, ok, err := cc.ctx.GetSessionVars().GetCache(stmt)
 	if err != nil {
 		return false, err
@@ -2102,7 +2103,6 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		} else {
 			cc.ctx.GetSessionVars().Stmt = nil
 		}
-		rs, err = cc.ctx.ExecuteStmt(ctx, stmt)
 	} else {
 		cc.ctx.GetSessionVars().Stmt = nil
 		rs = newGetResult(cs)
