@@ -128,6 +128,6 @@ func TestUserAttributes(t *testing.T) {
 	rootTK.MustExec("create user usr1@'%' identified by 'passord'")
 	rootTK.MustExec("alter user usr1 comment 'comment1'")
 	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "default"}`))
-	rootTK.MustExec("alter user usr1 resource group 'rg1'")
+	rootTK.MustExec("alter user usr1 resource group rg1")
 	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}`))
 }
