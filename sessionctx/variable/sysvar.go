@@ -2225,13 +2225,10 @@ var defaultSysVars = []*SysVar{
 			return s.MppExchangeCompressionMode.FmtMppExchangeCompressionMode(), nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, Value: strconv.FormatInt((kv.MppVersionUnspecified.ToInt64()), 10),
+	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeStr, Value: strconv.FormatInt((kv.MppVersionUnspecified.ToInt64()), 10),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			version, err := strconv.ParseInt(normalizedValue, 10, 64)
-			if err != nil {
-				return normalizedValue, err
-			}
-			if kv.MppVersion(version) >= kv.MppVersionUnspecified && kv.MppVersion(version) <= kv.NewestMppVersion {
+			_, err := kv.ToMppVersion(normalizedValue)
+			if err == nil {
 				return normalizedValue, nil
 			}
 			errMsg := fmt.Sprintf("incorrect value: %s. %s options: %d (unspecified)",
@@ -2243,11 +2240,11 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, errors.New(errMsg)
 		},
 		SetSession: func(s *SessionVars, val string) error {
-			version, err := strconv.ParseInt(val, 10, 64)
+			version, err := kv.ToMppVersion(val)
 			if err != nil {
 				return err
 			}
-			s.MppVersion = kv.MppVersion(version)
+			s.MppVersion = version
 			return nil
 		},
 		GetSession: func(s *SessionVars) (string, error) {

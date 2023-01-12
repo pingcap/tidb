@@ -17,6 +17,8 @@ package kv
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
@@ -45,9 +47,26 @@ const (
 	MppVersionUnspecified MppVersion = -1
 )
 
-// ToInt64 transforms MppVersion to int64“
+// ToInt64 transforms MppVersion to int64
 func (v MppVersion) ToInt64() int64 {
 	return int64(v)
+}
+
+// ToMppVersion transforms string to MppVersion
+func ToMppVersion(s string) (MppVersion, error) {
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		if !strings.HasPrefix(strings.ToUpper(s), "UNSPECIFIED") {
+			return MppVersionV0, err
+		} else {
+			return MppVersionUnspecified, nil
+		}
+	}
+	version := MppVersion(v)
+	if version >= MppVersionUnspecified && version <= NewestMppVersion {
+		return version, nil
+	}
+	return MppVersionV0, fmt.Errorf("invalid mpp version %s", s)
 }
 
 // GetTiDBMppVersion returns the mpp-version can be used in mpp plan

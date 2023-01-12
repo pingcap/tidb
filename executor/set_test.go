@@ -2077,6 +2077,7 @@ func TestSetMppVersionVariable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET SESSION mpp_version = -1")
 	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("unspecified(use 1)"))
+	tk.MustExec("SET SESSION mpp_version = unspecified")
 	tk.MustExec("SET SESSION mpp_version = 0")
 	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("0"))
 	tk.MustExec("SET SESSION mpp_version = 1")
