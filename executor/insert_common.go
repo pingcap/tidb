@@ -569,8 +569,6 @@ LOOP:
 		}
 		if etlMode {
 			select {
-			// innerRow is cloned in innerChunkRow.GetDatumRow, and the chunk is never reused,
-			// so it's safe to send it to another goroutine.
 			case dataCh <- chk:
 			case <-ctx.Done():
 				break LOOP
