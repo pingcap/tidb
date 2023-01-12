@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
 	"github.com/pingcap/tidb/util/memory"
@@ -257,6 +258,9 @@ const (
 
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
+
+	// ExplainShowMppFeature indicates whether to show mpp feature in explain result
+	ExplainShowMppFeature = "explain_show_mpp_feature"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -790,6 +794,12 @@ const (
 
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
+
+	// MppExchangeCompressionMode indicates the data compression method in mpp exchange operator
+	MppExchangeCompressionMode = "mpp_exchange_compression_mode"
+
+	// MppVersion indicates the mpp-version used to build mpp plan
+	MppVersion = "mpp_version"
 )
 
 // TiDB vars that have only global scope
@@ -1171,6 +1181,8 @@ const (
 	DefTiDBETLBatchSize                              = 2000
 	DefTiDBResultCacheSize                           = 0
 	DefTiDBResultCacheTimeout                        = 0
+	DefExplainShowMppFeature                         = false
+	DefaultExchangeCompressionMode                   = kv.ExchangeCompressionModeUnspecified
 )
 
 // Process global variables.
