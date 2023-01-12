@@ -2108,3 +2108,48 @@ func TestPlanCacheWithDynamicPruneMode(t *testing.T) {
 	// error value
 	tk.MustGetErrCode("set @@tidb_enable_plan_cache_with_dynamic_prune_mode=s", errno.ErrWrongValueForVar)
 }
+
+func TestSetMppVersionVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET SESSION mpp_version = -1")
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("unspecified(use 1)"))
+	tk.MustExec("SET SESSION mpp_version = unspecified")
+	tk.MustExec("SET SESSION mpp_version = 0")
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("0"))
+	tk.MustExec("SET SESSION mpp_version = 1")
+	tk.MustQuery("select @@session.mpp_version").Check(testkit.Rows("1"))
+	{
+		tk.MustGetErrMsg("SET SESSION mpp_version = 2", "incorrect value: 2. mpp_version options: -1 (unspecified), 0, 1")
+	}
+	{
+		tk.MustExec("SET GLOBAL mpp_version = 1")
+		tk.MustQuery("select @@global.mpp_version").Check(testkit.Rows("1"))
+		tk.MustExec("SET GLOBAL mpp_version = -1")
+		tk.MustQuery("select @@global.mpp_version").Check(testkit.Rows("-1"))
+	}
+
+	// default 0
+	tk.MustQuery("select @@session.explain_show_mpp_feature").Check(testkit.Rows("0"))
+}
+
+func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrMsg(
+		"SET SESSION mpp_exchange_compression_mode = 123",
+		"incorrect value: `123`. mpp_exchange_compression_mode options: NONE, FAST, HIGH_COMPRESSION, UNSPECIFIED")
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("unspecified(use FAST)"))
+
+	tk.MustExec("SET SESSION mpp_exchange_compression_mode = none")
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("NONE"))
+	tk.MustExec("SET SESSION mpp_exchange_compression_mode = fast")
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("FAST"))
+	tk.MustExec("SET SESSION mpp_exchange_compression_mode = HIGH_COMPRESSION")
+	tk.MustQuery("select @@session.mpp_exchange_compression_mode").Check(testkit.Rows("HIGH_COMPRESSION"))
+
+	{
+		tk.MustExec("SET GLOBAL mpp_exchange_compression_mode = none")
+		tk.MustQuery("select @@global.mpp_exchange_compression_mode").Check(testkit.Rows("none"))
+	}
+}

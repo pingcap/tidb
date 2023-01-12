@@ -2177,6 +2177,63 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompressionMode, Type: TypeStr, Value: DefaultExchangeCompressionMode.Name(),
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := kv.ToExchangeCompressionMode(strings.ToUpper(normalizedValue))
+			if !ok {
+				var msg string
+				for m := kv.ExchangeCompressionModeNONE; m <= kv.ExchangeCompressionModeUnspecified; m += 1 {
+					if m == 0 {
+						msg = m.Name()
+					} else {
+						msg = fmt.Sprintf("%s, %s", msg, m.Name())
+					}
+				}
+				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
+					originalValue,
+					MppExchangeCompressionMode, msg)
+				return normalizedValue, err
+			}
+			return normalizedValue, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.MppExchangeCompressionMode, _ = kv.ToExchangeCompressionMode(strings.ToUpper(val))
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return s.MppExchangeCompressionMode.FmtMppExchangeCompressionMode(), nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeStr, Value: strconv.FormatInt((kv.MppVersionUnspecified.ToInt64()), 10),
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, err := kv.ToMppVersion(normalizedValue)
+			if err == nil {
+				return normalizedValue, nil
+			}
+			errMsg := fmt.Sprintf("incorrect value: %s. %s options: %d (unspecified)",
+				originalValue, MppVersion, kv.MppVersionUnspecified)
+			for i := kv.MppVersionV0; i <= kv.NewestMppVersion; i += 1 {
+				errMsg = fmt.Sprintf("%s, %d", errMsg, i)
+			}
+
+			return normalizedValue, errors.New(errMsg)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			version, err := kv.ToMppVersion(val)
+			if err != nil {
+				return err
+			}
+			s.MppVersion = version
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return s.MppVersion.FmtMppVersion(), nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: ExplainShowMppFeature, Value: BoolToOnOff(DefExplainShowMppFeature), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.ExplainShowMppFeature = TiDBOptOn(val)
+		return nil
+	}},
 	{
 		Scope: ScopeGlobal, Name: TiDBTTLJobRunInterval, Value: DefTiDBTTLJobRunInterval, Type: TypeDuration, MinValue: int64(10 * time.Minute), MaxValue: uint64(8760 * time.Hour), SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			interval, err := time.ParseDuration(s)
