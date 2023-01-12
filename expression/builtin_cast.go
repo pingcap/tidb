@@ -527,15 +527,6 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			}
 			return jsonToInt, err
 		}
-	// TODO: after JSONTypeCodeDecimal supported, we can support cast to array of decimal, after float bug fixed, we can
-	// support cast to array of float/double
-	//case types.ETReal, types.ETDecimal:
-	//	return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
-	//		if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 && item.TypeCode != types.JSONTypeCodeFloat64 {
-	//			return nil, ErrInvalidJSONForFuncIndex
-	//		}
-	//		return types.ConvertJSONToFloat(sc, item)
-	//	}
 	case types.ETDatetime:
 		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
 			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
