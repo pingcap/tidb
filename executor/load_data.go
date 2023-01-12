@@ -87,7 +87,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		val := sctx.Value(LoadDataVarKey)
 		if val != nil {
 			sctx.SetValue(LoadDataVarKey, nil)
-			return errors.New("Load Data: previous load data option isn't closed normal")
+			return errors.New("Load Data: previous load data option wasn't closed normally")
 		}
 		sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
 	case ast.FileLocRemote:
