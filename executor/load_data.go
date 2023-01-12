@@ -47,6 +47,8 @@ import (
 var (
 	null          = []byte("NULL")
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
+	// InTest is a flag that bypass gcs authentication in unit tests.
+	InTest bool
 )
 
 // LoadDataExec represents a load data executor.
@@ -108,7 +110,12 @@ func (e *LoadDataExec) loadFromRemote(ctx context.Context) error {
 	if b.GetLocal() != nil {
 		return errors.Errorf("Load Data: don't support load data from tidb-server when set REMOTE, path %s", e.loadDataInfo.Path)
 	}
-	s, err := storage.New(ctx, b, nil)
+
+	opt := &storage.ExternalStorageOptions{}
+	if InTest {
+		opt.NoCredentials = true
+	}
+	s, err := storage.New(ctx, b, opt)
 	if err != nil {
 		return err
 	}
@@ -222,16 +229,15 @@ func processStream(ctx context.Context, readerFn func() ([]byte, error), loadDat
 		curData, err = readerFn()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
+				logutil.Logger(ctx).Error("read data for LOAD DATA failed", zap.Error(err))
 				break
+			} else {
+				err = nil
 			}
 		}
 		if len(curData) == 0 {
 			loadDataInfo.Drained = true
 			shouldBreak = true
-			if terror.ErrorEqual(err, io.EOF) {
-				err = nil
-			}
 			if len(prevData) == 0 {
 				break
 			}
