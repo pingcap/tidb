@@ -698,19 +698,19 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 				return err
 			}
 
-			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && castDatum.GetUint64() > 0 && !sctx.GetSessionVars().StmtCtx.ShouldClipToZero() {
+			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && castDatum.GetUint64() > uint64(0) && !sctx.GetSessionVars().StmtCtx.ShouldClipToZero() {
 				switch datum.Kind() {
 				case types.KindInt64:
 					if datum.GetInt64() < 0 {
-						castDatum.SetUint64(0)
+						castDatum = GetZeroValue(colInfos[idx])
 					}
 				case types.KindFloat32, types.KindFloat64:
 					if types.RoundFloat(datum.GetFloat64()) < 0 {
-						castDatum.SetUint64(0)
+						castDatum = GetZeroValue(colInfos[idx])
 					}
 				case types.KindMysqlDecimal:
 					if datum.GetMysqlDecimal().IsNegative() {
-						castDatum.SetUint64(0)
+						castDatum = GetZeroValue(colInfos[idx])
 					}
 				}
 			}
