@@ -896,6 +896,8 @@ const (
 	PasswordReuseTime = "password_reuse_interval"
 	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
 	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
+	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
+	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 )
 
 // TiDB intentional limits
@@ -1150,6 +1152,7 @@ const (
 	DefPasswordReuseTime                                   = 0
 	DefTiDBStoreBatchSize                                  = 0
 	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture                 = false
 	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
 	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                              = 4
@@ -1230,6 +1233,7 @@ var (
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
 )
 
 var (
