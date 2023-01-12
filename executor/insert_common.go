@@ -476,10 +476,12 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 	var (
 		dataBatch [][]types.Datum
 		dataCh    chan [][]types.Datum
-		closeCh   chan struct{}
 	)
 	etlConcurrency, etlBatchSize := sessVars.ETLConcurrency, sessVars.ETLBatchSize
-	if etlMode && etlConcurrency > 0 {
+	if etlConcurrency <= 1 {
+		etlMode = false
+	}
+	if etlMode {
 		var workers []insertCommon
 		workers, err = createFromSelectWorkers(ctx, base, etlConcurrency)
 		if err != nil {
@@ -491,25 +493,11 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 			affectedRow := uint64(0)
 			dataBatch = make([][]types.Datum, 0, etlBatchSize)
 			dataCh = make(chan [][]types.Datum, 2*etlConcurrency)
-			closeCh = make(chan struct{})
-			errCh := make(chan error, etlConcurrency)
-			var (
-				eg            errgroup.Group
-				subErr        error
-				closeChClosed atomic.Bool
-			)
+			var eg *errgroup.Group
+			eg, ctx = errgroup.WithContext(ctx)
 			defer func() {
 				err = eg.Wait()
-				if !closeChClosed.Load() {
-					close(closeCh)
-				}
-				close(errCh)
-				for range errCh {
-				}
 				for range dataCh {
-				}
-				if subErr != nil {
-					err = subErr
 				}
 				sessVars.StmtCtx.SetAffectedRows(affectedRow)
 				for _, worker := range workers {
@@ -528,21 +516,9 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 			for i := 0; i < etlConcurrency; i++ {
 				worker := workers[i]
 				eg.Go(func() error {
-					return insertRowsFromSelectWorker(ctx, worker, batchSize, dataCh, closeCh, errCh, &affectedRow, &sessVars.Killed)
+					return insertRowsFromSelectWorker(ctx, worker, batchSize, dataCh, &affectedRow, &sessVars.Killed)
 				})
 			}
-			// listen error channel
-			go func() {
-				select {
-				case subErr = <-errCh:
-					if subErr != nil {
-						// wait for next loop break and the dataCh will be closed.
-						closeChClosed.Store(true)
-						close(closeCh)
-					}
-				case <-closeCh:
-				}
-			}()
 		}
 	}
 
@@ -563,7 +539,6 @@ LOOP:
 				// innerRow is cloned in innerChunkRow.GetDatumRow, so it's safe to send it to another goroutine.
 				case dataCh <- dataBatch:
 				case <-ctx.Done():
-				case <-closeCh:
 				}
 			}
 			break
@@ -581,8 +556,6 @@ LOOP:
 					case dataCh <- dataBatch:
 						dataBatch = make([][]types.Datum, 0, etlBatchSize)
 					case <-ctx.Done():
-						break LOOP
-					case <-closeCh:
 						break LOOP
 					}
 				}
@@ -696,8 +669,8 @@ func createFromSelectWorkers(ctx context.Context, base insertCommon, concurrency
 	return inserts, nil
 }
 
-func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSize int, dataCh <-chan [][]types.Datum, closeCh <-chan struct{},
-	errCh chan<- error, globalAffectedRows *uint64, killed *uint32) error {
+func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSize int, dataCh <-chan [][]types.Datum,
+	globalAffectedRows *uint64, killed *uint32) error {
 	e := base.insertCommon()
 	se := e.ctx
 	sessVars := se.GetSessionVars()
@@ -740,12 +713,6 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 		return nil
 	}
 
-	// wait for closeCh is closed by error listener.
-	errAndWait := func(err error) {
-		errCh <- err
-		<-closeCh
-	}
-
 	defer func() {
 		CloseSession(se)
 		// hack here, the stmt context is not cleaned, so the affected row count is accumulated.
@@ -765,8 +732,6 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 			if !ok {
 				return nil
 			}
-		case <-closeCh:
-			return nil
 		case <-ctx.Done():
 			return nil
 		}
@@ -774,7 +739,6 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 			row, err := e.getRow(ctx, innerRow)
 			if err != nil {
 				logutil.Logger(ctx).Error("parallel insert get row error", zap.Error(err))
-				errAndWait(err)
 				return err
 			}
 			if extraColsInSel != nil {
@@ -783,7 +747,6 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 			rows = append(rows, row)
 		}
 		if err := commitRows(); err != nil {
-			errAndWait(err)
 			return err
 		}
 	}
