@@ -231,9 +231,8 @@ func processStream(ctx context.Context, readerFn func() ([]byte, error), loadDat
 			if terror.ErrorNotEqual(err, io.EOF) {
 				logutil.Logger(ctx).Error("read data for LOAD DATA failed", zap.Error(err))
 				break
-			} else {
-				err = nil
 			}
+			err = nil
 		}
 		if len(curData) == 0 {
 			loadDataInfo.Drained = true
