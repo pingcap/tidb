@@ -323,8 +323,6 @@ func (d *ddl) startDispatchBackfillJobsLoop() {
 	d.backfillCtx.jobCtxMap = make(map[int64]*JobContext)
 	d.backfillCtx.backfillCtxMap = make(map[int64]struct{})
 
-	logutil.BgLogger().Warn("------------------------------- start backfill jobs loop")
-
 	var notifyBackfillJobByEtcdCh clientv3.WatchChan
 	if d.etcdCli != nil {
 		notifyBackfillJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingBackfillJob)
@@ -386,7 +384,6 @@ func (d *ddl) loadBackfillJobAndRun() {
 
 	runningJobIDs := d.backfillCtxJobIDs()
 	if len(runningJobIDs) >= reorgWorkerCnt {
-		logutil.BgLogger().Warn("00 ******** load backfill job and run reorg jos is more than limit", zap.Int("limit", reorgWorkerCnt))
 		d.backfillCtx.Unlock()
 		return
 	}
@@ -415,10 +412,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 		defer func() {
 			d.removeBackfillCtxJobCtx(bJob.JobID)
 			tidbutil.Recover(metrics.LabelBackfillWorker, fmt.Sprintf("runBackfillJobs"), nil, false)
-			logutil.BgLogger().Warn("00 ******** load backfill job and run reorg jobs finished", zap.Int64("job id", bJob.JobID))
 		}()
-		traceID := bJob.ID + 100
-		initializeTrace(traceID)
 
 		if bJob.Meta.ReorgTp == model.ReorgTypeLitMerge {
 			if !ingest.LitInitialized {
@@ -439,9 +433,6 @@ func (d *ddl) loadBackfillJobAndRun() {
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] run backfill job failed", zap.Error(err))
 		}
-		details := collectTrace(bJob.JobID)
-		logutil.BgLogger().Info("[ddl] &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&--------------------------  finish backfill jobs",
-			zap.Int64("job ID", bJob.JobID), zap.String("time details", details))
 	})
 }
 
@@ -667,7 +658,6 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 func syncBackfillHistoryJobs(sess *session, uuid string, backfillJob *BackfillJob) error {
 	sql := fmt.Sprintf("update mysql.%s set state = %d where ddl_job_id = %d and ele_id = %d and ele_key = %s and exec_id = '%s' limit 1;",
 		BackfillHistoryTable, model.JobStateSynced, backfillJob.JobID, backfillJob.EleID, wrapKey2String(backfillJob.EleKey), uuid)
-	logutil.BgLogger().Warn("update *****************************   " + fmt.Sprintf("sql:%v, sess:%#v", sql, sess))
 	_, err := sess.execute(context.Background(), sql, "sync_backfill_history_job")
 	return err
 }
@@ -692,7 +682,6 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 			wrapKey2String(bj.StartKey), wrapKey2String(bj.EndKey), bj.StartTS, bj.FinishTS, bj.RowCount, wrapKey2String(mateByte)))
 		jobs += fmt.Sprintf("job:%#v; ", bj.AbbrStr())
 	}
-	logutil.BgLogger().Warn("insert ***************************** " + fmt.Sprintf("sql:%v", jobs))
 	return sqlBuilder.String(), nil
 }
 
@@ -903,7 +892,6 @@ func getUnsyncedInstanceIDs(sess *session, jobID int64, label string) ([]string,
 		InstanceID := row.GetString(1)
 		InstanceIDs = append(InstanceIDs, InstanceID)
 	}
-	logutil.BgLogger().Info(fmt.Sprintf("get unfinished exec ID ***************************** 00 lable:%s, sql:%s, instanceIDs:%s", sql, label, InstanceIDs))
 	return InstanceIDs, nil
 }
 
@@ -939,7 +927,6 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 		}
 		bJobs = append(bJobs, &bfJob)
 	}
-	logutil.BgLogger().Warn("get ***************************** " + fmt.Sprintf("sql:%v, label:%#v, bJobs:%v", condition, label, bJobs))
 	return bJobs, nil
 }
 
@@ -948,7 +935,6 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_backfill where ddl_job_id = %d and ele_id = %d and ele_key = %s",
 		backfillJob.JobID, backfillJob.EleID, wrapKey2String(backfillJob.EleKey))
-	logutil.BgLogger().Info(fmt.Sprintf("remove ***************************** xx sql:%#v", backfillJob))
 	if !isOneEle {
 		sql += fmt.Sprintf(" and id = %d", backfillJob.ID)
 	}
@@ -962,9 +948,8 @@ func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob
 		return err
 	}
 	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_lease = '%s', state = %d, curr_key = %s, row_count = %d, backfill_meta = %s where ddl_job_id = %d and ele_id = %d and ele_key = %s and id = %d",
-		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State, wrapKey2String(backfillJob.CurrKey), backfillJob.RowCount, wrapKey2String(mate),
-		backfillJob.JobID, backfillJob.EleID, wrapKey2String(backfillJob.EleKey), backfillJob.ID)
+		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State, wrapKey2String(backfillJob.CurrKey), backfillJob.RowCount,
+		wrapKey2String(mate), backfillJob.JobID, backfillJob.EleID, wrapKey2String(backfillJob.EleKey), backfillJob.ID)
 	_, err = sess.execute(context.Background(), sql, label)
-	logutil.BgLogger().Warn("update ***************************** " + fmt.Sprintf("bfJob:%s, sql:%v, label:%#v, err:%v", backfillJob.AbbrStr(), sql, label, err))
 	return err
 }

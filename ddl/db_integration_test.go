@@ -4314,25 +4314,3 @@ func TestRegexpFunctionsGeneratedColumn(t *testing.T) {
 
 	tk.MustExec("drop table if exists reg_like")
 }
-
-func TestAddIndexX(t *testing.T) {
-	// TODO: store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table test_add_index(a int, b int not null default '0')")
-	tk.MustExec("insert into test_add_index values(1, 1),(20,20),(300,300),(4000,4000),(50000,50000),(123456,123456),(1234567,1234567),(12345678,12345678)")
-	tk.MustExec("split table test_add_index BETWEEN (0) AND (10000000) REGIONS 7;")
-	fmt.Println("****************************************************************************** 00")
-	tk.MustExec("alter table test_add_index add index idx(b)")
-	tk.MustExec("admin check table test_add_index")
-	tk.MustQuery("select count(1) from mysql.tidb_ddl_backfill").Check(testkit.Rows("0"))
-	tk.MustQuery("select id, ele_id, ele_key, type, state from mysql.tidb_ddl_backfill_history").Check(testkit.Rows("1 1 _idx_ 0 6"))
-	fmt.Println("****************************************************************************** 11")
-	tk.MustExec("alter table test_add_index add unique index idx1(b)")
-	tk.MustExec("admin check table test_add_index")
-	tk.MustQuery("select count(1) from mysql.tidb_ddl_backfill").Check(testkit.Rows("0"))
-	tk.MustQuery("select id, ele_id, ele_key, type, state from mysql.tidb_ddl_backfill_history").Check(testkit.Rows("1 1 _idx_ 0 6", "1 2 _idx_ 0 6"))
-}

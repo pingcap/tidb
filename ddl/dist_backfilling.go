@@ -104,8 +104,6 @@ func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult
 		for {
 			select {
 			case result, ok := <-resultCh:
-				logutil.BgLogger().Warn("===========================    handle backfill task failed",
-					zap.Bool("ok", ok))
 				if !ok {
 					return
 				}
@@ -116,7 +114,6 @@ func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult
 					return
 				}
 			case <-bwm.exitCh:
-				logutil.BgLogger().Warn("===========================    exit xxx")
 				return
 			}
 		}

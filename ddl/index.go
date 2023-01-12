@@ -695,8 +695,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		details := collectTrace(job.ID)
-		logutil.BgLogger().Info("[ddl] &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&--------------------------  finish add index job", zap.String("job", job.String()),
-			zap.String("time details", details))
 		if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
@@ -905,10 +903,8 @@ func doReorgWorkForCreateIndexWithDistReorg(w *worker, d *ddlCtx, t *meta.Meta, 
 		switch bfProcess {
 		case model.ReorgTypeLitMerge:
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
-			logutil.BgLogger().Warn("============================================ finish LitMerge",
-				zap.Bool("done", done), zap.Error(err))
 			if err != nil {
-				err = tryFallbackToTxnMerge(job, err)
+				logutil.BgLogger().Warn("[ddl] dist lightning import error", zap.Error(err))
 				return false, ver, errors.Trace(err)
 			}
 			if !done {
@@ -916,8 +912,6 @@ func doReorgWorkForCreateIndexWithDistReorg(w *worker, d *ddlCtx, t *meta.Meta, 
 			}
 		case model.ReorgTypeTxnMerge:
 			done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, false)
-			logutil.BgLogger().Warn("============================================ finish TxnMerge",
-				zap.Bool("done", done), zap.Error(err))
 			if err != nil || !done {
 				return false, ver, errors.Trace(err)
 			}
@@ -968,7 +962,6 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			}, false)
 		return w.addTableIndex(tbl, reorgInfo)
 	})
-	logutil.BgLogger().Warn("============================================ run reorg job", zap.Error(err))
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -1688,7 +1681,6 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		}
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
-		logutil.BgLogger().Info("OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO", zap.Bool("done", taskDone))
 
 		err = w.batchCheckUniqueKey(txn, idxRecords)
 		if err != nil {
@@ -2047,33 +2039,23 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 		return errors.New(ingest.LitErrGetBackendFail)
 	}
 	var err error
-	logutil.BgLogger().Warn(fmt.Sprintf("------------------------------------ bf:%#v", bfJob))
 	bc, err = ingest.LitBackCtxMgr.Register(d.ctx, bfJob.Meta.IsUnique, bfJob.JobID, bfJob.Meta.SQLMode)
 	if err != nil {
-		// TODO: tryFallbackToTxnMerge
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
 		return err
 	}
 
-	logutil.BgLogger().Warn("00 ******** load backfill job and run reorg jobs start", zap.Int64("job id", bfJob.JobID))
 	tbl, err := runBackfillJobs(d, sess, bfJob, jobCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs error", zap.Error(err))
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
-		// TODO: tryFallbackToTxnMerge
 		return err
 	}
 
 	finish := injectSpan(bfJob.JobID, "finish-import")
 	err = bc.FinishImport(bfJob.EleID, bfJob.Meta.IsUnique, tbl)
 	if err != nil {
-		if kv.ErrKeyExists.Equal(err) {
-			logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", bfJob.AbbrStr()), zap.Error(err))
-			// TODO: convertAddIdxJob2RollbackJob
-		} else {
-			logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
-			// TODO: tryFallbackToTxnMerge
-		}
+		logutil.BgLogger().Warn("[ddl] lightning import error", zap.String("first backfill job", bfJob.AbbrStr()), zap.Error(err))
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
 		return err
 	}

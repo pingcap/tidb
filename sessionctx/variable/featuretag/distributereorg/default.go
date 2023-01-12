@@ -17,4 +17,5 @@
 package distributereorg
 
 // TiDBEnableDistributeReorg is a feature tag
+// TODO: Before merge this PR, change this value to false.
 const TiDBEnableDistributeReorg bool = true

@@ -448,7 +448,6 @@ func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResul
 	failpoint.Inject("mockBackfillRunErr", func() {
 		if w.GetCtx().id == 0 {
 			result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
-			logutil.BgLogger().Info("OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO")
 			failpoint.Return(result)
 		}
 	})
@@ -1215,8 +1214,6 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 		idxInfo := model.FindIndexInfoByID(t.Meta().Indices, reorgInfo.currElement.ID)
 		isUnique = idxInfo.Unique
 	}
-	logutil.BgLogger().Info("[ddl] control write physical table record ----------------- 00",
-		zap.Int64("ddlJobID", ddlJobID), zap.Reflect("maxBfJob", maxBfJob))
 	err = dc.splitTableToBackfillJobs(sess, reorgInfo, t, isUnique, bfWorkerType, startKey, currBackfillJobID)
 	if err != nil {
 		return errors.Trace(err)
@@ -1245,7 +1242,6 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 					logutil.BgLogger().Info("[ddl] getBackfillJobWithRetry failed", zap.Int64("job ID", ddlJobID), zap.Error(err))
 					return errors.Trace(err)
 				}
-				logutil.BgLogger().Info("[ddl] control write physical table record ---------------------------------- 11", zap.Bool("bfJobIsNil", bfJob == nil))
 				if bfJob == nil {
 					backfillJobFinished = true
 					logutil.BgLogger().Info("[ddl] finish backfill jobs", zap.Int64("job ID", ddlJobID))
@@ -1258,7 +1254,6 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 					logutil.BgLogger().Warn("[ddl] checkJobIsFinished failed", zap.Int64("job ID", ddlJobID), zap.Error(err))
 					return errors.Trace(err)
 				}
-				logutil.BgLogger().Info("[ddl] control write physical table record ---------------------------------- 22", zap.Bool("isSynced", isSynced))
 				if isSynced {
 					logutil.BgLogger().Info("[ddl] finish backfill jobs and put them to history", zap.Int64("job ID", ddlJobID))
 					return GetBackfillErr(sess, ddlJobID, currEle.ID, currEle.TypeKey)
@@ -1296,13 +1291,9 @@ func GetBackfillErr(sess *session, ddlJobID, currEleID int64, currEleKey []byte)
 		if err == nil {
 			for _, m := range metas {
 				if m.Error != nil {
-					logutil.BgLogger().Info("[ddl]  control write physical table record ---------------------------------- 33",
-						zap.Int64("job ID", ddlJobID), zap.Error(m.Error))
 					return m.Error
 				}
 			}
-			logutil.BgLogger().Info("[ddl]  control write physical table record ---------------------------------- 33",
-				zap.Int64("job ID", ddlJobID))
 			return nil
 		}
 
@@ -1330,7 +1321,6 @@ func checkAndHandleInterruptedBackfillJobs(sess *session, ddlJobID, currEleID in
 		return nil
 	}
 
-	logutil.BgLogger().Info(fmt.Sprintf("finish ***************************** xx sql:%#v", bJobs[0]))
 	for i := 0; i < retrySQLTimes; i++ {
 		err = MoveBackfillJobsToHistoryTable(sess, bJobs[0])
 		if err == nil {
