@@ -1736,19 +1736,6 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	if err != nil {
 		return nil, err
 	}
-	isAllColumn := func(leftOriginPlan LogicalPlan) []bool {
-		lp, ok := leftOriginPlan.(*LogicalProjection)
-		if ok {
-			result := make([]bool, 0, len(lp.Exprs))
-			for _, expr := range lp.Exprs {
-				_, ok := expr.(*expression.Column)
-				result = append(result, ok)
-			}
-			return result
-		}
-		return nil
-	}
-	leftIsColumnList := isAllColumn(leftOriginPlan)
 	joinPlan := LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(leftPlan.Schema())
@@ -1760,7 +1747,9 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		if err != nil {
 			return nil, err
 		}
-		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || (leftIsColumnList != nil && !leftIsColumnList[j]) {
+		_, leftArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[0].(*expression.Column)
+		_, rightArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[1].(*expression.Column)
+		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !leftArgIsColumn || !rightArgIsColumn {
 			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
 		} else {
 			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
