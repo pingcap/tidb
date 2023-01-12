@@ -15,6 +15,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//parser/duration",
         "//parser/terror",
         "//sessionctx",
         "//sessionctx/variable",
@@ -57,7 +58,6 @@ go_test(
         "//infoschema",
         "//kv",
         "//parser/ast",
-        "//parser/duration",
         "//parser/model",
         "//parser/mysql",
         "//session",

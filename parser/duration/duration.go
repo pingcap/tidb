@@ -22,23 +22,16 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// Duration is a format which supports 'd', 'h' and 'm', but doesn't support other formats and floats
-type Duration struct {
-	Day    int `json:"day"`
-	Hour   int `json:"hour"`
-	Minute int `json:"minute"`
-}
-
-func readInt(s string) (int, string, error) {
+func readFloat(s string) (float64, string, error) {
 	numbers := ""
 	for pos, ch := range s {
-		if !unicode.IsDigit(ch) {
+		if !unicode.IsDigit(ch) && ch != '.' {
 			numbers = s[:pos]
 			break
 		}
 	}
 	if len(numbers) > 0 {
-		i, err := strconv.Atoi(numbers)
+		i, err := strconv.ParseFloat(numbers, 64)
 		if err != nil {
 			return 0, s, err
 		}
@@ -48,72 +41,33 @@ func readInt(s string) (int, string, error) {
 }
 
 // ParseDuration parses the duration which contains 'd', 'h' and 'm'
-func ParseDuration(s string) (Duration, error) {
-	duration := Duration{}
+func ParseDuration(s string) (time.Duration, error) {
+	duration := time.Duration(0)
 
 	if s == "0" {
-		return Duration{}, nil
+		return 0, nil
 	}
 
 	var err error
-	i := 0
+	var i float64
 	for len(s) > 0 {
-		i, s, err = readInt(s)
+		i, s, err = readFloat(s)
 		if err != nil {
-			return Duration{}, err
+			return 0, err
 		}
 		switch s[0] {
 		case 'd':
-			duration.Day += i
+			duration += time.Duration(i * float64(time.Hour*24))
 		case 'h':
-			duration.Hour += i
+			duration += time.Duration(i * float64(time.Hour))
 		case 'm':
-			duration.Minute += i
+			duration += time.Duration(i * float64(time.Minute))
 		default:
-			return Duration{}, errors.Errorf("unknown unit %c", s[0])
+			return 0, errors.Errorf("unknown unit %c", s[0])
 		}
 
 		s = s[1:]
 	}
 
-	return duration.reorg(), nil
-}
-
-func (d Duration) reorg() Duration {
-	if d.Minute >= 60 {
-		d.Hour += d.Minute / 60
-		d.Minute = d.Minute % 60
-	}
-	if d.Hour >= 24 {
-		d.Day += d.Hour / 24
-		d.Hour = d.Hour % 24
-	}
-
-	return d
-}
-
-// String formats the duration
-func (d Duration) String() string {
-	d = d.reorg()
-
-	str := ""
-	if d.Day > 0 {
-		str += strconv.Itoa(d.Day) + "d"
-	}
-	if d.Hour > 0 {
-		str += strconv.Itoa(d.Hour) + "h"
-	}
-	if d.Minute > 0 {
-		str += strconv.Itoa(d.Minute) + "m"
-	}
-
-	if len(str) == 0 {
-		return "0m"
-	}
-	return str
-}
-
-// GoDuration returns the equal time.Duration
-func (d Duration) GoDuration() time.Duration {
-	return time.Hour*time.Duration(d.Day*24+d.Hour) + time.Minute*time.Duration(d.Minute)
+	return duration, nil
 }

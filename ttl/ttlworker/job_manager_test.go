@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -183,7 +182,7 @@ func TestReadyForNewJobTables(t *testing.T) {
 	se := newMockSession(t, tbl)
 
 	tblWithDailyInterval := newMockTTLTbl(t, "t2")
-	tblWithDailyInterval.TTLInfo.JobInterval = duration.Duration{Day: 1}
+	tblWithDailyInterval.TTLInfo.JobInterval = "1d"
 
 	cases := []struct {
 		name             string
@@ -237,7 +236,7 @@ func TestLockNewTable(t *testing.T) {
 	assert.NoError(t, err)
 	expireTime := now
 
-	testPhysicalTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year", JobInterval: duration.Duration{Hour: 1}}}}
+	testPhysicalTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year", JobInterval: "1h"}}}
 
 	type executeInfo struct {
 		sql  string
