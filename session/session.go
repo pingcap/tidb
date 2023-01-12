@@ -2679,11 +2679,11 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		return err
 	}
 
-	// If tidb_resource_control_enable is disabled, set resource group to default
+	// If tidb_resource_control_enable is disabled, set resource group to empty
 	if variable.EnableResourceControl.Load() {
-		s.sessionVars.ResourceGroupName = info.ResourceGroupName
+		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
 	} else {
-		s.sessionVars.ResourceGroupName = "default"
+		s.sessionVars.ResourceGroupName = ""
 	}
 	if info.InSandBoxMode {
 		// Enter sandbox mode, only execute statement for resetting password.
