@@ -595,7 +595,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			req.AppendInt64(0, job.ID)
 			req.AppendString(1, schemaName)
 			req.AppendString(2, tableName)
-			req.AppendString(3, subJob.Type.String()+" /* subjob */")
+			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob))
 			req.AppendString(4, subJob.SchemaState.String())
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
@@ -615,6 +615,16 @@ func showAddIdxReorgTp(job *model.Job) string {
 			if len(tp) > 0 {
 				return " /* " + tp + " */"
 			}
+		}
+	}
+	return ""
+}
+
+func showAddIdxReorgTpInSubJob(subJob *model.SubJob) string {
+	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
+		tp := subJob.ReorgTp.String()
+		if len(tp) > 0 {
+			return " /* " + tp + " */"
 		}
 	}
 	return ""
@@ -959,6 +969,9 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
+		if idx.MVIndex {
+			continue
+		}
 		idxNames = append(idxNames, idx.Name.O)
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.table.Meta().Name.O, idxNames)
@@ -978,7 +991,13 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The number of table rows is equal to the number of index rows.
 	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
 	if len(e.srcs) == 1 {
-		return e.checkIndexHandle(ctx, e.srcs[0])
+		err = e.checkIndexHandle(ctx, e.srcs[0])
+		if err == nil && e.srcs[0].index.MVIndex {
+			err = e.checkTableRecord(ctx, 0)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	taskCh := make(chan *IndexLookUpExecutor, len(e.srcs))
 	failure := atomicutil.NewBool(false)
@@ -997,6 +1016,14 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					select {
 					case src := <-taskCh:
 						err1 := e.checkIndexHandle(ctx, src)
+						if err1 == nil && src.index.MVIndex {
+							for offset, idx := range e.indexInfos {
+								if idx.ID == src.index.ID {
+									err1 = e.checkTableRecord(ctx, offset)
+									break
+								}
+							}
+						}
 						if err1 != nil {
 							failure.Store(true)
 							logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
@@ -2169,6 +2196,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
 	vars.DurationWaitTS = 0
+	vars.CurrInsertBatchExtraCols = nil
+	vars.CurrInsertValues = chunk.Row{}
 	return
 }
 

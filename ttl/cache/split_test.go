@@ -451,7 +451,6 @@ func TestNoTTLSplitSupportTables(t *testing.T) {
 	tbls := []*cache.PhysicalTable{
 		createTTLTable(t, tk, "t1", "char(32)  CHARACTER SET UTF8MB4"),
 		createTTLTable(t, tk, "t2", "varchar(32) CHARACTER SET UTF8MB4"),
-		createTTLTable(t, tk, "t3", "double"),
 		createTTLTable(t, tk, "t4", "decimal(32, 2)"),
 		create2PKTTLTable(t, tk, "t5", "char(32)  CHARACTER SET UTF8MB4"),
 	}

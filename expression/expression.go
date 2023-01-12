@@ -1171,7 +1171,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return false
 		}
 		return true
-	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr:
+	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr, ast.RegexpReplace:
 		funcCharset, funcCollation := function.Function.CharsetAndCollation()
 		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
 			return false
@@ -1574,6 +1574,8 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 			ft = types.NewFieldType(mysql.TypeDouble)
 		case types.KindString:
 			ft = types.NewFieldType(mysql.TypeVarString)
+		case types.KindMysqlTime:
+			ft = types.NewFieldType(mysql.TypeTimestamp)
 		default:
 			exprs[i] = nil
 			continue

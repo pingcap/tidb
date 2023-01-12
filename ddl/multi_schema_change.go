@@ -190,6 +190,10 @@ func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 	if err != nil {
 		return err
 	}
+	var reorgTp model.ReorgType
+	if job.ReorgMeta != nil {
+		reorgTp = job.ReorgMeta.ReorgTp
+	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
 		Type:        job.Type,
 		Args:        job.Args,
@@ -198,6 +202,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 		SnapshotVer: job.SnapshotVer,
 		Revertible:  true,
 		CtxVars:     job.CtxVars,
+		ReorgTp:     reorgTp,
 	})
 	return nil
 }
