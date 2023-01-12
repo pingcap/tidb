@@ -2103,7 +2103,10 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	} else {
 		cc.ctx.GetSessionVars().Stmt = nil
 		if rs != nil {
-			rs.Close()
+			err = rs.Close()
+			if err != nil {
+				return false, err
+			}
 			rs = newGetResult(cs)
 		}
 	}
