@@ -81,7 +81,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	case ast.UnaryNot:
 		// TODO: support "not like" convert to access conditions.
 		if s, ok := scalar.GetArgs()[0].(*expression.ScalarFunction); ok {
-			if s.FuncName.L == ast.Like {
+			if s.FuncName.L == ast.Like || s.FuncName.L == ast.NullEQ {
 				return false
 			}
 		} else {

@@ -861,3 +861,27 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult(ctx, mixedAggFuncs, emptyGroupByItems)
 	checkResult(ctx, mixedAggFuncs, groupByItems)
 }
+
+// https://github.com/pingcap/tidb/issues/38310
+func TestNullEQConditionPlan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 BOOL, PRIMARY KEY(c0));")
+	tk.MustExec("INSERT INTO t0 VALUES (FALSE);")
+	tk.MustQuery("SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows())
+
+	tk.MustQuery("explain SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE))").CheckAt(
+		[]int{0, 2, 4}, [][]interface{}{
+			{"TableReader_7", "root", "data:Selection_6"},
+			{"└─Selection_6", "cop[tikv]", "or(0, not(nulleq(test.t0.c0, 0)))"},
+			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+		})
+
+	tk.MustQuery("SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows("0"))
+	tk.MustQuery("explain SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE))").CheckAt(
+		[]int{0, 2, 4}, [][]interface{}{
+			{"Point_Get_5", "root", "handle:0"},
+		})
+}
