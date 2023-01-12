@@ -2200,7 +2200,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompressionMode, Type: TypeStr, Value: DefaultExchangeCompressionMode.Name(),
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			_, ok := kv.ToExchangeCompressionMode(strings.ToUpper(normalizedValue))
+			_, ok := kv.ToExchangeCompressionMode(normalizedValue)
 			if !ok {
 				var msg string
 				for m := kv.ExchangeCompressionModeNONE; m <= kv.ExchangeCompressionModeUnspecified; m += 1 {
@@ -2221,14 +2221,11 @@ var defaultSysVars = []*SysVar{
 			s.MppExchangeCompressionMode, _ = kv.ToExchangeCompressionMode(strings.ToUpper(val))
 			return nil
 		},
-		GetSession: func(s *SessionVars) (string, error) {
-			return s.MppExchangeCompressionMode.FmtMppExchangeCompressionMode(), nil
-		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeStr, Value: strconv.FormatInt((kv.MppVersionUnspecified.ToInt64()), 10),
+	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeStr, Value: kv.MppVersionUnspecifiedName,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			_, err := kv.ToMppVersion(normalizedValue)
-			if err == nil {
+			_, ok := kv.ToMppVersion(normalizedValue)
+			if ok {
 				return normalizedValue, nil
 			}
 			errMsg := fmt.Sprintf("incorrect value: %s. %s options: %d (unspecified)",
@@ -2240,15 +2237,9 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, errors.New(errMsg)
 		},
 		SetSession: func(s *SessionVars, val string) error {
-			version, err := kv.ToMppVersion(val)
-			if err != nil {
-				return err
-			}
+			version, _ := kv.ToMppVersion(val)
 			s.MppVersion = version
 			return nil
-		},
-		GetSession: func(s *SessionVars) (string, error) {
-			return s.MppVersion.FmtMppVersion(), nil
 		},
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: ExplainShowMppFeature, Value: BoolToOnOff(DefExplainShowMppFeature), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
