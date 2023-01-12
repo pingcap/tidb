@@ -257,7 +257,6 @@ go_test(
         "//util/domainutil",
         "//util/gcutil",
         "//util/logutil",
-        "//util/mathutil",
         "//util/mock",
         "//util/sem",
         "//util/sqlexec",
