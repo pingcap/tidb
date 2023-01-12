@@ -512,6 +512,47 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 	return fileWriter, tearDownRoutine
 }
 
+type ExternalBytesBuffer struct {
+	buf *bytes.Buffer
+}
+
+func (e ExternalBytesBuffer) Write(ctx context.Context, p []byte) (int, error) {
+	return e.buf.Write(p)
+}
+
+func (e ExternalBytesBuffer) Close(ctx context.Context) error {
+	return nil
+}
+
+func buildNewInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage, fileName string, buf *bytes.Buffer) (storage.ExternalFileWriter, func(context.Context)) {
+	var writer storage.ExternalFileWriter
+	fullPath := s.URI() + "/" + fileName
+	fileWriter := &InterceptFileWriter{}
+	initRoutine := func() error {
+		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
+		// which will cause a context canceled error when closing gcs's Writer
+		writer = ExternalBytesBuffer{buf: buf}
+		pCtx.L().Debug("opened file", zap.String("path", fullPath))
+		fileWriter.ExternalFileWriter = writer
+		return nil
+	}
+	fileWriter.initRoutine = initRoutine
+
+	tearDownRoutine := func(ctx context.Context) {
+		if writer == nil {
+			return
+		}
+		pCtx.L().Debug("tear down lazy file writer...", zap.String("path", fullPath))
+		err := writer.Close(ctx)
+		if err != nil {
+			pCtx.L().Warn("fail to close file",
+				zap.String("path", fullPath),
+				zap.Error(err))
+		}
+	}
+	return fileWriter, tearDownRoutine
+}
+
 // LazyStringWriter is an interceptor of io.StringWriter,
 // will lazily create file the first time StringWriter need to write something.
 type LazyStringWriter struct {
