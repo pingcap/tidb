@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	ptypes "github.com/pingcap/tidb/parser/types"
@@ -1509,7 +1510,7 @@ func (s *SessionVars) clearEarliestCacheResult() {
 }
 
 // SaveCache save result cache.
-func (s *SessionVars) SaveCache(cr *CacheResult) {
+func (s *SessionVars) SaveCache(cr *CacheResult) error {
 	cacheSize := int64(len(s.cacheRes))
 	maxAllowCacheSize := ResultCacheSize.Load()
 	var i int64 = 0
@@ -1518,21 +1519,40 @@ func (s *SessionVars) SaveCache(cr *CacheResult) {
 			s.clearEarliestCacheResult()
 		}
 	}
-	key := md5.Sum([]byte(s.Stmt.Text()))
+	var buf bytes.Buffer
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	err := s.Stmt.Restore(restoreCtx)
+	if err != nil {
+		return err
+	}
+	key := md5.Sum([]byte(buf.String()))
 	cr.LastUpdateTime = time.Now()
 	s.cacheRes[key] = cr
+	return nil
 }
 
 // GetCache get result from cache.
-func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool) {
-	key := md5.Sum([]byte(stmt.Text()))
+func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool, error) {
+	if ResultCacheSize.Load() == 0 {
+		return nil, false, nil
+	}
+	var buf bytes.Buffer
+	if stmt == nil {
+		return nil, false, nil
+	}
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	err := stmt.Restore(restoreCtx)
+	if err != nil {
+		return nil, false, err
+	}
+	key := md5.Sum([]byte(buf.String()))
 	cs, ok := s.cacheRes[key]
-	if time.Since(cs.LastUpdateTime).Milliseconds() >=
+	if ok && time.Since(cs.LastUpdateTime).Milliseconds() >=
 		ResultCacheTimeout.Load() {
 		delete(s.cacheRes, key)
-		return nil, false
+		return nil, false, nil
 	}
-	return cs, ok
+	return cs, ok, nil
 }
 
 const (

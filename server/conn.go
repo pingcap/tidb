@@ -2092,7 +2092,10 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	var rs ResultSet
 	var err error
-	cs, ok := cc.ctx.GetSessionVars().GetCache(stmt)
+	cs, ok, err := cc.ctx.GetSessionVars().GetCache(stmt)
+	if err != nil {
+		return false, err
+	}
 	if !ok {
 		if variable.ResultCacheSize.Load() != 0 {
 			cc.ctx.GetSessionVars().Stmt = stmt
@@ -2379,7 +2382,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		}
 	}
 	if cacheresult != nil {
-		cc.ctx.GetSessionVars().SaveCache(cacheresult)
+		err := cc.ctx.GetSessionVars().SaveCache(cacheresult)
+		if err != nil {
+			return false, err
+		}
 	}
 	if stmtDetail != nil {
 		start = time.Now()
@@ -2427,7 +2433,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 	if cacheresult != nil {
-		cc.ctx.GetSessionVars().SaveCache(cacheresult)
+		err := cc.ctx.GetSessionVars().SaveCache(cacheresult)
+		if err != nil {
+			return err
+		}
 	}
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
