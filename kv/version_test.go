@@ -34,35 +34,48 @@ func TestVersion(t *testing.T) {
 
 func TestMppVersion(t *testing.T) {
 	assert.Equal(t, int64(1), GetTiDBMppVersion().ToInt64())
-	assert.Equal(t, "unspecified(use 1)", MppVersionUnspecified.FmtMppVersion())
-	assert.Equal(t, "0", MppVersionV0.FmtMppVersion())
-	assert.Equal(t, "1", MppVersionV1.FmtMppVersion())
+	{
+		v, ok := ToMppVersion("unspecified")
+		assert.True(t, ok)
+		assert.Equal(t, v, MppVersionUnspecified)
+	}
+	{
+		v, ok := ToMppVersion("-1")
+		assert.True(t, ok)
+		assert.Equal(t, v, MppVersionUnspecified)
+	}
+	{
+		v, ok := ToMppVersion("0")
+		assert.True(t, ok)
+		assert.Equal(t, v, MppVersionV0)
+	}
+	{
+		v, ok := ToMppVersion("1")
+		assert.True(t, ok)
+		assert.Equal(t, v, MppVersionV1)
+	}
 }
 
 func TestExchangeCompressionMode(t *testing.T) {
 	assert.Equal(t, "UNSPECIFIED", ExchangeCompressionModeUnspecified.Name())
-	assert.Equal(t, "unspecified(use FAST)", ExchangeCompressionModeUnspecified.FmtMppExchangeCompressionMode())
 	{
 		a, ok := ToExchangeCompressionMode("UNSPECIFIED")
 		assert.Equal(t, a, ExchangeCompressionModeUnspecified)
 		assert.True(t, ok)
 	}
 	assert.Equal(t, "NONE", ExchangeCompressionModeNONE.Name())
-	assert.Equal(t, "NONE", ExchangeCompressionModeNONE.FmtMppExchangeCompressionMode())
 	{
 		a, ok := ToExchangeCompressionMode("NONE")
 		assert.Equal(t, a, ExchangeCompressionModeNONE)
 		assert.True(t, ok)
 	}
 	assert.Equal(t, "FAST", ExchangeCompressionModeFast.Name())
-	assert.Equal(t, "FAST", ExchangeCompressionModeFast.FmtMppExchangeCompressionMode())
 	{
 		a, ok := ToExchangeCompressionMode("FAST")
 		assert.Equal(t, a, ExchangeCompressionModeFast)
 		assert.True(t, ok)
 	}
 	assert.Equal(t, "HIGH_COMPRESSION", ExchangeCompressionModeHC.Name())
-	assert.Equal(t, "HIGH_COMPRESSION", ExchangeCompressionModeHC.FmtMppExchangeCompressionMode())
 	{
 		a, ok := ToExchangeCompressionMode("HIGH_COMPRESSION")
 		assert.Equal(t, a, ExchangeCompressionModeHC)

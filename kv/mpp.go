@@ -16,7 +16,6 @@ package kv
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +44,9 @@ const (
 
 	// MppVersionUnspecified means the illegal version
 	MppVersionUnspecified MppVersion = -1
+
+	// MppVersionUnspecifiedName denotes name of UNSPECIFIED mpp version
+	MppVersionUnspecifiedName string = "UNSPECIFIED"
 )
 
 // ToInt64 transforms MppVersion to int64
@@ -53,19 +55,20 @@ func (v MppVersion) ToInt64() int64 {
 }
 
 // ToMppVersion transforms string to MppVersion
-func ToMppVersion(s string) (MppVersion, error) {
-	v, err := strconv.ParseInt(s, 10, 64)
+func ToMppVersion(name string) (MppVersion, bool) {
+	name = strings.ToUpper(name)
+	if name == MppVersionUnspecifiedName {
+		return MppVersionUnspecified, true
+	}
+	v, err := strconv.ParseInt(name, 10, 64)
 	if err != nil {
-		if !strings.HasPrefix(strings.ToUpper(s), "UNSPECIFIED") {
-			return MppVersionV0, err
-		}
-		return MppVersionUnspecified, nil
+		return MppVersionUnspecified, false
 	}
 	version := MppVersion(v)
 	if version >= MppVersionUnspecified && version <= NewestMppVersion {
-		return version, nil
+		return version, true
 	}
-	return MppVersionV0, fmt.Errorf("invalid mpp version %s", s)
+	return MppVersionUnspecified, false
 }
 
 // GetTiDBMppVersion returns the mpp-version can be used in mpp plan
@@ -75,18 +78,6 @@ func GetTiDBMppVersion() MppVersion {
 
 var mppVersionFeatures = map[MppVersion]string{
 	MppVersionV1: "exchange data compression",
-}
-
-// FmtMppVersion returns the description about mpp-version
-func (v MppVersion) FmtMppVersion() string {
-	var version string
-	if v == MppVersionUnspecified {
-		v = GetTiDBMppVersion()
-		version = fmt.Sprintf("unspecified(use %d)", v)
-	} else {
-		version = fmt.Sprintf("%d", v)
-	}
-	return version
 }
 
 // MPPTaskMeta means the meta info such as location of a mpp task.
@@ -194,6 +185,7 @@ func (t ExchangeCompressionMode) Name() string {
 
 // ToExchangeCompressionMode returns the ExchangeCompressionMode from name
 func ToExchangeCompressionMode(name string) (ExchangeCompressionMode, bool) {
+	name = strings.ToUpper(name)
 	if name == exchangeCompressionModeUnspecifiedName {
 		return ExchangeCompressionModeUnspecified, true
 	}
@@ -215,15 +207,4 @@ func (t ExchangeCompressionMode) ToMppCompressionMode() tipb.CompressionMode {
 		return tipb.CompressionMode_HIGH_COMPRESSION
 	}
 	return tipb.CompressionMode_NONE
-}
-
-// FmtMppExchangeCompressionMode returns the description about exchange compression mode
-func (t ExchangeCompressionMode) FmtMppExchangeCompressionMode() string {
-	var res string
-	if t == ExchangeCompressionModeUnspecified {
-		res = fmt.Sprintf("unspecified(use %s)", RecommendedExchangeCompressionMode.Name())
-	} else {
-		res = t.Name()
-	}
-	return res
 }
