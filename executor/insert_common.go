@@ -457,6 +457,7 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 	return nil
 }
 
+// ETL_LOG_STEP is the step of log.
 const ETL_LOG_STEP = 1000_000
 
 func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) (err error) {
