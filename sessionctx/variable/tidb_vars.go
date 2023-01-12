@@ -1173,8 +1173,8 @@ const (
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
 	DefEnableDynamicPartitionPruning                 = false
-	DefTiDBETLConcurrency                            = 64
-	DefTiDBETLBatchSize                              = 2000
+	DefTiDBETLConcurrency                            = 256
+	DefTiDBETLBatchSize                              = 1000
 	DefExplainShowMppFeature                         = false
 	DefaultExchangeCompressionMode                   = kv.ExchangeCompressionModeUnspecified
 )
