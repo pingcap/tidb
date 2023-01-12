@@ -48,9 +48,9 @@ func TestResourceGroupBaisc(t *testing.T) {
 	dom.DDL().SetHook(hook)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'off'")
-	tk.MustGetErrCode("create user usr1 resource group 'rg1'", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
 	tk.MustExec("create user usr1")
-	tk.MustGetErrCode("alter user usr1 resource group 'rg1'", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("alter user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
 	tk.MustGetErrCode("create resource group x "+
 		"RRU_PER_SEC=1000 "+
 		"WRU_PER_SEC=2000", mysql.ErrResourceGroupSupportDisabled)
