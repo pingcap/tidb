@@ -495,8 +495,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 		} else {
 			affectedRow := uint64(0)
 			maxCap := e.maxChunkSize
-			dataCh = make(chan *chunk.Chunk, 2*etlConcurrency*(etlBatchSize/maxCap+1))
-			chunkBackCh := make(chan *chunk.Chunk, 2*etlConcurrency*(etlBatchSize/maxCap+1))
+			dataCh = make(chan *chunk.Chunk, etlConcurrency*(etlBatchSize/maxCap+1))
+			chunkBackCh := make(chan *chunk.Chunk, etlConcurrency*(etlBatchSize/maxCap+1))
 			var eg *errgroup.Group
 			eg, ctx = errgroup.WithContext(ctx)
 
