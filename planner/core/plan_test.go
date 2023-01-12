@@ -864,7 +864,8 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/38310
 func TestNullEQConditionPlan(t *testing.T) {
-	store, _ := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t0(c0 BOOL, PRIMARY KEY(c0));")
