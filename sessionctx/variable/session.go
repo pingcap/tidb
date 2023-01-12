@@ -1516,6 +1516,25 @@ func (s *SessionVars) clearOneTimeoutCacheResult() {
 			break
 		}
 	}
+	if key == 0 {
+		return
+	}
+	delete(s.cacheRes, key)
+}
+
+// Clear earliest CacheResult.
+func (s *SessionVars) clearEarlistCacheResult() {
+	var key uint32
+	minTime := time.Now()
+	for k, v := range s.cacheRes {
+		if v.LastUpdateTime.Before(minTime) {
+			minTime = v.LastUpdateTime
+			key = k
+		}
+	}
+	if key == 0 {
+		return
+	}
 	delete(s.cacheRes, key)
 }
 
@@ -1525,8 +1544,14 @@ func (s *SessionVars) SaveCache(cr *CacheResult) {
 	maxAllowCacheSize := ResultCacheSize.Load()
 	var i int64 = 0
 	if cacheSize >= maxAllowCacheSize {
-		for ; i <= cacheSize-maxAllowCacheSize+1; i++ {
+		for i = 0; i <= cacheSize-maxAllowCacheSize+1; i++ {
 			s.clearOneTimeoutCacheResult()
+		}
+	}
+	cacheSize = int64(len(s.cacheRes))
+	if cacheSize >= maxAllowCacheSize {
+		for i = 0; i <= cacheSize-maxAllowCacheSize+1; i++ {
+			s.clearEarlistCacheResult()
 		}
 	}
 	var buf bytes.Buffer
