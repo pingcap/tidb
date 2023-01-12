@@ -610,7 +610,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 		logutil.BgLogger().Info("[ddl] run add index job", zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
-		initializeTrace(job.ID)
 	}
 	originalState := indexInfo.State
 	switch indexInfo.State {
@@ -656,7 +655,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		defer injectSpan(job.ID, "write-reorg")()
 		// reorganization -> public
 		tbl, err := getTable(d.store, schemaID, tblInfo)
 		if err != nil {
@@ -2059,7 +2057,6 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 		return err
 	}
 
-	finish := injectSpan(bfJob.JobID, "finish-import")
 	err = bc.FinishImport(bfJob.EleID, bfJob.Meta.IsUnique, tbl)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning import error", zap.String("first backfill job", bfJob.AbbrStr()), zap.Error(err))
@@ -2067,7 +2064,6 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 		return err
 	}
 	ingest.LitBackCtxMgr.Unregister(bfJob.ID)
-	finish()
 	bc.SetDone()
 	return nil
 }

@@ -166,6 +166,7 @@ func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBac
 		priority:   bfJob.Meta.Priority}, nil
 }
 
+// GetTasks gets the backfill tasks associated with the non-runningJobID.
 func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, concurrency int) ([]*reorgBackfillTask, error) {
 	// TODO: At present, only add index is processed. In the future, different elements need to be distinguished.
 	var err error

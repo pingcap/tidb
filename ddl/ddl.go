@@ -973,15 +973,15 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-func (d *ddlCtx) asyncNotifyWorker(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
+func (dc *ddlCtx) asyncNotifyWorker(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
 	// If the workers don't run, we needn't notify workers.
 	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		return
 	}
-	if d.isOwner() {
+	if dc.isOwner() {
 		asyncNotify(ch)
 	} else {
-		d.asyncNotifyByEtcd(etcdPath, jobID, jobType)
+		dc.asyncNotifyByEtcd(etcdPath, jobID, jobType)
 	}
 }
 

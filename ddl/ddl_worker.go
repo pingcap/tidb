@@ -58,7 +58,7 @@ var (
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 
 	mockDDLErrOnce = int64(0)
-	// TestNotifyBeginTxnCh is used for if the txn is begining in runInTxn.
+	// TestNotifyBeginTxnCh is used for if the txn is beginning in runInTxn.
 	TestNotifyBeginTxnCh = make(chan struct{})
 )
 

@@ -462,8 +462,6 @@ func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResul
 	// Change the batch size dynamically.
 	w.GetCtx().batchCnt = int(variable.GetDDLReorgBatchSize())
 	result = w.handleBackfillTask(w.GetCtx().ddlCtx, task, w.backfiller)
-	finish := injectSpan(task.bfJob.JobID+100, fmt.Sprintf("handle-job-%d-task-%d", task.bfJob.JobID, task.bfJob.ID))
-	defer finish()
 	task.bfJob.RowCount = int64(result.addedCount)
 	if result.err != nil {
 		logutil.BgLogger().Warn("[ddl] backfill worker runTask failed",
@@ -1186,7 +1184,6 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 }
 
 func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
-	defer injectSpan(reorgInfo.Job.ID, "control-write-records")()
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	if startKey == nil && endKey == nil {
 		return nil
@@ -1284,6 +1281,7 @@ func checkJobIsFinished(sess *session, ddlJobID int64) (bool, error) {
 	return false, errors.Trace(err)
 }
 
+// GetBackfillErr gets the error in backfill job.
 func GetBackfillErr(sess *session, ddlJobID, currEleID int64, currEleKey []byte) error {
 	var err error
 	var metas []*model.BackfillMeta

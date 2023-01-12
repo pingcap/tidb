@@ -411,7 +411,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 	d.wg.Run(func() {
 		defer func() {
 			d.removeBackfillCtxJobCtx(bJob.JobID)
-			tidbutil.Recover(metrics.LabelBackfillWorker, fmt.Sprintf("runBackfillJobs"), nil, false)
+			tidbutil.Recover(metrics.LabelBackfillWorker, "runBackfillJobs", nil, false)
 		}()
 
 		if bJob.Meta.ReorgTp == model.ReorgTypeLitMerge {
@@ -847,6 +847,7 @@ func GetBackfillJobCount(sess *session, tblName, condition string, label string)
 	return int(rows[0].GetInt64(0)), nil
 }
 
+// GetBackfillMetas gets the backfill metas in the tblName table according to condition.
 func GetBackfillMetas(sess *session, tblName, condition string, label string) ([]*model.BackfillMeta, error) {
 	rows, err := sess.execute(context.Background(), fmt.Sprintf("select backfill_meta from mysql.%s where %s", tblName, condition), label)
 	if err != nil {
