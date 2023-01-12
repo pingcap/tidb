@@ -905,6 +905,7 @@ import (
 	DropDatabaseStmt           "DROP DATABASE statement"
 	DropImportStmt             "DROP IMPORT statement"
 	DropIndexStmt              "DROP INDEX statement"
+	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
 	DropTableStmt              "DROP TABLE statement"
@@ -11496,6 +11497,7 @@ Statement:
 |	DropSequenceStmt
 |	DropViewStmt
 |	DropUserStmt
+|	DropResourceGroupStmt
 |	DropRoleStmt
 |	DropStatisticsStmt
 |	DropStatsStmt
@@ -13048,7 +13050,7 @@ ResourceGroupNameOption:
 	{
 		$$ = nil
 	}
-|	"RESOURCE" "GROUP" stringLit
+|	"RESOURCE" "GROUP" ResourceGroupName
 	{
 		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
 	}
@@ -14209,8 +14211,8 @@ AlterResourceGroupStmt:
 		}
 	}
 
-DropPolicyStmt:
-	"DROP" "RESOURCE" "GROUP" IfExists PolicyName
+DropResourceGroupStmt:
+	"DROP" "RESOURCE" "GROUP" IfExists ResourceGroupName
 	{
 		$$ = &ast.DropResourceGroupStmt{
 			IfExists:          $4.(bool),
