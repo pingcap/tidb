@@ -1436,6 +1436,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
+		var count float64
 		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
 		if err != nil {
 			return 0, err
@@ -1456,7 +1457,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 					totalCount += 1
 					continue
 				}
-				count := idx.equalRowCount(lb, realtimeRowCount)
+				count = idx.equalRowCount(lb, realtimeRowCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				totalCount += count
@@ -1476,7 +1477,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 		r := types.NewBytesDatum(rb)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if isSingleCol && lowIsNull {
-			totalCount += float64(idx.NullCount)
+			count += float64(idx.NullCount)
 		}
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
@@ -1511,20 +1512,21 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				if expBackoffCnt > upperLimit {
 					expBackoffCnt = upperLimit
 				}
-				totalCount += expBackoffCnt
+				count += expBackoffCnt
 			}
 		}
 		if !expBackoffSuccess {
-			totalCount += idx.BetweenRowCount(l, r)
+			count += idx.BetweenRowCount(l, r)
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
-		totalCount *= idx.GetIncreaseFactor(realtimeRowCount)
+		count *= idx.GetIncreaseFactor(realtimeRowCount)
 
 		// handling the out-of-range part
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, modifyCount)
+			count += idx.Histogram.outOfRangeRowCount(&l, &r, modifyCount)
 		}
+		totalCount += count
 	}
 	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
 	return totalCount, nil

@@ -906,13 +906,28 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 	return statsTbl, nil
 }
 
-func getRange(start, end int64) []*ranger.Range {
+func getRange(start, end int64) ranger.Ranges {
 	ran := &ranger.Range{
 		LowVal:    []types.Datum{types.NewIntDatum(start)},
 		HighVal:   []types.Datum{types.NewIntDatum(end)},
 		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 	return []*ranger.Range{ran}
+}
+
+func getRanges(start, end []int64) (res ranger.Ranges) {
+	if len(start) != len(end) {
+		return nil
+	}
+	for i := range start {
+		ran := &ranger.Range{
+			LowVal:    []types.Datum{types.NewIntDatum(start[i])},
+			HighVal:   []types.Datum{types.NewIntDatum(end[i])},
+			Collators: collate.GetBinaryCollatorSlice(1),
+		}
+		res = append(res, ran)
+	}
+	return
 }
 
 func TestSelectivityGreedyAlgo(t *testing.T) {
@@ -978,4 +993,70 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	for i := range input {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {
+	idx2Columns := make(map[int64][]int64)
+	colID2IdxID := make(map[int64]int64)
+	for _, idxHist := range statsTbl.Indices {
+		ids := make([]int64, 0, len(idxHist.Info.Columns))
+		for _, idxCol := range idxHist.Info.Columns {
+			ids = append(ids, int64(idxCol.Offset))
+		}
+		if id, ok := colID2IdxID[ids[0]]; !ok || id > idxHist.ID {
+			colID2IdxID[ids[0]] = idxHist.ID
+		}
+		idx2Columns[idxHist.ID] = ids
+	}
+	statsTbl.Idx2ColumnIDs = idx2Columns
+	statsTbl.ColID2IdxID = colID2IdxID
+}
+
+func TestIssue39593(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, index idx(a, b))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// mock the statistics.Table
+	statsTbl := mockStatsTable(tblInfo, 540)
+	colValues, err := generateIntDatum(1, 54)
+	require.NoError(t, err)
+	for i := 1; i <= 2; i++ {
+		statsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:      tblInfo.Columns[i-1],
+			Loaded:    true,
+			StatsVer:  2,
+		}
+	}
+	idxValues, err := generateIntDatum(2, 3)
+	require.NoError(t, err)
+	tp := types.NewFieldType(mysql.TypeBlob)
+	statsTbl.Indices[1] = &statistics.Index{
+		Histogram: *mockStatsHistogram(1, idxValues, 60, tp),
+		Info:      tblInfo.Indices[0],
+		StatsVer:  2,
+	}
+	generateMapsForMockStatsTbl(statsTbl)
+
+	sctx := testKit.Session()
+	idxID := tblInfo.Indices[0].ID
+	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	count, err := statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals, vals))
+	require.NoError(t, err)
+	// estimated row count without any changes
+	require.Equal(t, float64(360), count)
+	statsTbl.Count *= 10
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRanges(vals, vals))
+	require.NoError(t, err)
+	// estimated row count after mock modify on the table
+	require.Equal(t, float64(3600), count)
 }
