@@ -2733,3 +2733,15 @@ func TestForeignKeyAndMemoryTracker(t *testing.T) {
 	tk.MustExec("update t1 set id=id+100000 where id=1")
 	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
 }
+
+func TestForeignKeyMetaInKeyColumnUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index(a, b));")
+	tk.MustExec("create table t2 (a int, b int, index(a, b), constraint fk foreign key(a, b) references t1(a, b));")
+	tk.MustQuery("select CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME from " +
+		"INFORMATION_SCHEMA.KEY_COLUMN_USAGE where CONSTRAINT_SCHEMA='test' and TABLE_NAME='t2' and REFERENCED_TABLE_SCHEMA is not null and REFERENCED_COLUMN_NAME is not null;").
+		Check(testkit.Rows("fk test t2 a test t1 a", "fk test t2 b test t1 b"))
+}
