@@ -457,6 +457,8 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 	return nil
 }
 
+const ETL_LOG_STEP = 1000_000
+
 func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) (err error) {
 	// process `insert|replace into ... select ... from ...`
 	e := base.insertCommon()
@@ -492,9 +494,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 		} else {
 			affectedRow := uint64(0)
 			maxCap := e.maxChunkSize
-			approximateChannelSize := 2 * etlConcurrency * (batchSize/maxCap + 1)
-			dataCh = make(chan *chunk.Chunk, approximateChannelSize)
-			chunkBackCh := make(chan *chunk.Chunk, approximateChannelSize)
+			dataCh = make(chan *chunk.Chunk, 2*etlConcurrency*(etlBatchSize/maxCap+1))
+			chunkBackCh := make(chan *chunk.Chunk, 2*etlConcurrency*(etlBatchSize/maxCap+1))
 			var eg *errgroup.Group
 			eg, ctx = errgroup.WithContext(ctx)
 
@@ -548,6 +549,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 		}
 	}
 
+	processedRows, nextLogRows := 0, ETL_LOG_STEP
 	extraColsInSel := make([][]types.Datum, 0, chk.Capacity())
 	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
 	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
@@ -568,6 +570,11 @@ LOOP:
 			break
 		}
 		if etlMode {
+			processedRows += chk.NumRows()
+			if processedRows > nextLogRows {
+				nextLogRows += ETL_LOG_STEP
+				logutil.Logger(ctx).Error("ETL Process", zap.Int("processed rows", processedRows))
+			}
 			select {
 			case dataCh <- chk:
 			case <-ctx.Done():
@@ -786,7 +793,9 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 			}
 			rows = append(rows, row)
 		}
-		execRows()
+		if err = execRows(); err != nil {
+			return err
+		}
 		chunkBackCh <- chk
 		if currentRows >= batchSize {
 			if err = commitRows(); err != nil {
