@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 )
@@ -33,7 +34,13 @@ var (
 	errUnterminatedQuotedField = errors.NewNoStackError("syntax error: unterminated quoted field")
 	errDanglingBackslash       = errors.NewNoStackError("syntax error: no character after backslash")
 	errUnexpectedQuoteField    = errors.NewNoStackError("syntax error: cannot have consecutive fields without separator")
+	// LargestEntryLimit is the max size for reading file to buf
+	LargestEntryLimit int
 )
+
+func init() {
+	LargestEntryLimit = tidbconfig.MaxTxnEntrySizeLimit
+}
 
 // CSVParser is basically a copy of encoding/csv, but special-cased for MySQL-like input.
 type CSVParser struct {
@@ -336,6 +343,9 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
+		if len(buf) > LargestEntryLimit {
+			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
+		}
 		parser.buf = nil
 		if err := parser.readBlock(); err != nil || len(parser.buf) == 0 {
 			if err == nil {
