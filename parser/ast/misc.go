@@ -1591,7 +1591,7 @@ type ResourceGroupNameOption struct {
 func (c *ResourceGroupNameOption) Restore(ctx *format.RestoreCtx) error {
 	if c.Type == UserResourceGroupName {
 		ctx.WriteKeyWord(" RESOURCE GROUP ")
-		ctx.WriteString(c.Value)
+		ctx.WriteName(c.Value)
 	}
 	return nil
 }
