@@ -71,6 +71,8 @@ const (
 	PlanReplayerTaskMetaSQLDigest = "sqlDigest"
 	// PlanReplayerTaskMetaPlanDigest indicates the plan digest of this task
 	PlanReplayerTaskMetaPlanDigest = "planDigest"
+	// PlanReplayerTaskEnableHistoricalStats indicates whether the task is using historical stats
+	PlanReplayerTaskEnableHistoricalStats = "enableHistoricalStats"
 )
 
 type tableNamePair struct {
@@ -168,6 +170,10 @@ var (
  |-stats
  |   |-stats1.json
  |   |-stats2.json
+ |   |-....
+ |-statsMem
+ |   |-stats1.txt
+ |   |-stats2.txt
  |   |-....
  |-config.toml
  |-table_tiflash_replica.txt
@@ -274,12 +280,17 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
-	// For capture task, we don't dump stats
-	if !task.IsCapture {
+	// For capture task, we dump stats in storage only if EnableHistoricalStatsForCapture is disabled.
+	// For manual plan replayer dump command, we directly dump stats in storage
+	if !variable.EnableHistoricalStatsForCapture.Load() || !task.IsCapture {
 		// Dump stats
 		if err = dumpStats(zw, pairs, do); err != nil {
 			return err
 		}
+	}
+
+	if err = dumpStatsMemStatus(zw, pairs, do); err != nil {
+		return err
 	}
 
 	// Dump variables
@@ -342,6 +353,7 @@ func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	varMap[PlanReplayerTaskMetaIsContinues] = strconv.FormatBool(task.IsContinuesCapture)
 	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
 	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
+	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(variable.EnableHistoricalStatsForCapture.Load())
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}
@@ -419,6 +431,37 @@ func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
 		_, err := fmt.Fprintf(zf, "%s;%s", table.DBName, table.TableName)
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain) error {
+	statsHandle := do.StatsHandle()
+	is := do.InfoSchema()
+	for pair := range pairs {
+		if pair.IsView {
+			continue
+		}
+		tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+		if err != nil {
+			return err
+		}
+		tblStats := statsHandle.GetTableStats(tbl.Meta())
+		if tblStats == nil {
+			continue
+		}
+		statsMemFw, err := zw.Create(fmt.Sprintf("statsMem/%v.%v.txt", pair.DBName, pair.TableName))
+		if err != nil {
+			return errors.AddStack(err)
+		}
+		fmt.Fprintf(statsMemFw, "[INDEX]\n")
+		for _, indice := range tblStats.Indices {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", indice.Info.Name.String(), indice.StatusToString()))
+		}
+		fmt.Fprintf(statsMemFw, "[COLUMN]\n")
+		for _, col := range tblStats.Columns {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", col.Info.Name.String(), col.StatusToString()))
 		}
 	}
 	return nil

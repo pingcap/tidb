@@ -198,6 +198,7 @@ go_test(
         "//util/resourcegrouptag",
         "//util/rowcodec",
         "//util/sqlexec",
+        "//util/syncutil",
         "//util/topsql",
         "//util/topsql/collector",
         "//util/topsql/collector/mock",
