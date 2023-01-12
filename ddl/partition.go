@@ -2771,7 +2771,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 	failpoint.Inject("reorgPartitionAfterDataCopy", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			panic("panic test")
+			panic("panic test in reorgPartitionAfterDataCopy")
 		}
 	})
 
@@ -2851,7 +2851,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 	failpoint.Inject("reorgPartitionAfterIndex", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			panic("panic test")
+			panic("panic test in reorgPartitionAfterIndex")
 		}
 	})
 	return nil
