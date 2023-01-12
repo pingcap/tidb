@@ -699,6 +699,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	if err != nil {
 		return err
 	}
+	CleanupDDLReorgHandles(job, w.sess)
 	asyncNotify(d.ddlJobDoneCh)
 	return nil
 }
