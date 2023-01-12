@@ -457,8 +457,8 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 	return nil
 }
 
-// ETL_LOG_STEP is the step of log.
-const ETL_LOG_STEP = 1000_000
+// ETLLogStep is the step of log.
+const ETLLogStep = 1000_000
 
 func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) (err error) {
 	// process `insert|replace into ... select ... from ...`
@@ -550,7 +550,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 		}
 	}
 
-	processedRows, nextLogRows := 0, ETL_LOG_STEP
+	processedRows, nextLogRows := 0, ETLLogStep
 	extraColsInSel := make([][]types.Datum, 0, chk.Capacity())
 	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
 	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
@@ -573,7 +573,7 @@ LOOP:
 		if etlMode {
 			processedRows += chk.NumRows()
 			if processedRows > nextLogRows {
-				nextLogRows += ETL_LOG_STEP
+				nextLogRows += ETLLogStep
 				logutil.Logger(ctx).Error("ETL Process", zap.Int("processed rows", processedRows))
 			}
 			select {
