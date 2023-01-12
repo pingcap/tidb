@@ -2102,8 +2102,10 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		}
 	} else {
 		cc.ctx.GetSessionVars().Stmt = nil
-		rs.Close()
-		rs = newGetResult(cs)
+		if rs != nil {
+			rs.Close()
+			rs = newGetResult(cs)
+		}
 	}
 	reg.End()
 	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
