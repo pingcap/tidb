@@ -103,8 +103,9 @@ func dumpType(tp byte) byte {
 	}
 }
 
-func (column *ColumnInfo) Tranfer() *variable.TmpcolumnInfo {
-	newTp := &variable.TmpcolumnInfo{
+// Tranfer ColumnInfo tranfer to VarColumnInfo
+func (column *ColumnInfo) Tranfer() *variable.VarColumnInfo {
+	newTp := &variable.VarColumnInfo{
 		Schema:             column.Schema,
 		Table:              column.Table,
 		OrgTable:           column.OrgTable,
@@ -122,7 +123,8 @@ func (column *ColumnInfo) Tranfer() *variable.TmpcolumnInfo {
 	return newTp
 }
 
-func tmpcolumnInfotransfer(tp *variable.TmpcolumnInfo) *ColumnInfo {
+// tmpcolumnInfotransfer VarColumnInfo tranfer to ColumnInfo
+func tmpcolumnInfotransfer(tp *variable.VarColumnInfo) *ColumnInfo {
 	newTp := &ColumnInfo{
 		Schema:             tp.Schema,
 		Table:              tp.Table,

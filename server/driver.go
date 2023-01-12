@@ -87,6 +87,7 @@ type fetchNotifier interface {
 	OnFetchReturned()
 }
 
+// GetResult save select result.
 type GetResult struct {
 	columns   []*ColumnInfo
 	ID        int
@@ -95,42 +96,51 @@ type GetResult struct {
 	CloseBool bool
 }
 
+// Columns get columnInfo.
 func (cache *GetResult) Columns() []*ColumnInfo {
 	return cache.columns
 }
 
+// Next return chunk.
 func (cache *GetResult) Next(ctx context.Context, req *chunk.Chunk) error {
 	cache.chunks[cache.ID].CopyChunk(req)
 	cache.ID++
 	return nil
 }
 
+// StoreFetchedRows save rows.
 func (cache *GetResult) StoreFetchedRows(rows []chunk.Row) {
 	cache.rows = rows
 }
 
+// GetFetchedRows get rows.
 func (cache *GetResult) GetFetchedRows() []chunk.Row {
 	return cache.rows
 }
 
+// Close close GetResult
 func (cache *GetResult) Close() error {
 	cache.ID = 0
 	cache.CloseBool = true
 	return nil
 }
 
+// IsClosed check if closed
 func (cache *GetResult) IsClosed() bool {
 	return cache.CloseBool
 }
+
+// NewChunk get new chunk.
 func (cache *GetResult) NewChunk(chunk.Allocator) *chunk.Chunk {
 	chunk := cache.chunks[cache.ID].CopyConstruct()
 	chunk.Reset()
 	return chunk
 }
 
+// newCacheResult new cacheResult
 func newCacheResult(rs ResultSet) *variable.CacheResult {
 	cols := rs.Columns()
-	tmpcols := make([]*variable.TmpcolumnInfo, 0, len(cols))
+	tmpcols := make([]*variable.VarColumnInfo, 0, len(cols))
 	for _, col := range cols {
 		tmpcols = append(tmpcols, col.Tranfer())
 	}
@@ -144,6 +154,7 @@ func newCacheResult(rs ResultSet) *variable.CacheResult {
 	return ca
 }
 
+// tryNewResultSet try save result
 func tryNewResultSet(rs ResultSet, stmt ast.StmtNode) *variable.CacheResult {
 	switch stmt.(type) {
 	case *ast.SelectStmt:
@@ -153,6 +164,7 @@ func tryNewResultSet(rs ResultSet, stmt ast.StmtNode) *variable.CacheResult {
 	}
 }
 
+// newGetResult CacheResult converted to GetResult
 func newGetResult(cs *variable.CacheResult) *GetResult {
 	colus := make([]*ColumnInfo, 0, len(cs.Columns))
 	for _, column := range cs.Columns {
