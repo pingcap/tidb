@@ -1095,6 +1095,7 @@ const (
 	ErrIngestFailed                       = 8247
 	ErrResourceGroupExists                = 8248
 	ErrResourceGroupNotExists             = 8249
+	ErrResourceGroupSupportDisabled       = 8250
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

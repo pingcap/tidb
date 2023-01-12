@@ -1101,7 +1101,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
 
-	ErrColumnInChange: mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
+	ErrColumnInChange:               mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
+	ErrResourceGroupSupportDisabled: mysql.Message("Resource group feature is disabled", nil),
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),
