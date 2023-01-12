@@ -847,6 +847,10 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 		if kv.IsTxnRetryableError(err) || dbterror.ErrNotOwner.Equal(err) {
 			return false, ver, errors.Trace(err)
 		}
+		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err1))
+		}
 		logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 		job.State = model.JobStateRollingback
 		return false, ver, errors.Trace(err)
