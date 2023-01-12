@@ -984,6 +984,32 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger)
 }
 
+func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+	opt := &pebble.IterOptions{
+		LowerBound: lowerBound,
+		UpperBound: upperBound,
+	}
+
+	iter := e.newKVIter(context.Background(), opt)
+	//nolint: errcheck
+	defer iter.Close()
+	// Needs seek to first because NewIter returns an iterator that is unpositioned
+	hasKey := iter.First()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
+	}
+	if !hasKey {
+		return nil, nil, nil
+	}
+	firstKey := append([]byte{}, iter.Key()...)
+	iter.Last()
+	if iter.Error() != nil {
+		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
+	lastKey := append([]byte{}, iter.Key()...)
+	return firstKey, lastKey, nil
+}
+
 type sstMeta struct {
 	path       string
 	minKey     []byte

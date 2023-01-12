@@ -146,7 +146,7 @@ func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
 // Backfilling is time consuming, to accelerate this process, TiDB has built some sub
 // workers to do this in the DDL owner node.
 //
-//                                DDL owner thread
+//                       DDL owner thread (also see comments before runReorgJob func)
 //                                      ^
 //                                      | (reorgCtx.doneCh)
 //                                      |
@@ -230,7 +230,7 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, reorgTp mod
 type backfiller interface {
 	BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
 	AddMetricInfo(float64)
-	GetTask() (*BackfillJob, error)
+	GetTasks() ([]*BackfillJob, error)
 	UpdateTask(bfJob *BackfillJob) error
 	FinishTask(bfJob *BackfillJob) error
 	GetCtx() *backfillCtx
@@ -632,9 +632,10 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		err = dc.isReorgRunnable(reorgInfo.Job.ID)
 	}
 
+	// Update the reorg handle that has been processed.
+	err1 := reorgInfo.UpdateReorgMeta(nextKey, scheduler.sessPool)
+
 	if err != nil {
-		// Update the reorg handle that has been processed.
-		err1 := reorgInfo.UpdateReorgMeta(nextKey, scheduler.sessPool)
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
 
@@ -663,7 +664,8 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		zap.String("start key", hex.EncodeToString(startKey)),
 		zap.String("next key", hex.EncodeToString(nextKey)),
 		zap.Int64("batch added count", taskAddedCount),
-		zap.String("take time", elapsedTime.String()))
+		zap.String("take time", elapsedTime.String()),
+		zap.NamedError("updateHandleError", err1))
 	return nil
 }
 
@@ -1394,15 +1396,15 @@ func GetMaxBackfillJob(sess *session, ddlJobID, currEleID int64, currEleKey []by
 }
 
 // MoveBackfillJobsToHistoryTable moves backfill table jobs to the backfill history table.
-func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bfJob *BackfillJob) error {
-	sess, ok := sessCtx.(*session)
+func MoveBackfillJobsToHistoryTable(sctx sessionctx.Context, bfJob *BackfillJob) error {
+	s, ok := sctx.(*session)
 	if !ok {
-		return errors.Errorf("sess ctx:%#v convert session failed", sessCtx)
+		return errors.Errorf("sess ctx:%#v convert session failed", sctx)
 	}
 
-	return runInTxn(sess, func(se *session) error {
+	return s.runInTxn(func(se *session) error {
 		// TODO: Consider batch by batch update backfill jobs and insert backfill history jobs.
-		bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s",
+		bJobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s",
 			bfJob.JobID, bfJob.EleID, wrapKey2String(bfJob.EleKey)), "update_backfill_job")
 		if err != nil {
 			return errors.Trace(err)
@@ -1416,13 +1418,13 @@ func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bfJob *BackfillJ
 			return errors.Trace(err)
 		}
 		startTS := txn.StartTS()
-		err = RemoveBackfillJob(sess, true, bJobs[0])
+		err = RemoveBackfillJob(se, true, bJobs[0])
 		if err == nil {
 			for _, bj := range bJobs {
 				bj.State = model.JobStateCancelled
 				bj.FinishTS = startTS
 			}
-			err = AddBackfillHistoryJob(sess, bJobs)
+			err = AddBackfillHistoryJob(se, bJobs)
 		}
 		logutil.BgLogger().Info("[ddl] move backfill jobs to history table", zap.Int("job count", len(bJobs)))
 		return errors.Trace(err)

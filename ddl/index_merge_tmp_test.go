@@ -250,16 +250,6 @@ func findIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.Inde
 	return tbl.Meta().FindIndexByName(idxName)
 }
 
-func TestPessimisticAmendIncompatibleWithFastReorg(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1;")
-
-	tk.MustGetErrMsg("set @@tidb_enable_amend_pessimistic_txn = 1;",
-		"amend pessimistic transactions is not compatible with tidb_ddl_enable_fast_reorg")
-}
-
 // TestCreateUniqueIndexKeyExist this case will test below things:
 // Create one unique index idx((a*b+1));
 // insert (0, 6) and delete it;
@@ -374,6 +364,43 @@ func TestAddIndexMergeIndexUpdateOnDeleteOnly(t *testing.T) {
 	for _, err := range checkErrs {
 		require.NoError(t, err)
 	}
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexMergeDeleteUniqueOnWriteOnly(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int default 0, b int default 0);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() {
+			return
+		}
+		var err error
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, err = tk1.Exec("insert into t values (5, 5);")
+			assert.NoError(t, err)
+		case model.StateWriteOnly:
+			_, err = tk1.Exec("insert into t values (5, 7);")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("delete from t where b = 7;")
+			assert.NoError(t, err)
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+	tk.MustExec("alter table t add unique index idx(a);")
 	tk.MustExec("admin check table t;")
 }
 

@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	rmutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -190,6 +191,9 @@ type DDL interface {
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
+	CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
+	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
+	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
@@ -724,7 +728,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	d.wg.Run(d.startDispatchLoop)
 }
 
-func (d *ddl) prepareBackfillWorkers() {
+func (d *ddl) prepareBackfillWorkers() error {
 	workerFactory := func() func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			bk := newBackfillWorker(context.Background(), nil)
@@ -733,9 +737,15 @@ func (d *ddl) prepareBackfillWorkers() {
 		}
 	}
 	d.backfillCtxPool = newBackfillContextPool(pools.NewResourcePool(workerFactory(), backfillWorkerCnt, backfillWorkerCnt, 0))
-	d.backfillWorkerPool = spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, int, *backfillWorker, *backfillWorkerContext]("backfill", int32(backfillWorkerCnt))
+	var err error
+	d.backfillWorkerPool, err = spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, int, *backfillWorker,
+		*backfillWorkerContext]("backfill", int32(backfillWorkerCnt), rmutil.DDL)
+	if err != nil {
+		return err
+	}
 	d.backfillJobCh = make(chan struct{}, 1)
 	d.wg.Run(d.startDispatchBackfillJobsLoop)
+	return nil
 }
 
 // Start implements DDL.Start interface.
@@ -755,7 +765,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
 	d.prepareWorkers4ConcurrencyDDL()
-	d.prepareBackfillWorkers()
+	if err := d.prepareBackfillWorkers(); err != nil {
+		return err
+	}
 
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
@@ -1412,7 +1424,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = newReorgHandler(t, sess).GetDDLReorgHandle(reorgJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(sess).GetDDLReorgHandle(reorgJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1651,6 +1663,31 @@ func (s *session) execute(ctx context.Context, query string, label string) ([]ch
 
 func (s *session) session() sessionctx.Context {
 	return s.Context
+}
+
+func (s *session) runInTxn(f func(*session) error) (err error) {
+	err = s.begin()
+	if err != nil {
+		return err
+	}
+	failpoint.Inject("NotifyBeginTxnCh", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		v := val.(int)
+		if v == 1 {
+			mockDDLErrOnce = 1
+			TestNotifyBeginTxnCh <- struct{}{}
+		} else if v == 2 && mockDDLErrOnce == 1 {
+			<-TestNotifyBeginTxnCh
+			mockDDLErrOnce = 0
+		}
+	})
+
+	err = f(s)
+	if err != nil {
+		s.rollback()
+		return
+	}
+	return errors.Trace(s.commit())
 }
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.
