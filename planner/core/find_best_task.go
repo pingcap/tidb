@@ -2000,9 +2000,16 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				return invalidTask, nil
 			}
 		}
+
+		mppVersion := kv.GetTiDBMppVersion()
+		if v := ds.SCtx().GetSessionVars().MppVersion; v != kv.MppVersionUnspecified {
+			mppVersion = v
+		}
+
 		mppTask := &mppTask{
-			p:      ts,
-			partTp: property.AnyType,
+			p:          ts,
+			partTp:     property.AnyType,
+			mppVersion: mppVersion,
 		}
 		ts.PartitionInfo = PartitionInfo{
 			PruningConds:   pushDownNot(ds.ctx, ds.allConds),
