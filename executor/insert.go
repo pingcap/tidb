@@ -315,15 +315,6 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
-<<<<<<< HEAD
-	e.ctx.GetSessionVars().CurrInsertValues = chunk.Row{}
-	e.ctx.GetSessionVars().CurrInsertBatchExtraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[0:0:0]
-=======
-	if e.runtimeStats != nil && e.stats != nil {
-		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
-	}
-	defer e.memTracker.ReplaceBytesUsed(0)
->>>>>>> f600fc694f (executor: reset the related session vars for both INSERT and REPLACE (#40354))
 	e.setMessage()
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
