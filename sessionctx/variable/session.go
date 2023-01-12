@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -1523,6 +1524,7 @@ func (s *SessionVars) SaveCache(cr *CacheResult) {
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
 	err := s.Stmt.Restore(restoreCtx)
 	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur restore %v", err))
 		return
 	}
 	key := crc32.ChecksumIEEE(buf.Bytes())
@@ -1542,6 +1544,7 @@ func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool) {
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
 	err := stmt.Restore(restoreCtx)
 	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur restore %v", err))
 		return nil, false
 	}
 	key := crc32.ChecksumIEEE(buf.Bytes())
