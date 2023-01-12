@@ -4378,7 +4378,8 @@ func TestIssueInsertPrefixIndexForNonUTF8Collation(t *testing.T) {
 }
 
 func TestMutipleReplaceAndInsertInOneSession(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_securities(id bigint not null auto_increment primary key, security_id varchar(8), market_id smallint, security_type int, unique key uu(security_id, market_id))")
