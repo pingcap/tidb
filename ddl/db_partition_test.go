@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -58,41 +57,6 @@ type allTableData struct {
 	keys [][]byte
 	vals [][]byte
 	tp   []string
-}
-
-// TODO: Create a more generic function that gets all accessible table ids
-// from all schemas, and checks the full key space so that there are no
-// keys for non-existing table IDs. Also figure out how to wait for deleteRange
-// Checks that there are no accessible data after an existing table
-// assumes that tableIDs are only increasing.
-// To be used during failure testing of ALTER, to make sure cleanup is done.
-func noNewTablesAfter(t *testing.T, ctx sessionctx.Context, tbl table.Table) {
-	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	defer func() {
-		err := txn.Rollback()
-		require.NoError(t, err)
-	}()
-	// Get max tableID (if partitioned)
-	tblID := tbl.Meta().ID
-	if pt := tbl.GetPartitionedTable(); pt != nil {
-		defs := pt.Meta().Partition.Definitions
-		{
-			for i := range defs {
-				tblID = mathutil.Max[int64](tblID, defs[i].ID)
-			}
-		}
-	}
-	prefix := tablecodec.EncodeTablePrefix(tblID + 1)
-	it, err := txn.Iter(prefix, nil)
-	require.NoError(t, err)
-	if it.Valid() {
-		foundTblID := tablecodec.DecodeTableID(it.Key())
-		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
-		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
-		require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
-	}
 }
 
 func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
