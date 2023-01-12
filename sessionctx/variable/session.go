@@ -1528,7 +1528,6 @@ func (s *SessionVars) SaveCache(cr *CacheResult) {
 	key := crc32.ChecksumIEEE(buf.Bytes())
 	cr.LastUpdateTime = time.Now()
 	s.cacheRes[key] = cr
-	return
 }
 
 // GetCache get result from cache.
