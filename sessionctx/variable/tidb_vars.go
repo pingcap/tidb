@@ -902,6 +902,10 @@ const (
 	TiDBETLConcurrency = "tidb_etl_concurrency"
 	// TiDBETLBatchSize controls the non-transaction batch of ETL operations.
 	TiDBETLBatchSize = "tidb_etl_batch_size"
+	// TiDBResultCacheSize TiDB sessioin cache result size.
+	TiDBResultCacheSize = "result_cache_size"
+	// TiDBResultCacheSize TiDB sessioin cache result time.
+	TiDBResultCacheTimeout = "result_cache_timeout"
 )
 
 // TiDB intentional limits
@@ -1165,6 +1169,8 @@ const (
 	DefEnableDynamicPartitionPruning                 = false
 	DefTiDBETLConcurrency                            = 64
 	DefTiDBETLBatchSize                              = 2000
+	DefTiDBResultCacheSize                           = 0
+	DefTiDBResultCacheTimeout                        = 0
 )
 
 // Process global variables.
@@ -1239,6 +1245,8 @@ var (
 	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
+	ResultCacheSize                    = atomic.NewInt64(DefTiDBResultCacheSize)
+	ResultCacheTimeout                 = atomic.NewInt64(DefTiDBResultCacheTimeout)
 )
 
 var (

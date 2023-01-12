@@ -1161,6 +1161,20 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 
+	{Scope: ScopeGlobal, Name: TiDBResultCacheSize, Value: strconv.Itoa(DefTiDBResultCacheSize), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(ResultCacheSize.Load(), 10), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		ResultCacheSize.Store(TidbOptInt64(val, DefTiDBResultCacheSize))
+		return nil
+	}},
+
+	{Scope: ScopeGlobal, Name: TiDBResultCacheTimeout, Value: strconv.Itoa(DefTiDBResultCacheTimeout), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint32, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(ResultCacheTimeout.Load(), 10), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		ResultCacheTimeout.Store(TidbOptInt64(val, DefTiDBResultCacheTimeout))
+		return nil
+	}},
+
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
