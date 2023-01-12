@@ -230,6 +230,8 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 	return ver, errors.Trace(err)
 }
 
+// alterTableLabelRule updates Label Rules if they exists
+// returns true if changed.
 func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) (bool, error) {
 	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, schemaName, meta.Name.L)
 	oldRule, err := infosync.GetLabelRules(context.TODO(), []string{tableRuleID})
@@ -245,7 +247,7 @@ func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) 
 		rule := r.Reset(schemaName, meta.Name.L, "", ids...)
 		err = infosync.PutLabelRule(context.TODO(), rule)
 		if err != nil {
-			return true, errors.Wrapf(err, "failed to notify PD label rule")
+			return false, errors.Wrapf(err, "failed to notify PD label rule")
 		}
 		return true, nil
 	}

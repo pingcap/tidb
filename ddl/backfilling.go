@@ -872,6 +872,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 				return err
 			}
 			runner = newBackfillWorker(jc.ddlJobCtx, i, partWorker)
+			worker = partWorker
 		default:
 			return errors.New("unknown backfill type")
 		}
