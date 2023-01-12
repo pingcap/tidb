@@ -1506,7 +1506,7 @@ func (s *SessionVars) AllocNewPlanID() int {
 	return s.PlanID
 }
 
-// Clear earliest CacheResult.
+// clearOneTimeoutCacheResult Clear one timeout CacheResult.
 func (s *SessionVars) clearOneTimeoutCacheResult() {
 	ts := ResultCacheTimeout.Load()
 	var key uint32
