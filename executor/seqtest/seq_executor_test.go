@@ -900,7 +900,7 @@ func TestPrepareMaxParamCountCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
-	_, err = tk.Exec(bigSQL, bigParams...)
+	err = tk.ExecToErr(bigSQL, bigParams...)
 	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1390]Prepared statement contains too many placeholders")
 }
@@ -987,16 +987,12 @@ func TestBatchInsertDelete(t *testing.T) {
 
 	// Test tidb_batch_insert could not work if enable-batch-dml is disabled.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("insert into batch_insert (c) select * from batch_insert;", errno.ErrTxnTooLarge)
 	tk.MustExec("set @@session.tidb_batch_insert=0;")
 
 	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	require.Error(t, err)
-	require.Truef(t, kv.ErrTxnTooLarge.Equal(err), "%v", err)
+	tk.MustGetErrCode(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`, errno.ErrTxnTooLarge)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
@@ -1022,17 +1018,14 @@ func TestBatchInsertDelete(t *testing.T) {
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 
 	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+	tk.MustExec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	require.NoError(t, err)
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
 	r.Check(testkit.Rows("320"))
 
 	// Disable BachInsert mode in transition.
 	tk.MustExec("begin;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("insert into batch_insert (c) select * from batch_insert;", errno.ErrTxnTooLarge)
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("640"))

@@ -13,6 +13,7 @@ go_library(
         "meta.go",
         "metrics.go",
         "owner.go",
+        "resourcemanager.go",
         "server.go",
         "session.go",
         "sli.go",

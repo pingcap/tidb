@@ -21,13 +21,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
-	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestKillStmt(t *testing.T) {
@@ -86,7 +86,7 @@ func TestKillStmt(t *testing.T) {
 func TestUserAttributes(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	rootTK := testkit.NewTestKit(t, store)
-	ctx := context.WithValue(context.Background(), tikvutil.RequestSourceKey, tikvutil.RequestSource{RequestSourceInternal: true})
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 
 	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html#create-user-comments-attributes
 	rootTK.MustExec(`CREATE USER testuser COMMENT '1234'`)

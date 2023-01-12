@@ -213,7 +213,8 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// higher concurrency, the data is just cached and not consumed for a while, this increase the memory usage.
 		// Set concurrency to 2 can reduce the memory usage and I've tested that it does not necessarily
 		// decrease the performance.
-		if it.concurrency > 2 {
+		// For ReqTypeAnalyze, we keep its concurrency to avoid slow analyze(see https://github.com/pingcap/tidb/issues/40162 for details).
+		if it.concurrency > 2 && it.req.Tp != kv.ReqTypeAnalyze {
 			oldConcurrency := it.concurrency
 			it.concurrency = 2
 

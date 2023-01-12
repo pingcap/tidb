@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/auth"
@@ -1258,6 +1259,11 @@ func TestIssue31141(t *testing.T) {
 }
 
 func TestMaxPreparedStmtCount(t *testing.T) {
+	oldVal := atomic.LoadInt64(&variable.PreparedStmtCount)
+	atomic.StoreInt64(&variable.PreparedStmtCount, 0)
+	defer func() {
+		atomic.StoreInt64(&variable.PreparedStmtCount, oldVal)
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.max_prepared_stmt_count = 2")

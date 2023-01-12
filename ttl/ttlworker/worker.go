@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type workerStatus int
@@ -122,6 +124,9 @@ func (w *baseWorker) Send() chan<- interface{} {
 func (w *baseWorker) loop() {
 	var err error
 	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Info("ttl worker panic", zap.Any("recover", r))
+		}
 		w.Lock()
 		w.toStopped(err)
 		w.Unlock()

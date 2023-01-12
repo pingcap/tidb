@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -577,6 +578,9 @@ type PlanBuilder struct {
 
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool
+
+	// allowBuildCastArray indicates whether allow cast(... as ... array).
+	allowBuildCastArray bool
 }
 
 type handleColHelper struct {
@@ -695,6 +699,14 @@ type PlanBuilderOptNoExecution struct{}
 // Apply implements the interface PlanBuilderOpt.
 func (p PlanBuilderOptNoExecution) Apply(builder *PlanBuilder) {
 	builder.disableSubQueryPreprocessing = true
+}
+
+// PlanBuilderOptAllowCastArray means the plan builder should allow build cast(... as ... array).
+type PlanBuilderOptAllowCastArray struct{}
+
+// Apply implements the interface PlanBuilderOpt.
+func (p PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
+	builder.allowBuildCastArray = true
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
@@ -1003,10 +1015,20 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (Plan, error) {
-	p := &SQLBindPlan{
-		SQLBindOp:    OpSetBindingStatus,
-		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
-		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+	var p *SQLBindPlan
+	if v.OriginNode != nil {
+		p = &SQLBindPlan{
+			SQLBindOp:    OpSetBindingStatus,
+			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+		}
+	} else if v.SQLDigest != "" {
+		p = &SQLBindPlan{
+			SQLBindOp: OpSetBindingStatusByDigest,
+			SQLDigest: v.SQLDigest,
+		}
+	} else {
+		return nil, errors.New("sql digest is empty")
 	}
 	switch v.BindingStatusType {
 	case ast.BindingStatusTypeEnabled:
@@ -1399,6 +1421,12 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
 			path.Forced = true
+			if hint.HintType == ast.HintKeepOrder {
+				path.ForceKeepOrder = true
+			}
+			if hint.HintType == ast.HintNoKeepOrder {
+				path.ForceNoKeepOrder = true
+			}
 			available = append(available, path)
 		}
 	}
@@ -1408,10 +1436,6 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
-	if staleread.IsStmtStaleness(ctx) {
-		// skip tiflash if the statement is for stale read until tiflash support stale read
-		available = removeTiflashDuringStaleRead(available)
-	}
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -1445,6 +1469,11 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 		// 1. path.StoreType doesn't exists in isolationReadEngines or
 		// 2. TiFlash is disaggregated and the number of tiflash_compute node is zero.
 		shouldPruneTiFlashCompute := noTiFlashComputeNode && exists && paths[i].StoreType == kv.TiFlash
+		failpoint.Inject("testDisaggregatedTiFlashQuery", func(val failpoint.Value) {
+			// Ignore check if tiflash_compute node number.
+			// After we support disaggregated tiflash in test framework, can delete this failpoint.
+			shouldPruneTiFlashCompute = val.(bool)
+		})
 		if shouldPruneTiFlashCompute {
 			outputComputeNodeErrMsg = true
 		}
@@ -3589,7 +3618,10 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
+		originalVal := b.allowBuildCastArray
+		b.allowBuildCastArray = true
 		expr, _, err := b.rewrite(ctx, column.GeneratedExpr, mockPlan, nil, true)
+		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err
 		}
@@ -4511,6 +4543,14 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, mysql.SystemDB,
 					"stats_extended", "", authErr)
+			} else if spec.Tp == ast.AlterTableAddConstraint {
+				if b.ctx.GetSessionVars().User != nil && spec.Constraint != nil &&
+					spec.Constraint.Tp == ast.ConstraintForeignKey && spec.Constraint.Refer != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("REFERENCES", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, spec.Constraint.Refer.Table.Name.L)
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReferencesPriv, spec.Constraint.Refer.Table.Schema.L,
+						spec.Constraint.Refer.Table.Name.L, "", authErr)
+				}
 			}
 		}
 	case *ast.AlterSequenceStmt:

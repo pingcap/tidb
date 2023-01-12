@@ -222,6 +222,10 @@ type Transaction interface {
 	// LockKeys tries to lock the entries with the keys in KV store.
 	// Will block until all keys are locked successfully or an error occurs.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
+	// LockKeysFunc tries to lock the entries with the keys in KV store.
+	// Will block until all keys are locked successfully or an error occurs.
+	// fn is called before LockKeys unlocks the keys.
+	LockKeysFunc(ctx context.Context, lockCtx *LockCtx, fn func(), keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt int, val interface{})
@@ -647,6 +651,8 @@ type Storage interface {
 	GetMinSafeTS(txnScope string) uint64
 	// GetLockWaits return all lock wait information
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
+	// GetCodec gets the codec of the storage.
+	GetCodec() tikv.Codec
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

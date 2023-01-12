@@ -533,6 +533,15 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL string, binding *Binding, n
 	return
 }
 
+// SetBindRecordStatusByDigest set a BindRecord's status to the storage and bind cache.
+func (h *BindHandle) SetBindRecordStatusByDigest(newStatus, sqlDigest string) (ok bool, err error) {
+	oldRecord, err := h.GetBindRecordBySQLDigest(sqlDigest)
+	if err != nil {
+		return false, err
+	}
+	return h.SetBindRecordStatus(oldRecord.OriginalSQL, nil, newStatus)
+}
+
 // GCBindRecord physically removes the deleted bind records in mysql.bind_info.
 func (h *BindHandle) GCBindRecord() (err error) {
 	h.bindInfo.Lock()

@@ -139,7 +139,7 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 	case CheckLocalDiskPlacement:
 		return NewLocalDiskPlacementCheckItem(b.cfg), nil
 	case CheckLocalTempKVDir:
-		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter), nil
+		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
 	case CheckTargetUsingCDCPITR:
 		return NewCDCPITRCheckItem(b.cfg), nil
 	default:

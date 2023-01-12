@@ -1603,6 +1603,7 @@ func TestBuiltin(t *testing.T) {
 		{"select cast(time '2000' as year);", true, "SELECT CAST(TIME '2000' AS YEAR)"},
 
 		{"select cast(b as signed array);", true, "SELECT CAST(`b` AS SIGNED ARRAY)"},
+		{"select cast(b as char(10) array);", true, "SELECT CAST(`b` AS CHAR(10) ARRAY)"},
 
 		// for last_insert_id
 		{"SELECT last_insert_id();", true, "SELECT LAST_INSERT_ID()"},
@@ -2822,6 +2823,11 @@ func TestDDL(t *testing.T) {
 		{"create table t (a int default (rand(1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
 		{"create table t (a int default (((rand()))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
 		{"create table t (a int default (((rand(1)))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
+		{"create table t (d date default current_date())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default current_date)", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default (current_date()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default (curdate()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default curdate())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3243,6 +3249,7 @@ func TestDDL(t *testing.T) {
 		{"create table t (a bigint, b bigint as (a+1) not null);", true, "CREATE TABLE `t` (`a` BIGINT,`b` BIGINT GENERATED ALWAYS AS(`a`+1) VIRTUAL NOT NULL)"},
 		{"create table t (a bigint, b bigint as (a+1) not null);", true, "CREATE TABLE `t` (`a` BIGINT,`b` BIGINT GENERATED ALWAYS AS(`a`+1) VIRTUAL NOT NULL)"},
 		{"create table t (a bigint, b bigint as (a+1) not null comment 'ttt');", true, "CREATE TABLE `t` (`a` BIGINT,`b` BIGINT GENERATED ALWAYS AS(`a`+1) VIRTUAL NOT NULL COMMENT 'ttt')"},
+		{"create table t(a int, index idx((cast(a as binary(1)))));", true, "CREATE TABLE `t` (`a` INT,INDEX `idx`((CAST(`a` AS BINARY(1)))))"},
 		{"alter table t add column (f timestamp as (a+1) default '2019-01-01 11:11:11');", false, ""},
 		{"alter table t modify column f int as (a+1) default 55;", false, ""},
 
@@ -3638,17 +3645,17 @@ func TestDDL(t *testing.T) {
 		{"create resource group x cpu ='8c'", true, "CREATE RESOURCE GROUP `x` CPU = '8c'"},
 		{"create resource group x region ='us, 3'", false, ""},
 		{"create resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", true, "CREATE RESOURCE GROUP `x` CPU = '8c' IO_READ_BANDWIDTH = '2GB/s' IO_WRITE_BANDWIDTH = '200MB/s'"},
-		{"create resource group x rru_per_sec='2000'", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = '2000'"},
-		{"create resource group x wru_per_sec='200000'", true, "CREATE RESOURCE GROUP `x` WRU_PER_SEC = '200000'"},
-		{"create resource group x rru_per_sec='2000' wru_per_sec='200000'", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = '2000' WRU_PER_SEC = '200000'"},
+		{"create resource group x rru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = 2000"},
+		{"create resource group x wru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` WRU_PER_SEC = 200000"},
+		{"create resource group x rru_per_sec=2000 wru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = 2000 WRU_PER_SEC = 200000"},
 		{"create resource group x followers=0", false, ""},
 
 		{"alter resource group x cpu ='8c'", true, "ALTER RESOURCE GROUP `x` CPU = '8c'"},
 		{"alter resource group x region ='us, 3'", false, ""},
 		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", true, "ALTER RESOURCE GROUP `x` CPU = '8c' IO_READ_BANDWIDTH = '2GB/s' IO_WRITE_BANDWIDTH = '200MB/s'"},
-		{"alter resource group x rru_per_sec='2000'", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = '2000'"},
-		{"alter resource group x wru_per_sec='200000'", true, "ALTER RESOURCE GROUP `x` WRU_PER_SEC = '200000'"},
-		{"alter resource group x rru_per_sec='2000' wru_per_sec='200000'", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = '2000' WRU_PER_SEC = '200000'"},
+		{"alter resource group x rru_per_sec=2000", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = 2000"},
+		{"alter resource group x wru_per_sec=200000", true, "ALTER RESOURCE GROUP `x` WRU_PER_SEC = 200000"},
+		{"alter resource group x rru_per_sec=2000 wru_per_sec=200000", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = 2000 WRU_PER_SEC = 200000"},
 		{"alter resource group x followers=0", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
@@ -3885,6 +3892,44 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t2", hints[0].Indexes[0].L)
 
 	require.Equal(t, "ignore_index", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 1)
+	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
+	require.Len(t, hints[1].Indexes, 1)
+	require.Equal(t, "t4", hints[1].Indexes[0].L)
+
+	// Test KEEP_ORDER
+	stmt, _, err = p.Parse("select /*+ KEEP_ORDER(T1,T2), keep_order(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "keep_order", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	require.Len(t, hints[0].Indexes, 1)
+	require.Equal(t, "t2", hints[0].Indexes[0].L)
+
+	require.Equal(t, "keep_order", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 1)
+	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
+	require.Len(t, hints[1].Indexes, 1)
+	require.Equal(t, "t4", hints[1].Indexes[0].L)
+
+	// Test NO_KEEP_ORDER
+	stmt, _, err = p.Parse("select /*+ NO_KEEP_ORDER(T1,T2), no_keep_order(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "no_keep_order", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	require.Len(t, hints[0].Indexes, 1)
+	require.Equal(t, "t2", hints[0].Indexes[0].L)
+
+	require.Equal(t, "no_keep_order", hints[1].HintName.L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Len(t, hints[1].Indexes, 1)
@@ -7066,6 +7111,7 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR"},
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
 		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
+		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF' TTL_JOB_INTERVAL='8h'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '8h'"},
 		{"create table t (created_at datetime) /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON'"},
 
 		// alter table with various temporal interval
@@ -7073,7 +7119,9 @@ func TestTTLTableOption(t *testing.T) {
 		{"alter table t TTL_ENABLE = 'ON'", true, "ALTER TABLE `t` TTL_ENABLE = 'ON'"},
 		{"alter table t TTL_ENABLE = 'OFF'", true, "ALTER TABLE `t` TTL_ENABLE = 'OFF'"},
 		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF'", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 MONTH TTL_ENABLE = 'OFF'"},
+		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF' TTL_JOB_INTERVAL '1h'", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 MONTH TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1h'"},
 		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON'"},
+		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON' TTL_JOB_INTERVAL='8h'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON' TTL_JOB_INTERVAL = '8h'"},
 
 		// alter table to remove ttl settings
 		{"alter table t remove ttl", true, "ALTER TABLE `t` REMOVE TTL"},
@@ -7082,6 +7130,10 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL_ENABLE = 'test_case'", false, ""},
 		{"create table t (created_at datetime) /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
 		{"alter table t /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
+
+		// validate invalid TTL_JOB_INTERVAL settings
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '@monthly'", false, ""},
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '10hourxx'", false, ""},
 	}
 
 	RunTest(t, table, false)

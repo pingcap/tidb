@@ -99,10 +99,10 @@ func TestGrantDBScope(t *testing.T) {
 	}
 
 	// Grant in wrong scope.
-	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
+	err := tk.ExecToErr(` grant create user on test.* to 'testDB1'@'localhost';`)
 	require.True(t, terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")))
 
-	_, err = tk.Exec("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
+	err = tk.ExecToErr("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
 	require.True(t, terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")))
 }
 
@@ -168,8 +168,8 @@ func TestGrantTableScope(t *testing.T) {
 		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 	}
 
-	_, err := tk.Exec("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';")
-	require.EqualError(t, err, "[executor:1144]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
+	tk.MustGetErrMsg("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';",
+		"[executor:1144]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
 }
 
 func TestGrantColumnScope(t *testing.T) {
@@ -213,8 +213,8 @@ func TestGrantColumnScope(t *testing.T) {
 		require.Greater(t, strings.Index(p, mysql.Priv2SetStr[v]), -1)
 	}
 
-	_, err := tk.Exec("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';")
-	require.EqualError(t, err, "[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
+	tk.MustGetErrMsg("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';",
+		"[executor:1221]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
 }
 
 func TestIssue2456(t *testing.T) {
