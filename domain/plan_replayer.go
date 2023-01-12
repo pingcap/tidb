@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
@@ -167,6 +168,13 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 	}
 }
 
+var (
+	planReplayerCaptureTaskSendCounter    = metrics.PlanReplayerTaskCounter.WithLabelValues("capture", "send")
+	planReplayerCaptureTaskDiscardCounter = metrics.PlanReplayerTaskCounter.WithLabelValues("capture", "discard")
+
+	planReplayerRegisterTaskGauge = metrics.PlanReplayerRegisterTaskGauge
+)
+
 type planReplayerHandle struct {
 	*planReplayerTaskCollectorHandle
 	*planReplayerTaskDumpHandle
@@ -181,9 +189,10 @@ func (h *planReplayerHandle) SendTask(task *PlanReplayerDumpTask) bool {
 		if !task.IsContinuesCapture {
 			h.planReplayerTaskCollectorHandle.removeTask(task.PlanReplayerTaskKey)
 		}
+		planReplayerCaptureTaskSendCounter.Inc()
 		return true
 	default:
-		// TODO: add metrics here
+		planReplayerCaptureTaskDiscardCounter.Inc()
 		// directly discard the task if the task channel is full in order not to block the query process
 		logutil.BgLogger().Warn("discard one plan replayer dump task",
 			zap.String("sql-digest", task.SQLDigest), zap.String("plan-digest", task.PlanDigest))
@@ -221,6 +230,7 @@ func (h *planReplayerTaskCollectorHandle) CollectPlanReplayerTask() error {
 		}
 	}
 	h.setupTasks(tasks)
+	planReplayerRegisterTaskGauge.Set(float64(len(tasks)))
 	return nil
 }
 
@@ -355,9 +365,11 @@ type planReplayerTaskDumpWorker struct {
 }
 
 func (w *planReplayerTaskDumpWorker) run() {
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker started.")
 	for task := range w.taskCH {
 		w.handleTask(task)
 	}
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker exited.")
 }
 
 func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
@@ -409,7 +421,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
-	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture)
+	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture, task.IsContinuesCapture, variable.EnableHistoricalStatsForCapture.Load())
 	if err != nil {
 		logutil.BgLogger().Warn("[plan-replayer-capture] generate task file failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),

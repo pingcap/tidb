@@ -89,6 +89,7 @@ func checkFileName(s string) bool {
 		"global_bindings.sql",
 		"sql/sql0.sql",
 		"explain/sql0.txt",
+		"statsMem/test.t_dump_single.txt",
 		"sql_meta.toml",
 	}
 	for _, f := range files {
@@ -1520,6 +1521,21 @@ func TestSetOperation(t *testing.T) {
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
+
+	// from https://github.com/pingcap/tidb/issues/40279
+	tk.MustExec("CREATE TABLE `issue40279` (`a` char(155) NOT NULL DEFAULT 'on1unvbxp5sko6mbetn3ku26tuiyju7w3wc0olzto9ew7gsrx',`b` mediumint(9) NOT NULL DEFAULT '2525518',PRIMARY KEY (`b`,`a`) /*T![clustered_index] CLUSTERED */);")
+	tk.MustExec("insert into `issue40279` values ();")
+	tk.MustQuery("( select    `issue40279`.`b` as r0 , from_base64( `issue40279`.`a` ) as r1 from `issue40279` ) " +
+		"except ( " +
+		"select    `issue40279`.`a` as r0 , elt(2, `issue40279`.`a` , `issue40279`.`a` ) as r1 from `issue40279`);").
+		Check(testkit.Rows("2525518 <nil>"))
+	tk.MustExec("drop table if exists t2")
+
+	tk.MustExec("CREATE TABLE `t2` (   `a` varchar(20) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t2 values(0xCED2)")
+	result := tk.MustQuery("(select elt(2,t2.a,t2.a) from t2) except (select 0xCED2  from t2)")
+	rows := result.Rows()
+	require.Len(t, rows, 0)
 }
 
 func TestSetOperationOnDiffColType(t *testing.T) {
