@@ -1495,14 +1495,43 @@ func (s *SessionVars) AllocNewPlanID() int {
 	return s.PlanID
 }
 
+// Clear earliest CacheResult.
+func (s *SessionVars) clearEarliestCacheResult() {
+	var key [16]byte
+	minTime := time.Now()
+	for k, v := range s.cacheRes {
+		if v.LastUpdateTime.Before(minTime) {
+			minTime = v.LastUpdateTime
+			key = k
+		}
+	}
+	delete(s.cacheRes, key)
+}
+
+// SaveCache save result cache.
 func (s *SessionVars) SaveCache(cr *CacheResult) {
+	cacheSize := int64(len(s.cacheRes))
+	maxAllowCacheSize := ResultCacheSize.Load()
+	var i int64 = 0
+	if cacheSize >= maxAllowCacheSize {
+		for ; i <= cacheSize-maxAllowCacheSize+1; i++ {
+			s.clearEarliestCacheResult()
+		}
+	}
 	key := md5.Sum([]byte(s.Stmt.Text()))
+	cr.LastUpdateTime = time.Now()
 	s.cacheRes[key] = cr
 }
 
+// GetCache get result from cache.
 func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool) {
 	key := md5.Sum([]byte(stmt.Text()))
 	cs, ok := s.cacheRes[key]
+	if time.Since(cs.LastUpdateTime).Milliseconds() >=
+		ResultCacheTimeout.Load() {
+		delete(s.cacheRes, key)
+		return nil, false
+	}
 	return cs, ok
 }
 
@@ -3194,11 +3223,12 @@ type TmpcolumnInfo struct {
 }
 
 type CacheResult struct {
-	Columns   []*TmpcolumnInfo
-	Id        int
-	Chunks    []*chunk.Chunk
-	Rows      []chunk.Row
-	CloseBool bool
+	Columns        []*TmpcolumnInfo
+	Id             int
+	Chunks         []*chunk.Chunk
+	Rows           []chunk.Row
+	CloseBool      bool
+	LastUpdateTime time.Time
 }
 
 func (cr *CacheResult) AppendChunk(chunk *chunk.Chunk) {

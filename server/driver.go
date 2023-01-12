@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"time"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
@@ -134,10 +135,11 @@ func newCacheResult(rs ResultSet) *variable.CacheResult {
 		tmpcols = append(tmpcols, col.Tranfer())
 	}
 	ca := &variable.CacheResult{
-		Id:        0,
-		Columns:   tmpcols,
-		Rows:      rs.GetFetchedRows(),
-		CloseBool: false,
+		Id:             0,
+		Columns:        tmpcols,
+		Rows:           rs.GetFetchedRows(),
+		CloseBool:      false,
+		LastUpdateTime: time.Now(),
 	}
 	return ca
 }
