@@ -1,6 +1,7 @@
 package mydump_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"fmt"
@@ -678,6 +679,29 @@ func TestConsecutiveFields(t *testing.T) {
 	runFailingTestCasesCSV(t, &cfg, int64(config.ReadBlockSize), []string{
 		"abc|1|+||+|\r\n",
 	})
+}
+
+func TestTooLargeRow(t *testing.T) {
+	cfg := config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator: ",",
+			Delimiter: `"`,
+		},
+	}
+	var testCase bytes.Buffer
+	testCase.WriteString("a,b,c,d")
+	// WARN: will take up 10KB memory here.
+	mydump.LargestEntryLimit = 10 * 1024
+	for i := 0; i < mydump.LargestEntryLimit; i++ {
+		testCase.WriteByte('d')
+	}
+	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+	require.NoError(t, err)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(testCase.String()), int64(config.ReadBlockSize), ioWorkers, false, charsetConvertor)
+	require.NoError(t, err)
+	e := parser.ReadRow()
+	require.Error(t, e)
+	require.Contains(t, e.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
 }
 
 func TestSpecialChars(t *testing.T) {
