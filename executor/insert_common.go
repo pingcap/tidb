@@ -579,7 +579,7 @@ LOOP:
 					select {
 					// innerRow is cloned in innerChunkRow.GetDatumRow, so it's safe to send it to another goroutine.
 					case dataCh <- dataBatch:
-						dataBatch = make([][]types.Datum, 0, batchSize)
+						dataBatch = make([][]types.Datum, 0, etlBatchSize)
 					case <-ctx.Done():
 						break LOOP
 					case <-closeCh:
