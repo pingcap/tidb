@@ -247,7 +247,15 @@ func (p *PhysicalTableScan) isFullScan() bool {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return "data:" + p.tablePlan.ExplainID().String()
+	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
+
+	if p.ctx.GetSessionVars().ExplainShowMppFeature {
+		if mppVersion := p.GetMppVersion(); mppVersion != kv.MppVersionUnspecified {
+			return fmt.Sprintf("MppVersion: %d, %s", mppVersion, tablePlanInfo)
+		}
+	}
+
+	return tablePlanInfo
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -800,6 +808,9 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
 		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.HashCols))
+	}
+	if p.ctx.GetSessionVars().ExplainShowMppFeature && p.CompressionMode != kv.ExchangeCompressionModeNONE {
+		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
 	}
 	if len(p.Tasks) > 0 {
 		fmt.Fprintf(buffer, ", tasks: [")
