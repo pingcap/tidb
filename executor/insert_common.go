@@ -790,7 +790,7 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 		}
 		execRows()
 		chunkBackCh <- chk
-		if currentRows > batchSize {
+		if currentRows >= batchSize {
 			if err = commitRows(); err != nil {
 				return err
 			}
