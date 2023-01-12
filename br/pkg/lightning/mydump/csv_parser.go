@@ -447,9 +447,18 @@ outside:
 
 func (parser *CSVParser) readQuotedField() error {
 	for {
+		prevPos := parser.pos
 		content, terminator, err := parser.readUntil(&parser.quoteByteSet)
-		err = parser.replaceEOF(err, errUnterminatedQuotedField)
 		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				// return the position of quote to the caller.
+				// because we return an error here, the parser won't
+				// use the `pos` again, so it's safe to modify it here.
+				parser.pos = prevPos - 1
+				// set buf to parser.buf in order to print err log
+				parser.buf = content
+				err = parser.replaceEOF(err, errUnterminatedQuotedField)
+			}
 			return err
 		}
 		parser.recordBuffer = append(parser.recordBuffer, content...)
