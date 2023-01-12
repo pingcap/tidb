@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -83,6 +84,7 @@ const (
 	// When setting the placement policy with "PLACEMENT POLICY `default`",
 	// it means to remove placement policy from the specified object.
 	defaultPlacementPolicyName        = "default"
+	defaultResourceGroupName          = "default"
 	tiflashCheckPendingTablesWaitTime = 3000 * time.Millisecond
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
@@ -3026,6 +3028,25 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 		placementSettings.VoterConstraints = stringVal
 	default:
 		return errors.Trace(errors.New("unknown placement policy option"))
+	}
+	return nil
+}
+
+// SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
+func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64) error {
+	switch typ {
+	case ast.ResourceRRURate:
+		resourceGroupSettings.RRURate = uintVal
+	case ast.ResourceWRURate:
+		resourceGroupSettings.WRURate = uintVal
+	case ast.ResourceUnitCPU:
+		resourceGroupSettings.CPULimiter = stringVal
+	case ast.ResourceUnitIOReadBandwidth:
+		resourceGroupSettings.IOReadBandwidth = stringVal
+	case ast.ResourceUnitIOWriteBandwidth:
+		resourceGroupSettings.IOWriteBandwidth = stringVal
+	default:
+		return errors.Trace(errors.New("unknown resource unit type"))
 	}
 	return nil
 }
@@ -7582,6 +7603,124 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 		return true
 	}
 	return false
+}
+
+// CreateResourceGroup implements the DDL interface, creates a resource group.
+func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
+	groupInfo := &model.ResourceGroupInfo{ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupName := stmt.ResourceGroupName
+	groupInfo.Name = groupName
+	for _, opt := range stmt.ResourceGroupOptionList {
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue)
+		if err != nil {
+			return err
+		}
+	}
+	if !stmt.IfNotExists {
+		if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
+			return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+		}
+	}
+
+	if groupName.L == defaultResourceGroupName {
+		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
+	}
+
+	if err := d.checkResourceGroupValidation(groupInfo); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
+	groupIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		return err
+	}
+	groupInfo.ID = groupIDs[0]
+
+	job := &model.Job{
+		SchemaName: groupName.L,
+		Type:       model.ActionCreateResourceGroup,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{groupInfo, false},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return err
+}
+
+func (d *ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) error {
+	_, err := resourcegroup.NewGroupFromOptions(groupInfo.Name.L, groupInfo.ResourceGroupSettings)
+	return err
+}
+
+// DropResourceGroup implements the DDL interface.
+func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
+	groupName := stmt.ResourceGroupName
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check group existence.
+	group, ok := is.ResourceGroupByName(groupName)
+	if !ok {
+		err = infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   group.ID,
+		SchemaName: group.Name.L,
+		Type:       model.ActionDropResourceGroup,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{groupName},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return err
+}
+
+func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
+	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	for _, opt := range options {
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return groupInfo, nil
+}
+
+// AlterResourceGroup implements the DDL interface.
+func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) (err error) {
+	groupName := stmt.ResourceGroupName
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check group existence.
+	group, ok := is.ResourceGroupByName(groupName)
+	if !ok {
+		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+	}
+	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := d.checkResourceGroupValidation(newGroupInfo); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Debug("alter resource group", zap.String("name", groupName.L), zap.Stringer("new resource group settings", newGroupInfo.ResourceGroupSettings))
+
+	job := &model.Job{
+		SchemaID:   newGroupInfo.ID,
+		SchemaName: newGroupInfo.Name.L,
+		Type:       model.ActionAlterResourceGroup,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newGroupInfo},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return err
 }
 
 func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {

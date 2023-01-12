@@ -140,7 +140,6 @@ func TestCostModelShowFormula(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int)`)
-	tk.MustExec("insert into t values (1), (2), (3)")
 	tk.MustExec("set @@tidb_cost_model_version=2")
 
 	tk.MustExecToErr("explain format='true_card_cost' select * from t") // 'true_card_cost' must work with 'explain analyze'
@@ -150,9 +149,9 @@ func TestCostModelShowFormula(t *testing.T) {
 		actual = append(actual, []interface{}{row[0], row[3]}) // id,costFormula
 	}
 	require.Equal(t, actual, [][]interface{}{
-		{"TableReader_7", "(((cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (scan(3*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(2*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00"},
-		{"└─Selection_6", "(cpu(3*filters(1)*tikv_cpu_factor(49.9))) + (scan(3*logrowsize(32)*tikv_scan_factor(40.7)))"},
-		{"  └─TableFullScan_5", "scan(3*logrowsize(32)*tikv_scan_factor(40.7))"},
+		{"TableReader_7", "(((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (scan(0*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00"},
+		{"└─Selection_6", "(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (scan(0*logrowsize(32)*tikv_scan_factor(40.7)))"},
+		{"  └─TableFullScan_5", "scan(0*logrowsize(32)*tikv_scan_factor(40.7))"},
 	})
 }
 
@@ -163,6 +162,7 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 	tk.MustExec(`create table t (pk int, a int, b int, c int, d int, primary key(pk), index ab(a, b), index abc(a, b, c))`)
 	tk.MustExec("insert into t values (1, 1, 1, 1, 1)")
 	tk.MustExec(`set @@tidb_cost_model_version=2`)
+	tk.MustExec("set global tidb_enable_collect_execution_info=1;")
 
 	cases := []struct {
 		query       string

@@ -91,6 +91,8 @@ const (
 	DefTempDir = "/tmp/tidb"
 	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
 	DefAuthTokenRefreshInterval = time.Hour
+	// EnvVarKeyspaceName is the system env name for keyspace name.
+	EnvVarKeyspaceName = "KEYSPACE_NAME"
 )
 
 // Valid config maps
@@ -185,6 +187,7 @@ type Config struct {
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
+	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
@@ -1458,4 +1461,10 @@ func ContainHiddenConfig(s string) bool {
 		}
 	}
 	return false
+}
+
+// GetGlobalKeyspaceName is used to get global keyspace name
+// from config file or command line.
+func GetGlobalKeyspaceName() string {
+	return GetGlobalConfig().KeyspaceName
 }

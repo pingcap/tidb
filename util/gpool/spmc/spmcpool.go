@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
@@ -55,7 +57,7 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.
-func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name string, size int32, options ...Option) (*Pool[T, U, C, CT, TF], error) {
+func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name string, size int32, component util.Component, options ...Option) (*Pool[T, U, C, CT, TF], error) {
 	opts := loadOptions(options...)
 	if expiry := opts.ExpiryDuration; expiry <= 0 {
 		opts.ExpiryDuration = gpool.DefaultCleanIntervalTime
@@ -77,6 +79,10 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.capacity.Add(size)
 	result.workers = newWorkerLoopQueue[T, U, C, CT, TF](int(size))
 	result.cond = sync.NewCond(result.lock)
+	err := resourcemanager.GlobalResourceManager.Register(result, name, component)
+	if err != nil {
+		return nil, err
+	}
 	// Start a goroutine to clean up expired workers periodically.
 	go result.purgePeriodically()
 	return result, nil
@@ -129,6 +135,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	if capacity == -1 || size <= 0 || size == capacity {
 		return
 	}
+	p.SetLastTuneTs(time.Now())
 	p.capacity.Store(int32(size))
 	if size > capacity {
 		// boost
