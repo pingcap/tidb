@@ -1513,10 +1513,10 @@ func (s *SessionVars) clearOneTimeoutCacheResult() {
 	for k, v := range s.cacheRes {
 		if time.Since(v.LastUpdateTime).Milliseconds() >= ts {
 			key = k
+			delete(s.cacheRes, key)
 			break
 		}
 	}
-	delete(s.cacheRes, key)
 }
 
 // Clear earliest CacheResult.
