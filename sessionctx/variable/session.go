@@ -1510,7 +1510,7 @@ func (s *SessionVars) clearEarliestCacheResult() {
 }
 
 // SaveCache save result cache.
-func (s *SessionVars) SaveCache(cr *CacheResult) error {
+func (s *SessionVars) SaveCache(cr *CacheResult) {
 	cacheSize := int64(len(s.cacheRes))
 	maxAllowCacheSize := ResultCacheSize.Load()
 	var i int64 = 0
@@ -1523,36 +1523,36 @@ func (s *SessionVars) SaveCache(cr *CacheResult) error {
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
 	err := s.Stmt.Restore(restoreCtx)
 	if err != nil {
-		return err
+		return
 	}
 	key := crc32.ChecksumIEEE(buf.Bytes())
 	cr.LastUpdateTime = time.Now()
 	s.cacheRes[key] = cr
-	return nil
+	return
 }
 
 // GetCache get result from cache.
-func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool, error) {
+func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool) {
 	if ResultCacheSize.Load() == 0 {
-		return nil, false, nil
+		return nil, false
 	}
 	var buf bytes.Buffer
 	if stmt == nil {
-		return nil, false, nil
+		return nil, false
 	}
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
 	err := stmt.Restore(restoreCtx)
 	if err != nil {
-		return nil, false, err
+		return nil, false
 	}
 	key := crc32.ChecksumIEEE(buf.Bytes())
 	cs, ok := s.cacheRes[key]
 	if ok && time.Since(cs.LastUpdateTime).Milliseconds() >=
 		ResultCacheTimeout.Load() {
 		delete(s.cacheRes, key)
-		return nil, false, nil
+		return nil, false
 	}
-	return cs, ok, nil
+	return cs, ok
 }
 
 const (
