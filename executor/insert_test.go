@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -1480,4 +1482,55 @@ func TestIssue32213(t *testing.T) {
 	tk.MustExec("insert into test.t1 values(99.9999)")
 	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 3)) from test.t1").Check(testkit.Rows("99.999"))
 	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
+}
+
+func TestETLInsertSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	executeParallelInsert := func(sql string, success bool) {
+		stmt, err := tk.Session().ParseWithParams(context.Background(), sql)
+		require.Nil(t, err)
+		stmt.(*ast.InsertStmt).Concurrent = true
+		rs, err := tk.Session().ExecuteStmt(context.Background(), stmt)
+		if success {
+			require.Nil(t, err)
+		} else {
+			require.NotNil(t, err)
+		}
+		if rs != nil {
+			rs.Close()
+		}
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(id int primary key, v1 varchar(20), v2 int)")
+	tk.MustExec("create table t1(id int primary key, v varchar(20))")
+	tk.MustExec("create table t2(id int primary key, v int)")
+	tk.Session().GetSessionVars().MaxChunkSize = 1
+	for conc := 1; conc <= 8; conc++ {
+		for batchSize := 1; batchSize <= 8; batchSize++ {
+			tk.MustExec(fmt.Sprintf("set session tidb_etl_concurrency = %d", conc))
+			tk.MustExec(fmt.Sprintf("set session tidb_etl_batch_size = %d", batchSize))
+			tk.MustExec("delete from t")
+			tk.MustExec("delete from t1")
+			tk.MustExec("delete from t2")
+			tk.MustExec("insert into t2 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
+			executeParallelInsert("insert into t1 select * from t2", true)
+			require.Equal(t, int64(5), int64(tk.Session().AffectedRows()))
+			tk.MustQuery("select * from t1").Sort().Check(tk.MustQuery("select * from t2").Sort().Rows())
+
+			tk.MustExec("insert into t1 values(6, '6'), (7, '70'), (8, '8')")
+			tk.MustExec("insert into t2 values(6, 60), (7, 7), (9, 9)")
+			executeParallelInsert("insert into t "+
+				"select tmp1.id, tmp1.v, tmp2.v from (select * from t1) tmp1 join (select * from t2) tmp2 on tmp1.id = tmp2.id", true)
+			require.Equal(t, int64(7), int64(tk.Session().AffectedRows()))
+			tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3", "4 4 4", "5 5 5", "6 6 60", "7 70 7"))
+
+			// duplicate key error
+			executeParallelInsert("insert into t "+
+				"select tmp1.id, tmp1.v, tmp2.v from (select * from t1) tmp1 join (select * from t2) tmp2 on tmp1.id = tmp2.id", false)
+		}
+	}
 }
