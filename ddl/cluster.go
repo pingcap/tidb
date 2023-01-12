@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -346,8 +345,8 @@ func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.Ke
 
 	// The meta data key ranges.
 	for schemaID := range schemaIDs {
-		metaStartKey := tablecodec.EncodeMetaKey(meta.DBkey(schemaID), meta.TableKey(0))
-		metaEndKey := tablecodec.EncodeMetaKey(meta.DBkey(schemaID), meta.TableKey(math.MaxInt64))
+		metaStartKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID))
+		metaEndKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID + 1))
 		keyRanges = append(keyRanges, kv.KeyRange{
 			StartKey: metaStartKey,
 			EndKey:   metaEndKey,
