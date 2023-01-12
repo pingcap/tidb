@@ -1498,13 +1498,13 @@ func (s *SessionVars) AllocNewPlanID() int {
 }
 
 // Clear earliest CacheResult.
-func (s *SessionVars) clearEarliestCacheResult() {
+func (s *SessionVars) clearOneTimeoutCacheResult() {
+	ts := ResultCacheTimeout.Load()
 	var key uint32
-	minTime := time.Now()
 	for k, v := range s.cacheRes {
-		if v.LastUpdateTime.Before(minTime) {
-			minTime = v.LastUpdateTime
+		if time.Since(v.LastUpdateTime).Milliseconds() >= ts {
 			key = k
+			break
 		}
 	}
 	delete(s.cacheRes, key)
@@ -1517,7 +1517,7 @@ func (s *SessionVars) SaveCache(cr *CacheResult) {
 	var i int64 = 0
 	if cacheSize >= maxAllowCacheSize {
 		for ; i <= cacheSize-maxAllowCacheSize+1; i++ {
-			s.clearEarliestCacheResult()
+			s.clearOneTimeoutCacheResult()
 		}
 	}
 	var buf bytes.Buffer
