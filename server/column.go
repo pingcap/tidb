@@ -17,6 +17,7 @@ package server
 import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const maxColumnNameSize = 256
@@ -100,4 +101,42 @@ func dumpType(tp byte) byte {
 	default:
 		return tp
 	}
+}
+
+func (column *ColumnInfo) Tranfer() *variable.TmpcolumnInfo {
+	newTp := &variable.TmpcolumnInfo{
+		Schema:             column.Schema,
+		Table:              column.Table,
+		OrgTable:           column.OrgTable,
+		Name:               column.Name,
+		OrgName:            column.OrgName,
+		ColumnLength:       column.ColumnLength,
+		Charset:            column.Charset,
+		Flag:               column.Flag,
+		Decimal:            column.Decimal,
+		Type:               column.Type,
+		DefaultValueLength: column.DefaultValueLength,
+	}
+	newTp.DefaultValue = make([]byte, len(column.DefaultValue))
+	copy(newTp.DefaultValue, column.DefaultValue)
+	return newTp
+}
+
+func tmpcolumnInfotransfer(tp *variable.TmpcolumnInfo) *ColumnInfo {
+	newTp := &ColumnInfo{
+		Schema:             tp.Schema,
+		Table:              tp.Table,
+		OrgTable:           tp.OrgTable,
+		Name:               tp.Name,
+		OrgName:            tp.OrgName,
+		ColumnLength:       tp.ColumnLength,
+		Charset:            tp.Charset,
+		Flag:               tp.Flag,
+		Decimal:            tp.Decimal,
+		Type:               tp.Type,
+		DefaultValueLength: tp.DefaultValueLength,
+	}
+	newTp.DefaultValue = make([]byte, len(tp.DefaultValue))
+	copy(newTp.DefaultValue, tp.DefaultValue)
+	return newTp
 }

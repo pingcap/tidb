@@ -2090,7 +2090,20 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(plugin.Starting)
-	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+	var rs ResultSet
+	var err error
+	cs, ok := cc.ctx.GetSessionVars().GetCache(stmt)
+	if !ok {
+		if variable.ResultCacheSize.Load() != 0 {
+			cc.ctx.GetSessionVars().Stmt = stmt
+		} else {
+			cc.ctx.GetSessionVars().Stmt = nil
+		}
+		rs, err = cc.ctx.ExecuteStmt(ctx, stmt)
+	} else {
+		cc.ctx.GetSessionVars().Stmt = nil
+		rs = newGetResult(cs)
+	}
 	reg.End()
 	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
 	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
@@ -2273,6 +2286,10 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 // serverStatus, a flag bit represents server information
 // The first return value indicates whether error occurs at the first call of ResultSet.Next.
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) (bool, error) {
+	var cacheresult *variable.CacheResult
+	if cc.ctx.GetSessionVars().Stmt != nil {
+		cacheresult = tryNewResultSet(rs, cc.ctx.GetSessionVars().Stmt)
+	}
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk(cc.chunkAlloc)
 	gotColumnInfo := false
@@ -2305,6 +2322,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		err := rs.Next(ctx, req)
 		if err != nil {
 			return firstNext, err
+		}
+		if cacheresult != nil {
+			cacheresult.AppendChunk(req)
 		}
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
@@ -2358,7 +2378,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
-
+	if cacheresult != nil {
+		cc.ctx.GetSessionVars().SaveCache(cacheresult)
+	}
 	if stmtDetail != nil {
 		start = time.Now()
 	}
@@ -2376,6 +2398,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
+	var cacheresult *variable.CacheResult
+	if cc.ctx.GetSessionVars().Stmt != nil {
+		cacheresult = tryNewResultSet(rs, cc.ctx.GetSessionVars().Stmt)
+	}
 	// if fetchedRows is not enough, getting data from recordSet.
 	// NOTE: chunk should not be allocated from the allocator
 	// the allocator will reset every statement
@@ -2387,6 +2413,9 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		if err := rs.Next(ctx, req); err != nil {
 			return err
 		}
+		if cacheresult != nil {
+			cacheresult.AppendChunk(req)
+		}
 		rowCount := req.NumRows()
 		if rowCount == 0 {
 			break
@@ -2397,7 +2426,9 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		}
 		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
-
+	if cacheresult != nil {
+		cc.ctx.GetSessionVars().SaveCache(cacheresult)
+	}
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
 	if len(fetchedRows) == 0 {

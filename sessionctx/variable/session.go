@@ -17,6 +17,7 @@ package variable
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -1331,6 +1332,8 @@ type SessionVars struct {
 
 	// ETLBatchSize is the non-transactional batch size of ETL operations.
 	ETLBatchSize int
+	Stmt         ast.StmtNode
+	cacheRes     map[[16]byte]*CacheResult
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -1490,6 +1493,17 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 func (s *SessionVars) AllocNewPlanID() int {
 	s.PlanID++
 	return s.PlanID
+}
+
+func (s *SessionVars) SaveCache(cr *CacheResult) {
+	key := md5.Sum([]byte(s.Stmt.Text()))
+	s.cacheRes[key] = cr
+}
+
+func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool) {
+	key := md5.Sum([]byte(stmt.Text()))
+	cs, ok := s.cacheRes[key]
+	return cs, ok
 }
 
 const (
@@ -1696,6 +1710,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+		cacheRes:                      make(map[[16]byte]*CacheResult),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -3161,4 +3176,32 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
+}
+
+type TmpcolumnInfo struct {
+	Schema             string
+	Table              string
+	OrgTable           string
+	Name               string
+	OrgName            string
+	ColumnLength       uint32
+	Charset            uint16
+	Flag               uint16
+	Decimal            uint8
+	Type               uint8
+	DefaultValueLength uint64
+	DefaultValue       []byte
+}
+
+type CacheResult struct {
+	Columns   []*TmpcolumnInfo
+	Id        int
+	Chunks    []*chunk.Chunk
+	Rows      []chunk.Row
+	CloseBool bool
+}
+
+func (cr *CacheResult) AppendChunk(chunk *chunk.Chunk) {
+	newchun := chunk.CopyConstruct()
+	cr.Chunks = append(cr.Chunks, newchun)
 }

@@ -658,3 +658,16 @@ func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
 		}
 	}
 }
+
+func (c *Chunk) CopyChunk(req *Chunk) {
+	if c.sel != nil {
+		req.sel = make([]int, len(c.sel))
+		copy(req.sel, c.sel)
+	}
+	req.numVirtualRows = c.numVirtualRows
+	req.capacity = c.capacity
+	req.requiredRows = c.requiredRows
+	for i := range c.columns {
+		req.columns[i] = c.columns[i].CopyConstruct(nil)
+	}
+}
