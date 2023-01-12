@@ -365,9 +365,11 @@ type planReplayerTaskDumpWorker struct {
 }
 
 func (w *planReplayerTaskDumpWorker) run() {
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker started.")
 	for task := range w.taskCH {
 		w.handleTask(task)
 	}
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker exited.")
 }
 
 func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
