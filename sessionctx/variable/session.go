@@ -17,10 +17,10 @@ package variable
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"math"
 	"math/rand"
 	"net"
@@ -1334,7 +1334,7 @@ type SessionVars struct {
 	// ETLBatchSize is the non-transactional batch size of ETL operations.
 	ETLBatchSize int
 	Stmt         ast.StmtNode
-	cacheRes     map[[16]byte]*CacheResult
+	cacheRes     map[uint32]*CacheResult
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -1498,7 +1498,7 @@ func (s *SessionVars) AllocNewPlanID() int {
 
 // Clear earliest CacheResult.
 func (s *SessionVars) clearEarliestCacheResult() {
-	var key [16]byte
+	var key uint32
 	minTime := time.Now()
 	for k, v := range s.cacheRes {
 		if v.LastUpdateTime.Before(minTime) {
@@ -1525,7 +1525,7 @@ func (s *SessionVars) SaveCache(cr *CacheResult) error {
 	if err != nil {
 		return err
 	}
-	key := md5.Sum([]byte(buf.String()))
+	key := crc32.ChecksumIEEE(buf.Bytes())
 	cr.LastUpdateTime = time.Now()
 	s.cacheRes[key] = cr
 	return nil
@@ -1545,7 +1545,7 @@ func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	key := md5.Sum([]byte(buf.String()))
+	key := crc32.ChecksumIEEE(buf.Bytes())
 	cs, ok := s.cacheRes[key]
 	if ok && time.Since(cs.LastUpdateTime).Milliseconds() >=
 		ResultCacheTimeout.Load() {
@@ -1759,7 +1759,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
-		cacheRes:                      make(map[[16]byte]*CacheResult),
+		cacheRes:                      make(map[uint32]*CacheResult),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
