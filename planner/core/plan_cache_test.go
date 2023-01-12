@@ -479,7 +479,6 @@ func TestPlanCacheWithLimit(t *testing.T) {
 
 	for _, testCase := range testCases {
 		tk.MustExec(testCase.sql)
-		tk.MustExec("set @a = 1")
 		var using []string
 		for i, p := range testCase.params {
 			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
@@ -490,7 +489,7 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-		tk.MustExec("set @a0 = 10086")
+		tk.MustExec("set @a0 = 6")
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
