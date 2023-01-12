@@ -701,7 +701,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		})
 	}
 
-	tableFileMap := restore.MapTableToFiles(files, backupMeta.ApiVersion)
+	tableFileMap := restore.MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
 	rangeStream := restore.GoValidateFileRanges(

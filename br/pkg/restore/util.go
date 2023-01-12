@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -290,7 +289,7 @@ func EstimateRangeSize(files []*backuppb.File) int {
 
 // MapTableToFiles makes a map that mapping table ID to its backup files.
 // aware that one file can and only can hold one table.
-func MapTableToFiles(files []*backuppb.File, version kvrpcpb.APIVersion) map[int64][]*backuppb.File {
+func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
 	result := map[int64][]*backuppb.File{}
 	for _, file := range files {
 		tableID := tablecodec.DecodeTableID(file.GetStartKey())
