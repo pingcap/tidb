@@ -521,6 +521,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 			}()
 
 			defer func() {
+				close(dataCh)
 				err = eg.Wait()
 				for range dataCh {
 				}
@@ -555,7 +556,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
 	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
 	e.ctx.GetTxnWriteThroughputSLI().SetInvalid()
-LOOP:
+
 	for {
 		// we send the datum to other goroutine, and the datum has reference to the chunk,
 		// for safety, create a new chunk.
@@ -564,7 +565,6 @@ LOOP:
 		}
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
-			close(dataCh)
 			return err
 		}
 		if chk.NumRows() == 0 {
@@ -579,7 +579,7 @@ LOOP:
 			select {
 			case dataCh <- chk:
 			case <-ctx.Done():
-				break LOOP
+				return nil
 			}
 			continue
 		}
@@ -628,9 +628,6 @@ LOOP:
 		memTracker.Consume(-memUsageOfRows)
 		memTracker.Consume(-memUsageOfExtraCols)
 		memTracker.Consume(-chkMemUsage)
-	}
-	if etlMode {
-		close(dataCh)
 	}
 	return nil
 }
