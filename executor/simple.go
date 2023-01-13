@@ -1092,6 +1092,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	resourceGroupName := "default"
 	if s.ResourceGroupNameOption != nil {
+		if !variable.EnableResourceControl.Load() {
+			return infoschema.ErrResourceGroupSupportDisabled
+		}
 		if s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
 			resourceGroupName = s.ResourceGroupNameOption.Value
 		}
@@ -1894,6 +1897,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if s.ResourceGroupNameOption != nil && s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
+			if !variable.EnableResourceControl.Load() {
+				return infoschema.ErrResourceGroupSupportDisabled
+			}
 			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, s.ResourceGroupNameOption.Value))
 		}
 		if passwordLockingStr != "" {
