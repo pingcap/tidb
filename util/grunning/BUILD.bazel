@@ -1,0 +1,29 @@
+load("//build/bazelutil/unused_checker:unused.bzl", "get_x_data")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "grunning",
+    srcs = [
+        "disabled.go",
+        "enabled.go",
+        "grunning.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/grunning",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "grunning_test",
+    srcs = [
+        "disabled_test.go",
+        "enabled_test.go",
+    ],
+    args = ["-test.timeout=295s"],
+    deps = [
+        ":grunning",
+        "@com_github_cockroachdb_cockroach//pkg/util/grunning",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+get_x_data(name = "get_x_data")
