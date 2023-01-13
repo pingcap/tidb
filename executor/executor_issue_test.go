@@ -1304,7 +1304,8 @@ func TestIssue33214(t *testing.T) {
 }
 
 func TestIssue40158(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
