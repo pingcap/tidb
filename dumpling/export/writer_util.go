@@ -522,7 +522,7 @@ func (e externalBytesBuffer) Write(_ context.Context, p []byte) (int, error) {
 }
 
 // Close implements ExternalFileWriter.Close
-func (_ externalBytesBuffer) Close(_ context.Context) error {
+func (externalBytesBuffer) Close(_ context.Context) error {
 	return nil
 }
 

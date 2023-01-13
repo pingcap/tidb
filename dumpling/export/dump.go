@@ -772,7 +772,9 @@ func (d *Dumper) handleBuffer(totalChunk int) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			defer w.Close(d.tctx)
+			defer func() {
+				_ = w.Close(d.tctx)
+			}()
 			for id := 0; id < totalChunk; id++ {
 				cond.L.Lock()
 				if buf, ok := set[id]; ok {
@@ -884,12 +886,10 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 				query += " "
 				query += whereCond
 			}
-
 			if orderByClause != "" {
 				query += " "
 				query += orderByClause
 			}
-
 		} else {
 			query = buildSelectQuery(db, tbl, selectField, "", buildWhereCondition(conf, where), orderByClause)
 		}

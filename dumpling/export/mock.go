@@ -30,15 +30,15 @@ func (m *mockTableIR) RawRows() *sql.Rows {
 	return m.rows
 }
 
-func (_ *mockTableIR) ShowCreateTable() string {
+func (*mockTableIR) ShowCreateTable() string {
 	return ""
 }
 
-func (_ *mockTableIR) ShowCreateView() string {
+func (*mockTableIR) ShowCreateView() string {
 	return ""
 }
 
-func (_ *mockTableIR) AvgRowLength() uint64 {
+func (*mockTableIR) AvgRowLength() uint64 {
 	return 0
 }
 
@@ -46,7 +46,7 @@ func (m *mockTableIR) HasImplicitRowID() bool {
 	return m.hasImplicitRowID
 }
 
-func (_ *mockTableIR) Start(_ *tcontext.Context, _ *sql.Conn) error {
+func (*mockTableIR) Start(_ *tcontext.Context, _ *sql.Conn) error {
 	return nil
 }
 
@@ -111,7 +111,7 @@ func (m *mockTableIR) Rows() SQLRowIter {
 	return m.SQLRowIter
 }
 
-func (_ *mockTableIR) Close() error {
+func (*mockTableIR) Close() error {
 	return nil
 }
 
