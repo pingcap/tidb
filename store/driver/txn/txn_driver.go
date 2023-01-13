@@ -273,6 +273,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
 	case kv.TxnSource:
 		txn.KVTxn.SetTxnSource(val.(uint64))
+	case kv.ResourceGroupName:
+		txn.KVTxn.SetResourceGroupName(val.(string))
 	}
 }
 

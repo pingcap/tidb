@@ -95,6 +95,8 @@ const (
 	ScanBatchSize
 	// TxnSource set the source of this transaction.
 	TxnSource
+	// ResourceGroupName set the bind resource group name.
+	ResourceGroupName
 )
 
 // ReplicaReadType is the type of replica to read data from
