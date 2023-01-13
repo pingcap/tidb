@@ -16,7 +16,6 @@ package bindinfo_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"strconv"
 	"testing"
 	"time"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
