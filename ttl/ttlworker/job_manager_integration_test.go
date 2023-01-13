@@ -126,6 +126,7 @@ func TestFinishJob(t *testing.T) {
 	job.Finish(se, time.Now())
 
 	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 {\"total_rows\":0,\"success_rows\":0,\"error_rows\":0,\"total_scan_task\":1,\"scheduled_scan_task\":0,\"finished_scan_task\":0,\"scan_task_err\":\"\\\"'an error message contains both single and double quote'\\\"\"}"))
+	tk.MustQuery("select * from mysql.tidb_ttl_task").Check(testkit.Rows())
 }
 
 func TestTTLAutoAnalyze(t *testing.T) {
