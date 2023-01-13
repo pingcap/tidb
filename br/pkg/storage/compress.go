@@ -11,6 +11,10 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
+type compressReaderBufferType struct{}
+
+var CompressReaderBufferType compressReaderBufferType
+
 type withCompression struct {
 	ExternalStorage
 	compressType CompressType
@@ -46,7 +50,7 @@ func (w *withCompression) Open(ctx context.Context, path string) (ExternalFileRe
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	uncompressReader, err := newInterceptReader(fileReader, w.compressType)
+	uncompressReader, err := newInterceptReader(ctx, fileReader, w.compressType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -73,7 +77,7 @@ func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, er
 		return data, errors.Trace(err)
 	}
 	bf := bytes.NewBuffer(data)
-	compressBf, err := newCompressReader(w.compressType, bf)
+	compressBf, err := newCompressReader(ctx, w.compressType, bf)
 	if err != nil {
 		return nil, err
 	}
@@ -88,11 +92,11 @@ type compressReader struct {
 }
 
 // nolint:interfacer
-func newInterceptReader(fileReader ExternalFileReader, compressType CompressType) (ExternalFileReader, error) {
+func newInterceptReader(ctx context.Context, fileReader ExternalFileReader, compressType CompressType) (ExternalFileReader, error) {
 	if compressType == NoCompression {
 		return fileReader, nil
 	}
-	r, err := newCompressReader(compressType, fileReader)
+	r, err := newCompressReader(ctx, compressType, fileReader)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
