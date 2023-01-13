@@ -30,7 +30,7 @@ func TestWithCompressReadWriteFile(t *testing.T) {
 	// make sure compressed file is written correctly
 	file, err := os.Open(filepath.Join(dir, fileName))
 	require.NoError(t, err)
-	uncompressedFile, err := newCompressReader(Gzip, file)
+	uncompressedFile, err := newCompressReader(ctx, Gzip, file)
 	require.NoError(t, err)
 	newContent, err := io.ReadAll(uncompressedFile)
 	require.NoError(t, err)

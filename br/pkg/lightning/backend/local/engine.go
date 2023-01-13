@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -32,6 +33,8 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -41,7 +44,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -1000,6 +1006,9 @@ type Writer struct {
 	engine            *Engine
 	memtableSizeLimit int64
 
+	regionSplitSize int64
+	regionSplitKeys int
+
 	// if the KVs are append in order, we can directly write the into SST file,
 	// else we must first store them in writeBatch and then batch flush into SST file.
 	isKVSorted bool
@@ -1017,6 +1026,9 @@ type Writer struct {
 	batchSize  int64
 
 	lastMetaSeq int32
+
+	kvStore             *tikv.KVStore
+	importClientFactory ImportClientFactory
 }
 
 func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
@@ -1081,7 +1093,8 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	}
 	w.batchCount = cnt
 
-	if w.batchSize > w.memtableSizeLimit {
+	if (w.isKVSorted && (w.batchSize > w.regionSplitSize || w.batchCount > w.regionSplitKeys)) ||
+		(!w.isKVSorted && w.batchSize > w.memtableSizeLimit) {
 		if err := w.flushKVs(ctx); err != nil {
 			return err
 		}
@@ -1111,9 +1124,9 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 		}
 	}
 
-	if w.isKVSorted {
-		return w.appendRowsSorted(kvs)
-	}
+	//if w.isKVSorted {
+	//	return w.appendRowsSorted(kvs)
+	//}
 	return w.appendRowsUnsorted(ctx, kvs)
 }
 
@@ -1145,6 +1158,175 @@ func (w *Writer) flush(ctx context.Context) error {
 	return nil
 }
 
+func (w *Writer) writeToTiKV(ctx context.Context, kvs []common.KvPair) error {
+	regionIDs, err := w.kvStore.SplitRegions(ctx, [][]byte{kvs[0].Key}, true, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, regionID := range regionIDs {
+		if err := w.kvStore.WaitScatterRegionFinish(ctx, regionID, 0); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	startKey := kvs[0].Key
+	endKey := nextKey(kvs[len(kvs)-1].Key)
+	regions, err := w.scanRegions(ctx, startKey, endKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(regions) == 0 {
+		return errors.Errorf("no region found for range [%x, %x)", startKey, endKey)
+	}
+	for _, region := range regions {
+		// TODO: check startIdx and endIdx.
+		startIdx := sort.Search(len(kvs), func(i int) bool {
+			return bytes.Compare(kvs[i].Key, region.Meta.StartKey) >= 0
+		})
+		endIdx := sort.Search(len(kvs), func(i int) bool {
+			return bytes.Compare(kvs[i].Key, region.Meta.EndKey) >= 0
+		})
+		if err := w.writeToRegion(ctx, region, kvs[startIdx:endIdx]); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (w *Writer) writeToRegion(ctx context.Context, region *pd.Region, kvs []common.KvPair) error {
+	var (
+		leaderIdx    = -1
+		leaderClinet sstpb.ImportSSTClient
+		writeClients []sstpb.ImportSST_WriteClient
+	)
+	closeAll := func() {
+		for _, c := range writeClients {
+			_ = c.CloseSend()
+		}
+	}
+
+	u := uuid.New()
+	meta := &sstpb.SSTMeta{
+		Uuid:        u[:],
+		RegionId:    region.Meta.GetId(),
+		RegionEpoch: region.Meta.GetRegionEpoch(),
+		Range: &sstpb.Range{
+			Start: codec.EncodeBytes(nil, kvs[0].Key),
+			End:   codec.EncodeBytes(nil, kvs[len(kvs)-1].Key),
+		},
+	}
+
+	for i := 0; i < len(region.Meta.Peers); i++ {
+		peer := region.Meta.Peers[i]
+		importClient, err := w.importClientFactory.Create(ctx, peer.StoreId)
+		if err != nil {
+			closeAll()
+			return err
+		}
+		if peer.Id == region.Leader.GetId() {
+			leaderIdx = i
+			leaderClinet = importClient
+		}
+		writeClient, err := importClient.Write(ctx)
+		if err != nil {
+			closeAll()
+			return err
+		}
+		writeClients = append(writeClients, writeClient)
+
+		if err := writeClient.Send(&sstpb.WriteRequest{
+			Chunk: &sstpb.WriteRequest_Meta{
+				Meta: meta,
+			},
+		}); err != nil {
+			closeAll()
+			return err
+		}
+	}
+	if leaderIdx == -1 {
+		closeAll()
+		return fmt.Errorf("region %d has no leader", region.Meta.Id)
+	}
+
+	writeBatch := &sstpb.WriteBatch{
+		CommitTs: w.engine.TS,
+	}
+
+	req := &sstpb.WriteRequest{
+		Chunk: &sstpb.WriteRequest_Batch{
+			Batch: writeBatch,
+		},
+	}
+
+	const writeBatchSize = 1024
+
+	for i, kvPair := range kvs {
+		writeBatch.Pairs = append(writeBatch.Pairs, &sstpb.Pair{
+			Key:   kvPair.Key,
+			Value: kvPair.Val,
+		})
+		if i+1 == len(kvs) || len(writeBatch.Pairs) >= writeBatchSize {
+			for _, wc := range writeClients {
+				if err := wc.Send(req); err != nil {
+					closeAll()
+					return err
+				}
+			}
+			writeBatch.Pairs = writeBatch.Pairs[:0]
+		}
+	}
+
+	var sstMetas []*sstpb.SSTMeta
+	for i, wc := range writeClients {
+		resp, err := wc.CloseAndRecv()
+		if err != nil {
+			closeAll()
+			return err
+		}
+		if i == leaderIdx {
+			sstMetas = resp.Metas
+		}
+	}
+	if len(sstMetas) == 0 {
+		return errors.New("no sst meta received from leader")
+	}
+
+	reqCtx := &kvrpcpb.Context{
+		RegionId:    region.Meta.GetId(),
+		RegionEpoch: region.Meta.GetRegionEpoch(),
+		Peer:        region.Leader,
+	}
+
+	resp, err := leaderClinet.MultiIngest(ctx, &sstpb.MultiIngestRequest{
+		Context: reqCtx,
+		Ssts:    sstMetas,
+	})
+	if err != nil {
+		return err
+	}
+	if resp.Error != nil {
+		return errors.New(resp.Error.String())
+	}
+	return nil
+}
+
+func (w *Writer) scanRegions(ctx context.Context, startKey, endKey []byte) ([]*pd.Region, error) {
+	pdCli := w.kvStore.GetPDClient()
+
+	var result []*pd.Region
+	for bytes.Compare(startKey, endKey) < 0 {
+		regions, err := pdCli.ScanRegions(ctx, startKey, endKey, 1000)
+		if err != nil {
+			return nil, err
+		}
+		if len(regions) == 0 {
+			break
+		}
+		result = append(result, regions...)
+		startKey = regions[len(regions)-1].Meta.EndKey
+	}
+	return result, nil
+}
+
 type flushStatus struct {
 	local *Engine
 	seq   int32
@@ -1170,30 +1352,47 @@ func (w *Writer) IsSynced() bool {
 }
 
 func (w *Writer) flushKVs(ctx context.Context) error {
-	writer, err := w.createSSTWriter()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !w.isWriteBatchSorted {
-		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
-			return bytes.Compare(i.Key, j.Key) < 0
-		})
-		w.isWriteBatchSorted = true
-	}
+	if !w.isKVSorted {
+		writer, err := w.createSSTWriter()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !w.isWriteBatchSorted {
+			slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
+				return bytes.Compare(i.Key, j.Key) < 0
+			})
+			w.isWriteBatchSorted = true
+		}
 
-	err = writer.writeKVs(w.writeBatch[:w.batchCount])
-	if err != nil {
-		return errors.Trace(err)
+		err = writer.writeKVs(w.writeBatch[:w.batchCount])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		meta, err := writer.close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = w.addSST(ctx, meta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		var err error
+		for i := 0; i < 60; i++ {
+			err = w.writeToTiKV(ctx, w.writeBatch[:w.batchCount])
+			if err == nil {
+				break
+			}
+			log.FromContext(ctx).Warn("write to tikv fail", zap.Error(err))
+			select {
+			case <-time.After(time.Second * 5):
+			case <-ctx.Done():
+			}
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	meta, err := writer.close()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = w.addSST(ctx, meta)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	w.batchSize = 0
 	w.batchCount = 0
 	w.kvBuffer.Reset()

@@ -453,6 +453,7 @@ type CSVConfig struct {
 type MydumperRuntime struct {
 	ReadBlockSize    ByteSize         `toml:"read-block-size" json:"read-block-size"`
 	BatchSize        ByteSize         `toml:"batch-size" json:"batch-size"`
+	IOBufferSize     ByteSize         `toml:"io-buffer-size" json:"io-buffer-size"`
 	BatchImportRatio float64          `toml:"batch-import-ratio" json:"batch-import-ratio"`
 	SourceID         string           `toml:"source-id" json:"source-id"`
 	SourceDir        string           `toml:"data-source-dir" json:"data-source-dir"`
@@ -477,6 +478,8 @@ type MydumperRuntime struct {
 	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
 	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
 	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
+	// DisableRealOffset disable real offset operation
+	DisableRealOffset bool `toml:"disable-real-offset" json:"disable-real-offset"`
 }
 
 type AllIgnoreColumns []*IgnoreColumns
@@ -713,6 +716,7 @@ func NewConfig() *Config {
 		},
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
+			IOBufferSize:  IOBufferSize,
 			CSV: CSVConfig{
 				Separator:       ",",
 				Delimiter:       `"`,
@@ -1157,6 +1161,9 @@ func (cfg *Config) AdjustMydumper() {
 	}
 	if cfg.Mydumper.ReadBlockSize <= 0 {
 		cfg.Mydumper.ReadBlockSize = ReadBlockSize
+	}
+	if cfg.Mydumper.IOBufferSize <= 0 {
+		cfg.Mydumper.IOBufferSize = IOBufferSize
 	}
 	if len(cfg.Mydumper.CharacterSet) == 0 {
 		cfg.Mydumper.CharacterSet = "auto"
