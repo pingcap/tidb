@@ -333,7 +333,7 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, len(row))
 	require.Equal(t, types.KindUint64, row[0].Kind())
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
@@ -639,7 +639,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, len(records), i)
 
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))

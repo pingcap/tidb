@@ -1537,7 +1537,7 @@ func (s *session) begin() error {
 }
 
 func (s *session) commit() error {
-	s.StmtCommit()
+	s.StmtCommit(context.Background())
 	return s.CommitTxn(context.Background())
 }
 
@@ -1546,12 +1546,12 @@ func (s *session) txn() (kv.Transaction, error) {
 }
 
 func (s *session) rollback() {
-	s.StmtRollback()
+	s.StmtRollback(context.Background(), false)
 	s.RollbackTxn(context.Background())
 }
 
 func (s *session) reset() {
-	s.StmtRollback()
+	s.StmtRollback(context.Background(), false)
 }
 
 func (s *session) execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {

@@ -61,7 +61,7 @@ func TestDDLStatsInfo(t *testing.T) {
 	require.NoError(t, err)
 	_, err = m.AddRecord(ctx, types.MakeDatums(3, 3))
 	require.NoError(t, err)
-	ctx.StmtCommit()
+	ctx.StmtCommit(context.Background())
 	require.NoError(t, ctx.CommitTxn(context.Background()))
 
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "idx", "c1")
