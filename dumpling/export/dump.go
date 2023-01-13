@@ -1009,7 +1009,7 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 	if err != nil {
 		return err
 	}
-	d.handleBuffer(len(handleVals) + 1)
+	d.handleBuffer(tctx, len(handleVals)+1)
 	return d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, handleVals, "", 0, len(handleVals)+1)
 }
 
@@ -1035,7 +1035,7 @@ func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn 
 		totalChunk += len(handleVals) + 1
 		cachedHandleVals[i] = handleVals
 	}
-	d.handleBuffer(totalChunk)
+	d.handleBuffer(tctx, totalChunk)
 	for i, partition := range partitions {
 		err := d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, cachedHandleVals[i], partition, startChunkIdx, totalChunk)
 		if err != nil {
