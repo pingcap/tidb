@@ -144,7 +144,7 @@ func TestCheckpointRunner(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	checkpointRunner.WaitForFinish()
+	checkpointRunner.WaitForFinish(ctx)
 
 	checker := func(groupKey string, resp *rtree.Range) {
 		require.NotNil(t, resp)
@@ -226,5 +226,5 @@ func TestCheckpointRunnerLock(t *testing.T) {
 	_, err = checkpoint.StartCheckpointRunnerForTest(ctx, s, cipher, 5*time.Second, NewMockTimer(40, 10))
 	require.Error(t, err)
 
-	runner.WaitForFinish()
+	runner.WaitForFinish(ctx)
 }

@@ -322,13 +322,18 @@ func (r *CheckpointRunner) Append(
 }
 
 // Note: Cannot be parallel with `Append` function
-func (r *CheckpointRunner) WaitForFinish() {
+func (r *CheckpointRunner) WaitForFinish(ctx context.Context) {
 	// can not append anymore
 	close(r.appendCh)
 	// wait the range flusher exit
 	r.wg.Wait()
 	// wait the checksum flusher exit
 	r.checksumRunner.wg.Wait()
+	// remove the checkpoint lock
+	err := r.storage.DeleteFile(ctx, CheckpointLockPath)
+	if err != nil {
+		log.Warn("failed to remove the checkpoint lock", zap.Error(err))
+	}
 }
 
 // Send the meta to the flush goroutine, and reset the CheckpointRunner's meta
@@ -576,8 +581,8 @@ func (r *CheckpointRunner) checkLockFile(ctx context.Context, caller string, now
 	}
 	if lock.ExpireAt >= now && lock.LockId != r.lockId {
 		return errors.New(fmt.Sprintf("Failed to %s. The existing lock will expire in %d seconds. "+
-			"There may be another BR(%d) running. If not, you can wait for the lock to expire, or delete the file `%s` manually.",
-			caller, (lock.ExpireAt-now)/1000, lock.LockId, CheckpointLockPath))
+			"There may be another BR(%d) running. If not, you can wait for the lock to expire, or delete the file `%s%s` manually.",
+			caller, (lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.storage.URI(), "/"), CheckpointLockPath))
 	}
 	if lock.LockId > r.lockId {
 		return errors.New(fmt.Sprintf("Failed to %s. There are another BR(%d) running after but setting lock before this one(%d). "+
@@ -621,7 +626,10 @@ func (r *CheckpointRunner) initialLock(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	return nil
+	// wait for 3 seconds to check whether the lock file is overwritten by another BR
+	time.Sleep(3 * time.Second)
+	err = r.checkLockFile(ctx, "initialize checkpoint lock", p)
+	return errors.Trace(err)
 }
 
 // walk the whole checkpoint range files and retrieve the metadatat of backed up ranges
