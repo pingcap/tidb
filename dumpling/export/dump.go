@@ -748,32 +748,30 @@ func (d *Dumper) handleBuffer(tctx *tcontext.Context, totalChunk int) {
 		return
 	}
 	set := make(map[int]*bytes.Buffer)
-	cond := sync.NewCond(new(sync.Mutex))
+	var lock sync.Mutex
 	finished := make(chan struct{})
+	newBufSignal := make(chan struct{}, 128)
 	go func() {
-		for {
+		for i := 0; i < totalChunk; i++ {
 			select {
 			case <-tctx.Done():
-				tick := time.NewTicker(time.Second)
-				for {
-					select {
-					case <-finished:
-						return
-					case <-tick.C:
-						cond.L.Lock()
-						cond.Signal()
-						cond.L.Unlock()
-					}
-				}
+				close(newBufSignal)
+				return
 			case <-finished:
 				return
 			case r := <-d.bufChan:
-				cond.L.Lock()
+				lock.Lock()
 				set[r.idx] = r.buf
-				cond.Signal()
-				cond.L.Unlock()
+				lock.Unlock()
+				select {
+				case newBufSignal <- struct{}{}:
+				case <-tctx.Done():
+					close(newBufSignal)
+					return
+				}
 			}
 		}
+		close(newBufSignal)
 	}()
 	d.wg.Go(
 		func() error {
@@ -795,22 +793,23 @@ func (d *Dumper) handleBuffer(tctx *tcontext.Context, totalChunk int) {
 				_ = w.Close(d.tctx)
 			}()
 			for id := 0; id < totalChunk; id++ {
-				if tctx.Err() != nil {
-					return tctx.Err()
-				}
-				cond.L.Lock()
+				lock.Lock()
 				if buf, ok := set[id]; ok {
 					delete(set, id)
-					cond.L.Unlock()
+					lock.Unlock()
 					_, err = w.Write(d.tctx, buf.Bytes())
 					if err != nil {
 						return err
 					}
 					buf.Reset()
-				} else {
-					id--
-					cond.Wait()
-					cond.L.Unlock()
+					continue
+				}
+				lock.Unlock()
+				id--
+				select {
+				case <-tctx.Done():
+					return tctx.Err()
+				case <-newBufSignal:
 				}
 			}
 			return nil
