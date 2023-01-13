@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"math"
 	"math/rand"
 	"net"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	ptypes "github.com/pingcap/tidb/parser/types"
@@ -49,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -1340,6 +1343,8 @@ type SessionVars struct {
 
 	// ETLBatchSize is the non-transactional batch size of ETL operations.
 	ETLBatchSize int
+	Stmt         ast.StmtNode
+	cacheRes     map[uint32]*CacheResult
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -1499,6 +1504,79 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 func (s *SessionVars) AllocNewPlanID() int {
 	s.PlanID++
 	return s.PlanID
+}
+
+// clearOneTimeoutCacheResult Clear one timeout CacheResult.
+func (s *SessionVars) clearTimeoutCacheResult() {
+	ts := ResultCacheTimeout.Load()
+	for k, v := range s.cacheRes {
+		if time.Since(v.LastUpdateTime).Milliseconds() >= ts {
+			delete(s.cacheRes, k)
+		}
+	}
+}
+
+// clearEarlistCacheResult Clear earliest CacheResult.
+func (s *SessionVars) clearEarlistCacheResult() {
+	var key uint32
+	minTime := time.Now()
+	for k, v := range s.cacheRes {
+		if v.LastUpdateTime.Before(minTime) {
+			minTime = v.LastUpdateTime
+			key = k
+		}
+	}
+	delete(s.cacheRes, key)
+}
+
+// SaveCache save result cache.
+func (s *SessionVars) SaveCache(cr *CacheResult) {
+	cacheSize := int64(len(s.cacheRes))
+	maxAllowCacheSize := ResultCacheSize.Load()
+	if cacheSize >= maxAllowCacheSize {
+		s.clearTimeoutCacheResult()
+	}
+	cacheSize = int64(len(s.cacheRes))
+	if cacheSize >= maxAllowCacheSize {
+		for i := int64(0); i < cacheSize-maxAllowCacheSize+1; i++ {
+			s.clearEarlistCacheResult()
+		}
+	}
+	var buf bytes.Buffer
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	err := s.Stmt.Restore(restoreCtx)
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur restore %v", err))
+		return
+	}
+	key := crc32.ChecksumIEEE(buf.Bytes())
+	cr.LastUpdateTime = time.Now()
+	s.cacheRes[key] = cr
+}
+
+// GetCache get result from cache.
+func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool) {
+	if ResultCacheSize.Load() == 0 {
+		return nil, false
+	}
+	var buf bytes.Buffer
+	if stmt == nil {
+		return nil, false
+	}
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	err := stmt.Restore(restoreCtx)
+	if err != nil {
+		logutil.BgLogger().Error(fmt.Sprintf("Error occur restore %v", err))
+		return nil, false
+	}
+	key := crc32.ChecksumIEEE(buf.Bytes())
+	cs, ok := s.cacheRes[key]
+	if ok && time.Since(cs.LastUpdateTime).Milliseconds() >=
+		ResultCacheTimeout.Load() {
+		delete(s.cacheRes, key)
+		return nil, false
+	}
+	return cs, ok
 }
 
 const (
@@ -1705,6 +1783,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+		cacheRes:                      make(map[uint32]*CacheResult),
 		MppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		MppVersion:                    kv.MppVersionUnspecified,
 		ExplainShowMppFeature:         DefExplainShowMppFeature,
@@ -3173,4 +3252,36 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
+}
+
+// VarColumnInfo same as columninfo
+type VarColumnInfo struct {
+	Schema             string
+	Table              string
+	OrgTable           string
+	Name               string
+	OrgName            string
+	ColumnLength       uint32
+	Charset            uint16
+	Flag               uint16
+	Decimal            uint8
+	Type               uint8
+	DefaultValueLength uint64
+	DefaultValue       []byte
+}
+
+// CacheResult save select result.
+type CacheResult struct {
+	Columns        []*VarColumnInfo
+	ID             int
+	Chunks         []*chunk.Chunk
+	Rows           []chunk.Row
+	CloseBool      bool
+	LastUpdateTime time.Time
+}
+
+// AppendChunk add Chunks info.
+func (cr *CacheResult) AppendChunk(chunk *chunk.Chunk) {
+	newchun := chunk.CopyConstruct()
+	cr.Chunks = append(cr.Chunks, newchun)
 }

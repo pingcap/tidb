@@ -17,9 +17,12 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"time"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -82,4 +85,97 @@ type fetchNotifier interface {
 	// OnFetchReturned be called when COM_FETCH returns.
 	// it will be used in server-side cursor.
 	OnFetchReturned()
+}
+
+// GetResult save select result.
+type GetResult struct {
+	columns   []*ColumnInfo
+	ID        int
+	chunks    []*chunk.Chunk
+	rows      []chunk.Row
+	CloseBool bool
+}
+
+// Columns get columnInfo.
+func (cache *GetResult) Columns() []*ColumnInfo {
+	return cache.columns
+}
+
+// Next return chunk.
+func (cache *GetResult) Next(ctx context.Context, req *chunk.Chunk) error {
+	cache.chunks[cache.ID].CopyChunk(req)
+	cache.ID++
+	return nil
+}
+
+// StoreFetchedRows save rows.
+func (cache *GetResult) StoreFetchedRows(rows []chunk.Row) {
+	cache.rows = rows
+}
+
+// GetFetchedRows get rows.
+func (cache *GetResult) GetFetchedRows() []chunk.Row {
+	return cache.rows
+}
+
+// Close close GetResult
+func (cache *GetResult) Close() error {
+	cache.ID = 0
+	cache.CloseBool = true
+	return nil
+}
+
+// IsClosed check if closed
+func (cache *GetResult) IsClosed() bool {
+	return cache.CloseBool
+}
+
+// NewChunk get new chunk.
+func (cache *GetResult) NewChunk(chunk.Allocator) *chunk.Chunk {
+	chunk := cache.chunks[cache.ID].CopyConstruct()
+	chunk.Reset()
+	return chunk
+}
+
+// newCacheResult new cacheResult
+func newCacheResult(rs ResultSet) *variable.CacheResult {
+	cols := rs.Columns()
+	tmpcols := make([]*variable.VarColumnInfo, 0, len(cols))
+	for _, col := range cols {
+		tmpcols = append(tmpcols, col.Tranfer())
+	}
+	ca := &variable.CacheResult{
+		ID:             0,
+		Columns:        tmpcols,
+		Rows:           rs.GetFetchedRows(),
+		CloseBool:      false,
+		LastUpdateTime: time.Now(),
+	}
+	return ca
+}
+
+// tryNewResultSet try save result
+func tryNewResultSet(rs ResultSet, stmt ast.StmtNode) *variable.CacheResult {
+	switch stmt.(type) {
+	case *ast.SelectStmt:
+		return newCacheResult(rs)
+	default:
+		return nil
+	}
+}
+
+// newGetResult CacheResult converted to GetResult
+func newGetResult(cs *variable.CacheResult) *GetResult {
+	colus := make([]*ColumnInfo, 0, len(cs.Columns))
+	for _, column := range cs.Columns {
+		colus = append(colus, tmpcolumnInfotransfer(column))
+	}
+	getRes := &GetResult{
+		columns:   colus,
+		ID:        0,
+		chunks:    cs.Chunks,
+		CloseBool: false,
+		rows:      cs.Rows,
+	}
+	return getRes
 }
