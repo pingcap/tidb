@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -40,9 +39,6 @@ import (
 // This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
 // then the all the record of job A must before or after job B, no cross record between these 2 jobs should be in between.
 func TestDDLScheduling(t *testing.T) {
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skipf("test requires concurrent ddl")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -248,18 +244,20 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	d := dom.DDL()
 	se := ddl.NewSession(tk.Session())
 
-	jobID1 := int64(2)
-	jobID2 := int64(3)
-	eleID1 := int64(4)
-	eleID2 := int64(5)
+	jobID1 := int64(1)
+	jobID2 := int64(2)
+	eleID1 := int64(11)
+	eleID2 := int64(22)
+	eleID3 := int64(33)
 	uuid := d.GetID()
+	eleKey := meta.IndexElementKey
 	instanceLease := ddl.InstanceLease
 	// test no backfill job
 	bJobs, err := ddl.GetBackfillJobsForOneEle(se, 1, []int64{jobID1, jobID2}, instanceLease)
 	require.NoError(t, err)
 	require.Nil(t, bJobs)
 	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, instanceLease)
-	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job, lease is timeout").Error())
+	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job").Error())
 	require.Nil(t, bJobs)
 	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
 		jobID1, eleID2, meta.IndexElementKey), "check_backfill_job_count")
@@ -267,10 +265,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.Equal(t, allCnt, 0)
 	// Test some backfill jobs, add backfill jobs to the table.
 	cnt := 2
-	bjTestCases := make([]*ddl.BackfillJob, 0, cnt*2)
+	bjTestCases := make([]*ddl.BackfillJob, 0, cnt*3)
 	bJobs1 := makeAddIdxBackfillJobs(1, 2, jobID1, eleID1, cnt, "alter table add index idx(a)")
 	bJobs2 := makeAddIdxBackfillJobs(1, 2, jobID2, eleID2, cnt, "alter table add index idx(b)")
-	bJobs3 := makeAddIdxBackfillJobs(1, 2, jobID2, eleID1, cnt, "alter table add index idx(c)")
+	bJobs3 := makeAddIdxBackfillJobs(1, 2, jobID2, eleID3, cnt, "alter table add index idx(c)")
 	bjTestCases = append(bjTestCases, bJobs1...)
 	bjTestCases = append(bjTestCases, bJobs2...)
 	bjTestCases = append(bjTestCases, bJobs3...)
@@ -281,37 +279,37 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 1      jobID1     eleID1    ""
 	// 0      jobID2     eleID2    ""
 	// 1      jobID2     eleID2    ""
-	// 0      jobID2     eleID1    ""
-	// 1      jobID2     eleID1    ""
+	// 0      jobID2     eleID3    ""
+	// 1      jobID2     eleID3    ""
 	require.NoError(t, err)
 	// test get some backfill jobs
 	bJobs, err = ddl.GetBackfillJobsForOneEle(se, 1, []int64{jobID2 - 1, jobID2 + 1}, instanceLease)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
-	expectJob := bjTestCases[4]
+	expectJob := bjTestCases[2]
 	if expectJob.ID != bJobs[0].ID {
-		expectJob = bjTestCases[5]
+		expectJob = bjTestCases[3]
 	}
 	require.Equal(t, expectJob, bJobs[0])
-	previousTime, err := ddl.GetOracleTime(se)
+	previousTime, err := ddl.GetOracleTimeWithStartTS(se)
 	require.EqualError(t, err, "[kv:8024]invalid transaction")
 	readInTxn(se, func(sessionctx.Context) {
-		previousTime, err = ddl.GetOracleTime(se)
+		previousTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
 
 	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID2, uuid, instanceLease)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
-	expectJob = bjTestCases[4]
+	expectJob = bjTestCases[2]
 	if expectJob.ID != bJobs[0].ID {
-		expectJob = bjTestCases[5]
+		expectJob = bjTestCases[3]
 	}
 	expectJob.InstanceID = uuid
 	equalBackfillJob(t, expectJob, bJobs[0], ddl.GetLeaseGoTime(previousTime, instanceLease))
 	var currTime time.Time
 	readInTxn(se, func(sessionctx.Context) {
-		currTime, err = ddl.GetOracleTime(se)
+		currTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
 	currGoTime := ddl.GetLeaseGoTime(currTime, instanceLease)
@@ -327,8 +325,8 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 1      jobID1     eleID1
 	// 0      jobID2     eleID2
 	// 1      jobID2     eleID2
-	// 0      jobID2     eleID1
-	// 1      jobID2     eleID1
+	// 0      jobID2     eleID3
+	// 1      jobID2     eleID3
 	require.NoError(t, err)
 	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
@@ -341,8 +339,8 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// ID     jobID     eleID
 	// ------------------------
 	// 1      jobID1     eleID1
-	// 0      jobID2     eleID1
-	// 1      jobID2     eleID1
+	// 0      jobID2     eleID3
+	// 1      jobID2     eleID3
 	require.NoError(t, err)
 	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
@@ -365,28 +363,36 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// ------------------------
 	// 0      jobID2     eleID2
 	readInTxn(se, func(sessionctx.Context) {
-		currTime, err = ddl.GetOracleTime(se)
+		currTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
-	condition := fmt.Sprintf("exec_ID = '' or exec_lease < '%v' and ddl_job_id = %d order by ddl_job_id", currTime.Add(-instanceLease), jobID1)
+	condition := fmt.Sprintf("exec_ID = '' or exec_lease < '%v' and ddl_job_id = %d order by ddl_job_id", currTime.Add(-instanceLease), jobID2)
 	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackfillHistoryTable, condition, "test_get_bj")
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
-	require.Greater(t, bJobs[0].FinishTS, uint64(0))
+	require.Equal(t, bJobs[0].FinishTS, uint64(0))
 
-	// test GetInterruptedBackfillJobsForOneEle
-	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, meta.IndexElementKey)
+	// test GetMaxBackfillJob and GetInterruptedBackfillJobsForOneEle
+	bjob, err := ddl.GetMaxBackfillJob(se, bJobs3[0].JobID, bJobs3[0].EleID, eleKey)
+	require.NoError(t, err)
+	require.Nil(t, bjob)
+	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
 	require.Nil(t, bJobs)
+	err = ddl.AddBackfillJobs(se, bjTestCases)
+	require.NoError(t, err)
 	// ID     jobID     eleID
 	// ------------------------
 	// 0      jobID1     eleID1
 	// 1      jobID1     eleID1
 	// 0      jobID2     eleID2
 	// 1      jobID2     eleID2
-	err = ddl.AddBackfillJobs(se, bjTestCases)
+	// 0      jobID2     eleID3
+	// 1      jobID2     eleID3
+	bjob, err = ddl.GetMaxBackfillJob(se, jobID2, eleID2, eleKey)
 	require.NoError(t, err)
-	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, meta.IndexElementKey)
+	require.Equal(t, bJobs2[1], bjob)
+	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
 	require.Nil(t, bJobs)
 	bJobs1[0].State = model.JobStateRollingback
@@ -394,6 +400,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs1[0].InstanceID = uuid
 	bJobs1[1].State = model.JobStateCancelling
 	bJobs1[1].ID = 3
+	bJobs1[1].Meta.ErrMsg = "errMsg"
 	err = ddl.AddBackfillJobs(se, bJobs1)
 	require.NoError(t, err)
 	// ID     jobID     eleID     state
@@ -402,19 +409,134 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 1      jobID1     eleID1    JobStateNone
 	// 0      jobID2     eleID2    JobStateNone
 	// 1      jobID2     eleID2    JobStateNone
-	// 0      jobID2     eleID1    JobStateNone
-	// 1      jobID2     eleID1    JobStateNone
+	// 0      jobID2     eleID3    JobStateNone
+	// 1      jobID2     eleID3    JobStateNone
 	// 2      jobID1     eleID1    JobStateRollingback
 	// 3      jobID1     eleID1    JobStateCancelling
-	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, meta.IndexElementKey)
+	bjob, err = ddl.GetMaxBackfillJob(se, jobID1, eleID1, eleKey)
+	require.NoError(t, err)
+	require.Equal(t, bJobs1[1], bjob)
+	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 2)
 	equalBackfillJob(t, bJobs1[0], bJobs[0], types.ZeroTime)
 	equalBackfillJob(t, bJobs1[1], bJobs[1], types.ZeroTime)
-
 	// test the BackfillJob's AbbrStr
-	require.Equal(t, fmt.Sprintf("ID:2, JobID:2, EleID:4, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
-	require.Equal(t, "ID:3, JobID:2, EleID:4, Type:add index, State:cancelling, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
-	require.Equal(t, "ID:0, JobID:3, EleID:5, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs2[0].AbbrStr())
-	require.Equal(t, "ID:1, JobID:3, EleID:5, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs2[1].AbbrStr())
+	require.Equal(t, fmt.Sprintf("ID:2, JobID:1, EleID:11, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
+	require.Equal(t, "ID:3, JobID:1, EleID:11, Type:add index, State:cancelling, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
+	require.Equal(t, "ID:0, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[0].AbbrStr())
+	require.Equal(t, "ID:1, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[1].AbbrStr())
+
+	bJobs1[0].State = model.JobStateNone
+	bJobs1[0].ID = 5
+	bJobs1[1].State = model.JobStateNone
+	bJobs1[1].ID = 4
+	err = ddl.AddBackfillHistoryJob(se, bJobs1)
+	// BackfillTable
+	// ID     jobID     eleID     state
+	// --------------------------------
+	// 0      jobID1     eleID1    JobStateNone
+	// 1      jobID1     eleID1    JobStateNone
+	// 0      jobID2     eleID2    JobStateNone
+	// 1      jobID2     eleID2    JobStateNone
+	// 0      jobID2     eleID3    JobStateNone
+	// 1      jobID2     eleID3    JobStateNone
+	// 2      jobID1     eleID1    JobStateRollingback
+	// 3      jobID1     eleID1    JobStateCancelling
+	//
+	// BackfillHistoryTable
+	// ID     jobID     eleID     state
+	// --------------------------------
+	// 5      jobID1     eleID1    JobStateNone
+	// 4      jobID1     eleID1    JobStateNone
+	bjob, err = ddl.GetMaxBackfillJob(se, jobID1, eleID1, eleKey)
+	require.NoError(t, err)
+	require.Equal(t, bJobs1[0], bjob)
+	bJobs1[0].ID = 6
+	bJobs1[1].ID = 7
+	err = ddl.AddBackfillJobs(se, bJobs1)
+	// BackfillTable
+	// ID     jobID     eleID     state
+	// --------------------------------
+	// 0      jobID1     eleID1    JobStateNone
+	// 1      jobID1     eleID1    JobStateNone
+	// 0      jobID2     eleID2    JobStateNone
+	// 1      jobID2     eleID2    JobStateNone
+	// 0      jobID2     eleID3    JobStateNone
+	// 1      jobID2     eleID3    JobStateNone
+	// 2      jobID1     eleID1    JobStateRollingback
+	// 3      jobID1     eleID1    JobStateCancelling
+	// 6      jobID1     eleID1    JobStateNone
+	// 7      jobID1     eleID1    JobStateNone
+	//
+	// BackfillHistoryTable
+	// ID     jobID     eleID     state
+	// --------------------------------
+	// 5      jobID1     eleID1    JobStateNone
+	// 4      jobID1     eleID1    JobStateNone
+	bjob, err = ddl.GetMaxBackfillJob(se, jobID1, eleID1, eleKey)
+	require.NoError(t, err)
+	require.Equal(t, bJobs1[1], bjob)
+
+	// test MoveBackfillJobsToHistoryTable
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 2)
+	err = ddl.MoveBackfillJobsToHistoryTable(se, bJobs3[0])
+	require.NoError(t, err)
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 0)
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillHistoryTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 2)
+	// BackfillTable
+	// ID     jobID     eleID     state
+	// --------------------------------
+	// 0      jobID1     eleID1    JobStateNone
+	// 1      jobID1     eleID1    JobStateNone
+	// 0      jobID2     eleID2    JobStateNone
+	// 1      jobID2     eleID2    JobStateNone
+	// 2      jobID1     eleID1    JobStateRollingback
+	// 3      jobID1     eleID1    JobStateCancelling
+	// 6      jobID1     eleID1    JobStateNone
+	// 7      jobID1     eleID1    JobStateNone
+	//
+	// BackfillHistoryTable
+	// ID     jobID     eleID     state
+	// --------------------------------
+	// 5      jobID1     eleID1    JobStateNone
+	// 4      jobID1     eleID1    JobStateNone
+	// 0      jobID2     eleID3    JobStateNone
+	// 1      jobID2     eleID3    JobStateNone
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 6)
+	err = ddl.MoveBackfillJobsToHistoryTable(se, bJobs1[0])
+	require.NoError(t, err)
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 0)
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillHistoryTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	require.NoError(t, err)
+	require.Equal(t, allCnt, 8)
+	// BackfillTable
+	// ID     jobID     eleID     state
+	// --------------------------------
+	// 0      jobID2     eleID2    JobStateNone
+	// 1      jobID2     eleID2    JobStateNone
+	//
+	// BackfillHistoryTable
+	// ID     jobID     eleID     state
+	// --------------------------------
+	// 5      jobID1     eleID1    JobStateNone
+	// 4      jobID1     eleID1    JobStateNone
+	// 0      jobID2     eleID3    JobStateNone
+	// 1      jobID2     eleID3    JobStateNone
+	// 0      jobID1     eleID1    JobStateNone
+	// 1      jobID1     eleID1    JobStateNone
+	// 2      jobID1     eleID1    JobStateRollingback
+	// 3      jobID1     eleID1    JobStateCancelling
+	// 6      jobID1     eleID1    JobStateNone
+	// 7      jobID1     eleID1    JobStateNone
 }

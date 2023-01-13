@@ -194,6 +194,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ReadFromTableCacheCounter)
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
 	prometheus.MustRegister(NonTransactionalDMLCount)
+	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
 	prometheus.MustRegister(MemoryUsage)
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
@@ -216,6 +217,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLPhaseTime)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
+
+	prometheus.MustRegister(HistoricalStatsCounter)
+	prometheus.MustRegister(PlanReplayerTaskCounter)
+	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

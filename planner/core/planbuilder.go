@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -1420,6 +1421,12 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
 			path.Forced = true
+			if hint.HintType == ast.HintKeepOrder {
+				path.ForceKeepOrder = true
+			}
+			if hint.HintType == ast.HintNoKeepOrder {
+				path.ForceNoKeepOrder = true
+			}
 			available = append(available, path)
 		}
 	}
@@ -1429,10 +1436,6 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
-	if staleread.IsStmtStaleness(ctx) {
-		// skip tiflash if the statement is for stale read until tiflash support stale read
-		available = removeTiflashDuringStaleRead(available)
-	}
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -1466,6 +1469,11 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 		// 1. path.StoreType doesn't exists in isolationReadEngines or
 		// 2. TiFlash is disaggregated and the number of tiflash_compute node is zero.
 		shouldPruneTiFlashCompute := noTiFlashComputeNode && exists && paths[i].StoreType == kv.TiFlash
+		failpoint.Inject("testDisaggregatedTiFlashQuery", func(val failpoint.Value) {
+			// Ignore check if tiflash_compute node number.
+			// After we support disaggregated tiflash in test framework, can delete this failpoint.
+			shouldPruneTiFlashCompute = val.(bool)
+		})
 		if shouldPruneTiFlashCompute {
 			outputComputeNodeErrMsg = true
 		}

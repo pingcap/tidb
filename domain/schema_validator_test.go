@@ -61,7 +61,7 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	// Stop the validator, validator's items value is nil.
 	validator.Stop()
 	require.False(t, validator.IsStarted())
-	_, isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
+	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	require.True(t, isTablesChanged)
 	_, valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10}, true)
 	require.Equal(t, ResultUnknown, valid)
@@ -91,12 +91,12 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	validator.Update(ts, currVer, newItem.schemaVer, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3}, ActionTypes: []uint64{1, 2, 3}})
 	// Make sure the updated table IDs don't be covered with the same schema version.
 	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, nil)
-	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
 	require.False(t, isTablesChanged)
-	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
 	require.Truef(t, isTablesChanged, "currVer %d, newItem %v", currVer, newItem)
 	// The current schema version is older than the oldest schema version.
-	_, isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
+	isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
 	require.Truef(t, isTablesChanged, "currVer %d, newItem %v", currVer, newItem)
 
 	// All schema versions is expired.
@@ -214,10 +214,8 @@ func subTestEnqueueActionType(t *testing.T) {
 
 	// Check the flag set by schema diff, note tableID = 3 has been set flag 0x3 in schema version 9, and flag 0x4
 	// in schema version 10, so the resActions for tableID = 3 should be 0x3 & 0x4 = 0x7.
-	relatedChanges, isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
+	isTablesChanged := validator.isRelatedTablesChanged(5, []int64{1, 2, 3, 4})
 	require.True(t, isTablesChanged)
-	require.Equal(t, []int64{1, 2, 3, 4}, relatedChanges.PhyTblIDS)
-	require.Equal(t, []uint64{(1 << 1) | (1 << 15), 1 << 2, (1 << 3) | (1 << 4), 1 << 4}, relatedChanges.ActionTypes)
 }
 
 type leaseGrantItem struct {
