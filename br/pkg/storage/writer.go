@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -86,14 +87,19 @@ func newCompressWriter(compressType CompressType, w io.Writer) simpleCompressWri
 	}
 }
 
-func newCompressReader(compressType CompressType, r io.Reader) (io.Reader, error) {
+func newCompressReader(ctx context.Context, compressType CompressType, r io.Reader) (io.Reader, error) {
+	bufferSize := 4194304
+	if bufferSizeInt, ok := ctx.Value(CompressReaderBufferType).(int); ok && bufferSizeInt > 0 {
+		bufferSize = bufferSizeInt
+	}
+	bufioReader := bufio.NewReaderSize(r, bufferSize)
 	switch compressType {
 	case Gzip:
-		return gzip.NewReader(r)
+		return gzip.NewReader(bufioReader)
 	case Snappy:
-		return snappy.NewReader(r), nil
+		return snappy.NewReader(bufioReader), nil
 	case Zstd:
-		return zstd.NewReader(r)
+		return zstd.NewReader(bufioReader)
 	default:
 		return nil, nil
 	}

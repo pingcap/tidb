@@ -21,6 +21,7 @@ import (
 const (
 	// mydumper
 	ReadBlockSize ByteSize = 64 * units.KiB
+	IOBufferSize  ByteSize = 4 * units.MiB
 	MaxRegionSize ByteSize = 256 * units.MiB
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
 	// lower the max-key-count to avoid tikv trigger region auto split
