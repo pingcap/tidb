@@ -16,6 +16,7 @@ package pooltask
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 // Context is a interface that can be used to create a context.
@@ -31,6 +32,15 @@ func (NilContext) GetContext() any {
 	return nil
 }
 
+const (
+	// PendingTask is a task waiting to start
+	PendingTask int32 = iota
+	// RunningTask is a task running
+	RunningTask
+	// StopTask is a stop task
+	StopTask
+)
+
 // TaskBox is a box which contains all info about pooltask.
 type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	constArgs   C
@@ -39,10 +49,24 @@ type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	task        chan Task[T]
 	resultCh    chan U
 	taskID      uint64
+	status      atomic.Int32 // task manager is able to make this task stop, wait or running
+}
+
+// GetStatus is to get the status of task.
+func (t *TaskBox[T, U, C, CT, TF]) GetStatus() int32 {
+	return t.status.Load()
+}
+
+// SetStatus is to set the status of task.
+func (t *TaskBox[T, U, C, CT, TF]) SetStatus(s int32) {
+	t.status.Store(s)
 }
 
 // NewTaskBox is to create a task box for pool.
 func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contextFunc TF, wg *sync.WaitGroup, taskCh chan Task[T], resultCh chan U, taskID uint64) TaskBox[T, U, C, CT, TF] {
+	// we still need to do some work after a taskbox finish.
+	// So we need to add 1 to waitgroup. After we finish the work, we need to call TaskBox.Finish()
+	wg.Add(1)
 	return TaskBox[T, U, C, CT, TF]{
 		constArgs:   constArgs,
 		contextFunc: contextFunc,
@@ -54,7 +78,7 @@ func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contex
 }
 
 // TaskID is to get the task id.
-func (t TaskBox[T, U, C, CT, TF]) TaskID() uint64 {
+func (t *TaskBox[T, U, C, CT, TF]) TaskID() uint64 {
 	return t.taskID
 }
 
@@ -83,6 +107,11 @@ func (t *TaskBox[T, U, C, CT, TF]) Done() {
 	t.wg.Done()
 }
 
+// Finish is to set the TaskBox finish status.
+func (t *TaskBox[T, U, C, CT, TF]) Finish() {
+	t.wg.Done()
+}
+
 // Clone is to copy the box
 func (t *TaskBox[T, U, C, CT, TF]) Clone() *TaskBox[T, U, C, CT, TF] {
 	newBox := NewTaskBox[T, U, C, CT, TF](t.constArgs, t.contextFunc, t.wg, t.task, t.resultCh, t.taskID)
@@ -92,6 +121,8 @@ func (t *TaskBox[T, U, C, CT, TF]) Clone() *TaskBox[T, U, C, CT, TF] {
 // GPool is a goroutine pool.
 type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
 	Tune(size int)
+	DeleteTask(id uint64)
+	StopTask(id uint64)
 }
 
 // TaskController is a controller that can control or watch the pool.
@@ -119,6 +150,12 @@ func (t *TaskController[T, U, C, CT, TF]) Wait() {
 	<-t.close
 	t.wg.Wait()
 	close(t.resultCh)
+	t.pool.DeleteTask(t.taskID)
+}
+
+// Stop is to send stop command to the task. But you still need to wait the task to stop.
+func (t *TaskController[T, U, C, CT, TF]) Stop() {
+	t.pool.StopTask(t.TaskID())
 }
 
 // TaskID is to get the task id.

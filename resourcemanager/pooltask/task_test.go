@@ -12,33 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package pooltask
 
 import (
-	"time"
+	"sync"
+	"testing"
 
-	"github.com/pingcap/tidb/resourcemanager/util"
-	"github.com/pingcap/tidb/util/cpu"
+	"github.com/stretchr/testify/require"
 )
 
-// CPUScheduler is a cpu scheduler
-type CPUScheduler struct{}
-
-// NewCPUScheduler is to create a new cpu scheduler
-func NewCPUScheduler() *CPUScheduler {
-	return &CPUScheduler{}
-}
-
-// Tune is to tune the goroutine pool
-func (*CPUScheduler) Tune(_ util.Component, pool util.GorotinuePool) Command {
-	if time.Since(pool.LastTunerTs()) < util.MinSchedulerInterval.Load() {
-		return Hold
+func TestTaskManager(t *testing.T) {
+	size := 32
+	taskConcurrency := 8
+	tm := NewTaskManager[int, int, int, any, NilContext](int32(size))
+	tm.RegisterTask(1, int32(taskConcurrency))
+	for i := 0; i < taskConcurrency; i++ {
+		tid := NewTaskBox[int, int, int, any, NilContext](1, NilContext{}, &sync.WaitGroup{}, make(chan Task[int]), make(chan int), 1)
+		tm.AddSubTask(1, &tid)
 	}
-	if cpu.GetCPUUsage() < 0.5 {
-		return Overclock
+	for i := 0; i < taskConcurrency; i++ {
+		tm.ExitSubTask(1)
 	}
-	if cpu.GetCPUUsage() > 0.7 {
-		return Downclock
-	}
-	return Hold
+	require.Equal(t, int32(0), tm.Running(1))
 }
