@@ -597,7 +597,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	probeCost := divCostVer2(mulCostVer2(probeChildCost, buildRows), batchRatio)
 
 	// Double Read Cost
-	var doubleReadCost costVer2
+	doubleReadCost := zeroCostVer2
 	if p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 {
 		batchSize := float64(p.ctx.GetSessionVars().IndexJoinBatchSize)
 		taskPerBatch := 1024.0 // TODO: remove this magic number
