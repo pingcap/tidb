@@ -764,11 +764,6 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 					p.TiFlashFineGrainedShuffleStreamCount = streamCount
 				}
 			}
-			// TODO: support data compression in exchange operator while using fine grained shuffle if necessary
-			if x.TiFlashFineGrainedShuffleStreamCount > 0 {
-				// Disable compression
-				x.CompressionMode = kv.ExchangeCompressionModeNONE
-			}
 		}
 		// exchange sender will break the data partition.
 		helper.clear()
