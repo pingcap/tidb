@@ -5662,6 +5662,68 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query), fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
 	require.NoError(t, err)
 
+	// check situations when `admin show ddl job 20` happens at the same time with new DDLs being executed
+	var wg sync.WaitGroup
+	wg.Add(2)
+	flag := true
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			tk.MustExec("drop table if exists admin_test9")
+			tk.MustExec("create table admin_test9 (c1 int, c2 int, c3 int default 1, index (c1))")
+		}
+	}()
+	go func() {
+		// check that the result set has no duplication
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			result := tk.MustQuery(`admin show ddl job queries 20`)
+			rows := result.Rows()
+			rowIDs := make(map[string]struct{})
+			for _, row := range rows {
+				rowID := fmt.Sprintf("%v", row[0])
+				if _, ok := rowIDs[rowID]; ok {
+					flag = false
+					return
+				}
+				rowIDs[rowID] = struct{}{}
+			}
+		}
+	}()
+	wg.Wait()
+	require.True(t, flag)
+
+	// check situations when `admin show ddl job queries limit 3 offset 2` happens at the same time with new DDLs being executed
+	var wg2 sync.WaitGroup
+	wg2.Add(2)
+	flag = true
+	go func() {
+		defer wg2.Done()
+		for i := 0; i < 10; i++ {
+			tk.MustExec("drop table if exists admin_test9")
+			tk.MustExec("create table admin_test9 (c1 int, c2 int, c3 int default 1, index (c1))")
+		}
+	}()
+	go func() {
+		// check that the result set has no duplication
+		defer wg2.Done()
+		for i := 0; i < 10; i++ {
+			result := tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
+			rows := result.Rows()
+			rowIDs := make(map[string]struct{})
+			for _, row := range rows {
+				rowID := fmt.Sprintf("%v", row[0])
+				if _, ok := rowIDs[rowID]; ok {
+					flag = false
+					return
+				}
+				rowIDs[rowID] = struct{}{}
+			}
+		}
+	}()
+	wg2.Wait()
+	require.True(t, flag)
+
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	tk.MustExec("insert admin_test1 (c1) values (21),(22)")

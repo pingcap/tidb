@@ -684,8 +684,21 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	e.jobs = append(e.jobs, jobs...)
-	e.jobs = append(e.jobs, historyJobs...)
+	appendedJobID := make(map[int64]struct{})
+	// deduplicate job results
+	// for situations when this operation happens at the same time with new DDLs being executed
+	for _, job := range jobs {
+		if _, ok := appendedJobID[job.ID]; !ok {
+			appendedJobID[job.ID] = struct{}{}
+			e.jobs = append(e.jobs, job)
+		}
+	}
+	for _, historyJob := range historyJobs {
+		if _, ok := appendedJobID[historyJob.ID]; !ok {
+			appendedJobID[historyJob.ID] = struct{}{}
+			e.jobs = append(e.jobs, historyJob)
+		}
+	}
 
 	return nil
 }
@@ -759,8 +772,25 @@ func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	e.jobs = append(e.jobs, jobs...)
-	e.jobs = append(e.jobs, historyJobs...)
+	appendedJobID := make(map[int64]struct{})
+	// deduplicate job results
+	// for situations when this operation happens at the same time with new DDLs being executed
+	for _, job := range jobs {
+		if _, ok := appendedJobID[job.ID]; !ok {
+			appendedJobID[job.ID] = struct{}{}
+			e.jobs = append(e.jobs, job)
+		}
+	}
+	for _, historyJob := range historyJobs {
+		if _, ok := appendedJobID[historyJob.ID]; !ok {
+			appendedJobID[historyJob.ID] = struct{}{}
+			e.jobs = append(e.jobs, historyJob)
+		}
+	}
+
+	if e.cursor < int(e.offset) {
+		e.cursor = int(e.offset)
+	}
 
 	return nil
 }
@@ -776,9 +806,12 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Ch
 	}
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		if i >= int(e.offset) && i < int(e.offset+e.limit) {
+		// i is make true to be >= int(e.offset)
+		if i < int(e.offset+e.limit) {
 			req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
 			req.AppendString(1, e.jobs[i].Query)
+		} else {
+			break
 		}
 	}
 	e.cursor += numCurBatch
