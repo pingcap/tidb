@@ -619,7 +619,7 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify txt json")
 	tk.MustExec("alter table t modify e json")
 	tk.MustExec("alter table t modify s json")
-	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} \"{\\\"k1\\\": \\\"value\\\"}\" \"{\\\"k1\\\": \\\"value\\\"}\""))
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"}"))
 
 	reset(tk)
 	tk.MustExec("insert into t values ('123x', 'x123', 'abc', 'datetime', 'timestamp', 'date', '123', '123')")
@@ -651,7 +651,10 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 	reset(tk)
 	tk.MustExec("alter table t modify c char(15)")
 	tk.MustExec("insert into t(c) values ('{\"k1\": \"value\"')")
+	tk.MustExec("insert into t(e, s) values ('str', 'str')")
 	tk.MustGetErrCode("alter table t modify c json", errno.ErrInvalidJSONText)
+	tk.MustGetErrCode("alter table t modify e json", errno.ErrInvalidJSONText)
+	tk.MustGetErrCode("alter table t modify s json", errno.ErrInvalidJSONText)
 
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1" error.
 	tk.MustExec("insert into t(vc) values ('abc')")
@@ -1138,7 +1141,7 @@ func TestColumnTypeChangeFromDateTimeTypeToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify dt json")
 	tk.MustExec("alter table t modify tmp json")
 	tk.MustExec("alter table t modify y json")
-	tk.MustQuery("select * from t").Check(testkit.Rows("\"2020-10-30\" \"19:38:25.001\" \"2020-10-30 08:21:33.455555\" \"2020-10-30 08:21:33.455555\" 2020"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("\"2020-10-30\" \"19:38:25.001000\" \"2020-10-30 08:21:33.455555\" \"2020-10-30 08:21:33.455555\" 2020"))
 }
 
 func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
@@ -1603,7 +1606,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 		checkErr error
 	)
 	i := 0
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1649,6 +1652,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			i++
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column b tinyint NOT NULL")
 	dom.DDL().SetHook(originalHook)
@@ -1808,8 +1812,7 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 	tk.MustExec("use test")
 
 	prepare := func() {
-		tk.MustExec("drop table if exists users")
-		tk.MustExec("drop table if exists orders")
+		tk.MustExec("drop table if exists users, orders")
 		tk.MustExec("CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);")
 		tk.MustExec("CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES users(id));")
 	}
@@ -1942,7 +1945,7 @@ func TestChangeIntToBitWillPanicInBackfillIndexes(t *testing.T) {
 		"  KEY `idx3` (`a`,`b`),\n" +
 		"  KEY `idx4` (`a`,`b`,`c`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("\x11 2 2.00", "\x13 1 1.00"))
 }
 
 // Close issue #24584
@@ -2417,4 +2420,19 @@ func TestColumnTypeChangeTimestampToInt(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 20160313033000"))
 	tk.MustExec("alter table t add index idx1(id, c1);")
 	tk.MustExec("admin check table t")
+}
+
+func TestFixDDLTxnWillConflictWithReorgTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF")
+	tk.MustExec("alter table t add index(a)")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("insert into t values(128),(129)")
+	tk.MustExec("alter table t modify column a tinyint")
+
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 2 warnings with this error code, first warning: constant 128 overflows tinyint"))
 }

@@ -9,15 +9,18 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+    race = "on",
     deps = [
         "//config",
         "//parser/mysql",
         "//sessionctx/binloginfo",
         "//store/mockstore/mockcopr",
         "//testkit",
+        "//testkit/testsetup",
         "//tests/realtikvtest",
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

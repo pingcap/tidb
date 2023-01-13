@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -187,7 +188,7 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 			}
 		}
 	}
-	err := FillVirtualColumnValue(fieldTps, virtualColIdx, schema, e.colsInfo, e.ctx, chk)
+	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx, chk)
 	if err != nil {
 		return err
 	}
@@ -197,6 +198,27 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 		collector.Base().Samples[i].Columns = datums
 	}
 	return nil
+}
+
+func printAnalyzeMergeCollectorLog(oldRootCount, newRootCount, subCount, tableID, partitionID int64, isPartition bool, info string, index int) {
+	if index < 0 {
+		logutil.BgLogger().Debug(info,
+			zap.Int64("tableID", tableID),
+			zap.Int64("partitionID", partitionID),
+			zap.Bool("isPartitionTable", isPartition),
+			zap.Int64("oldRootCount", oldRootCount),
+			zap.Int64("newRootCount", newRootCount),
+			zap.Int64("subCount", subCount))
+	} else {
+		logutil.BgLogger().Debug(info,
+			zap.Int64("tableID", tableID),
+			zap.Int64("partitionID", partitionID),
+			zap.Bool("isPartitionTable", isPartition),
+			zap.Int64("oldRootCount", oldRootCount),
+			zap.Int64("newRootCount", newRootCount),
+			zap.Int64("subCount", subCount),
+			zap.Int("subCollectorIndex", index))
+	}
 }
 
 func (e *AnalyzeColumnsExecV2) buildSamplingStats(
@@ -235,7 +257,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
-		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i == 0)
+		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
 	}
 	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
 		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
@@ -255,7 +277,12 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			continue
 		}
 		oldRootCollectorSize := rootRowCollector.Base().MemSize
+		oldRootCollectorCount := rootRowCollector.Base().Count
 		rootRowCollector.MergeCollector(mergeResult.collector)
+		newRootCollectorCount := rootRowCollector.Base().Count
+		printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
+			mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
+			"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
 		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 	}
 	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
@@ -544,7 +571,8 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	return tasks
 }
 
-func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, isClosedChanThread bool) {
+func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
+	isClosedChanThread := index == 0
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -566,6 +594,13 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	}()
 	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
 		panic("failpoint triggered")
+	})
+	failpoint.Inject("mockAnalyzeMergeWorkerSlowConsume", func(val failpoint.Value) {
+		times := val.(int)
+		for i := 0; i < times; i++ {
+			e.memTracker.Consume(5 << 20)
+			time.Sleep(100 * time.Millisecond)
+		}
 	})
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
@@ -589,7 +624,12 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
 		oldRetCollectorSize := retCollector.Base().MemSize
+		oldRetCollectorCount := retCollector.Base().Count
 		retCollector.MergeCollector(subCollector)
+		newRetCollectorCount := retCollector.Base().Count
+		printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
+			e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),
+			"merge subCollector in concurrency in AnalyzeColumnsExecV2", index)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
 		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)

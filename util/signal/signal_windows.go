@@ -37,6 +37,6 @@ func SetupSignalHandler(shutdownFunc func(bool)) {
 	go func() {
 		sig := <-closeSignalChan
 		logutil.BgLogger().Info("got signal to exit", zap.Stringer("signal", sig))
-		shutdownFunc(sig == syscall.SIGQUIT)
+		shutdownFunc(sig != syscall.SIGHUP)
 	}()
 }

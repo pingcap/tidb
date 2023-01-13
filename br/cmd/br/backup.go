@@ -31,6 +31,15 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
+
+	if cfg.FullBackupType == task.FullBackupTypeEBS {
+		if err := task.RunBackupEBS(ctx, tidbGlue, &cfg); err != nil {
+			log.Error("failed to backup", zap.Error(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
 	if cfg.IgnoreStats {
 		// Do not run stat worker in BR.
 		session.DisableStats4Test()
@@ -109,6 +118,7 @@ func newFullBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, acceptAllTables, false)
+	task.DefineBackupEBSFlags(command.PersistentFlags())
 	return command
 }
 

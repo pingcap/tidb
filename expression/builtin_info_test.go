@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
@@ -164,7 +163,7 @@ func TestBenchMark(t *testing.T) {
 		{3, types.CurrentTime(mysql.TypeDatetime), 0, false},
 		{3, types.CurrentTime(mysql.TypeTimestamp), 0, false},
 		{3, types.CurrentTime(mysql.TypeDuration), 0, false},
-		{3, json.CreateBinary("[1]"), 0, false},
+		{3, types.CreateBinaryJSON("[1]"), 0, false},
 	}
 
 	for _, c := range cases {

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -219,7 +218,7 @@ type partialResult4MaxMinString struct {
 }
 
 type partialResult4MaxMinJSON struct {
-	val    json.BinaryJSON
+	val    types.BinaryJSON
 	isNull bool
 }
 
@@ -1426,7 +1425,7 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			p.isNull = false
 			continue
 		}
-		cmp := json.CompareBinary(input, p.val)
+		cmp := types.CompareBinaryJSON(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 			oldMem := len(p.val.Value)
 			newMem := len(input.Value)
@@ -1446,7 +1445,7 @@ func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 		*p2 = *p1
 		return 0, nil
 	}
-	cmp := json.CompareBinary(p1.val, p2.val)
+	cmp := types.CompareBinaryJSON(p1.val, p2.val)
 	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 		p2.val = p1.val
 		p2.isNull = false

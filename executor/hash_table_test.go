@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
@@ -49,7 +48,7 @@ func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 		oldChk.AppendString(2, str)
 		oldChk.AppendString(3, str)
 		oldChk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		oldChk.AppendJSON(5, json.CreateBinary(str))
+		oldChk.AppendJSON(5, types.CreateBinaryJSON(str))
 	}
 	return oldChk, colTypes
 }
@@ -128,7 +127,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-	rowContainer := newHashRowContainer(sctx, 0, hCtx, colTypes)
+	rowContainer := newHashRowContainer(sctx, hCtx, colTypes)
 	copiedRC = rowContainer.ShallowCopy()
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(memory.LabelForBuildSideResult)

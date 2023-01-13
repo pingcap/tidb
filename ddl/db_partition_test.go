@@ -168,6 +168,7 @@ func TestCreateTableWithPartition(t *testing.T) {
 	partition p3 values less than (65,30,13),
 	partition p4 values less than (maxvalue,30,40)
 	);`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	sql6 := `create table employees (
 	id int not null,
@@ -271,14 +272,13 @@ func TestCreateTableWithPartition(t *testing.T) {
 		);`)
 
 	tk.MustExec("set @@tidb_enable_table_partition = 1")
-	tk.MustExec("set @@tidb_enable_table_partition = 1")
 	tk.MustExec(`create table t30 (
 		  a int,
-		  b float,
+		  b varchar(20),
 		  c varchar(30))
 		  partition by range columns (a, b)
-		  (partition p0 values less than (10, 10.0))`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type RANGE, treat as normal table"))
+		  (partition p0 values less than (10, '10.0'))`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustGetErrCode(`create table t31 (a int not null) partition by range( a );`, errno.ErrPartitionsMustBeDefined)
 	tk.MustGetErrCode(`create table t32 (a int not null) partition by range columns( a );`, errno.ErrPartitionsMustBeDefined)
@@ -383,7 +383,14 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 ) PARTITION BY HASH(store_id) PARTITIONS 102400000000;`, errno.ErrTooManyPartitions)
 
 	tk.MustExec("CREATE TABLE t_linear (a int, b varchar(128)) PARTITION BY LINEAR HASH(a) PARTITIONS 4")
-	tk.MustGetErrCode("select * from t_linear partition (p0)", errno.ErrPartitionClauseOnNonpartitioned)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 LINEAR HASH is not supported, using non-linear HASH instead"))
+	tk.MustQuery(`show create table t_linear`).Check(testkit.Rows("" +
+		"t_linear CREATE TABLE `t_linear` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(128) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 4"))
+	tk.MustQuery("select * from t_linear partition (p0)").Check(testkit.Rows())
 
 	tk.MustExec(`CREATE TABLE t_sub (a int, b varchar(128)) PARTITION BY RANGE( a ) SUBPARTITION BY HASH( a )
                                    SUBPARTITIONS 2 (
@@ -404,7 +411,6 @@ func TestCreateTableWithRangeColumnPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`
 create table log_message_1 (
     add_time datetime not null default '2000-01-01 00:00:00',
@@ -437,6 +443,36 @@ create table log_message_1 (
 
 	tk.MustExec("drop table if exists t")
 
+	tk.MustExec("create table t (a varchar(255), b varchar(255)) partition by range columns (a,b)" +
+		`(partition pNull values less than ("",""), partition p0 values less than ("A",""),` +
+		`partition p1 values less than ("A","A"), partition p2 values less than ("A","b"),` +
+		`partition p3 values less than ("A",maxvalue), partition p4 values less than ("B",""),` +
+		`partition pMax values less than (maxvalue,""))`)
+	err := tk.ExecToErr("create table t (a varchar(255), b varchar(255)) partition by range columns (a,b)" +
+		`(partition pNull values less than ("",""), partition p0 values less than ("A",""),` +
+		`partition p1 values less than ("A","A"), partition p2 values less than ("A","b"),` +
+		`partition p3 values less than ("A",maxvalue), partition p4 values less than ("B",""),` +
+		// If one column has maxvalue set, the next column does not matter, so we should not allow it!
+		`partition pMax values less than (maxvalue,""), partition pMax2 values less than (maxvalue,"a"))`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+	err = tk.ExecToErr("create table t (a varchar(255), b varchar(255)) partition by range columns (a,b)" +
+		`(partition pNull values less than ("",""), partition p0 values less than ("A",""),` +
+		`partition p1 values less than ("A","A"), partition p2 values less than ("A","b"),` +
+		`partition p3 values less than ("A",maxvalue), partition p4 values less than ("B",""),` +
+		// If one column has maxvalue set, the next column does not matter, so we should not allow it!
+		`partition pMax values less than ("b",MAXVALUE), partition pMax2 values less than ("b","a"))`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+	err = tk.ExecToErr("create table t (a varchar(255), b varchar(255)) partition by range columns (a,b)" +
+		`(partition pNull values less than ("",""), partition p0 values less than ("A",""),` +
+		`partition p1 values less than ("A","A"), partition p2 values less than ("A","b"),` +
+		`partition p3 values less than ("A",maxvalue), partition p4 values less than ("B",""),` +
+		// If one column has maxvalue set, the next column does not matter, so we should not allow it!
+		`partition pMax values less than ("b",MAXVALUE), partition pMax2 values less than ("b",MAXVALUE))`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+
 	type testCase struct {
 		sql string
 		err *terror.Error
@@ -450,14 +486,6 @@ create table log_message_1 (
 		{
 			"create table t(a datetime) partition by range columns (a) (partition p1 values less than ('2000-02-01'), partition p2 values less than ('20000102'));",
 			dbterror.ErrRangeNotIncreasing,
-		},
-		{
-			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202020'), partition p2 values less than ('20:20:10'));",
-			dbterror.ErrRangeNotIncreasing,
-		},
-		{
-			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202090'));",
-			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2));",
@@ -492,12 +520,12 @@ create table log_message_1 (
 			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		// create as normal table, warning.
-		//	{
-		//		"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
-		//			"partition p0 values less than (1, 'a')," +
-		//			"partition p1 values less than (1, 'a'))",
-		//		dbterror.ErrRangeNotIncreasing,
-		//	},
+		{
+			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+				"partition p0 values less than (1, 'a')," +
+				"partition p1 values less than (1, 'a'))",
+			dbterror.ErrRangeNotIncreasing,
+		},
 		{
 			"create table t (a int, b varchar(64)) partition by range columns ( b) (" +
 				"partition p0 values less than ( 'a')," +
@@ -505,12 +533,12 @@ create table log_message_1 (
 			dbterror.ErrRangeNotIncreasing,
 		},
 		// create as normal table, warning.
-		//	{
-		//		"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
-		//			"partition p0 values less than (1, 'b')," +
-		//			"partition p1 values less than (1, 'a'))",
-		//		dbterror.ErrRangeNotIncreasing,
-		//	},
+		{
+			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+				"partition p0 values less than (1, 'b')," +
+				"partition p1 values less than (1, 'a'))",
+			dbterror.ErrRangeNotIncreasing,
+		},
 		{
 			"create table t (a int, b varchar(64)) partition by range columns (b) (" +
 				"partition p0 values less than ('b')," +
@@ -518,12 +546,12 @@ create table log_message_1 (
 			dbterror.ErrRangeNotIncreasing,
 		},
 		// create as normal table, warning.
-		//		{
-		//			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
-		//				"partition p0 values less than (1, maxvalue)," +
-		//				"partition p1 values less than (1, 'a'))",
-		//			dbterror.ErrRangeNotIncreasing,
-		//		},
+		{
+			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+				"partition p0 values less than (1, maxvalue)," +
+				"partition p1 values less than (1, 'a'))",
+			dbterror.ErrRangeNotIncreasing,
+		},
 		{
 			"create table t (a int, b varchar(64)) partition by range columns ( b) (" +
 				"partition p0 values less than (  maxvalue)," +
@@ -620,6 +648,7 @@ create table log_message_1 (
 	tk.MustExec("create table t1 (a int, b char(3)) partition by range columns (a, b) (" +
 		"partition p0 values less than (1, 'a')," +
 		"partition p1 values less than (2, maxvalue))")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (a int, b char(3)) partition by range columns (b) (" +
@@ -653,9 +682,43 @@ create table log_message_1 (
 	tk.MustExec(`alter table t add partition (partition p1 values less than (X'0D'), partition p2 values less than (X'0E'));`)
 	tk.MustExec(`insert into t values (X'0B'), (X'0C'), (X'0D')`)
 	tk.MustQuery(`select * from t where a < X'0D' order by a`).Check(testkit.Rows("\x0B", "\x0C"))
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t(a time) partition by range columns (a) (partition p1 values less than ('2020'))`)
+	tk.MustExec(`insert into t values ('2019')`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` time DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('2020'))"))
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a time, b time) partition by range columns (a) (partition p1 values less than ('2020'), partition p2 values less than ('20:20:10'))`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` time DEFAULT NULL,\n" +
+			"  `b` time DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('2020'),\n" +
+			" PARTITION `p2` VALUES LESS THAN ('20:20:10'))"))
+	tk.MustExec(`insert into t values ('2019','2019'),('20:20:09','20:20:09')`)
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a time, b time) partition by range columns (a,b) (partition p1 values less than ('2020','2020'), partition p2 values less than ('20:20:10','20:20:10'))`)
+	tk.MustExec(`insert into t values ('2019','2019'),('20:20:09','20:20:09')`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` time DEFAULT NULL,\n" +
+			"  `b` time DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`a`,`b`)\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20','00:20:20'),\n" +
+			" PARTITION `p2` VALUES LESS THAN ('20:20:10','20:20:10'))"))
 }
 
 func TestPartitionRangeColumnsCollate(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create schema PartitionRangeColumnsCollate")
@@ -1346,7 +1409,7 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	tk.MustExec(`alter table t drop partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "5", "<nil>"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil>", "1", "5"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1861,11 +1924,6 @@ func TestAlterTableExchangePartition(t *testing.T) {
 		id INT NOT NULL
 	);`)
 	tk.MustExec(`INSERT INTO e VALUES (1669),(337),(16),(2005)`)
-	// test disable exchange partition
-	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it"))
-	tk.MustQuery("select * from e").Check(testkit.Rows("16", "1669", "337", "2005"))
-	tk.MustQuery("select * from e2").Check(testkit.Rows())
 
 	// enable exchange partition
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
@@ -2189,14 +2247,6 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
-			// foreign key test
-			// Partition table doesn't support to add foreign keys in mysql
-			"create table pt9 (id int not null primary key auto_increment,t_id int not null) partition by hash(id) partitions 1;",
-			"create table nt9 (id int not null primary key auto_increment, t_id int not null,foreign key fk_id (t_id) references pt5(id));",
-			"alter table pt9 exchange partition p0 with table nt9;",
-			dbterror.ErrPartitionExchangeForeignKey,
-		},
-		{
 			// Generated column (virtual)
 			"create table pt10 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) virtual) partition by hash(id) partitions 1;",
 			"create table nt10 (id int not null, lname varchar(30), fname varchar(100));",
@@ -2405,7 +2455,7 @@ func TestExchangePartitionHook(t *testing.T) {
 			tkCancel.MustGetErrCode("insert into nt values (5)", errno.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	hook.OnJobUpdatedExported = hookFunc
+	hook.OnJobUpdatedExported.Store(&hookFunc)
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
@@ -2438,6 +2488,35 @@ func TestExchangePartitionAutoID(t *testing.T) {
 	tk.MustExec("insert into nt values (NULL)")
 	tk.MustQuery("select count(*) from nt where a >= 4000000").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from pt where a >= 4000000").Check(testkit.Rows("1"))
+}
+
+func TestTiDBEnableExchangePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int primary key auto_increment) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 values less than (9)
+		);`)
+	// default
+	tk.MustExec(`create table nt(a int primary key auto_increment);`)
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+
+	// set tidb_enable_exchange_partition = 0
+	tk.MustExec("set @@tidb_enable_exchange_partition=0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on, this variable has been deprecated and will be removed in the future releases"))
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+
+	// set tidb_enable_exchange_partition = 1
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on, this variable has been deprecated and will be removed in the future releases"))
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {
@@ -2937,7 +3016,6 @@ func TestPartitionUniqueKeyNeedAllFieldsInPf(t *testing.T) {
         )`
 	tk.MustGetErrCode(sql10, errno.ErrUniqueKeyNeedAllFieldsInPf)
 
-	// after we support multiple columns partition, this sql should fail. For now, it will be a normal table.
 	sql11 := `create table part9 (
                  a int not null,
                  b int not null,
@@ -2952,7 +3030,7 @@ func TestPartitionUniqueKeyNeedAllFieldsInPf(t *testing.T) {
                partition p1 values less than (7, 9),
                partition p2 values less than (11, 22)
         )`
-	tk.MustExec(sql11)
+	tk.MustGetErrCode(sql11, errno.ErrUniqueKeyNeedAllFieldsInPf)
 
 	sql12 := `create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),
@@ -3269,6 +3347,7 @@ func TestPartitionErrorCode(t *testing.T) {
 	// Reduce the impact on DML when executing partition DDL
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk1.MustExec("set global tidb_enable_metadata_lock=0")
 	tk1.MustExec("drop table if exists t;")
 	tk1.MustExec(`create table t(id int primary key)
 		partition by hash(id) partitions 4;`)
@@ -3430,6 +3509,7 @@ func TestCommitWhenSchemaChange(t *testing.T) {
 	})
 	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
 	tk.MustExec(`create table schema_change (a int, b timestamp)
@@ -3569,6 +3649,9 @@ func TestPartitionListWithTimeType(t *testing.T) {
 }
 
 func TestPartitionListWithNewCollation(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -3659,11 +3742,12 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 		}
 	}
 	var errCount int32
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
 			atomic.AddInt32(&errCount, 1)
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	done1 := make(chan error, 1)
 	go backgroundExec(store, "alter table test.t truncate partition p0;", done1)
 	done2 := make(chan error, 1)
@@ -3976,7 +4060,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	tk.MustQuery("select count(*) from ipt").Check(testkit.Rows("27"))
 
-	tk.MustExec("create table idpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
+	tk.MustExec("create table idpt (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
 	tk.MustQuery("SHOW CREATE TABLE idpt").Check(testkit.Rows(
 		"idpt CREATE TABLE `idpt` (\n" +
 			"  `id` date NOT NULL,\n" +
@@ -4002,7 +4086,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	// if using a month with 31 days.
 	// But managing partitions with the day-part of 29, 30 or 31 will be troublesome, since once the FIRST is not 31
 	// both the ALTER TABLE t FIRST PARTITION and MERGE FIRST PARTITION will have issues
-	tk.MustExec("create table t (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
+	tk.MustExec("create table t (id date primary key nonclustered, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `id` date NOT NULL,\n" +
@@ -4332,6 +4416,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		"(PARTITION \"p0\" VALUES LESS THAN (1638288000),\n" +
 		" PARTITION \"p1\" VALUES LESS THAN (1640966400))"))
 	tk.MustExec("drop table t")
+	tk.MustExec("set @@time_zone = default")
 
 	// Test values in.
 	tk.MustExec(`CREATE TABLE t (a int DEFAULT NULL, b varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a,b) (
@@ -4349,12 +4434,169 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	// Test escaped characters in single quotes.
 	tk.MustExec(`CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
 		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
- 		PARTITION p1 VALUES IN ('""','\\','\\\'\t\n'))`)
+		PARTITION p1 VALUES IN ('""','\\','\\\'\t\n'))`)
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
 		"  \"a\" varchar(255) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY LIST COLUMNS(\"a\")\n" +
-		"(PARTITION \"p0\" VALUES IN ('''','''''',''''''''),\n" +
-		" PARTITION \"p1\" VALUES IN ('\"\"','\\\\','\\\\''\t\n'))"))
+		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
+		` PARTITION "p1" VALUES IN ('""','\\','\\''\t\n'))`))
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
 	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+		PARTITION p1 VALUES IN ('\"\"','\\',0x5c27090a))`)
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\")\n" +
+		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
+		` PARTITION "p1" VALUES IN ('""','\\',x'5c27090a'))`))
+	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+		PARTITION p1 VALUES IN ('""','\\',x'5c27090a'))`)
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\")\n" +
+		`(PARTITION "p0" VALUES IN ('''','''''',''''''''),` + "\n" +
+		` PARTITION "p1" VALUES IN ('""','\\',x'5c27090a'))`))
+
+	// https://github.com/pingcap/tidb/issues/37692
+	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255)) PARTITION BY RANGE COLUMNS(a) (
+		PARTITION p0 VALUES LESS THAN ('"'),
+		PARTITION p1 VALUES LESS THAN ('""'),
+		PARTITION p2 VALUES LESS THAN ('\''),
+		PARTITION p3 VALUES LESS THAN (''''''),
+		PARTITION p4 VALUES LESS THAN ('\\''\t\n'),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE))`)
+	//PARTITION p4 VALUES IN (x'5c27090a'))`)
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		`PARTITION BY RANGE COLUMNS("a")` + "\n" +
+		`(PARTITION "p0" VALUES LESS THAN ('"'),` + "\n" +
+		` PARTITION "p1" VALUES LESS THAN ('""'),` + "\n" +
+		` PARTITION "p2" VALUES LESS THAN (''''),` + "\n" +
+		` PARTITION "p3" VALUES LESS THAN (''''''),` + "\n" +
+		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n'),` + "\n" +
+		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE))`))
+	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255)) PARTITION BY RANGE COLUMNS(a) (
+		PARTITION p0 VALUES LESS THAN ('"'),
+		PARTITION p1 VALUES LESS THAN ('""'),
+		PARTITION p2 VALUES LESS THAN ('\''),
+		PARTITION p3 VALUES LESS THAN (''''''),
+		PARTITION p4 VALUES LESS THAN (0x5c27090a),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec(`insert into t values (0x5c27090a),('\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		`PARTITION BY RANGE COLUMNS("a")` + "\n" +
+		`(PARTITION "p0" VALUES LESS THAN ('"'),` + "\n" +
+		` PARTITION "p1" VALUES LESS THAN ('""'),` + "\n" +
+		` PARTITION "p2" VALUES LESS THAN (''''),` + "\n" +
+		` PARTITION "p3" VALUES LESS THAN (''''''),` + "\n" +
+		` PARTITION "p4" VALUES LESS THAN (x'5c27090a'),` + "\n" +
+		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE))`))
+
+	tk.MustExec("drop table t")
+	tk.MustExec(`CREATE TABLE t (a varchar(255), b varchar(255)) PARTITION BY RANGE COLUMNS(a,b) (
+		PARTITION p0 VALUES LESS THAN ('"','"'),
+		PARTITION p1 VALUES LESS THAN ('""','""'),
+		PARTITION p2 VALUES LESS THAN ('\'','\''),
+		PARTITION p3 VALUES LESS THAN ('''''',''''''),
+		PARTITION p4 VALUES LESS THAN ('\\''\t\n',0x5c27090a),
+		PARTITION pMax VALUES LESS THAN (MAXVALUE,maxvalue))`)
+	tk.MustExec(`insert into t values (0x5c27090a,'\\''\t\n')`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL,\n" +
+		"  \"b\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		`PARTITION BY RANGE COLUMNS("a","b")` + "\n" +
+		`(PARTITION "p0" VALUES LESS THAN ('"','"'),` + "\n" +
+		` PARTITION "p1" VALUES LESS THAN ('""','""'),` + "\n" +
+		` PARTITION "p2" VALUES LESS THAN ('''',''''),` + "\n" +
+		` PARTITION "p3" VALUES LESS THAN ('''''',''''''),` + "\n" +
+		` PARTITION "p4" VALUES LESS THAN ('\\''\t\n','\\''\t\n'),` + "\n" +
+		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
+}
+
+func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
+	t.Skip("waiting for supporting Modify Partition Column again")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "truncWarn"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`set sql_mode = default`)
+	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
+	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
+	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
+	tk.MustExec(`set sql_mode = ''`)
+	tk.MustExec(`alter table t modify a varchar(5)`)
+	// Fix the duplicate warning, see https://github.com/pingcap/tidb/issues/38699
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
+}
+
+func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "modColPartRename"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int, b char) partition by range (a) (partition p0 values less than (10))`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a char, b char) partition by range columns (a) (partition p0 values less than ('z'))`)
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b char) partition by list (a) (partition p0 values in (10))`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a char, b char) partition by list columns (a) (partition p0 values in ('z'))`)
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int, b char) partition by hash (a) partitions 3`)
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+}
+
+func TestDropPartitionKeyColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database DropPartitionKeyColumn")
+	defer tk.MustExec("drop database DropPartitionKeyColumn")
+	tk.MustExec("use DropPartitionKeyColumn")
+
+	tk.MustExec("create table t1 (a tinyint, b char) partition by range (a) ( partition p0 values less than (10) )")
+	err := tk.ExecToErr("alter table t1 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t1 drop column b")
+
+	tk.MustExec("create table t2 (a tinyint, b char) partition by range (a-1) ( partition p0 values less than (10) )")
+	err = tk.ExecToErr("alter table t2 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t2 drop column b")
+
+	tk.MustExec("create table t3 (a tinyint, b char) partition by hash(a) partitions 4;")
+	err = tk.ExecToErr("alter table t3 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t3 drop column b")
+
+	tk.MustExec("create table t4 (a char, b char) partition by list columns (a) ( partition p0 values in ('0'),  partition p1 values in ('a'), partition p2 values in ('b'));")
+	err = tk.ExecToErr("alter table t4 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t4 drop column b")
 }

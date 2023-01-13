@@ -46,6 +46,15 @@ var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
 // TsoRequestCount is the key for recording tso request counts in some places
 var TsoRequestCount stringutil.StringerStr = "tsoRequestCount"
 
+// TsoWaitCount doesn't include begin and commit
+var TsoWaitCount stringutil.StringerStr = "tsoWaitCount"
+
+// TsoUseConstantCount is the key for constant tso counter
+var TsoUseConstantCount stringutil.StringerStr = "tsoUseConstantCount"
+
+// CallOnStmtRetryCount is the key for recording calling OnStmtRetry at RC isolation level
+var CallOnStmtRetryCount stringutil.StringerStr = "callOnStmtRetryCount"
+
 // AssertLockErr is used to record the lock errors we encountered
 // Only for test
 var AssertLockErr stringutil.StringerStr = "assertLockError"
@@ -124,6 +133,38 @@ func TsoRequestCountInc(sctx sessionctx.Context) {
 	}
 	count++
 	sctx.SetValue(TsoRequestCount, count)
+}
+
+// TsoWaitCountInc is used only for test
+// When it is called, there is a waiting tso operation
+func TsoWaitCountInc(sctx sessionctx.Context) {
+	count, ok := sctx.Value(TsoWaitCount).(uint64)
+	if !ok {
+		count = 0
+	}
+	count++
+	sctx.SetValue(TsoWaitCount, count)
+}
+
+// TsoUseConstantCountInc is used to test constant tso count
+func TsoUseConstantCountInc(sctx sessionctx.Context) {
+	count, ok := sctx.Value(TsoUseConstantCount).(uint64)
+	if !ok {
+		count = 0
+	}
+	count++
+	sctx.SetValue(TsoUseConstantCount, count)
+}
+
+// OnStmtRetryCountInc is used only for test.
+// When it is called, there is calling `(p *PessimisticRCTxnContextProvider) OnStmtRetry`.
+func OnStmtRetryCountInc(sctx sessionctx.Context) {
+	count, ok := sctx.Value(CallOnStmtRetryCount).(int)
+	if !ok {
+		count = 0
+	}
+	count++
+	sctx.SetValue(CallOnStmtRetryCount, count)
 }
 
 // ExecTestHook is used only for test. It consumes hookKey in session wait do what it gets from it.

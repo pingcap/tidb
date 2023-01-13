@@ -1255,7 +1255,7 @@ func (b *builtinConvSig) conv(str string, fromBase, toBase int64) (res string, i
 
 	val, err := strconv.ParseUint(str, int(fromBase), 64)
 	if err != nil {
-		return res, false, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSINGED", str)
+		return res, false, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", str)
 	}
 	if signed {
 		if negative && val > -math.MinInt64 {

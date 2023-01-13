@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"reflect"
 	"strconv"
 	"testing"
@@ -49,7 +50,7 @@ func TestTiDBOptOn(t *testing.T) {
 }
 
 func TestNewSessionVars(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	require.Equal(t, DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, DefIndexLookupSize, vars.IndexLookupSize)
@@ -73,6 +74,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.HashAggPartialConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.HashAggFinalConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.WindowConcurrency())
+	require.Equal(t, DefExecutorConcurrency, vars.IndexMergeIntersectionConcurrency())
 	require.Equal(t, DefTiDBMergeJoinConcurrency, vars.MergeJoinConcurrency())
 	require.Equal(t, DefTiDBStreamAggConcurrency, vars.StreamAggConcurrency())
 	require.Equal(t, DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())
@@ -103,12 +105,12 @@ func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {
 }
 
 func TestVarsutil(t *testing.T) {
-	v := NewSessionVars()
+	v := NewSessionVars(nil)
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
 	err := v.SetSystemVar("autocommit", "1")
 	require.NoError(t, err)
-	val, err := v.GetSessionOrGlobalSystemVar("autocommit")
+	val, err := v.GetSessionOrGlobalSystemVar(context.Background(), "autocommit")
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 	require.NotNil(t, v.SetSystemVar("autocommit", ""))
@@ -116,20 +118,19 @@ func TestVarsutil(t *testing.T) {
 	// 0 converts to OFF
 	err = v.SetSystemVar("foreign_key_checks", "0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar("foreign_key_checks")
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), "foreign_key_checks")
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
 
-	// 1/ON is not supported (generates a warning and sets to OFF)
 	err = v.SetSystemVar("foreign_key_checks", "1")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar("foreign_key_checks")
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), "foreign_key_checks")
 	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
+	require.Equal(t, "ON", val)
 
 	err = v.SetSystemVar("sql_mode", "strict_trans_tables")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar("sql_mode")
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), "sql_mode")
 	require.NoError(t, err)
 	require.Equal(t, "STRICT_TRANS_TABLES", val)
 	require.True(t, v.StrictSQLMode)
@@ -226,7 +227,7 @@ func TestVarsutil(t *testing.T) {
 	// Test case for TiDBConfig session variable.
 	err = v.SetSystemVar(TiDBConfig, "abc")
 	require.True(t, terror.ErrorEqual(err, ErrIncorrectScope))
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBConfig)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBConfig)
 	require.NoError(t, err)
 	jsonConfig, err := config.GetJSONConfig()
 	require.NoError(t, err)
@@ -255,7 +256,7 @@ func TestVarsutil(t *testing.T) {
 
 	err = v.SetSystemVar(TiDBRetryLimit, "3")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBRetryLimit)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRetryLimit)
 	require.NoError(t, err)
 	require.Equal(t, "3", val)
 	require.Equal(t, int64(3), v.RetryLimit)
@@ -263,7 +264,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "", v.EnableTablePartition)
 	err = v.SetSystemVar(TiDBEnableTablePartition, "on")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBEnableTablePartition)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableTablePartition)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 	require.Equal(t, "ON", v.EnableTablePartition)
@@ -271,7 +272,7 @@ func TestVarsutil(t *testing.T) {
 	require.False(t, v.EnableListTablePartition)
 	err = v.SetSystemVar(TiDBEnableListTablePartition, "on")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBEnableListTablePartition)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableListTablePartition)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 	require.True(t, v.EnableListTablePartition)
@@ -279,20 +280,20 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, v.TiDBOptJoinReorderThreshold)
 	err = v.SetSystemVar(TiDBOptJoinReorderThreshold, "5")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptJoinReorderThreshold)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptJoinReorderThreshold)
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
 
 	err = v.SetSystemVar(TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBLowResolutionTSO)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBLowResolutionTSO)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 	require.True(t, v.LowResolutionTSO)
 	err = v.SetSystemVar(TiDBLowResolutionTSO, "0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBLowResolutionTSO)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBLowResolutionTSO)
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
 	require.False(t, v.LowResolutionTSO)
@@ -300,7 +301,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 0.9, v.CorrelationThreshold)
 	err = v.SetSystemVar(TiDBOptCorrelationThreshold, "0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptCorrelationThreshold)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptCorrelationThreshold)
 	require.NoError(t, err)
 	require.Equal(t, "0", val)
 	require.Equal(t, float64(0), v.CorrelationThreshold)
@@ -308,7 +309,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 3.0, v.GetCPUFactor())
 	err = v.SetSystemVar(TiDBOptCPUFactor, "5.0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptCPUFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptCPUFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
 	require.Equal(t, 5.0, v.GetCPUFactor())
@@ -316,7 +317,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 3.0, v.GetCopCPUFactor())
 	err = v.SetSystemVar(TiDBOptCopCPUFactor, "5.0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptCopCPUFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptCopCPUFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
 	require.Equal(t, 5.0, v.GetCopCPUFactor())
@@ -324,7 +325,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 24.0, v.CopTiFlashConcurrencyFactor)
 	err = v.SetSystemVar(TiDBOptTiFlashConcurrencyFactor, "5.0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptTiFlashConcurrencyFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptTiFlashConcurrencyFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
 	require.Equal(t, 5.0, v.GetCopCPUFactor())
@@ -332,7 +333,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 1.0, v.GetNetworkFactor(nil))
 	err = v.SetSystemVar(TiDBOptNetworkFactor, "3.0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptNetworkFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptNetworkFactor)
 	require.NoError(t, err)
 	require.Equal(t, "3.0", val)
 	require.Equal(t, 3.0, v.GetNetworkFactor(nil))
@@ -340,7 +341,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 1.5, v.GetScanFactor(nil))
 	err = v.SetSystemVar(TiDBOptScanFactor, "3.0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptScanFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptScanFactor)
 	require.NoError(t, err)
 	require.Equal(t, "3.0", val)
 	require.Equal(t, 3.0, v.GetScanFactor(nil))
@@ -348,7 +349,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 3.0, v.GetDescScanFactor(nil))
 	err = v.SetSystemVar(TiDBOptDescScanFactor, "5.0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptDescScanFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptDescScanFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
 	require.Equal(t, 5.0, v.GetDescScanFactor(nil))
@@ -356,7 +357,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 20.0, v.GetSeekFactor(nil))
 	err = v.SetSystemVar(TiDBOptSeekFactor, "50.0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptSeekFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptSeekFactor)
 	require.NoError(t, err)
 	require.Equal(t, "50.0", val)
 	require.Equal(t, 50.0, v.GetSeekFactor(nil))
@@ -364,7 +365,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 0.001, v.GetMemoryFactor())
 	err = v.SetSystemVar(TiDBOptMemoryFactor, "1.0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptMemoryFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptMemoryFactor)
 	require.NoError(t, err)
 	require.Equal(t, "1.0", val)
 	require.Equal(t, 1.0, v.GetMemoryFactor())
@@ -372,7 +373,7 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 1.5, v.GetDiskFactor())
 	err = v.SetSystemVar(TiDBOptDiskFactor, "1.1")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptDiskFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptDiskFactor)
 	require.NoError(t, err)
 	require.Equal(t, "1.1", val)
 	require.Equal(t, 1.1, v.GetDiskFactor())
@@ -380,33 +381,33 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 3.0, v.GetConcurrencyFactor())
 	err = v.SetSystemVar(TiDBOptConcurrencyFactor, "5.0")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBOptConcurrencyFactor)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBOptConcurrencyFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
 	require.Equal(t, 5.0, v.GetConcurrencyFactor())
 
 	err = v.SetSystemVar(TiDBReplicaRead, "follower")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBReplicaRead)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "follower", val)
 	require.Equal(t, kv.ReplicaReadFollower, v.GetReplicaRead())
 	err = v.SetSystemVar(TiDBReplicaRead, "leader")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBReplicaRead)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader", val)
 	require.Equal(t, kv.ReplicaReadLeader, v.GetReplicaRead())
 	err = v.SetSystemVar(TiDBReplicaRead, "leader-and-follower")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBReplicaRead)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, "leader-and-follower", val)
 	require.Equal(t, kv.ReplicaReadMixed, v.GetReplicaRead())
 
 	err = v.SetSystemVar(TiDBRedactLog, "ON")
 	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBRedactLog)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRedactLog)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 
@@ -436,7 +437,7 @@ func TestVarsutil(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "'tidb_table_cache_lease' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
 
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBMinPagingSize)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBMinPagingSize)
 	require.NoError(t, err)
 	require.Equal(t, strconv.Itoa(DefMinPagingSize), val)
 
@@ -444,7 +445,7 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, v.MinPagingSize, 123)
 
-	val, err = v.GetSessionOrGlobalSystemVar(TiDBMaxPagingSize)
+	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBMaxPagingSize)
 	require.NoError(t, err)
 	require.Equal(t, strconv.Itoa(DefMaxPagingSize), val)
 
@@ -458,7 +459,7 @@ func TestVarsutil(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	v := NewSessionVars()
+	v := NewSessionVars(nil)
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 
@@ -535,9 +536,6 @@ func TestValidate(t *testing.T) {
 		{TiDBShardAllocateStep, "ad", true},
 		{TiDBShardAllocateStep, "-123", false},
 		{TiDBShardAllocateStep, "128", false},
-		{TiDBEnableAmendPessimisticTxn, "0", false},
-		{TiDBEnableAmendPessimisticTxn, "1", false},
-		{TiDBEnableAmendPessimisticTxn, "256", true},
 		{TiDBAllowFallbackToTiKV, "", false},
 		{TiDBAllowFallbackToTiKV, "tiflash", false},
 		{TiDBAllowFallbackToTiKV, "  tiflash  ", false},
@@ -587,7 +585,7 @@ func TestValidate(t *testing.T) {
 }
 
 func TestValidateStmtSummary(t *testing.T) {
-	v := NewSessionVars()
+	v := NewSessionVars(nil)
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 
@@ -629,7 +627,7 @@ func TestValidateStmtSummary(t *testing.T) {
 }
 
 func TestConcurrencyVariables(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
 	wdConcurrency := 2
@@ -686,7 +684,7 @@ func TestHelperFuncs(t *testing.T) {
 }
 
 func TestStmtVars(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	err := vars.SetStmtVar("bogussysvar", "1")
 	require.Equal(t, "[variable:1193]Unknown system variable 'bogussysvar'", err.Error())
 	err = vars.SetStmtVar(MaxExecutionTime, "ACDC")
@@ -696,7 +694,7 @@ func TestStmtVars(t *testing.T) {
 }
 
 func TestSessionStatesSystemVar(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	err := vars.SetSystemVar("autocommit", "1")
 	require.NoError(t, err)
 	val, keep, err := vars.GetSessionStatesSystemVar("autocommit")
@@ -712,4 +710,28 @@ func TestSessionStatesSystemVar(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "1024", val)
 	require.Equal(t, true, keep)
+}
+
+func TestOnOffHelpers(t *testing.T) {
+	require.Equal(t, "ON", trueFalseToOnOff("TRUE"))
+	require.Equal(t, "ON", trueFalseToOnOff("TRue"))
+	require.Equal(t, "ON", trueFalseToOnOff("true"))
+	require.Equal(t, "OFF", trueFalseToOnOff("FALSE"))
+	require.Equal(t, "OFF", trueFalseToOnOff("False"))
+	require.Equal(t, "OFF", trueFalseToOnOff("false"))
+	require.Equal(t, "other", trueFalseToOnOff("other"))
+	require.Equal(t, "true", OnOffToTrueFalse("ON"))
+	require.Equal(t, "true", OnOffToTrueFalse("on"))
+	require.Equal(t, "true", OnOffToTrueFalse("On"))
+	require.Equal(t, "false", OnOffToTrueFalse("OFF"))
+	require.Equal(t, "false", OnOffToTrueFalse("Off"))
+	require.Equal(t, "false", OnOffToTrueFalse("off"))
+	require.Equal(t, "other", OnOffToTrueFalse("other"))
+}
+
+func TestAssertionLevel(t *testing.T) {
+	require.Equal(t, AssertionLevelStrict, tidbOptAssertionLevel(AssertionStrictStr))
+	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel(AssertionOffStr))
+	require.Equal(t, AssertionLevelFast, tidbOptAssertionLevel(AssertionFastStr))
+	require.Equal(t, AssertionLevelOff, tidbOptAssertionLevel("bogus"))
 }

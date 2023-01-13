@@ -197,3 +197,9 @@ func TestAutoCommitNeedNotLinearizability(t *testing.T) {
 		tk.MustExec("COMMIT")
 	}()
 }
+
+func TestKill(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("kill connection_id();")
+}

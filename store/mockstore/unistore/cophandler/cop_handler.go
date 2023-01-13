@@ -401,7 +401,7 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 		if primaryCols != nil {
 			pkCols = primaryCols
 		} else {
-			pkCols = []int64{0}
+			pkCols = []int64{-1}
 		}
 	}
 	def := func(i int, chk *chunk.Chunk) error {

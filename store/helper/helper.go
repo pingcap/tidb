@@ -78,6 +78,7 @@ type Storage interface {
 	Closed() <-chan struct{}
 	GetMinSafeTS(txnScope string) uint64
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
+	GetCodec() tikv.Codec
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -653,11 +654,11 @@ func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWit
 
 // NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
 func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	return newIndexWithKeyRange(db, table, index)
+	return newIndexWithKeyRange(db, table, index, table.ID)
 }
 
-func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	sk, ek := tablecodec.GetTableIndexKeyRange(table.ID, index.ID)
+func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, physicalID int64) TableInfoWithKeyRange {
+	sk, ek := tablecodec.GetTableIndexKeyRange(physicalID, index.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
 	return TableInfoWithKeyRange{
@@ -727,7 +728,13 @@ func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWit
 				tables = append(tables, newTableWithKeyRange(db, table))
 			}
 			for _, index := range table.Indices {
-				tables = append(tables, newIndexWithKeyRange(db, table, index))
+				if table.Partition == nil || index.Global {
+					tables = append(tables, newIndexWithKeyRange(db, table, index, table.ID))
+					continue
+				}
+				for _, partition := range table.Partition.Definitions {
+					tables = append(tables, newIndexWithKeyRange(db, table, index, partition.ID))
+				}
 			}
 		}
 	}
@@ -862,6 +869,24 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 				zap.String("url", urlVar), zap.Error(err))
 		}
 	}()
+
+	if resp.StatusCode != http.StatusOK {
+		logFields := []zap.Field{
+			zap.String("url", urlVar),
+			zap.String("status", resp.Status),
+		}
+
+		bs, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			logFields = append(logFields, zap.NamedError("readBodyError", err))
+		} else {
+			logFields = append(logFields, zap.ByteString("body", bs))
+		}
+
+		logutil.BgLogger().Warn("requestPDForOneHost failed with non 200 status", logFields...)
+		return errors.Errorf("PD request failed with status: '%s'", resp.Status)
+	}
+
 	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
 		return errors.Trace(err)
@@ -983,7 +1008,13 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
-
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, err)
+		}
+		return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, string(body))
+	}
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)
@@ -1128,39 +1159,6 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	return nil
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) error {
-	pdAddrs, err := h.GetPDAddr()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	startKey := tablecodec.GenTableRecordPrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-
-	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		url.QueryEscape(string(startKey)),
-		url.QueryEscape(string(endKey)))
-
-	resp, err := util.InternalHTTPClient().Get(statURL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
-		}
-	}()
-
-	dec := json.NewDecoder(resp.Body)
-
-	return dec.Decode(stats)
-}
-
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
 func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 	e, _ := hex.DecodeString(endKey)
@@ -1196,7 +1194,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 			continue
 		}
 		realN++
-		r, err := strconv.ParseInt(s, 10, 32)
+		r, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return errors.Trace(err)
 		}

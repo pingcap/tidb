@@ -113,8 +113,8 @@ func TestIndexPathSplitCorColCond(t *testing.T) {
 			corColIDs:  []int64{5},
 			idxColIDs:  []int64{2, 1},
 			idxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength},
-			access:     "[eq(Column#2, 1) eq(Column#1, Column#5)]",
-			remained:   "[]",
+			access:     "[]",
+			remained:   "[eq(Column#1, Column#5) eq(Column#2, 1)]",
 		},
 		{
 			expr:       "col1 = col5 and col2 = 1",
@@ -157,11 +157,11 @@ func TestIndexPathSplitCorColCond(t *testing.T) {
 			remained:   "[]",
 		},
 		{
-			expr:       "col3 = CHAR(1 COLLATE 'binary')",
-			corColIDs:  []int64{},
-			idxColIDs:  []int64{3},
-			idxColLens: []int{types.UnspecifiedLength},
-			access:     "[eq(Column#3, \x01)]",
+			expr:       "col1 = col5 and col3 = CHAR(1 COLLATE 'binary')",
+			corColIDs:  []int64{5},
+			idxColIDs:  []int64{1, 3},
+			idxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength},
+			access:     "[eq(Column#1, Column#5) eq(Column#3, \x01)]",
 			remained:   "[]",
 		},
 	}

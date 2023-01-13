@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,11 +26,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -3762,14 +3762,6 @@ func TestSetVariables(t *testing.T) {
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
 	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
-
-	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=1")
-	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("1"))
-	require.True(t, variable.EnableConcurrentDDL.Load())
-	tk.MustExec("set @@global.tidb_enable_concurrent_ddl=0")
-	tk.MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
-	require.False(t, variable.EnableConcurrentDDL.Load())
-	testkit.NewTestKit(t, store).MustQuery("select @@global.tidb_enable_concurrent_ddl").Check(testkit.Rows("0"))
 }
 
 func TestPreparePlanCache(t *testing.T) {
@@ -3794,10 +3786,11 @@ func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
+	tk.Session()
 
 	var err error
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session()),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)

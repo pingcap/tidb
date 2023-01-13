@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
@@ -802,7 +801,7 @@ func TestJSON(t *testing.T) {
 	originalDatums := make([]types.Datum, 0, len(tbl))
 	for _, jsonDatum := range tbl {
 		var d types.Datum
-		j, err := json.ParseBinaryFromString(jsonDatum)
+		j, err := types.ParseBinaryJSONFromString(jsonDatum)
 		require.NoError(t, err)
 		d.SetMysqlJSON(j)
 		originalDatums = append(originalDatums, d)
@@ -869,12 +868,12 @@ func TestCut(t *testing.T) {
 			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 		},
 		{
-			types.MakeDatums(json.CreateBinary("abc")),
-			types.MakeDatums(json.CreateBinary("abc")),
+			types.MakeDatums(types.CreateBinaryJSON("abc")),
+			types.MakeDatums(types.CreateBinaryJSON("abc")),
 		},
 		{
-			types.MakeDatums(json.CreateBinary(json.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
-			types.MakeDatums(json.CreateBinary(json.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
+			types.MakeDatums(types.CreateBinaryJSON(types.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
+			types.MakeDatums(types.CreateBinaryJSON(types.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
 		},
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -1052,7 +1051,7 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		{types.Set{Name: "a", Value: 1}, _tp2},
 		{types.Set{Name: "f", Value: 32}, _tp3},
 		{types.BinaryLiteral{100}, _tp4},
-		{json.CreateBinary("abc"), types.NewFieldType(mysql.TypeJSON)},
+		{types.CreateBinaryJSON("abc"), types.NewFieldType(mysql.TypeJSON)},
 		{int64(1), types.NewFieldType(mysql.TypeYear)},
 	}
 
@@ -1188,6 +1187,9 @@ func TestHashChunkRow(t *testing.T) {
 
 	testHashChunkRowEqual(t, "x", []byte("x"), true)
 	testHashChunkRowEqual(t, "x", []byte("y"), false)
+
+	testHashChunkRowEqual(t, types.CreateBinaryJSON(int64(1)), types.CreateBinaryJSON(float64(1.0)), true)
+	testHashChunkRowEqual(t, types.CreateBinaryJSON(uint64(math.MaxUint64)), types.CreateBinaryJSON(float64(math.MaxUint64)), false)
 }
 
 func TestValueSizeOfSignedInt(t *testing.T) {

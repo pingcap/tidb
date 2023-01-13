@@ -19,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,19 +51,36 @@ type TestKit struct {
 	t       testing.TB
 	store   kv.Storage
 	session session.Session
-
-	useGeneralPlanCache bool
+	alloc   chunk.Allocator
 }
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
+	runtime.GOMAXPROCS(mathutil.Min(16, runtime.GOMAXPROCS(0)))
 	tk := &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
 		t:       t,
 		store:   store,
+		alloc:   chunk.NewAllocator(),
 	}
 	tk.RefreshSession()
+
+	dom, _ := session.GetDomain(store)
+	sm := dom.InfoSyncer().GetSessionManager()
+	if sm != nil {
+		mockSm, ok := sm.(*MockSessionManager)
+		if ok {
+			mockSm.mu.Lock()
+			if mockSm.conn == nil {
+				mockSm.conn = make(map[uint64]session.Session)
+			}
+			mockSm.conn[tk.session.GetSessionVars().ConnectionID] = tk.session
+			mockSm.mu.Unlock()
+		}
+		tk.session.SetSessionManager(sm)
+	}
+
 	return tk
 }
 
@@ -72,14 +92,8 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se session.Session) *
 		t:       t,
 		store:   store,
 		session: se,
+		alloc:   chunk.NewAllocator(),
 	}
-}
-
-// NewTestKitWithGeneralPlanCache returns a new *TestKit.
-func NewTestKitWithGeneralPlanCache(t testing.TB, store kv.Storage) *TestKit {
-	tk := NewTestKit(t, store)
-	tk.useGeneralPlanCache = true
-	return tk
 }
 
 // RefreshSession set a new session for the testkit
@@ -103,6 +117,11 @@ func (tk *TestKit) Session() session.Session {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
+	defer func() {
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
 	tk.MustExecWithContext(context.Background(), sql, args...)
 }
 
@@ -120,6 +139,11 @@ func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	defer func() {
+		if tk.alloc != nil {
+			tk.alloc.Reset()
+		}
+	}()
 	return tk.MustQueryWithContext(context.Background(), sql, args...)
 }
 
@@ -146,7 +170,8 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...interfac
 		if len(partitions) == 0 && strings.Contains(rs.rows[i][3], "partition:") {
 			ok = false
 		}
-		if len(partitions) != 0 && strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
+		// The data format is "table: t1, partition: p0,p1,p2"
+		if len(partitions) != 0 && strings.HasSuffix(rs.rows[i][3], "partition:"+partitions) {
 			ok = true
 		}
 	}
@@ -209,6 +234,29 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
+func (tk *TestKit) HasTiFlashPlan(sql string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][2], "tiflash") {
+			return true
+		}
+	}
+	return false
+}
+
+// HasPlanForLastExecution checks if the execution plan of the last execution contains specific plan.
+func (tk *TestKit) HasPlanForLastExecution(plan string) bool {
+	connID := tk.session.GetSessionVars().ConnectionID
+	rs := tk.MustQuery(fmt.Sprintf("explain for connection %d", connID))
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
+}
+
 // HasKeywordInOperatorInfo checks if the result execution plan contains specific keyword in the operator info.
 func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
@@ -247,16 +295,12 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 }
 
 // ExecWithContext executes a sql statement using the prepared stmt API
-func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
+	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
 		var stmts []ast.StmtNode
-		if tk.useGeneralPlanCache {
-			if execStmt, ok := tk.session.Parameterize(ctx, sql); ok {
-				stmts = append(stmts, execStmt)
-			}
-		}
 		if len(stmts) == 0 {
 			var err error
 			stmts, err = tk.session.Parse(ctx, sql)
@@ -266,12 +310,13 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		}
 		warns := sc.GetWarnings()
 		parserWarns := warns[len(prevWarns):]
+		tk.Session().GetSessionVars().SetAlloc(tk.alloc)
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
 			var rs sqlexec.RecordSet
 			var err error
-			if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
-				rs, err = session.HandleNonTransactionalDelete(ctx, s, tk.Session())
+			if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+				rs, err = session.HandleNonTransactionalDML(ctx, s, tk.Session())
 			} else {
 				rs, err = tk.Session().ExecuteStmt(ctx, stmt)
 			}
@@ -294,7 +339,8 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 		return nil, errors.Trace(err)
 	}
 	params := expression.Args2Expressions4Test(args...)
-	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
+	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
+	rs, err = tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return rs, errors.Trace(err)
 	}

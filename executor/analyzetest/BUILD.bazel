@@ -29,6 +29,7 @@ go_test(
         "//tablecodec",
         "//testkit",
         "//types",
+        "//util",
         "//util/codec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

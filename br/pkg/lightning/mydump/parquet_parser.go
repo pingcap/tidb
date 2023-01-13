@@ -3,6 +3,7 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/big"
@@ -26,8 +27,16 @@ const (
 	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
 	// optimize the read performance
 	smallParquetFileThreshold = 256 * 1024 * 1024
+	// jan011970 is the date of unix epoch in julian day,
+	jan011970 = 2440588
+	secPerDay = 24 * 60 * 60
+
+	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
+	timeLayout    = "2006-01-02 15:04:05.999999"
 )
 
+// ParquetParser parses a parquet file for import
+// It implements the Parser interface.
 type ParquetParser struct {
 	Reader      *preader.ParquetReader
 	columns     []string
@@ -49,7 +58,7 @@ type readerWrapper struct {
 	path string
 }
 
-func (r *readerWrapper) Write(p []byte) (n int, err error) {
+func (*readerWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
@@ -69,7 +78,7 @@ func (r *readerWrapper) Open(name string) (source.ParquetFile, error) {
 	}, nil
 }
 
-func (r *readerWrapper) Create(name string) (source.ParquetFile, error) {
+func (*readerWrapper) Create(_ string) (source.ParquetFile, error) {
 	return nil, errors.New("unsupported operation")
 }
 
@@ -81,15 +90,15 @@ type bytesReaderWrapper struct {
 	path string
 }
 
-func (r *bytesReaderWrapper) Close() error {
+func (*bytesReaderWrapper) Close() error {
 	return nil
 }
 
-func (r *bytesReaderWrapper) Create(name string) (source.ParquetFile, error) {
+func (*bytesReaderWrapper) Create(_ string) (source.ParquetFile, error) {
 	return nil, errors.New("unsupported operation")
 }
 
-func (r *bytesReaderWrapper) Write(p []byte) (n int, err error) {
+func (*bytesReaderWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
@@ -104,6 +113,7 @@ func (r *bytesReaderWrapper) Open(name string) (source.ParquetFile, error) {
 	}, nil
 }
 
+// OpenParquetReader opens a parquet file and returns a handle that can at least read the file.
 func OpenParquetReader(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -134,7 +144,8 @@ func OpenParquetReader(
 	}, nil
 }
 
-// a special func to fetch parquet file row count fast.
+// ReadParquetFileRowCount reads the parquet file row count.
+// It is a special func to fetch parquet file row count fast.
 func ReadParquetFileRowCount(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -161,6 +172,7 @@ func ReadParquetFileRowCount(
 	return numRows, nil
 }
 
+// NewParquetParser generates a parquet parser.
 func NewParquetParser(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -310,6 +322,8 @@ func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
 	return pp.curStart + int64(pp.curIndex), pp.lastRow.RowID
 }
 
+// SetPos sets the position in a parquet file.
+// It implements the Parser interface.
 func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	if pos < pp.curStart {
 		panic("don't support seek back yet")
@@ -337,11 +351,21 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	return nil
 }
 
+// RealPos implements the Parser interface.
+// For parquet it's equal to Pos().
+func (pp *ParquetParser) RealPos() (int64, error) {
+	return pp.curStart + int64(pp.curIndex), nil
+}
+
+// Close closes the parquet file of the parser.
+// It implements the Parser interface.
 func (pp *ParquetParser) Close() error {
 	pp.Reader.ReadStop()
 	return pp.Reader.PFile.Close()
 }
 
+// ReadRow reads a row in the parquet file by the parser.
+// It implements the Parser interface.
 func (pp *ParquetParser) ReadRow() error {
 	pp.lastRow.RowID++
 	pp.lastRow.Length = 0
@@ -435,7 +459,12 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 	if meta.LogicalType != nil && meta.LogicalType.DECIMAL != nil {
 		v = binaryToDecimalStr([]byte(v), int(meta.LogicalType.DECIMAL.Scale))
 	}
-	d.SetString(v, "")
+	if meta.Type != nil && *meta.Type == parquet.Type_INT96 && len(v) == 96/8 {
+		ts := int96ToTime([]byte(v))
+		ts = ts.UTC()
+		v = ts.Format(utcTimeLayout)
+	}
+	d.SetString(v, "utf8mb4_bin")
 }
 
 func binaryToDecimalStr(rawBytes []byte, scale int) string {
@@ -445,7 +474,7 @@ func binaryToDecimalStr(rawBytes []byte, scale int) string {
 			rawBytes[i] = ^rawBytes[i]
 		}
 		for i := len(rawBytes) - 1; i >= 0; i-- {
-			rawBytes[i] += 1
+			rawBytes[i]++
 			if rawBytes[i] != 0 {
 				break
 			}
@@ -492,20 +521,20 @@ func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
 		}
 		val := fmt.Sprintf("%0*d", minLen, v)
 		dotIndex := len(val) - int(*meta.Scale)
-		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "")
+		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "utf8mb4_bin")
 	case logicalType.DATE != nil:
 		dateStr := time.Unix(v*86400, 0).Format("2006-01-02")
-		d.SetString(dateStr, "")
+		d.SetString(dateStr, "utf8mb4_bin")
 	case logicalType.TIMESTAMP != nil:
 		// convert all timestamp types (datetime/timestamp) to string
-		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, "2006-01-02 15:04:05.999999",
-			"2006-01-02 15:04:05.999999Z", logicalType.TIMESTAMP.IsAdjustedToUTC)
-		d.SetString(timeStr, "")
+		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, timeLayout,
+			utcTimeLayout, logicalType.TIMESTAMP.IsAdjustedToUTC)
+		d.SetString(timeStr, "utf8mb4_bin")
 	case logicalType.TIME != nil:
 		// convert all timestamp types (datetime/timestamp) to string
 		timeStr := formatTime(v, logicalType.TIME.Unit, "15:04:05.999999", "15:04:05.999999Z",
 			logicalType.TIME.IsAdjustedToUTC)
-		d.SetString(timeStr, "")
+		d.SetString(timeStr, "utf8mb4_bin")
 	default:
 		d.SetInt64(v)
 	}
@@ -529,11 +558,14 @@ func formatTime(v int64, units *parquet.TimeUnit, format, utcFormat string, utc 
 	return t.Format(format)
 }
 
+// LastRow gets the last row parsed by the parser.
+// It implements the Parser interface.
 func (pp *ParquetParser) LastRow() Row {
 	return pp.lastRow
 }
 
-func (pp *ParquetParser) RecycleRow(row Row) {
+// RecycleRow implements the Parser interface.
+func (*ParquetParser) RecycleRow(_ Row) {
 }
 
 // Columns returns the _lower-case_ column names corresponding to values in
@@ -543,10 +575,42 @@ func (pp *ParquetParser) Columns() []string {
 }
 
 // SetColumns set restored column names to parser
-func (pp *ParquetParser) SetColumns(cols []string) {
+func (*ParquetParser) SetColumns(_ []string) {
 	// just do nothing
 }
 
+// SetLogger sets the logger used in the parser.
+// It implements the Parser interface.
 func (pp *ParquetParser) SetLogger(l log.Logger) {
 	pp.logger = l
+}
+
+// SetRowID sets the rowID in a parquet file when we start a compressed file.
+// It implements the Parser interface.
+func (pp *ParquetParser) SetRowID(rowID int64) {
+	pp.lastRow.RowID = rowID
+}
+
+func jdToTime(jd int32, nsec int64) time.Time {
+	sec := int64(jd-jan011970) * secPerDay
+	// it's fine not to check the value of nsec
+	// because it's legall even though it exceeds the maximum.
+	// See TestNsecOutSideRange.
+	return time.Unix(sec, nsec)
+}
+
+// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
+// INT96 timestamp layout
+// --------------------------
+// |   64 bit   |   32 bit   |
+// ---------------------------
+// |  nano sec  |  julian day  |
+// ---------------------------
+// NOTE: parquet date can be less than 1970-01-01 that is not supported by TiDB,
+// where dt is a negative number but still legal in the context of Go.
+// But it will cause errors or potential data inconsistency when importing.
+func int96ToTime(parquetDate []byte) time.Time {
+	nano := binary.LittleEndian.Uint64(parquetDate[:8])
+	dt := binary.LittleEndian.Uint32(parquetDate[8:])
+	return jdToTime(int32(dt), int64(nano))
 }

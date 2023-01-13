@@ -21,6 +21,7 @@ go_library(
         "//parser/ast",
         "//parser/mysql",
         "//sessionctx",
+        "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
         "//sessiontxn/internal",
@@ -36,6 +37,7 @@ go_test(
     name = "staleread_test",
     timeout = "short",
     srcs = [
+        "externalts_test.go",
         "main_test.go",
         "processor_test.go",
         "provider_test.go",
@@ -48,6 +50,7 @@ go_test(
         "//kv",
         "//parser",
         "//parser/ast",
+        "//parser/auth",
         "//sessionctx",
         "//sessiontxn",
         "//table/temptable",

@@ -54,11 +54,6 @@ var (
 )
 
 var (
-	coprCacheCounterHit  = metrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
-	coprCacheCounterMiss = metrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
-)
-
-var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*serialSelectResults)(nil)
 )
@@ -160,8 +155,6 @@ type selectResult struct {
 func (r *selectResult) fetchResp(ctx context.Context) error {
 	defer func() {
 		if r.stats != nil {
-			coprCacheCounterHit.Add(float64(r.stats.CoprCacheHitNum))
-			coprCacheCounterMiss.Add(float64(len(r.stats.copRespTime) - int(r.stats.CoprCacheHitNum)))
 			// Ignore internal sql.
 			if !r.ctx.GetSessionVars().InRestrictedSQL && len(r.stats.copRespTime) > 0 {
 				ratio := float64(r.stats.CoprCacheHitNum) / float64(len(r.stats.copRespTime))
@@ -366,13 +359,11 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 
 	if r.stats == nil {
-		id := r.rootPlanID
 		r.stats = &selectResultRuntimeStats{
 			backoffSleep:       make(map[string]time.Duration),
 			rpcStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
@@ -462,6 +453,9 @@ func (r *selectResult) Close() error {
 	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
 	if respSize > 0 {
 		r.memConsume(-respSize)
+	}
+	if r.stats != nil {
+		defer r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 	}
 	return r.resp.Close()
 }

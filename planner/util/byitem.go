@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // ByItems wraps a "by" item.
@@ -43,4 +44,17 @@ func (by *ByItems) Clone() *ByItems {
 // Equal checks whether two ByItems are equal.
 func (by *ByItems) Equal(ctx sessionctx.Context, other *ByItems) bool {
 	return by.Expr.Equal(ctx, other.Expr) && by.Desc == other.Desc
+}
+
+// MemoryUsage return the memory usage of ByItems.
+func (by *ByItems) MemoryUsage() (sum int64) {
+	if by == nil {
+		return
+	}
+
+	sum = size.SizeOfBool
+	if by.Expr != nil {
+		sum += by.Expr.MemoryUsage()
+	}
+	return sum
 }

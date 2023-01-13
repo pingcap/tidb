@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
@@ -409,7 +408,7 @@ func (b *builtinJSONAnyValueSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinJSONAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinJSONAnyValueSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinJSONAnyValueSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
 	return b.args[0].EvalJSON(b.ctx, row)
 }
 
@@ -1105,7 +1104,7 @@ func (b *builtinNameConstJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinNameConstJSONSig) evalJSON(row chunk.Row) (types.BinaryJSON, bool, error) {
 	return b.args[1].EvalJSON(b.ctx, row)
 }
 

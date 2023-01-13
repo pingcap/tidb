@@ -1,18 +1,26 @@
-diff -urN a/errcheck/analyzer.go b/errcheck/analyzer.go
+From c346bb5b779e1f07a30f74ad07b28f89e1922b3c Mon Sep 17 00:00:00 2001
+From: Weizhen Wang <wangweizhen@pingcap.com>
+Date: Sat, 27 Aug 2022 16:20:25 +0800
+Subject: [PATCH] update
+
+Signed-off-by: Weizhen Wang <wangweizhen@pingcap.com>
+---
+ errcheck/analyzer.go | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/errcheck/analyzer.go b/errcheck/analyzer.go
+index 68593cc..2e3fd28 100644
 --- a/errcheck/analyzer.go
 +++ b/errcheck/analyzer.go
-@@ -3,9 +3,9 @@ package errcheck
- import (
- 	"fmt"
+@@ -5,6 +5,7 @@ import (
  	"go/ast"
--	"go/token"
  	"reflect"
  	"regexp"
 +	"strings"
  
  	"golang.org/x/tools/go/analysis"
  )
-@@ -21,6 +22,7 @@ var (
+@@ -20,6 +21,7 @@ var (
  	argBlank       bool
  	argAsserts     bool
  	argExcludeFile string
@@ -20,7 +28,7 @@ diff -urN a/errcheck/analyzer.go b/errcheck/analyzer.go
  	argExcludeOnly bool
  )
  
-@@ -28,6 +30,7 @@ func init() {
+@@ -27,6 +29,7 @@ func init() {
  	Analyzer.Flags.BoolVar(&argBlank, "blank", false, "if true, check for errors assigned to blank identifier")
  	Analyzer.Flags.BoolVar(&argAsserts, "assert", false, "if true, check for ignored type assertion results")
  	Analyzer.Flags.StringVar(&argExcludeFile, "exclude", "", "Path to a file containing a list of functions to exclude from checking")
@@ -28,7 +36,7 @@ diff -urN a/errcheck/analyzer.go b/errcheck/analyzer.go
  	Analyzer.Flags.BoolVar(&argExcludeOnly, "excludeonly", false, "Use only excludes from exclude file")
  }
  
-@@ -39,7 +42,14 @@ func runAnalyzer(pass *analysis.Pass) (interface{}, error) {
+@@ -38,7 +41,14 @@ func runAnalyzer(pass *analysis.Pass) (interface{}, error) {
  			exclude[name] = true
  		}
  	}
@@ -44,16 +52,6 @@ diff -urN a/errcheck/analyzer.go b/errcheck/analyzer.go
  		excludes, err := ReadExcludes(argExcludeFile)
  		if err != nil {
  			return nil, fmt.Errorf("Could not read exclude file: %v\n", err)
---- a/errcheck/analyzer.go
-+++ b/errcheck/analyzer.go
-@@ -65,8 +65,9 @@ func runAnalyzer(pass *analysis.Pass) (interface{}, error) {
- 		ast.Walk(v, f)
- 
- 		for _, err := range v.errors {
-+			fsetFile := pass.Fset.File(f.Pos())
- 			pass.Report(analysis.Diagnostic{
--				Pos:     token.Pos(int(f.Pos()) + err.Pos.Offset),
-+				Pos:     fsetFile.Pos(err.Pos.Offset),
- 				Message: "unchecked error",
- 			})
- 		}
+-- 
+2.30.1 (Apple Git-130)
+

@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -141,12 +142,37 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 		handleKey = &keyValueWithDupInfo{
 			newKey: tablecodec.EncodeRecordKey(t.RecordPrefix(), handle),
-			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
+			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), t.Meta().Name.String()+".PRIMARY"),
 		}
 	}
 
-	// addChangingColTimes is used to fetch values while processing "modify/change column" operation.
-	addChangingColTimes := 0
+	// extraColumns is used to fetch values while processing "add/drop/modify/change column" operation.
+	extraColumns := 0
+	for _, col := range t.WritableCols() {
+		// if there is a changing column, append the dependency column for index fetch values
+		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
+			value, err := table.CastValue(ctx, row[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+			if err != nil {
+				return nil, err
+			}
+			row = append(row, value)
+			extraColumns++
+			continue
+		}
+
+		if col.State != model.StatePublic {
+			// only append origin default value for index fetch values
+			if col.Offset >= len(row) {
+				value, err := table.GetColOriginDefaultValue(ctx, col.ToInfo())
+				if err != nil {
+					return nil, err
+				}
+
+				row = append(row, value)
+				extraColumns++
+			}
+		}
+	}
 	// append unique keys and errors
 	for _, v := range t.Indices() {
 		if !tables.IsIndexWritable(v) {
@@ -158,40 +184,38 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if t.Meta().IsCommonHandle && v.Meta().Primary {
 			continue
 		}
-		if len(row) < len(t.WritableCols()) && addChangingColTimes == 0 {
-			if col := tables.FindChangingCol(t.WritableCols(), v.Meta()); col != nil {
-				row = append(row, row[col.DependencyColumnOffset])
-				addChangingColTimes++
-			}
-		}
 		colVals, err1 := v.FetchValues(row, nil)
 		if err1 != nil {
 			return nil, err1
 		}
 		// Pass handle = 0 to GenIndexKey,
 		// due to we only care about distinct key.
-		key, distinct, err1 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
-			colVals, kv.IntHandle(0), nil)
-		if err1 != nil {
-			return nil, err1
+		iter := v.GenIndexKVIter(ctx.GetSessionVars().StmtCtx, colVals, kv.IntHandle(0), nil)
+		for iter.Valid() {
+			key, _, distinct, err1 := iter.Next(nil)
+			if err1 != nil {
+				return nil, err1
+			}
+			// Skip the non-distinct keys.
+			if !distinct {
+				continue
+			}
+			// If index is used ingest ways, then we should check key from temp index.
+			if v.Meta().State != model.StatePublic && v.Meta().BackfillState != model.BackfillStateInapplicable {
+				_, key, _ = tables.GenTempIdxKeyByState(v.Meta(), key)
+			}
+			colValStr, err1 := formatDataForDupError(colVals)
+			if err1 != nil {
+				return nil, err1
+			}
+			uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
+				newKey:       key,
+				dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
+				commonHandle: t.Meta().IsCommonHandle,
+			})
 		}
-		// Skip the non-distinct keys.
-		if !distinct {
-			continue
-		}
-		colValStr, err1 := formatDataForDupError(colVals)
-		if err1 != nil {
-			return nil, err1
-		}
-		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-			newKey:       key,
-			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
-			commonHandle: t.Meta().IsCommonHandle,
-		})
 	}
-	if addChangingColTimes == 1 {
-		row = row[:len(row)-1]
-	}
+	row = row[:len(row)-extraColumns]
 	result = append(result, toBeCheckedRow{
 		row:        row,
 		handleKey:  handleKey,

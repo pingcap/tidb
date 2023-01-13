@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/metrics"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/kvcache"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -54,28 +54,26 @@ func TestPrepared(t *testing.T) {
 		tk.MustExec(`execute stmt_test_1 using @a;`)
 		tk.MustExec(`prepare stmt_test_2 from 'select 1'`)
 		// Prepare multiple statement is not allowed.
-		_, err = tk.Exec(`prepare stmt_test_3 from 'select id from prepare_test where id > ?;select id from prepare_test where id > ?;'`)
-		require.True(t, executor.ErrPrepareMulti.Equal(err))
+		tk.MustGetErrCode(`prepare stmt_test_3 from 'select id from prepare_test where id > ?;select id from prepare_test where id > ?;'`, errno.ErrPrepareMulti)
 
 		// The variable count does not match.
 		tk.MustExec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?';`)
 		tk.MustExec(`set @a = 1;`)
-		_, err = tk.Exec(`execute stmt_test_4 using @a;`)
-		require.True(t, plannercore.ErrWrongParamCount.Equal(err))
+		tk.MustGetErrCode(`execute stmt_test_4 using @a;`, errno.ErrWrongParamCount)
 		// Prepare and deallocate prepared statement immediately.
 		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?';`)
 		tk.MustExec(`deallocate prepare stmt_test_5;`)
 
 		// Statement not found.
-		_, err = tk.Exec("deallocate prepare stmt_test_5")
+		err = tk.ExecToErr("deallocate prepare stmt_test_5")
 		require.True(t, plannercore.ErrStmtNotFound.Equal(err))
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
-		_, err = tk.Exec(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`)
-		require.EqualError(t, err, `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '/*' and b = 'p'' at line 1`)
+		tk.MustGetErrMsg(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`,
+			`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '/*' and b = 'p'' at line 1`)
 
 		// The `stmt_test5` should not be found.
-		_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
+		err = tk.ExecToErr(`set @a = 1; execute stmt_test_5 using @a;`)
 		require.True(t, plannercore.ErrStmtNotFound.Equal(err))
 
 		// Use parameter marker with argument will run prepared statement.
@@ -159,8 +157,7 @@ func TestPrepared(t *testing.T) {
 
 		// Make schema change.
 		tk.MustExec("drop table if exists prepare2")
-		_, err = tk.Exec("create table prepare2 (a int)")
-		require.NoError(t, err)
+		tk.MustExec("create table prepare2 (a int)")
 
 		// Should success as the changed schema do not affect the prepared statement.
 		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
@@ -186,8 +183,7 @@ func TestPrepared(t *testing.T) {
 		tk.MustExec("drop table if exists prepare3")
 		tk.MustExec("create table prepare3 (a decimal(1))")
 		tk.MustExec("prepare stmt from 'insert into prepare3 value(123)'")
-		_, err = tk.Exec("execute stmt")
-		require.Error(t, err)
+		tk.MustExecToErr("execute stmt")
 
 		_, _, fields, err := tk.Session().PrepareStmt("select a from prepare3")
 		require.NoError(t, err)
@@ -231,27 +227,21 @@ func TestPrepared(t *testing.T) {
 		tk.MustExec("drop table if exists prepare1;")
 		tk.MustExec("create table prepare1 (a decimal(1))")
 		tk.MustExec("insert into prepare1 values(1);")
-		_, err = tk.Exec("prepare stmt FROM @sql1")
-		require.EqualError(t, err, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 4 near \"NULL\" ")
+		tk.MustGetErrMsg("prepare stmt FROM @sql1",
+			"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 4 near \"NULL\" ")
 		tk.MustExec("SET @sql = 'update prepare1 set a=5 where a=?';")
-		_, err = tk.Exec("prepare stmt FROM @sql")
-		require.NoError(t, err)
+		tk.MustExec("prepare stmt FROM @sql")
 		tk.MustExec("set @var=1;")
-		_, err = tk.Exec("execute stmt using @var")
-		require.NoError(t, err)
+		tk.MustExec("execute stmt using @var")
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("5"))
 
 		// issue 19371
 		tk.MustExec("SET @sql = 'update prepare1 set a=a+1';")
-		_, err = tk.Exec("prepare stmt FROM @SQL")
-		require.NoError(t, err)
-		_, err = tk.Exec("execute stmt")
-		require.NoError(t, err)
+		tk.MustExec("prepare stmt FROM @SQL")
+		tk.MustExec("execute stmt")
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("6"))
-		_, err = tk.Exec("prepare stmt FROM @Sql")
-		require.NoError(t, err)
-		_, err = tk.Exec("execute stmt")
-		require.NoError(t, err)
+		tk.MustExec("prepare stmt FROM @Sql")
+		tk.MustExec("execute stmt")
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("7"))
 
 		// Coverage.
@@ -290,11 +280,11 @@ func TestPreparedLimitOffset(t *testing.T) {
 		r.Check(testkit.Rows("2"))
 
 		tk.MustExec(`set @a=1.1`)
-		r = tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
-		r.Check(testkit.Rows("2"))
+		_, err := tk.Exec(`execute stmt_test_1 using @a, @b;`)
+		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
 		tk.MustExec(`set @c="-1"`)
-		_, err := tk.Exec("execute stmt_test_1 using @c, @c")
+		_, err = tk.Exec("execute stmt_test_1 using @c, @c")
 		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
@@ -344,7 +334,7 @@ func TestPrepareWithAggregation(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-			PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+			PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session()),
 		})
 		require.NoError(t, err)
 		tk.SetSession(se)
@@ -430,14 +420,14 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(1), hit)
+			require.Equal(t, float64(0), hit) // insert-values-stmt cannot use the plan cache
 		}
 		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(0), hit)
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -453,21 +443,21 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(0), hit)
 		}
 		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(3), hit)
+			require.Equal(t, float64(1), hit)
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(4), hit)
+			require.Equal(t, float64(2), hit)
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)
@@ -609,7 +599,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=true`)
 
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(3, 0.1, math.MaxUint64),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session()),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
@@ -776,4 +766,24 @@ func TestPreparedIssue17419(t *testing.T) {
 	// require.NotNil(t, tk1.Session().ShowProcess().Plan)
 	// _, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
 	// require.True(t, ok)
+}
+
+func TestLimitUnsupportedCase(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+
+	tk.MustExec("set @a = 1.2")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = 1.")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = '0'")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = '1'")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = 1_2")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 }

@@ -61,6 +61,21 @@ error = '''
 version mismatch
 '''
 
+["BR:EBS:ErrRestoreInvalidPeer"]
+error = '''
+restore met a invalid peer
+'''
+
+["BR:EBS:ErrRestoreRegionWithoutPeer"]
+error = '''
+restore met a region without any peer
+'''
+
+["BR:EBS:ErrRestoreTotalKVMismatch"]
+error = '''
+restore total tikvs mismatch
+'''
+
 ["BR:ExternalStorage:ErrStorageInvalidConfig"]
 error = '''
 invalid external storage config
@@ -421,6 +436,11 @@ error = '''
 table route error
 '''
 
+["Lightning:Loader:ErrTooManySourceFiles"]
+error = '''
+too many source files
+'''
+
 ["Lightning:MetaMgr:ErrMetaMgrUnknown"]
 error = '''
 unknown error occur on meta manager
@@ -439,6 +459,11 @@ pause gc error
 ["Lightning:PD:ErrUpdatePD"]
 error = '''
 update pd error
+'''
+
+["Lightning:PreCheck:ErrCheckCDCPiTR"]
+error = '''
+check TiCDC/PiTR task error
 '''
 
 ["Lightning:PreCheck:ErrCheckCSVHeader"]
@@ -741,6 +766,11 @@ error = '''
 Incorrect usage of %s and %s
 '''
 
+["ddl:1235"]
+error = '''
+This version of TiDB doesn't yet support '%s'
+'''
+
 ["ddl:1246"]
 error = '''
 Converting column '%s' from %s to %s
@@ -814,6 +844,11 @@ In definition of view, derived table or common table expression, SELECT list and
 ["ddl:1391"]
 error = '''
 Key part '%-.192s' length cannot be 0
+'''
+
+["ddl:1452"]
+error = '''
+Cannot add or update a child row: a foreign key constraint fails (%.192s)
 '''
 
 ["ddl:1470"]
@@ -891,6 +926,11 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1553"]
+error = '''
+Cannot drop index '%-.192s': needed in a foreign key constraint
+'''
+
 ["ddl:1562"]
 error = '''
 Cannot create temporary table with partitions
@@ -951,6 +991,11 @@ error = '''
 VALUES value for partition '%-.64s' must have type INT
 '''
 
+["ddl:1701"]
+error = '''
+Cannot truncate a table referenced in a foreign key constraint (%.192s)
+'''
+
 ["ddl:1731"]
 error = '''
 Non matching attribute '%-.64s' between partition and table
@@ -994,6 +1039,21 @@ Duplicate foreign key constraint name '%s'
 ["ddl:1828"]
 error = '''
 Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1829"]
+error = '''
+Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s' of table '%-.192s'
+'''
+
+["ddl:1832"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s'
+'''
+
+["ddl:1833"]
+error = '''
+Cannot change column '%-.192s': used in a foreign key constraint '%-.192s' of table '%-.192s'
 '''
 
 ["ddl:1846"]
@@ -1051,6 +1111,11 @@ error = '''
 You cannot use the window function '%s' in this context.'
 '''
 
+["ddl:3730"]
+error = '''
+Cannot drop table '%s' referenced by a foreign key constraint '%s' on table '%s'.
+'''
+
 ["ddl:3753"]
 error = '''
 Cannot create an expression index on a function that returns a JSON or GEOMETRY value
@@ -1098,7 +1163,7 @@ Default value expression of column '%s' contains a disallowed function: `%s`.
 
 ["ddl:3780"]
 error = '''
-Referencing column '%s' in foreign key constraint '%s' are incompatible
+Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.
 '''
 
 ["ddl:3800"]
@@ -1109,6 +1174,11 @@ Expression of expression index '%s' cannot refer to a row value
 ["ddl:3837"]
 error = '''
 Column '%s' has an expression index dependency and cannot be dropped or renamed
+'''
+
+["ddl:3855"]
+error = '''
+Column '%s' has a partitioning function dependency and cannot be dropped or renamed
 '''
 
 ["ddl:4135"]
@@ -1139,6 +1209,36 @@ Unknown SEQUENCE: '%-.300s'
 ["ddl:8006"]
 error = '''
 `%s` is unsupported on temporary tables.
+'''
+
+["ddl:8148"]
+error = '''
+Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP
+'''
+
+["ddl:8149"]
+error = '''
+Cannot drop column '%-.192s': needed in TTL config
+'''
+
+["ddl:8150"]
+error = '''
+Cannot set %s on a table without TTL config
+'''
+
+["ddl:8151"]
+error = '''
+Set TTL for temporary table is not allowed
+'''
+
+["ddl:8152"]
+error = '''
+Set TTL for a table referenced by foreign key is not allowed
+'''
+
+["ddl:8153"]
+error = '''
+Unsupported clustered primary key type FLOAT/DOUBLE for TTL
 '''
 
 ["ddl:8200"]
@@ -1286,6 +1386,11 @@ error = '''
 Error happened when enable/disable DDL: %s
 '''
 
+["ddl:8247"]
+error = '''
+Ingest failed: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1401,9 +1506,24 @@ error = '''
 SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.
 '''
 
+["executor:1819"]
+error = '''
+Your password does not satisfy the current policy requirements
+'''
+
 ["executor:1827"]
 error = '''
 The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
+'''
+
+["executor:3008"]
+error = '''
+Foreign key cascade delete/update exceeds max depth of %v.
+'''
+
+["executor:3016"]
+error = '''
+The password for anonymous user cannot be expired.
 '''
 
 ["executor:3523"]
@@ -1419,6 +1539,11 @@ Illegal privilege level specified for %s
 ["executor:3636"]
 error = '''
 Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value
+'''
+
+["executor:3638"]
+error = '''
+Cannot use these credentials for '%s@%s' because they contradict the password history policy.
 '''
 
 ["executor:3929"]
@@ -1511,6 +1636,11 @@ error = '''
 setting %s has no effect in TiDB
 '''
 
+["executor:8147"]
+error = '''
+transaction aborted because lazy uniqueness check is enabled and an error occurred: %s
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -1571,6 +1701,26 @@ error = '''
 Incorrect type for argument %s in function %s.
 '''
 
+["expression:3146"]
+error = '''
+Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.
+'''
+
+["expression:3752"]
+error = '''
+Value is out of range for expression index '%s' at row %d
+'''
+
+["expression:3903"]
+error = '''
+Invalid JSON value for CAST for expression index '%s'
+'''
+
+["expression:3907"]
+error = '''
+Data too long for expression index '%s'
+'''
+
 ["expression:8128"]
 error = '''
 Invalid TABLESAMPLE: %s
@@ -1598,12 +1748,17 @@ Cannot create a JSON value from a string with CHARACTER SET '%s'.
 
 ["json:3149"]
 error = '''
-In this situation, path expressions may not contain the * and ** tokens.
+In this situation, path expressions may not contain the * and ** tokens or range selection.
 '''
 
 ["json:3150"]
 error = '''
 The second argument can only be either 'one' or 'all'.
+'''
+
+["json:3157"]
+error = '''
+The JSON document exceeds the maximum depth.
 '''
 
 ["json:3158"]
@@ -1668,7 +1823,7 @@ not implemented
 
 ["kv:9007"]
 error = '''
-Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s [try again later]
+Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s%s%s%s, reason=%s [try again later]
 '''
 
 ["meta:1007"]
@@ -1709,6 +1864,16 @@ Placement policy '%-.192s' already exists
 ["meta:8239"]
 error = '''
 Unknown placement policy '%-.192s'
+'''
+
+["meta:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["meta:8249"]
+error = '''
+Unknown resource group '%-.192s'
 '''
 
 ["planner:1044"]
@@ -1874,6 +2039,16 @@ View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) o
 ["planner:1391"]
 error = '''
 Key part '%-.192s' length cannot be 0
+'''
+
+["planner:1451"]
+error = '''
+Cannot delete or update a parent row: a foreign key constraint fails (%.192s)
+'''
+
+["planner:1452"]
+error = '''
+Cannot add or update a child row: a foreign key constraint fails (%.192s)
 '''
 
 ["planner:1462"]
@@ -2141,9 +2316,19 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["privilege:1045"]
+error = '''
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
+'''
+
+["privilege:1862"]
+error = '''
+Your password has expired. To log in you must change it using a client that supports expired passwords.
 '''
 
 ["privilege:3530"]
@@ -2261,6 +2446,26 @@ error = '''
 Changing schema from '%-.192s' to '%-.192s' is not allowed.
 '''
 
+["schema:1506"]
+error = '''
+Foreign key clause is not yet supported in conjunction with partitioning
+'''
+
+["schema:1822"]
+error = '''
+Failed to add the foreign key constraint. Missing index for constraint '%s' in the referenced table '%s'
+'''
+
+["schema:1824"]
+error = '''
+Failed to open the referenced table '%s'
+'''
+
+["schema:1830"]
+error = '''
+Column '%-.192s' cannot be NOT NULL: needed in a foreign key constraint '%-.192s' SET NULL
+'''
+
 ["schema:1831"]
 error = '''
 Duplicate index '%-.64s' defined on the table '%-.64s.%-.64s'. This is deprecated and will be disallowed in a future release.
@@ -2274,6 +2479,16 @@ User %s does not exist.
 ["schema:3163"]
 error = '''
 User %s already exists.
+'''
+
+["schema:3733"]
+error = '''
+Foreign key '%s' uses virtual column '%s' which is not supported.
+'''
+
+["schema:3734"]
+error = '''
+Failed to add the foreign key constraint. Missing column '%s' for constraint '%s' in the referenced table '%s'
 '''
 
 ["schema:3750"]
@@ -2304,6 +2519,21 @@ Placement policy '%-.192s' already exists
 ["schema:8239"]
 error = '''
 Unknown placement policy '%-.192s'
+'''
+
+["schema:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["schema:8249"]
+error = '''
+Unknown resource group '%-.192s'
+'''
+
+["schema:8250"]
+error = '''
+Resource group feature is disabled
 '''
 
 ["session:8002"]
@@ -2478,7 +2708,7 @@ TTL manager has timed out, pessimistic locks may expire, please commit or rollba
 
 ["tikv:9001"]
 error = '''
-PD server timeout
+PD server timeout: %s
 '''
 
 ["tikv:9002"]
@@ -2616,6 +2846,11 @@ error = '''
 Datetime function: %-.32s field overflow
 '''
 
+["types:1525"]
+error = '''
+Incorrect %-.32s value: '%-.128s'
+'''
+
 ["types:1690"]
 error = '''
 %s value is out of range in '%s'
@@ -2663,12 +2898,12 @@ TiDB does not yet support JSON objects with the key length >= 65536
 
 ["types:8131"]
 error = '''
-Build table: %s global-level stats failed due to missing partition-level stats
+Build global-level stats failed due to missing partition-level stats: %s
 '''
 
 ["types:8244"]
 error = '''
-Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions
+Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions
 '''
 
 ["variable:1193"]

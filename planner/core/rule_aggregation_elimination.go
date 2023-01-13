@@ -38,7 +38,7 @@ type aggregationEliminateChecker struct {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *logicalOptimizeOp) *LogicalProjection {
+func (*aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *logicalOptimizeOp) *LogicalProjection {
 	for _, af := range agg.AggFuncs {
 		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
 		// arguments it accepts are promised to be NOT-NULL.
@@ -76,7 +76,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
 // have unique key column. see detail example in https://github.com/pingcap/tidb/issues/23436
-func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation, opt *logicalOptimizeOp) {
+func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation, opt *logicalOptimizeOp) {
 	for _, af := range agg.AggFuncs {
 		if af.HasDistinct {
 			cols := make([]*expression.Column, 0, len(af.Args))

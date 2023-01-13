@@ -29,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -356,7 +357,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 		requiredRows = omw.maxBatchSize
 	}
 	for requiredRows > 0 {
-		execChk := newFirstChunk(omw.executor)
+		execChk := tryNewCacheChunk(omw.executor)
 		err := Next(ctx, omw.executor, execChk)
 		if err != nil {
 			return task, err
@@ -705,7 +706,7 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLoo
 
 // fetchNextInnerResult collects a chunk of inner results from inner child executor.
 func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *lookUpMergeJoinTask) (beginRow chunk.Row, err error) {
-	task.innerResult = chunk.NewChunkWithCapacity(retTypes(imw.innerExec), imw.ctx.GetSessionVars().MaxChunkSize)
+	task.innerResult = imw.ctx.GetSessionVars().GetNewChunkWithCapacity(retTypes(imw.innerExec), imw.ctx.GetSessionVars().MaxChunkSize, imw.ctx.GetSessionVars().MaxChunkSize, imw.innerExec.base().AllocPool)
 	err = Next(ctx, imw.innerExec, task.innerResult)
 	task.innerIter = chunk.NewIterator4Chunk(task.innerResult)
 	beginRow = task.innerIter.Begin()
@@ -714,13 +715,15 @@ func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *loo
 
 // Close implements the Executor interface.
 func (e *IndexLookUpMergeJoin) Close() error {
+	if e.runtimeStats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.runtimeStats)
+	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 		e.cancelFunc = nil
 	}
 	if e.resultCh != nil {
-		for range e.resultCh {
-		}
+		channel.Clear(e.resultCh)
 		e.resultCh = nil
 	}
 	e.joinChkResourceCh = nil

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -75,11 +76,16 @@ const (
 	// flagEnableOpenTracing is whether to enable opentracing
 	flagEnableOpenTracing = "enable-opentracing"
 	flagSkipCheckPath     = "skip-check-path"
-	flagWithSysTable      = "with-sys-table"
+	flagDryRun            = "dry-run"
+	// TODO used for local test, should be removed later
+	flagSkipAWS             = "skip-aws"
+	flagCloudAPIConcurrency = "cloud-api-concurrency"
+	flagWithSysTable        = "with-sys-table"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
+	defaultCloudAPIConcurrency  = 8
 
 	flagCipherType    = "crypter.method"
 	flagCipherKey     = "crypter.key"
@@ -90,8 +96,21 @@ const (
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
 
-	tidbNewCollationEnabled = "new_collation_enabled"
+	flagFullBackupType = "type"
 )
+
+// FullBackupType type when doing full backup or restore
+type FullBackupType string
+
+const (
+	FullBackupTypeKV  FullBackupType = "kv" // default type
+	FullBackupTypeEBS FullBackupType = "aws-ebs"
+)
+
+// Valid whether the type is valid
+func (t FullBackupType) Valid() bool {
+	return t == FullBackupTypeKV || t == FullBackupTypeEBS
+}
 
 // TLSConfig is the common configuration for TLS connection.
 type TLSConfig struct {
@@ -744,4 +763,30 @@ func normalizePDURL(pd string, useTLS bool) (string, error) {
 // see details https://github.com/pingcap/br/issues/675#issuecomment-753780742
 func gcsObjectNotFound(err error) bool {
 	return errors.Cause(err) == gcs.ErrObjectNotExist // nolint:errorlint
+}
+
+// write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
+// progress of ebs backup. and user can get the progress through `kubectl get job`
+// todo: maybe change to http api later
+func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, total int64, progressFile string) {
+	// remove tmp file
+	defer func() {
+		_ = os.Remove(progressFile)
+	}()
+
+	for progress.GetCurrent() < total {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+			break
+		}
+		cur := progress.GetCurrent()
+		p := float64(cur) / float64(total)
+		p *= 100
+		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		if err != nil {
+			log.Warn("failed to update tmp progress file", zap.Error(err))
+		}
+	}
 }

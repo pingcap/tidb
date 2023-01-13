@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -283,7 +282,7 @@ func (g *defaultGener) gen() interface{} {
 		}
 		return d
 	case types.ETJson:
-		j := new(json.BinaryJSON)
+		j := new(types.BinaryJSON)
 		if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, g.randGen.Int()))); err != nil {
 			panic(err)
 		}
@@ -342,7 +341,7 @@ type constJSONGener struct {
 }
 
 func (g *constJSONGener) gen() interface{} {
-	j := new(json.BinaryJSON)
+	j := new(types.BinaryJSON)
 	if err := j.UnmarshalJSON([]byte(g.jsonStr)); err != nil {
 		panic(err)
 	}
@@ -372,7 +371,7 @@ func (g *decimalJSONGener) gen() interface{} {
 	if err := (&types.MyDecimal{}).FromFloat64(f); err != nil {
 		panic(err)
 	}
-	return json.CreateBinary(f)
+	return types.CreateBinaryJSON(f)
 }
 
 type jsonStringGener struct {
@@ -384,7 +383,7 @@ func newJSONStringGener() *jsonStringGener {
 }
 
 func (g *jsonStringGener) gen() interface{} {
-	j := new(json.BinaryJSON)
+	j := new(types.BinaryJSON)
 	if err := j.UnmarshalJSON([]byte(fmt.Sprintf(`{"key":%v}`, g.randGen.Int()))); err != nil {
 		panic(err)
 	}
@@ -429,7 +428,7 @@ func newJSONTimeGener() *jsonTimeGener {
 
 func (g *jsonTimeGener) gen() interface{} {
 	tm := types.NewTime(getRandomTime(g.randGen.Rand), mysql.TypeDatetime, types.DefaultFsp)
-	return json.CreateBinary(tm.String())
+	return types.CreateBinaryJSON(tm)
 }
 
 type rangeDurationGener struct {
@@ -1225,7 +1224,7 @@ func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen
 		case types.ETDuration:
 			col.AppendDuration(v.(types.Duration))
 		case types.ETJson:
-			col.AppendJSON(v.(json.BinaryJSON))
+			col.AppendJSON(v.(types.BinaryJSON))
 		case types.ETString:
 			col.AppendString(v.(string))
 		}
@@ -1651,7 +1650,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					require.NoErrorf(t, err, commentf(i))
 					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {
-						cmp := json.CompareBinary(val, output.GetJSON(i))
+						cmp := types.CompareBinaryJSON(val, output.GetJSON(i))
 						require.Zero(t, cmp, commentf(i))
 					}
 					i++

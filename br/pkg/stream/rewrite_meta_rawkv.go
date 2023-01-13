@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -337,6 +336,11 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 		}
 	}
 
+	// Force to disable TTL_ENABLE when restore
+	if newTableInfo.TTLInfo != nil {
+		newTableInfo.TTLInfo.Enable = false
+	}
+
 	if sr.AfterTableRewritten != nil {
 		sr.AfterTableRewritten(false, newTableInfo)
 	}
@@ -452,11 +456,18 @@ func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([
 			return rewriteResult{}, errors.Trace(err)
 		}
 
-		if rawWriteCFValue.t == WriteTypeDelete {
+		if rawWriteCFValue.IsDelete() {
 			return rewriteResult{
 				NewValue:    value,
 				NeedRewrite: true,
 				Deleted:     true,
+			}, nil
+		}
+		if rawWriteCFValue.IsRollback() {
+			return rewriteResult{
+				NewValue:    value,
+				NeedRewrite: true,
+				Deleted:     false,
 			}, nil
 		}
 		if !rawWriteCFValue.HasShortValue() {
@@ -468,6 +479,9 @@ func (sr *SchemasReplace) rewriteValueV2(value []byte, cf string, rewrite func([
 
 		shortValue, needWrite, err := rewrite(rawWriteCFValue.GetShortValue())
 		if err != nil {
+			log.Info("failed to rewrite short value",
+				zap.ByteString("write-type", []byte{rawWriteCFValue.GetWriteType()}),
+				zap.Int("short-value-len", len(rawWriteCFValue.GetShortValue())))
 			return rewriteResult{}, errors.Trace(err)
 		}
 		if !needWrite {
@@ -499,8 +513,8 @@ func (sr *SchemasReplace) rewriteValue(
 func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
 	// skip mDDLJob
 
-	if !strings.HasPrefix(string(e.Key), "mDB") {
-		if cf == DefaultCF && strings.HasPrefix(string(e.Key), "mDDLJobH") { // mDDLJobHistory
+	if !IsMetaDBKey(e.Key) {
+		if cf == DefaultCF && IsMetaDDLJobHistoryKey(e.Key) { // mDDLJobHistory
 			job := &model.Job{}
 			if err := job.Decode(e.Value); err != nil {
 				log.Debug("failed to decode the job", zap.String("error", err.Error()), zap.String("job", string(e.Value)))

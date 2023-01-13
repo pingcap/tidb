@@ -91,6 +91,12 @@ const (
 	RequestSourceType
 	// ReplicaReadAdjuster set the adjust function of cop requsts.
 	ReplicaReadAdjuster
+	// ScanBatchSize set the iter scan batch size.
+	ScanBatchSize
+	// TxnSource set the source of this transaction.
+	TxnSource
+	// ResourceGroupName set the bind resource group name.
+	ResourceGroupName
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -163,4 +169,6 @@ const (
 	InternalTxnBR = InternalTxnTools
 	// InternalTxnTrace handles the trace statement.
 	InternalTxnTrace = "Trace"
+	// InternalTxnTTL is the type of TTL usage
+	InternalTxnTTL = "TTL"
 )

@@ -95,6 +95,8 @@ var (
 	ErrReorgPanic = ClassDDL.NewStd(mysql.ErrReorgPanic)
 	// ErrFkColumnCannotDrop is used when foreign key column can't be dropped.
 	ErrFkColumnCannotDrop = ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
+	// ErrFkColumnCannotDropChild is used when foreign key column can't be dropped.
+	ErrFkColumnCannotDropChild = ClassDDL.NewStd(mysql.ErrFkColumnCannotDropChild)
 	// ErrFKIncompatibleColumns is used when foreign key column type is incompatible.
 	ErrFKIncompatibleColumns = ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
 	// ErrOnlyOnRangeListPartition is used when the partition type is range list.
@@ -367,6 +369,8 @@ var (
 	ErrDependentByFunctionalIndex = ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// ErrFunctionalIndexOnBlob when the expression of expression index returns blob or text.
 	ErrFunctionalIndexOnBlob = ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
+	// ErrDependentByPartitionFunctional returns when the dropped column depends by expression partition.
+	ErrDependentByPartitionFunctional = ClassDDL.NewStd(mysql.ErrDependentByPartitionFunctional)
 
 	// ErrUnsupportedAlterTableSpec means we don't support this alter table specification (i.e. unknown)
 	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "Unsupported/unknown ALTER TABLE specification"), nil))
@@ -389,6 +393,8 @@ var (
 	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
 	// ErrDDLSetting returns when failing to enable/disable DDL
 	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
+	// ErrIngestFailed returns when the DDL ingest job is failed.
+	ErrIngestFailed = ClassDDL.NewStd(mysql.ErrIngestFailed)
 
 	// ErrColumnInChange indicates there is modification on the column in parallel.
 	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)
@@ -401,4 +407,33 @@ var (
 
 	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
 	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER TiFlash settings for tables not supported by TiFlash: table contains %s charset"), nil))
+
+	// ErrDropIndexNeededInForeignKey returns when drop index which is needed in foreign key.
+	ErrDropIndexNeededInForeignKey = ClassDDL.NewStd(mysql.ErrDropIndexNeededInForeignKey)
+	// ErrForeignKeyCannotDropParent returns when drop table which has foreign key referred.
+	ErrForeignKeyCannotDropParent = ClassDDL.NewStd(mysql.ErrForeignKeyCannotDropParent)
+	// ErrTruncateIllegalForeignKey returns when truncate table which has foreign key referred.
+	ErrTruncateIllegalForeignKey = ClassDDL.NewStd(mysql.ErrTruncateIllegalForeignKey)
+	// ErrForeignKeyColumnCannotChange returns when change column which used by foreign key.
+	ErrForeignKeyColumnCannotChange = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChange)
+	// ErrForeignKeyColumnCannotChangeChild returns when change child table's column which used by foreign key.
+	ErrForeignKeyColumnCannotChangeChild = ClassDDL.NewStd(mysql.ErrForeignKeyColumnCannotChangeChild)
+	// ErrNoReferencedRow2 returns when there are rows in child table don't have related foreign key value in refer table.
+	ErrNoReferencedRow2 = ClassDDL.NewStd(mysql.ErrNoReferencedRow2)
+
+	// ErrUnsupportedColumnInTTLConfig returns when a column type is not expected in TTL config
+	ErrUnsupportedColumnInTTLConfig = ClassDDL.NewStd(mysql.ErrUnsupportedColumnInTTLConfig)
+	// ErrTTLColumnCannotDrop returns when a column is dropped while referenced by TTL config
+	ErrTTLColumnCannotDrop = ClassDDL.NewStd(mysql.ErrTTLColumnCannotDrop)
+	// ErrSetTTLOptionForNonTTLTable returns when the `TTL_ENABLE` or `TTL_JOB_INTERVAL` option is set on a non-TTL table
+	ErrSetTTLOptionForNonTTLTable = ClassDDL.NewStd(mysql.ErrSetTTLOptionForNonTTLTable)
+	// ErrTempTableNotAllowedWithTTL returns when setting TTL config for a temp table
+	ErrTempTableNotAllowedWithTTL = ClassDDL.NewStd(mysql.ErrTempTableNotAllowedWithTTL)
+	// ErrUnsupportedTTLReferencedByFK returns when the TTL config is set for a table referenced by foreign key
+	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
+	// ErrUnsupportedPrimaryKeyTypeWithTTL returns when create or alter a table with TTL options but the primary key is not supported
+	ErrUnsupportedPrimaryKeyTypeWithTTL = ClassDDL.NewStd(mysql.ErrUnsupportedPrimaryKeyTypeWithTTL)
+
+	// ErrNotSupportedYet returns when tidb does not support this feature.
+	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)
 )

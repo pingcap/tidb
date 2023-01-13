@@ -39,7 +39,7 @@ func TestBuildTasksWithoutBuckets(t *testing.T) {
 	}()
 
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
@@ -168,7 +168,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'c'}, {'g'}, {'k'}, {'n'}}, regionIDs[0])
 	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'t'}, {'x'}}, regionIDs[1])
 	cluster.SplitRegionBuckets(regionIDs[2], [][]byte{{'x'}, {}}, regionIDs[2])
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
@@ -363,7 +363,7 @@ func TestSplitRegionRanges(t *testing.T) {
 	}()
 
 	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
@@ -371,43 +371,43 @@ func TestSplitRegionRanges(t *testing.T) {
 
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
-	ranges, err := cache.SplitRegionRanges(bo, buildKeyRanges("a", "c"))
+	ranges, err := cache.SplitRegionRanges(bo, BuildKeyRanges("a", "c"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "a", "c")
 
-	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("h", "y"))
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("h", "y"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 3)
 	rangeEqual(t, ranges, "h", "n", "n", "t", "t", "y")
 
-	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("s", "z"))
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("s", "z"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 2)
 	rangeEqual(t, ranges, "s", "t", "t", "z")
 
-	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("s", "s"))
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("s", "s"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "s", "s")
 
-	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("t", "t"))
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("t", "t"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "t", "t")
 
-	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("t", "u"))
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("t", "u"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "t", "u")
 
-	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("u", "z"))
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("u", "z"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "u", "z")
 
 	// min --> max
-	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("a", "z"))
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("a", "z"))
 	require.NoError(t, err)
 	require.Len(t, ranges, 4)
 	rangeEqual(t, ranges, "a", "g", "g", "n", "n", "t", "t", "z")
@@ -425,7 +425,7 @@ func TestRebuild(t *testing.T) {
 	}()
 
 	storeID, regionIDs, peerIDs := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
@@ -454,19 +454,8 @@ func TestRebuild(t *testing.T) {
 	taskEqual(t, tasks[0], regionIDs[2], 0, "q", "z")
 }
 
-func buildKeyRanges(keys ...string) []kv.KeyRange {
-	var ranges []kv.KeyRange
-	for i := 0; i < len(keys); i += 2 {
-		ranges = append(ranges, kv.KeyRange{
-			StartKey: []byte(keys[i]),
-			EndKey:   []byte(keys[i+1]),
-		})
-	}
-	return ranges
-}
-
 func buildCopRanges(keys ...string) *KeyRanges {
-	return NewKeyRanges(buildKeyRanges(keys...))
+	return NewKeyRanges(BuildKeyRanges(keys...))
 }
 
 func taskEqual(t *testing.T, task *copTask, regionID, bucketsVer uint64, keys ...string) {
@@ -499,7 +488,7 @@ func TestBuildPagingTasks(t *testing.T) {
 	}()
 
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
@@ -545,54 +534,54 @@ func TestCalculateRetry(t *testing.T) {
 
 	// split in one range
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("b", "c")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("b", "c")[0]
 		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), false)
 		rangeEqual(t, toRange(retry), "b", "c", "e", "g")
 	}
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("e", "f")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("e", "f")[0]
 		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
 		rangeEqual(t, toRange(retry), "a", "c", "e", "f")
 	}
 
 	// across ranges
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("b", "f")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("b", "f")[0]
 		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), false)
 		rangeEqual(t, toRange(retry), "b", "c", "e", "g")
 	}
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("b", "f")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("b", "f")[0]
 		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
 		rangeEqual(t, toRange(retry), "a", "c", "e", "f")
 	}
 
 	// exhaust the ranges
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("a", "g")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("a", "g")[0]
 		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), false)
 		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
 	}
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("a", "g")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("a", "g")[0]
 		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
 		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
 	}
 
 	// nil range
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
+		ranges := BuildKeyRanges("a", "c", "e", "g")
 		retry := worker.calculateRetry(NewKeyRanges(ranges), nil, false)
 		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
 	}
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
+		ranges := BuildKeyRanges("a", "c", "e", "g")
 		retry := worker.calculateRetry(NewKeyRanges(ranges), nil, true)
 		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
 	}
@@ -603,55 +592,129 @@ func TestCalculateRemain(t *testing.T) {
 
 	// split in one range
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("a", "b")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("a", "b")[0]
 		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), false)
 		rangeEqual(t, toRange(remain), "b", "c", "e", "g")
 	}
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("f", "g")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("f", "g")[0]
 		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
 		rangeEqual(t, toRange(remain), "a", "c", "e", "f")
 	}
 
 	// across ranges
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("a", "f")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("a", "f")[0]
 		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), false)
 		rangeEqual(t, toRange(remain), "f", "g")
 	}
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("b", "g")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("b", "g")[0]
 		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
 		rangeEqual(t, toRange(remain), "a", "b")
 	}
 
 	// exhaust the ranges
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("a", "g")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("a", "g")[0]
 		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), false)
 		require.Equal(t, remain.Len(), 0)
 	}
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
-		split := buildKeyRanges("a", "g")[0]
+		ranges := BuildKeyRanges("a", "c", "e", "g")
+		split := BuildKeyRanges("a", "g")[0]
 		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
 		require.Equal(t, remain.Len(), 0)
 	}
 
 	// nil range
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
+		ranges := BuildKeyRanges("a", "c", "e", "g")
 		remain := worker.calculateRemain(NewKeyRanges(ranges), nil, false)
 		rangeEqual(t, toRange(remain), "a", "c", "e", "g")
 	}
 	{
-		ranges := buildKeyRanges("a", "c", "e", "g")
+		ranges := BuildKeyRanges("a", "c", "e", "g")
 		remain := worker.calculateRemain(NewKeyRanges(ranges), nil, true)
 		rangeEqual(t, toRange(remain), "a", "c", "e", "g")
 	}
+}
+
+func TestBasicSmallTaskConc(t *testing.T) {
+	require.False(t, isSmallTask(&copTask{RowCountHint: -1}))
+	require.False(t, isSmallTask(&copTask{RowCountHint: 0}))
+	require.True(t, isSmallTask(&copTask{RowCountHint: 1}))
+	require.True(t, isSmallTask(&copTask{RowCountHint: 6}))
+	require.True(t, isSmallTask(&copTask{RowCountHint: CopSmallTaskRow}))
+	require.False(t, isSmallTask(&copTask{RowCountHint: CopSmallTaskRow + 1}))
+	_, conc := smallTaskConcurrency([]*copTask{})
+	require.GreaterOrEqual(t, conc, 0)
+}
+
+func TestBuildCopTasksWithRowCountHint(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+	_, _, _ = testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{}
+	req.FixedRowCountHint = []int{1, 1, 3, CopSmallTaskRow}
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z"), req, nil)
+	require.Nil(t, err)
+	require.Equal(t, len(tasks), 4)
+	// task[0] ["a"-"c", "d"-"e"]
+	require.Equal(t, tasks[0].RowCountHint, 2)
+	// task[1] ["h"-"n"]
+	require.Equal(t, tasks[1].RowCountHint, 3)
+	// task[2] ["n"-"t"]
+	require.Equal(t, tasks[2].RowCountHint, 3)
+	// task[3] ["t"-"x", "y"-"z"]
+	require.Equal(t, tasks[3].RowCountHint, 3+CopSmallTaskRow)
+	_, conc := smallTaskConcurrency(tasks)
+	require.Equal(t, conc, 1)
+
+	req.FixedRowCountHint = []int{1, 1, 3, 3}
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z"), req, nil)
+	require.Nil(t, err)
+	require.Equal(t, len(tasks), 4)
+	// task[0] ["a"-"c", "d"-"e"]
+	require.Equal(t, tasks[0].RowCountHint, 2)
+	// task[1] ["h"-"n"]
+	require.Equal(t, tasks[1].RowCountHint, 3)
+	// task[2] ["n"-"t"]
+	require.Equal(t, tasks[2].RowCountHint, 3)
+	// task[3] ["t"-"x", "y"-"z"]
+	require.Equal(t, tasks[3].RowCountHint, 6)
+	_, conc = smallTaskConcurrency(tasks)
+	require.Equal(t, conc, 2)
+
+	// cross-region long range
+	req.FixedRowCountHint = []int{10}
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), req, nil)
+	require.Nil(t, err)
+	require.Equal(t, len(tasks), 4)
+	// task[0] ["a"-"g"]
+	require.Equal(t, tasks[0].RowCountHint, 10)
+	// task[1] ["g"-"n"]
+	require.Equal(t, tasks[1].RowCountHint, 10)
+	// task[2] ["n"-"t"]
+	require.Equal(t, tasks[2].RowCountHint, 10)
+	// task[3] ["t"-"z"]
+	require.Equal(t, tasks[3].RowCountHint, 10)
 }

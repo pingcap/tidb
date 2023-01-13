@@ -11,6 +11,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -349,4 +350,162 @@ func TestRewriteFileKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511)), start)
 	require.Equal(t, codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(511).PrefixNext()), end)
+}
+
+func newPeerMeta(
+	regionId uint64,
+	peerId uint64,
+	storeId uint64,
+	startKey []byte,
+	endKey []byte,
+	lastLogTerm uint64,
+	lastIndex uint64,
+	commitIndex uint64,
+	version uint64,
+	tombstone bool,
+) *restore.RecoverRegion {
+	return &restore.RecoverRegion{
+		&recover_data.RegionMeta{
+			RegionId:    regionId,
+			PeerId:      peerId,
+			StartKey:    startKey,
+			EndKey:      endKey,
+			LastLogTerm: lastLogTerm,
+			LastIndex:   lastIndex,
+			CommitIndex: commitIndex,
+			Version:     version,
+			Tombstone:   tombstone,
+		},
+		storeId,
+	}
+}
+
+func newRecoverRegionInfo(r *restore.RecoverRegion) *restore.RecoverRegionInfo {
+	return &restore.RecoverRegionInfo{
+		RegionVersion: r.Version,
+		RegionId:      r.RegionId,
+		StartKey:      restore.PrefixStartKey(r.StartKey),
+		EndKey:        restore.PrefixEndKey(r.EndKey),
+		TombStone:     r.Tombstone,
+	}
+}
+
+func TestSortRecoverRegions(t *testing.T) {
+	selectedPeer1 := newPeerMeta(9, 11, 2, []byte("aa"), nil, 2, 0, 0, 0, false)
+	selectedPeer2 := newPeerMeta(19, 22, 3, []byte("bbb"), nil, 2, 1, 0, 1, false)
+	selectedPeer3 := newPeerMeta(29, 30, 1, []byte("c"), nil, 2, 1, 1, 2, false)
+	regions := map[uint64][]*restore.RecoverRegion{
+		9: {
+			// peer 11 should be selected because of log term
+			newPeerMeta(9, 10, 1, []byte("a"), nil, 1, 1, 1, 1, false),
+			selectedPeer1,
+			newPeerMeta(9, 12, 3, []byte("aaa"), nil, 0, 0, 0, 0, false),
+		},
+		19: {
+			// peer 22 should be selected because of log index
+			newPeerMeta(19, 20, 1, []byte("b"), nil, 1, 1, 1, 1, false),
+			newPeerMeta(19, 21, 2, []byte("bb"), nil, 2, 0, 0, 0, false),
+			selectedPeer2,
+		},
+		29: {
+			// peer 30 should be selected because of log index
+			selectedPeer3,
+			newPeerMeta(29, 31, 2, []byte("cc"), nil, 2, 0, 0, 0, false),
+			newPeerMeta(29, 32, 3, []byte("ccc"), nil, 2, 1, 0, 0, false),
+		},
+	}
+	regionsInfos := restore.SortRecoverRegions(regions)
+	expectRegionInfos := []*restore.RecoverRegionInfo{
+		newRecoverRegionInfo(selectedPeer3),
+		newRecoverRegionInfo(selectedPeer2),
+		newRecoverRegionInfo(selectedPeer1),
+	}
+	require.Equal(t, expectRegionInfos, regionsInfos)
+}
+
+func TestCheckConsistencyAndValidPeer(t *testing.T) {
+	//key space is continuous
+	validPeer1 := newPeerMeta(9, 11, 2, []byte(""), []byte("bb"), 2, 0, 0, 0, false)
+	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
+	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 1, 2, false)
+
+	validRegionInfos := []*restore.RecoverRegionInfo{
+		newRecoverRegionInfo(validPeer1),
+		newRecoverRegionInfo(validPeer2),
+		newRecoverRegionInfo(validPeer3),
+	}
+
+	validPeer, err := restore.CheckConsistencyAndValidPeer(validRegionInfos)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(validPeer))
+	var regions = make(map[uint64]struct{}, 3)
+	regions[9] = struct{}{}
+	regions[19] = struct{}{}
+	regions[29] = struct{}{}
+
+	require.Equal(t, regions, validPeer)
+
+	//key space is not continuous
+	invalidPeer1 := newPeerMeta(9, 11, 2, []byte("aa"), []byte("cc"), 2, 0, 0, 0, false)
+	invalidPeer2 := newPeerMeta(19, 22, 3, []byte("dd"), []byte("cc"), 2, 1, 0, 1, false)
+	invalidPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte("dd"), 2, 1, 1, 2, false)
+
+	invalidRegionInfos := []*restore.RecoverRegionInfo{
+		newRecoverRegionInfo(invalidPeer1),
+		newRecoverRegionInfo(invalidPeer2),
+		newRecoverRegionInfo(invalidPeer3),
+	}
+
+	_, err = restore.CheckConsistencyAndValidPeer(invalidRegionInfos)
+	require.Error(t, err)
+	require.Regexp(t, ".*invalid restore range.*", err.Error())
+}
+
+func TestLeaderCandidates(t *testing.T) {
+	//key space is continuous
+	validPeer1 := newPeerMeta(9, 11, 2, []byte(""), []byte("bb"), 2, 1, 0, 0, false)
+	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
+	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 0, 2, false)
+
+	peers := []*restore.RecoverRegion{
+		validPeer1,
+		validPeer2,
+		validPeer3,
+	}
+
+	candidates, err := restore.LeaderCandidates(peers)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(candidates))
+}
+
+func TestSelectRegionLeader(t *testing.T) {
+	validPeer1 := newPeerMeta(9, 11, 2, []byte(""), []byte("bb"), 2, 1, 0, 0, false)
+	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
+	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 0, 2, false)
+
+	peers := []*restore.RecoverRegion{
+		validPeer1,
+		validPeer2,
+		validPeer3,
+	}
+	// init store banlance score all is 0
+	storeBalanceScore := make(map[uint64]int, len(peers))
+	leader := restore.SelectRegionLeader(storeBalanceScore, peers)
+	require.Equal(t, validPeer1, leader)
+
+	// change store banlance store
+	storeBalanceScore[2] = 3
+	storeBalanceScore[3] = 2
+	storeBalanceScore[1] = 1
+	leader = restore.SelectRegionLeader(storeBalanceScore, peers)
+	require.Equal(t, validPeer3, leader)
+
+	// one peer
+	peer := []*restore.RecoverRegion{
+		validPeer3,
+	}
+	// init store banlance score all is 0
+	storeScore := make(map[uint64]int, len(peer))
+	leader = restore.SelectRegionLeader(storeScore, peer)
+	require.Equal(t, validPeer3, leader)
 }

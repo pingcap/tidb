@@ -137,7 +137,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var policyID int64
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if policyID != 0 {
 			return
 		}
@@ -147,6 +147,7 @@ func TestPlacementPolicy(t *testing.T) {
 			return
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 
 	tk.MustExec("create placement policy x " +
@@ -2060,8 +2061,7 @@ func TestPDFail(t *testing.T) {
 	checkAllBundlesNotChange(t, existBundles)
 
 	// exchange partition
-	tk.MustExec("alter table tp exchange partition p1 with table t1")
-	require.True(t, infosync.ErrHTTPServiceError.Equal(err))
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t1", mysql.ErrTablesDifferentMetadata)
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))

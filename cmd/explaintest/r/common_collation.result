@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 drop table if exists t;
 create table t(a char(10) collate utf8mb4_unicode_ci, b char(10) collate utf8mb4_general_ci);
 insert into t values ('啊', '撒旦');

@@ -19,7 +19,6 @@ package expression
 import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 )
@@ -588,7 +587,7 @@ func (b *builtinInJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			}
 			arg0 := buf0.GetJSON(i)
 			arg1 := buf1.GetJSON(i)
-			compareResult = json.CompareBinary(arg0, arg1)
+			compareResult = types.CompareBinaryJSON(arg0, arg1)
 			if compareResult == 0 {
 				result.SetNull(i, false)
 				r64s[i] = 1

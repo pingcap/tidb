@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
 
@@ -32,6 +33,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
@@ -47,6 +49,7 @@ func TestRunMain(t *testing.T) {
 }
 
 func TestSetGlobalVars(t *testing.T) {
+	defer view.Stop()
 	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
 	require.Equal(t, "1073741824", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
 	require.NotEqual(t, "test", variable.GetSysVar(variable.Version).Value)

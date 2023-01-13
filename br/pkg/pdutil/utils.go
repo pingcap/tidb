@@ -9,8 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -28,41 +26,8 @@ type UndoFunc func(context.Context) error
 var Nop UndoFunc = func(context.Context) error { return nil }
 
 const (
-	resetTSURL       = "/pd/api/v1/admin/reset-ts"
 	placementRuleURL = "/pd/api/v1/config/rules"
 )
-
-// ResetTS resets the timestamp of PD to a bigger value.
-func ResetTS(ctx context.Context, pdAddr string, ts uint64, tlsConf *tls.Config) error {
-	payload, err := json.Marshal(struct {
-		TSO string `json:"tso,omitempty"`
-	}{TSO: strconv.FormatUint(ts, 10)})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cli := httputil.NewClient(tlsConf)
-	prefix := "http://"
-	if tlsConf != nil {
-		prefix = "https://"
-	}
-	reqURL := prefix + pdAddr + resetTSURL
-	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(string(payload)))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := cli.Do(req)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusForbidden {
-		buf := new(bytes.Buffer)
-		_, _ = buf.ReadFrom(resp.Body)
-		return errors.Annotatef(berrors.ErrPDInvalidResponse, "pd resets TS failed: req=%v, resp=%v, err=%v", string(payload), buf.String(), err)
-	}
-	return nil
-}
 
 // GetPlacementRules return the current placement rules.
 func GetPlacementRules(ctx context.Context, pdAddr string, tlsConf *tls.Config) ([]pdtypes.Rule, error) {

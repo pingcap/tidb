@@ -77,3 +77,17 @@ func TestConcurrentBitmapUniqueSetter(t *testing.T) {
 	assert.Less(t, clearCounter, uint64(loopCount))
 	assert.Equal(t, setterCounter, clearCounter+1)
 }
+
+// TestResetConcurrentBitmap test the reset of concurrentBitmap.
+func TestResetConcurrentBitmap(t *testing.T) {
+	bm := NewConcurrentBitmap(32)
+	bm.Set(1)
+	bm.Set(3)
+	bm.Set(7)
+	bm.Set(16)
+	bm.Reset(8)
+	assert.Equal(t, bm.bitLen, 8)
+	assert.Equal(t, bm.UnsafeIsSet(1), false)
+	assert.Equal(t, bm.UnsafeIsSet(3), false)
+	assert.Equal(t, bm.UnsafeIsSet(7), false)
+}

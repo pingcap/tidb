@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -34,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -58,7 +59,7 @@ var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, e
 // RewriteAstExpr rewrites ast expression directly.
 // Note: initialized in planner/core
 // import expression and planner/core together to use EvalAstExpr
-var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice) (Expression, error)
+var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice, allowCastArray bool) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
@@ -126,7 +127,7 @@ type Expression interface {
 	EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
+	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -165,6 +166,9 @@ type Expression interface {
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
 	resolveIndicesByVirtualExpr(schema *Schema) bool
 
+	// RemapColumn remaps columns with provided mapping and returns new expression
+	RemapColumn(map[int64]*Column) (Expression, error)
+
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
@@ -177,6 +181,9 @@ type Expression interface {
 	// Column: ColumnFlag+encoded value
 	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
 	HashCode(sc *stmtctx.StatementContext) []byte
+
+	// MemoryUsage return the memory usage of Expression
+	MemoryUsage() int64
 }
 
 // CNFExprs stands for a CNF expression.
@@ -754,6 +761,19 @@ type Assignment struct {
 	LazyErr error
 }
 
+// MemoryUsage return the memory usage of Assignment
+func (a *Assignment) MemoryUsage() (sum int64) {
+	if a == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + a.ColName.MemoryUsage() + size.SizeOfInterface*2
+	if a.Expr != nil {
+		sum += a.Expr.MemoryUsage()
+	}
+	return
+}
+
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.
 type VarAssignment struct {
 	Name        string
@@ -796,6 +816,10 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: %v affects null check"))
+	}
+	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
+		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
 		return expr
 	}
 	return evaluateExprWithNull(ctx, schema, expr)
@@ -820,6 +844,71 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		}
 	}
 	return expr
+}
+
+// evaluateExprWithNullInNullRejectCheck sets columns in schema as null and calculate the final result of the scalar function.
+// If the Expression is a non-constant value, it means the result is unknown.
+// The returned bool values indicates whether the value is influenced by the Null Constant transformed from schema column
+// when the value is Null Constant.
+func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schema, expr Expression) (Expression, bool) {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		args := make([]Expression, len(x.GetArgs()))
+		nullFromSets := make([]bool, len(x.GetArgs()))
+		for i, arg := range x.GetArgs() {
+			args[i], nullFromSets[i] = evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+		}
+		allArgsNullFromSet := true
+		for i := range args {
+			if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && !nullFromSets[i] {
+				allArgsNullFromSet = false
+				break
+			}
+		}
+
+		// If one of the args of `AND` and `OR` are Null Constant from the column schema, and the another argument is Constant, then we should keep it.
+		// Otherwise, we shouldn't let Null Constant which affected by the column schema participate in computing in `And` and `OR`
+		// due to the result of `AND` and `OR` are uncertain if one of the arguments is NULL.
+		if x.FuncName.L == ast.LogicAnd || x.FuncName.L == ast.LogicOr {
+			hasNonConstantArg := false
+			for _, arg := range args {
+				if _, ok := arg.(*Constant); !ok {
+					hasNonConstantArg = true
+					break
+				}
+			}
+			if hasNonConstantArg {
+				for i := range args {
+					if cons, ok := args[i].(*Constant); ok && cons.Value.IsNull() && nullFromSets[i] {
+						if x.FuncName.L == ast.LogicAnd {
+							args[i] = NewOne()
+							break
+						}
+						if x.FuncName.L == ast.LogicOr {
+							args[i] = NewZero()
+							break
+						}
+					}
+				}
+			}
+		}
+
+		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		cons, ok := c.(*Constant)
+		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
+		// then we think the result Null Constant is also affected by the column schema
+		return c, ok && cons.Value.IsNull() && allArgsNullFromSet
+	case *Column:
+		if !schema.Contains(x) {
+			return x, false
+		}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
+	case *Constant:
+		if x.DeferredExpr != nil {
+			return FoldConstant(x), false
+		}
+	}
+	return expr, false
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
@@ -909,7 +998,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := RewriteAstExpr(ctx, expr, mockSchema, names)
+			e, err := RewriteAstExpr(ctx, expr, mockSchema, names, true)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -982,8 +1071,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
-		// FIXME: JSONUnquote is incompatible with Coprocessor
-		ast.JSONUnquote,
+		ast.JSONUnquote, ast.JSONContains, ast.JSONValid,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
@@ -1021,6 +1109,12 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
 			return true
 		}
+	case ast.Regexp, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr, ast.RegexpReplace:
+		funcCharset, funcCollation := sf.Function.CharsetAndCollation()
+		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
+			return false
+		}
+		return true
 	}
 	return false
 }
@@ -1056,10 +1150,10 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.Repeat,
+		ast.JSONLength, ast.JSONExtract, ast.JSONUnquote, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
-		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
+		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
 		ast.TimeToSec:
 		switch function.Function.PbCode() {
@@ -1068,6 +1162,18 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_IfNullDuration,
 			tipb.ScalarFuncSig_IfDuration,
 			tipb.ScalarFuncSig_CaseWhenDuration:
+			return false
+		case tipb.ScalarFuncSig_JsonUnquoteSig:
+			// TiFlash json_unquote now only supports json string generated by cast(json as string)
+			if childFunc, ok := function.GetArgs()[0].(*ScalarFunction); ok {
+				return childFunc.Function.PbCode() == tipb.ScalarFuncSig_CastJsonAsString
+			}
+			return false
+		}
+		return true
+	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr, ast.RegexpReplace:
+		funcCharset, funcCollation := function.Function.CharsetAndCollation()
+		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
 			return false
 		}
 		return true
@@ -1100,7 +1206,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
 			return function.RetType.IsDecimalValid()
 		case tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastTimeAsString,
-			tipb.ScalarFuncSig_CastStringAsString /*, tipb.ScalarFuncSig_CastDurationAsString, tipb.ScalarFuncSig_CastJsonAsString*/ :
+			tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastJsonAsString /*, tipb.ScalarFuncSig_CastDurationAsString*/ :
 			return true
 		case tipb.ScalarFuncSig_CastDecimalAsTime, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime, tipb.ScalarFuncSig_CastTimeAsTime,
 			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
@@ -1132,7 +1238,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Extract:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_ExtractDatetime:
+		case tipb.ScalarFuncSig_ExtractDatetime, tipb.ScalarFuncSig_ExtractDuration:
 			return true
 		}
 	case ast.Replace:
@@ -1149,7 +1255,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
-	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
+	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase, ast.Space:
 		return true
 	case ast.Sysdate:
 		return true
@@ -1161,7 +1267,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
-	case ast.Hex:
+	case ast.Hex, ast.Unhex, ast.Bin:
 		return true
 	case ast.GetFormat:
 		return true
@@ -1252,12 +1358,15 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
 			})
 		}
+		storageName := storeType.Name()
+		if storeType == kv.UnSpecified {
+			storageName = "storage layer"
+		}
+		warnErr := errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
 		if pc.sc.InExplainStmt {
-			storageName := storeType.Name()
-			if storeType == kv.UnSpecified {
-				storageName = "storage layer"
-			}
-			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now."))
+			pc.sc.AppendWarning(warnErr)
+		} else {
+			pc.sc.AppendExtraWarning(warnErr)
 		}
 		return false
 	}
@@ -1287,14 +1396,20 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
+			warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
 			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'."))
+				pc.sc.AppendWarning(warnErr)
+			} else {
+				pc.sc.AppendExtraWarning(warnErr)
 			}
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
+				warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
 				if pc.sc.InExplainStmt {
-					pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "')."))
+					pc.sc.AppendWarning(warnErr)
+				} else {
+					pc.sc.AppendExtraWarning(warnErr)
 				}
 				return false
 			}
@@ -1459,6 +1574,10 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 			ft = types.NewFieldType(mysql.TypeDouble)
 		case types.KindString:
 			ft = types.NewFieldType(mysql.TypeVarString)
+		case types.KindMysqlTime:
+			ft = types.NewFieldType(mysql.TypeTimestamp)
+		case types.KindBytes:
+			ft = types.NewFieldType(mysql.TypeBlob)
 		default:
 			exprs[i] = nil
 			continue

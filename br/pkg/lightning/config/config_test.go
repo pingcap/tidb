@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -280,57 +280,64 @@ func TestAdjustWillBatchImportRatioInvalid(t *testing.T) {
 
 func TestAdjustSecuritySection(t *testing.T) {
 	testCases := []struct {
-		input       string
-		expectedCA  string
-		expectedTLS string
+		input          string
+		expectedCA     string
+		hasTLS         bool
+		fallback2NoTLS bool
 	}{
 		{
-			input:       ``,
-			expectedCA:  "",
-			expectedTLS: "false",
+			input:          ``,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
 				[security]
 			`,
-			expectedCA:  "",
-			expectedTLS: "false",
-		},
-		{
-			input: `
-				[security]
-				ca-path = "/path/to/ca.pem"
-			`,
-			expectedCA:  "/path/to/ca.pem",
-			expectedTLS: "cluster",
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
 				[security]
 				ca-path = "/path/to/ca.pem"
-				[tidb.security]
 			`,
-			expectedCA:  "",
-			expectedTLS: "false",
+			expectedCA:     "/path/to/ca.pem",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
 				[security]
 				ca-path = "/path/to/ca.pem"
 				[tidb.security]
-				ca-path = "/path/to/ca2.pem"
 			`,
-			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: "cluster",
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
 				[security]
+				ca-path = "/path/to/ca.pem"
 				[tidb.security]
 				ca-path = "/path/to/ca2.pem"
 			`,
-			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: "cluster",
+			expectedCA:     "/path/to/ca2.pem",
+			hasTLS:         false,
+			fallback2NoTLS: false,
+		},
+		{
+			input: `
+				[security]
+				[tidb.security]
+				ca-path = "/path/to/ca2.pem"
+			`,
+			expectedCA:     "/path/to/ca2.pem",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
@@ -339,8 +346,20 @@ func TestAdjustSecuritySection(t *testing.T) {
 				tls = "skip-verify"
 				[tidb.security]
 			`,
-			expectedCA:  "",
-			expectedTLS: "skip-verify",
+			expectedCA:     "",
+			hasTLS:         true,
+			fallback2NoTLS: true,
+		},
+		{
+			input: `
+				[security]
+				[tidb]
+				tls = "false"
+				[tidb.security]
+			`,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 	}
 
@@ -356,15 +375,18 @@ func TestAdjustSecuritySection(t *testing.T) {
 		err = cfg.Adjust(context.Background())
 		require.NoError(t, err, comment)
 		require.Equal(t, tc.expectedCA, cfg.TiDB.Security.CAPath, comment)
-		require.Equal(t, tc.expectedTLS, cfg.TiDB.TLS, comment)
+		if tc.hasTLS {
+			require.NotNil(t, cfg.TiDB.Security.TLSConfig, comment)
+		} else {
+			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
+		}
+		require.Equal(t, tc.fallback2NoTLS, cfg.TiDB.Security.AllowFallbackToPlaintext, comment)
 	}
 	// test different tls config name
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.Security.CAPath = "/path/to/ca.pem"
-	cfg.Security.TLSConfigName = "tidb-tls"
 	require.NoError(t, cfg.Adjust(context.Background()))
-	require.Equal(t, cfg.TiDB.TLS, cfg.TiDB.Security.TLSConfigName)
 }
 
 func TestInvalidCSV(t *testing.T) {
@@ -620,7 +642,9 @@ func TestLoadConfig(t *testing.T) {
 	taskCfg.TiDB.DistSQLScanConcurrency = 1
 	err = taskCfg.Adjust(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=false", taskCfg.Checkpoint.DSN)
+	equivalentDSN := taskCfg.Checkpoint.MySQLParam.ToDriverConfig().FormatDSN()
+	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
+	require.Equal(t, expectedDSN, equivalentDSN)
 
 	result := taskCfg.String()
 	require.Regexp(t, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`, result)
@@ -745,7 +769,7 @@ func TestCronEncodeDecode(t *testing.T) {
 func TestAdjustWithLegacyBlackWhiteList(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
-	require.Equal(t, config.DefaultFilter, cfg.Mydumper.Filter)
+	require.Equal(t, config.GetDefaultFilter(), cfg.Mydumper.Filter)
 	require.False(t, cfg.HasLegacyBlackWhiteList())
 
 	ctx := context.Background()
@@ -757,7 +781,7 @@ func TestAdjustWithLegacyBlackWhiteList(t *testing.T) {
 	cfg.BWList.DoDBs = []string{"test"}
 	require.EqualError(t, cfg.Adjust(ctx), "[Lightning:Config:ErrInvalidConfig]`mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 
-	cfg.Mydumper.Filter = config.DefaultFilter
+	cfg.Mydumper.Filter = config.GetDefaultFilter()
 	require.NoError(t, cfg.Adjust(ctx))
 	require.True(t, cfg.HasLegacyBlackWhiteList())
 }
@@ -774,6 +798,17 @@ func TestAdjustDiskQuota(t *testing.T) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
+}
+
+func TestRemoveAllowAllFiles(t *testing.T) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	ctx := context.Background()
+
+	cfg.Checkpoint.Driver = config.CheckpointDriverMySQL
+	cfg.Checkpoint.DSN = "guest:12345@tcp(172.16.30.11:4001)/?tls=false&allowAllFiles=true&charset=utf8mb4"
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, "guest:12345@tcp(172.16.30.11:4001)/?tls=false&charset=utf8mb4", cfg.Checkpoint.DSN)
 }
 
 func TestDataCharacterSet(t *testing.T) {
@@ -949,4 +984,42 @@ func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 	// legal dir
 	cfg.TikvImporter.SortedKVDir = base
 	require.NoError(t, cfg.CheckAndAdjustForLocalBackend())
+}
+
+func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
+	originalDefaultCfg := append([]string{}, config.GetDefaultFilter()...)
+	cfg1 := config.NewConfig()
+	require.NoError(t, cfg1.LoadFromTOML([]byte(`
+		[mydumper]
+		filter = ["db1.tbl1", "db2.*", "!db2.tbl1"]
+	`)))
+	require.Equal(t, 3, len(cfg1.Mydumper.Filter))
+	require.True(t, common.StringSliceEqual(
+		cfg1.Mydumper.Filter,
+		[]string{"db1.tbl1", "db2.*", "!db2.tbl1"},
+	))
+	require.True(t, common.StringSliceEqual(config.GetDefaultFilter(), originalDefaultCfg))
+
+	cfg2 := config.NewConfig()
+	require.True(t, common.StringSliceEqual(
+		cfg2.Mydumper.Filter,
+		originalDefaultCfg,
+	))
+	require.True(t, common.StringSliceEqual(config.GetDefaultFilter(), originalDefaultCfg))
+
+	gCfg1, err := config.LoadGlobalConfig([]string{"-f", "db1.tbl1", "-f", "db2.*", "-f", "!db2.tbl1"}, nil)
+	require.NoError(t, err)
+	require.True(t, common.StringSliceEqual(
+		gCfg1.Mydumper.Filter,
+		[]string{"db1.tbl1", "db2.*", "!db2.tbl1"},
+	))
+	require.True(t, common.StringSliceEqual(config.GetDefaultFilter(), originalDefaultCfg))
+
+	gCfg2, err := config.LoadGlobalConfig([]string{}, nil)
+	require.NoError(t, err)
+	require.True(t, common.StringSliceEqual(
+		gCfg2.Mydumper.Filter,
+		originalDefaultCfg,
+	))
+	require.True(t, common.StringSliceEqual(config.GetDefaultFilter(), originalDefaultCfg))
 }

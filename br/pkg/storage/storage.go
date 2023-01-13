@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -135,6 +136,14 @@ type ExternalStorageOptions struct {
 	// CheckPermissions check the given permission in New() function.
 	// make sure we can access the storage correctly before execute tasks.
 	CheckPermissions []Permission
+
+	// S3Retryer is the retryer for create s3 storage, if it is nil,
+	// defaultS3Retryer() will be used.
+	S3Retryer request.Retryer
+
+	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
+	// if enabled. it will send the options to tikv.
+	CheckS3ObjectLockOptions bool
 }
 
 // Create creates ExternalStorage.
@@ -164,14 +173,14 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
-		return newS3Storage(backend.S3, opts)
+		return NewS3Storage(backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
 		return newNoopStorage(), nil
 	case *backuppb.StorageBackend_Gcs:
 		if backend.Gcs == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
-		return newGCSStorage(ctx, backend.Gcs, opts)
+		return NewGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
 	default:

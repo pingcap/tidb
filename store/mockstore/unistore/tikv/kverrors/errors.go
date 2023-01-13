@@ -106,6 +106,7 @@ type ErrConflict struct {
 	ConflictTS       uint64
 	ConflictCommitTS uint64
 	Key              []byte
+	Reason           kvrpcpb.WriteConflict_Reason
 }
 
 func (*ErrConflict) Error() string {

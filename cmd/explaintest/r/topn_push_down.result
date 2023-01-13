@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 CREATE TABLE `tr` (
 `id` bigint(20) NOT NULL,
 `biz_date` date NOT NULL,
@@ -176,13 +177,13 @@ Limit	0.00	root		offset:0, count:5
   │   │ │ └─IndexRangeScan	10.00	cop[tikv]	table:tr, index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178,810094178], keep order:false, stats:pseudo
   │   │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
   │   │   └─TableRowIDScan	0.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
-  │   └─IndexLookUp(Probe)	1.25	root		
-  │     ├─IndexRangeScan(Build)	50.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:false, stats:pseudo
-  │     └─Selection(Probe)	1.25	cop[tikv]		ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
-  │       └─TableRowIDScan	50.00	cop[tikv]	table:te	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	1.25	root		index:Selection
-    └─Selection	1.25	cop[tikv]		not(isnull(test.p.relate_id))
-      └─IndexRangeScan	1.25	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(test.p.relate_id, test.tr.id)], keep order:false, stats:pseudo
+  │   └─IndexLookUp(Probe)	0.00	root		
+  │     ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:false, stats:pseudo
+  │     └─Selection(Probe)	0.00	cop[tikv]		ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
+  │       └─TableRowIDScan	0.00	cop[tikv]	table:te	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	0.00	root		index:Selection
+    └─Selection	0.00	cop[tikv]		not(isnull(test.p.relate_id))
+      └─IndexRangeScan	0.00	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(test.p.relate_id, test.tr.id)], keep order:false, stats:pseudo
 desc select 1 as a from dual order by a limit 1;
 id	estRows	task	access object	operator info
 Projection_6	1.00	root		1->Column#1
@@ -197,24 +198,24 @@ Apply_15	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
 ├─TableReader_18(Build)	9990.00	root		data:Selection_17
 │ └─Selection_17	9990.00	cop[tikv]		not(isnull(test.t1.a))
 │   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_19(Probe)	0.80	root		not(isnull(test.t2.a))
-  └─Limit_20	1.00	root		offset:0, count:1
-    └─TableReader_25	1.00	root		data:Limit_24
-      └─Limit_24	1.00	cop[tikv]		offset:0, count:1
-        └─Selection_23	1.00	cop[tikv]		gt(test.t2.b, test.t1.b)
-          └─TableFullScan_22	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Selection_19(Probe)	7992.00	root		not(isnull(test.t2.a))
+  └─Limit_20	9990.00	root		offset:0, count:1
+    └─TableReader_25	9990.00	root		data:Limit_24
+      └─Limit_24	9990.00	cop[tikv]		offset:0, count:1
+        └─Selection_23	9990.00	cop[tikv]		gt(test.t2.b, test.t1.b)
+          └─TableFullScan_22	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	estRows	task	access object	operator info
 Apply_17	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
 ├─TableReader_20(Build)	9990.00	root		data:Selection_19
 │ └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t1.a))
 │   └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_21(Probe)	0.80	root		not(isnull(test.t2.a))
-  └─Limit_23	1.00	root		offset:0, count:1
-    └─TableReader_28	1.00	root		data:Limit_27
-      └─Limit_27	1.00	cop[tikv]		offset:0, count:1
-        └─Selection_26	1.00	cop[tikv]		gt(test.t2.b, test.t1.b)
-          └─TableFullScan_25	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Selection_21(Probe)	7992.00	root		not(isnull(test.t2.a))
+  └─Limit_23	9990.00	root		offset:0, count:1
+    └─TableReader_28	9990.00	root		data:Limit_27
+      └─Limit_27	9990.00	cop[tikv]		offset:0, count:1
+        └─Selection_26	9990.00	cop[tikv]		gt(test.t2.b, test.t1.b)
+          └─TableFullScan_25	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int not null, index idx(a));
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
@@ -223,8 +224,8 @@ Limit	5.00	root		offset:0, count:5
 └─IndexJoin	5.00	root		inner join, inner:IndexReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
   ├─TableReader(Build)	4.00	root		data:TableFullScan
   │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	1.25	root		index:IndexRangeScan
-    └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
+  └─IndexReader(Probe)	5.00	root		index:IndexRangeScan
+    └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5
@@ -232,8 +233,8 @@ Limit	5.00	root		offset:0, count:5
   └─IndexJoin	5.00	root		left outer join, inner:IndexReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
     ├─TableReader(Build)	4.00	root		data:TableFullScan
     │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─IndexReader(Probe)	1.25	root		index:IndexRangeScan
-      └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
+    └─IndexReader(Probe)	5.00	root		index:IndexRangeScan
+      └─IndexRangeScan	5.00	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
 explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	estRows	task	access object	operator info
 Limit	5.00	root		offset:0, count:5

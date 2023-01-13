@@ -18,9 +18,12 @@ import (
 	"bytes"
 	"strconv"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/metrics"
@@ -198,4 +201,29 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store
 		}
 		c.OnSendFailForTiFlash(bo.TiKVBackoffer(), store, ri.Region, ri.Meta, scheduleReload, err, !(index < 10 || log.GetLevel() <= zap.DebugLevel))
 	}
+}
+
+// BuildBatchTask fetches store and peer info for cop task, wrap it as `batchedCopTask`.
+func (c *RegionCache) BuildBatchTask(bo *Backoffer, task *copTask, replicaRead kv.ReplicaReadType) (*batchedCopTask, error) {
+	rpcContext, err := c.GetTiKVRPCContext(bo.TiKVBackoffer(), task.region, options.GetTiKVReplicaReadType(replicaRead), 0)
+	if err != nil {
+		return nil, err
+	}
+	// fallback to non-batch path
+	if rpcContext == nil {
+		return nil, nil
+	}
+	return &batchedCopTask{
+		task: task,
+		region: coprocessor.RegionInfo{
+			RegionId: rpcContext.Region.GetID(),
+			RegionEpoch: &metapb.RegionEpoch{
+				ConfVer: rpcContext.Region.GetConfVer(),
+				Version: rpcContext.Region.GetVer(),
+			},
+			Ranges: task.ranges.ToPBRanges(),
+		},
+		storeID: rpcContext.Store.StoreID(),
+		peer:    rpcContext.Peer,
+	}, nil
 }

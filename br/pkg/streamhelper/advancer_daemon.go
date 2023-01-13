@@ -4,15 +4,12 @@ package streamhelper
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
 )
 
 const (
@@ -20,64 +17,37 @@ const (
 	ownerPath   = "/tidb/br-stream/owner"
 )
 
-// AdvancerDaemon is a "high-availability" version of advancer.
-// It involved the manager for electing a owner and doing things.
-// You can embed it into your code by simply call:
-//
-// ad := NewAdvancerDaemon(adv, mgr)
-// loop, err := ad.Begin(ctx)
-//
-//	if err != nil {
-//	  return err
-//	}
-//
-// loop()
-type AdvancerDaemon struct {
-	adv     *CheckpointAdvancer
-	manager owner.Manager
+// OnTick advances the inner logic clock for the advancer.
+// It's synchronous: this would only return after the events triggered by the clock has all been done.
+// It's generally panic-free, you may not need to trying recover a panic here.
+func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
+	defer c.recordTimeCost("tick")()
+	defer utils.PanicToErr(&err)
+	return c.tick(ctx)
 }
 
-func NewAdvancerDaemon(adv *CheckpointAdvancer, manager owner.Manager) *AdvancerDaemon {
-	return &AdvancerDaemon{
-		adv:     adv,
-		manager: manager,
-	}
+// OnStart implements daemon.Interface.
+func (c *CheckpointAdvancer) OnStart(ctx context.Context) {
+	metrics.AdvancerOwner.Set(1.0)
+	c.StartTaskListener(ctx)
+	c.spawnSubscriptionHandler(ctx)
+	go func() {
+		<-ctx.Done()
+		c.onStop()
+	}()
+}
+
+// Name implements daemon.Interface.
+func (c *CheckpointAdvancer) Name() string {
+	return "LogBackup::Advancer"
+}
+
+func (c *CheckpointAdvancer) onStop() {
+	metrics.AdvancerOwner.Set(0.0)
+	c.stopSubscriber()
 }
 
 func OwnerManagerForLogBackup(ctx context.Context, etcdCli *clientv3.Client) owner.Manager {
 	id := uuid.New()
 	return owner.NewOwnerManager(ctx, etcdCli, ownerPrompt, id.String(), ownerPath)
-}
-
-// Begin starts the daemon.
-// It would do some bootstrap task, and return a closure that would begin the main loop.
-func (ad *AdvancerDaemon) Begin(ctx context.Context) (func(), error) {
-	log.Info("begin advancer daemon", zap.String("id", ad.manager.ID()))
-	if err := ad.manager.CampaignOwner(); err != nil {
-		return nil, err
-	}
-
-	ad.adv.StartTaskListener(ctx)
-	tick := time.NewTicker(ad.adv.cfg.TickDuration)
-	loop := func() {
-		log.Info("begin advancer daemon loop", zap.String("id", ad.manager.ID()))
-		for {
-			select {
-			case <-ctx.Done():
-				log.Info("advancer loop exits", zap.String("id", ad.manager.ID()))
-				return
-			case <-tick.C:
-				log.Debug("deamon tick start", zap.Bool("is-owner", ad.manager.IsOwner()))
-				if ad.manager.IsOwner() {
-					metrics.AdvancerOwner.Set(1.0)
-					if err := ad.adv.OnTick(ctx); err != nil {
-						log.Warn("failed on tick", logutil.ShortError(err))
-					}
-				} else {
-					metrics.AdvancerOwner.Set(0.0)
-				}
-			}
-		}
-	}
-	return loop, nil
 }

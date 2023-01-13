@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -371,7 +371,7 @@ func (b *builtinCoalesceJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalJSON(b.ctx, row)
 		if err != nil || !isNull {
@@ -1340,8 +1340,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
-	if (lhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) ||
-		(lhsFieldType.GetType() == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
+	if (lhsEvalType.IsStringKind() && lhsFieldType.GetType() == mysql.TypeJSON) || (rhsEvalType.IsStringKind() && rhsFieldType.GetType() == mysql.TypeJSON) {
 		cmpType = types.ETJson
 	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.GetType()) || types.IsTypeTime(rhsFieldType.GetType())) {
 		// date[time] <cmp> date[time]
@@ -1576,12 +1575,18 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
 		// here and skip this refine operation in all other cases for safety.
 		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
-			ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+			var reason error
+			if arg1IsString {
+				reason = errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg1.String())
+			} else { // arg0IsString
+				reason = errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String())
+			}
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			RemoveMutableConst(ctx, args)
 		} else {
 			return args
 		}
-	} else if ctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	} else if !ctx.GetSessionVars().StmtCtx.UseCache {
 		// We should remove the mutable constant for correctness, because its value may be changed.
 		RemoveMutableConst(ctx, args)
 	}
@@ -2745,7 +2750,7 @@ func (b *builtinNullEQJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 != isNull1:
 		return res, false, nil
 	default:
-		cmpRes := json.CompareBinary(arg0, arg1)
+		cmpRes := types.CompareBinaryJSON(arg0, arg1)
 		if cmpRes == 0 {
 			res = 1
 		}
@@ -2993,5 +2998,5 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
 	}
-	return int64(json.CompareBinary(arg0, arg1)), false, nil
+	return int64(types.CompareBinaryJSON(arg0, arg1)), false, nil
 }

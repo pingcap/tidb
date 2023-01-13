@@ -56,7 +56,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 		jobID    int64
 		res      sqlexec.RecordSet
 	)
-	hook.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.TableID != tbl.Meta().ID {
 			return
 		}
@@ -77,6 +77,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 			}
 		}
 	}
+	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(hook)
 
 	// This will hang on stateDeleteOnly, and the job will be canceled.

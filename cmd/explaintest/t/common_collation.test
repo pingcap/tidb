@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 --disable_warnings
 drop table if exists t;
 --enable_warnings

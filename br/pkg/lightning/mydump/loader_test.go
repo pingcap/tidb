@@ -15,11 +15,15 @@
 package mydump_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -211,6 +215,27 @@ func TestTableUnexpectedError(t *testing.T) {
 			sql, err := tblMeta.GetSchema(ctx, store)
 			require.Equal(t, "", sql)
 			require.Contains(t, err.Error(), "failed to decode db.tbl-schema.sql as : Unsupported encoding ")
+		}
+	}
+}
+
+func TestMissingTableSchema(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
+	s.cfg.Mydumper.CharacterSet = "auto"
+
+	s.touch(t, "db.tbl.csv")
+
+	ctx := context.Background()
+	store, err := storage.NewLocalStorage(s.sourceDir)
+	require.NoError(t, err)
+
+	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
+	require.NoError(t, err)
+	for _, dbMeta := range loader.GetDatabases() {
+		for _, tblMeta := range dbMeta.Tables {
+			_, err := tblMeta.GetSchema(ctx, store)
+			require.ErrorContains(t, err, "schema file is missing for the table")
 		}
 	}
 }
@@ -911,4 +936,153 @@ func TestInputWithSpecialChars(t *testing.T) {
 			},
 		},
 	}, mdl.GetDatabases())
+}
+
+func TestMaxScanFilesOption(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	memStore := storage.NewMemStorage()
+	require.NoError(t, memStore.WriteFile(ctx, "/test-src/db1.tbl1-schema.sql",
+		[]byte("CREATE TABLE db1.tbl1 ( id INTEGER, val VARCHAR(255) );"),
+	))
+	require.NoError(t, memStore.WriteFile(ctx, "/test-src/db1-schema-create.sql",
+		[]byte("CREATE DATABASE db1;"),
+	))
+	const dataFilesCount = 200
+	maxScanFilesCount := 500
+	for i := 0; i < dataFilesCount; i++ {
+		require.NoError(t, memStore.WriteFile(ctx, fmt.Sprintf("/test-src/db1.tbl1.%d.sql", i),
+			[]byte(fmt.Sprintf("INSERT INTO db1.tbl1 (id, val) VALUES (%d, 'aaa%d');", i, i)),
+		))
+	}
+	cfg := newConfigWithSourceDir("/test-src")
+
+	mdl, err := md.NewMyDumpLoaderWithStore(ctx, cfg, memStore)
+	require.NoError(t, err)
+	require.NotNil(t, mdl)
+	dbMetas := mdl.GetDatabases()
+	require.Equal(t, 1, len(dbMetas))
+	dbMeta := dbMetas[0]
+	require.Equal(t, 1, len(dbMeta.Tables))
+	tbl := dbMeta.Tables[0]
+	require.Equal(t, dataFilesCount, len(tbl.DataFiles))
+
+	mdl, err = md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
+		md.WithMaxScanFiles(maxScanFilesCount),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, mdl)
+	dbMetas = mdl.GetDatabases()
+	require.Equal(t, 1, len(dbMetas))
+	dbMeta = dbMetas[0]
+	require.Equal(t, 1, len(dbMeta.Tables))
+	tbl = dbMeta.Tables[0]
+	require.Equal(t, dataFilesCount, len(tbl.DataFiles))
+
+	maxScanFilesCount = 100
+	mdl, err = md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
+		md.WithMaxScanFiles(maxScanFilesCount),
+	)
+	require.EqualError(t, err, common.ErrTooManySourceFiles.Error())
+	require.NotNil(t, mdl)
+	dbMetas = mdl.GetDatabases()
+	require.Equal(t, 1, len(dbMetas))
+	dbMeta = dbMetas[0]
+	require.Equal(t, 1, len(dbMeta.Tables))
+	tbl = dbMeta.Tables[0]
+	require.Equal(t, maxScanFilesCount-2, len(tbl.DataFiles))
+}
+
+func TestExternalDataRoutes(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+
+	s.touch(t, "test_1-schema-create.sql")
+	s.touch(t, "test_1.t1-schema.sql")
+	s.touch(t, "test_1.t1.sql")
+	s.touch(t, "test_2-schema-create.sql")
+	s.touch(t, "test_2.t2-schema.sql")
+	s.touch(t, "test_2.t2.sql")
+	s.touch(t, "test_3-schema-create.sql")
+	s.touch(t, "test_3.t1-schema.sql")
+	s.touch(t, "test_3.t1.sql")
+	s.touch(t, "test_3.t3-schema.sql")
+	s.touch(t, "test_3.t3.sql")
+
+	s.cfg.Mydumper.SourceID = "mysql-01"
+	s.cfg.Routes = []*router.TableRule{
+		{
+			TableExtractor: &router.TableExtractor{
+				TargetColumn: "c_table",
+				TableRegexp:  "t(.*)",
+			},
+			SchemaExtractor: &router.SchemaExtractor{
+				TargetColumn: "c_schema",
+				SchemaRegexp: "test_(.*)",
+			},
+			SourceExtractor: &router.SourceExtractor{
+				TargetColumn: "c_source",
+				SourceRegexp: "mysql-(.*)",
+			},
+			SchemaPattern: "test_*",
+			TablePattern:  "t*",
+			TargetSchema:  "test",
+			TargetTable:   "t",
+		},
+	}
+
+	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+
+	require.NoError(t, err)
+	var database *md.MDDatabaseMeta
+	for _, db := range mdl.GetDatabases() {
+		if db.Name == "test" {
+			require.Nil(t, database)
+			database = db
+		}
+	}
+	require.NotNil(t, database)
+	require.Len(t, database.Tables, 1)
+	require.Len(t, database.Tables[0].DataFiles, 4)
+	expectExtendCols := []string{"c_table", "c_schema", "c_source"}
+	expectedExtendVals := [][]string{
+		{"1", "1", "01"},
+		{"2", "2", "01"},
+		{"1", "3", "01"},
+		{"3", "3", "01"},
+	}
+	for i, fileInfo := range database.Tables[0].DataFiles {
+		require.Equal(t, expectExtendCols, fileInfo.FileMeta.ExtendData.Columns)
+		require.Equal(t, expectedExtendVals[i], fileInfo.FileMeta.ExtendData.Values)
+	}
+}
+
+func TestSampleFileCompressRatio(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+	store, err := storage.NewLocalStorage(s.sourceDir)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	byteArray := make([]byte, 0, 4096)
+	bf := bytes.NewBuffer(byteArray)
+	compressWriter := gzip.NewWriter(bf)
+	csvData := []byte("aaaa\n")
+	for i := 0; i < 1000; i++ {
+		_, err = compressWriter.Write(csvData)
+		require.NoError(t, err)
+	}
+	err = compressWriter.Flush()
+	require.NoError(t, err)
+
+	fileName := "test_1.t1.csv.gz"
+	err = store.WriteFile(ctx, fileName, bf.Bytes())
+	require.NoError(t, err)
+
+	ratio, err := md.SampleFileCompressRatio(ctx, md.SourceFileMeta{
+		Path:        fileName,
+		Compression: md.CompressionGZ,
+	}, store)
+	require.NoError(t, err)
+	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
 }

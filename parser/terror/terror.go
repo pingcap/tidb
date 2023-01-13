@@ -15,6 +15,7 @@ package terror
 
 import (
 	"fmt"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -166,6 +167,7 @@ func (ec ErrClass) NotEqualClass(err error) bool {
 
 func (ec ErrClass) initError(code ErrCode) string {
 	if frozen() {
+		debug.PrintStack()
 		panic("register error after initialized is prohibited")
 	}
 	clsMap, ok := ErrClassToMySQLCodes[ec]

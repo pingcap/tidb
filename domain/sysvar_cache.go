@@ -17,16 +17,13 @@ package domain
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"sync"
-	"time"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	pd "github.com/tikv/pd/client"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -39,10 +36,10 @@ import (
 
 // sysVarCache represents the cache of system variables broken up into session and global scope.
 type sysVarCache struct {
-	sync.RWMutex // protects global and session maps
-	global       map[string]string
-	session      map[string]string
-	rebuildLock  sync.Mutex // protects concurrent rebuild
+	syncutil.RWMutex // protects global and session maps
+	global           map[string]string
+	session          map[string]string
+	rebuildLock      syncutil.Mutex // protects concurrent rebuild
 }
 
 func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {
@@ -147,17 +144,12 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 			// This does not apply to INSTANCE scoped vars (HasGlobalScope() is false)
 			if sv.SetGlobal != nil && !sv.SkipSysvarCache() {
 				sVal = sv.ValidateWithRelaxedValidation(ctx.GetSessionVars(), sVal, variable.ScopeGlobal)
-				err = sv.SetGlobal(ctx.GetSessionVars(), sVal)
+				err = sv.SetGlobal(context.Background(), ctx.GetSessionVars(), sVal)
 				if err != nil {
 					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
 				}
 			}
 		}
-
-		// Some PD options need to be checked outside of the SetGlobal func.
-		// This is also done for the SET GLOBAL caller in executor/set.go,
-		// but here we check for other tidb instances.
-		do.checkPDClientDynamicOption(sv.Name, sVal)
 	}
 
 	logutil.BgLogger().Debug("rebuilding sysvar cache")
@@ -167,45 +159,4 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	do.sysVarCache.session = newSessionCache
 	do.sysVarCache.global = newGlobalCache
 	return nil
-}
-
-func (do *Domain) checkPDClientDynamicOption(name, sVal string) {
-	switch name {
-	case variable.TiDBTSOClientBatchMaxWaitTime:
-		val, err := strconv.ParseFloat(sVal, 64)
-		if err != nil {
-			break
-		}
-		err = do.SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
-		if err != nil {
-			break
-		}
-		variable.MaxTSOBatchWaitInterval.Store(val)
-	case variable.TiDBEnableTSOFollowerProxy:
-		val := variable.TiDBOptOn(sVal)
-		err := do.SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
-		if err != nil {
-			break
-		}
-		variable.EnableTSOFollowerProxy.Store(val)
-	}
-}
-
-// SetPDClientDynamicOption is used to set the dynamic option into the PD client.
-func (do *Domain) SetPDClientDynamicOption(option pd.DynamicOption, val interface{}) error {
-	store, ok := do.store.(interface{ GetPDClient() pd.Client })
-	if !ok {
-		return nil
-	}
-	pdClient := store.GetPDClient()
-	if pdClient == nil {
-		return nil
-	}
-	return pdClient.UpdateOption(option, val)
-}
-
-// SetStatsCacheCapacity sets statsCache cap
-func (do *Domain) SetStatsCacheCapacity(c int64) {
-	do.StatsHandle().SetStatsCacheCapacity(c)
-	logutil.BgLogger().Info("update stats cache capacity successfully", zap.Int64("capacity", c))
 }

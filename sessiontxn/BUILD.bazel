@@ -24,11 +24,15 @@ go_test(
     srcs = [
         "txn_context_test.go",
         "txn_manager_test.go",
+        "txn_rc_tso_optimize_test.go",
     ],
     flaky = True,
+    race = "on",
+    shard_count = 2,
     deps = [
         ":sessiontxn",
         "//domain",
+        "//errno",
         "//expression",
         "//infoschema",
         "//kv",
@@ -36,6 +40,7 @@ go_test(
         "//parser/model",
         "//sessionctx",
         "//sessiontxn/internal",
+        "//sessiontxn/isolation",
         "//sessiontxn/staleread",
         "//table/temptable",
         "//tablecodec",

@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
@@ -74,7 +73,7 @@ func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Serve
 	require.NoError(t, err)
 
 	// Fix issue 9836
-	sm := &testutil.MockSessionManager{
+	sm := &testkit.MockSessionManager{
 		PS:    make([]*util.ProcessInfo, 1),
 		SerID: 1,
 	}
@@ -291,7 +290,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 35
+	result := 45
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

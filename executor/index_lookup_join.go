@@ -67,7 +67,7 @@ type IndexLookUpJoin struct {
 
 	task       *lookUpJoinTask
 	joinResult *chunk.Chunk
-	innerIter  chunk.Iterator
+	innerIter  *chunk.Iterator4Slice
 
 	joiner      joiner
 	isOuterJoin bool
@@ -171,7 +171,6 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	e.finished.Store(false)
 	if e.runtimeStats != nil {
 		e.stats = &indexLookUpJoinRuntimeStats{}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.cancelFunc = nil
 	return nil
@@ -226,7 +225,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.outerCtx,
 		taskCh:        taskCh,
 		ctx:           e.ctx,
-		executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+		executorChk:   e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize, e.maxChunkSize, e.AllocPool),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 		stats:         innerStats,
@@ -277,7 +276,10 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 		startTime := time.Now()
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			e.lookUpMatchedInners(task, task.cursor)
-			e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
+			if e.innerIter == nil {
+				e.innerIter = chunk.NewIterator4Slice(task.matchedInners).(*chunk.Iterator4Slice)
+			}
+			e.innerIter.Reset(task.matchedInners)
 			e.innerIter.Begin()
 		}
 
@@ -372,6 +374,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	}()
 	for {
 		failpoint.Inject("TestIssue30211", nil)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		task, err := ow.buildTask(ctx)
 		if err != nil {
 			task.doneCh <- err
@@ -412,6 +415,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task.memTracker = memory.NewTracker(-1, -1)
 	task.outerResult.GetMemTracker().AttachTo(task.memTracker)
 	task.memTracker.AttachTo(ow.parentMemTracker)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 
 	ow.increaseBatchSize()
 	requiredRows := ow.batchSize
@@ -426,7 +430,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
 	for requiredRows > task.outerResult.Len() {
-		chk := chunk.NewChunkWithCapacity(ow.outerCtx.rowTypes, maxChunkSize)
+		chk := ow.ctx.GetSessionVars().GetNewChunkWithCapacity(ow.outerCtx.rowTypes, maxChunkSize, maxChunkSize, ow.executor.base().AllocPool)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
 		err := Next(ctx, ow.executor, chk)
 		if err != nil {
@@ -457,7 +461,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	task.encodedLookUpKeys = make([]*chunk.Chunk, task.outerResult.NumChunks())
 	for i := range task.encodedLookUpKeys {
-		task.encodedLookUpKeys[i] = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, task.outerResult.GetChunk(i).NumRows())
+		task.encodedLookUpKeys[i] = ow.ctx.GetSessionVars().GetNewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, task.outerResult.GetChunk(i).NumRows(), task.outerResult.GetChunk(i).NumRows(), ow.executor.base().AllocPool)
 	}
 	return task, nil
 }
@@ -555,6 +559,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				}
 				return nil, err
 			}
+			failpoint.Inject("ConsumeRandomPanic", nil)
 			if rowIdx == 0 {
 				iw.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
 			}
@@ -700,6 +705,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		default:
 		}
 		err := Next(ctx, innerExec, iw.executorChk)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			return err
 		}
@@ -707,7 +713,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = newFirstChunk(innerExec)
+		iw.executorChk = tryNewCacheChunk(innerExec)
 	}
 	task.innerResult = innerResult
 	return nil
@@ -758,6 +764,9 @@ func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
 
 // Close implements the Executor interface.
 func (e *IndexLookUpJoin) Close() error {
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}

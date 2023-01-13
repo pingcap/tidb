@@ -19,12 +19,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -44,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
@@ -79,7 +76,7 @@ func TestShowCreateTable(t *testing.T) {
 	prevState := model.StateNone
 	callback := &ddl.TestDDLCallback{}
 	currTestCaseOffset := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -114,6 +111,7 @@ func TestShowCreateTable(t *testing.T) {
 			terror.Log(result.Close())
 		}
 	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -147,7 +145,7 @@ func TestDropNotNullColumn(t *testing.T) {
 	originalCallback := d.GetHook()
 	callback := &ddl.TestDDLCallback{}
 	sqlNum := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -166,7 +164,7 @@ func TestDropNotNullColumn(t *testing.T) {
 			}
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop column a")
 	require.NoError(t, checkErr)
@@ -230,7 +228,7 @@ func TestTwoStates(t *testing.T) {
 
 	times := 0
 	var checkErr error
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
 			return
 		}
@@ -278,6 +276,7 @@ func TestTwoStates(t *testing.T) {
 			}
 		}
 	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -834,7 +833,7 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		callback.OnJobUpdatedExported = cbFunc
+		callback.OnJobUpdatedExported.Store(&cbFunc)
 	} else {
 		callback.OnJobRunBeforeExported = cbFunc
 	}
@@ -877,7 +876,7 @@ func TestShowIndex(t *testing.T) {
 	prevState := model.StateNone
 	showIndexSQL := `show index from t`
 	var checkErr error
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -896,7 +895,7 @@ func TestShowIndex(t *testing.T) {
 			}
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
@@ -1436,13 +1435,13 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Dom
 
 	callback := &ddl.TestDDLCallback{}
 	once := sync.Once{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		// sleep a while, let other job enqueue.
 		once.Do(func() {
 			time.Sleep(time.Millisecond * 10)
 		})
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
@@ -1518,7 +1517,7 @@ func TestDDLIfExists(t *testing.T) {
 // This test is used to simulate the following conditions:
 // In a cluster, TiDB "a" executes the DDL.
 // TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
-func TestParallelDDLBeforeRunDDLJo(t *testing.T) {
+func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
@@ -1533,38 +1532,25 @@ func TestParallelDDLBeforeRunDDLJo(t *testing.T) {
 	tk2.MustExec("use test_db_state")
 
 	intercept := &ddl.TestInterceptor{}
-	firstConnID := uint64(1)
-	finishedCnt := int32(0)
-	interval := 5 * time.Millisecond
-	var sessionCnt int32 // sessionCnt is the number of sessions that goes into the function of OnGetInfoSchema.
+
+	var sessionToStart sync.WaitGroup // sessionToStart is a waitgroup to wait for two session to get the same information schema
+	sessionToStart.Add(2)
+	firstDDLFinished := make(chan struct{})
+
 	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 		// The following code is for testing.
 		// Make sure the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
 		var info infoschema.InfoSchema
-		atomic.AddInt32(&sessionCnt, 1)
-		for {
-			// Make sure there are two sessions running here.
-			if atomic.LoadInt32(&sessionCnt) == 2 {
-				info = is
-				break
-			}
-			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
-			log.Info("sleep in TestParallelDDLBeforeRunDDLJob", zap.String("interval", interval.String()))
-			time.Sleep(interval)
-		}
+		sessionToStart.Done()
+		sessionToStart.Wait()
+		info = is
 
+		// Make sure the two session have got the same information schema. And the first session can continue to go on,
+		// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
 		currID := ctx.GetSessionVars().ConnectionID
-		for {
-			seCnt := atomic.LoadInt32(&sessionCnt)
-			// Make sure the two session have got the same information schema. And the first session can continue to go on,
-			// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
-			if currID == firstConnID || seCnt == finishedCnt {
-				break
-			}
-			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
-			log.Info("sleep in TestParallelDDLBeforeRunDDLJob", zap.String("interval", interval.String()))
-			time.Sleep(interval)
+		if currID != 1 {
+			<-firstDDLFinished
 		}
 
 		return info
@@ -1575,12 +1561,11 @@ func TestParallelDDLBeforeRunDDLJo(t *testing.T) {
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
 	var wg util.WaitGroupWrapper
+
 	wg.Run(func() {
-		tk1.Session().SetConnectionID(firstConnID)
+		tk1.Session().SetConnectionID(1)
 		tk1.MustExec("alter table test_table drop column c2")
-		// Sleep a while to make sure the connection 2 break out the first for loop in OnGetInfoSchemaExported, otherwise atomic.LoadInt32(&sessionCnt) == 2 will be false forever.
-		time.Sleep(100 * time.Millisecond)
-		atomic.StoreInt32(&sessionCnt, finishedCnt)
+		firstDDLFinished <- struct{}{}
 	})
 	wg.Run(func() {
 		tk2.Session().SetConnectionID(2)
@@ -1682,7 +1667,7 @@ func TestCreateExpressionIndex(t *testing.T) {
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1721,11 +1706,20 @@ func TestCreateExpressionIndex(t *testing.T) {
 		}
 	}
 
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t add index idx((b+1))")
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+
+	// https://github.com/pingcap/tidb/issues/39784
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(name varchar(20))")
+	tk.MustExec("insert into t values ('Abc'), ('Bcd'), ('abc')")
+	tk.MustExec("create index idx on test.t((lower(test.t.name)))")
+	tk.MustExec("admin check table t")
 }
 
 func TestCreateUniqueExpressionIndex(t *testing.T) {
@@ -1748,12 +1742,10 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
-		err := originalCallback.OnChanged(nil)
-		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1832,7 +1824,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 			// (1, 7), (2, 7), (5, 7), (8, 8), (13, 9), (11, 10), (0, 11)
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t add unique index idx((a*b+1))")
 	require.NoError(t, checkErr)
@@ -1859,7 +1851,7 @@ func TestDropExpressionIndex(t *testing.T) {
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1892,7 +1884,7 @@ func TestDropExpressionIndex(t *testing.T) {
 			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (0, 11)
 		}
 	}
-
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop index idx")
 	require.NoError(t, checkErr)
@@ -1967,9 +1959,9 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
-	tk.MustExec("rename table t1 to t")
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	checkErr = nil
+	tk.MustExec("rename table t1 to t")
 
 	// rename then add column, but rename to other database
 	concurrentDDLQuery = "alter table t add column g int"
@@ -1977,8 +1969,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to test2.t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	// [schema:1146]Table '(Schema ID 1).(Table ID 65)' doesn't exist
-	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	checkErr = nil
 
@@ -1989,8 +1980,7 @@ func TestParallelRenameTable(t *testing.T) {
 	concurrentDDLQueryPre = "create table t(a int)"
 	wg.Wait()
 	require.Error(t, checkErr)
-	// [schema:1146]Table '(Schema ID 1).(Table ID 65)' doesn't exist
-	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	concurrentDDLQueryPre = ""
 	checkErr = nil
@@ -2001,7 +1991,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table t1 to t")
 	checkErr = nil
 
@@ -2011,7 +2001,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to test2.t1")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table test2.t1 to test.t")
 	checkErr = nil
 
@@ -2023,7 +2013,7 @@ func TestParallelRenameTable(t *testing.T) {
 	tk.MustExec("rename table t to tt, t2 to tt2, t3 to tt3")
 	wg.Wait()
 	require.Error(t, checkErr)
-	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
+	require.True(t, strings.Contains(checkErr.Error(), "Information schema is changed"), checkErr.Error())
 	tk.MustExec("rename table tt to t")
 }
 

@@ -18,11 +18,13 @@ import (
 	goctx "context"
 	"fmt"
 	"math"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/table"
 	"github.com/stretchr/testify/require"
@@ -48,6 +50,11 @@ func (s *ddlSuite) checkDropIndex(t *testing.T, tableName string) {
 
 // TestIndex operations on table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c)).
 func TestIndex(t *testing.T) {
+	err := os.Setenv("tidb_manager_ttl", fmt.Sprintf("%d", *lease+5))
+	if err != nil {
+		log.Fatal("set tidb_manager_ttl failed")
+	}
+
 	s := createDDLSuite(t)
 	defer s.teardown(t)
 

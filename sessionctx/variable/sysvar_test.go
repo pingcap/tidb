@@ -15,276 +15,27 @@
 package variable
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"runtime"
+	"math"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/gctuner"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSysVar(t *testing.T) {
-	f := GetSysVar("autocommit")
-	require.NotNil(t, f)
-
-	f = GetSysVar("wrong-var-name")
-	require.Nil(t, f)
-
-	f = GetSysVar("explicit_defaults_for_timestamp")
-	require.NotNil(t, f)
-	require.Equal(t, "ON", f.Value)
-
-	f = GetSysVar("port")
-	require.NotNil(t, f)
-	require.Equal(t, "4000", f.Value)
-
-	f = GetSysVar("tidb_low_resolution_tso")
-	require.Equal(t, "OFF", f.Value)
-
-	f = GetSysVar("tidb_replica_read")
-	require.Equal(t, "leader", f.Value)
-
-	f = GetSysVar("tidb_enable_table_partition")
-	require.Equal(t, "ON", f.Value)
-
-	f = GetSysVar("version_compile_os")
-	require.Equal(t, runtime.GOOS, f.Value)
-
-	f = GetSysVar("version_compile_machine")
-	require.Equal(t, runtime.GOARCH, f.Value)
-}
-
-func TestError(t *testing.T) {
-	kvErrs := []*terror.Error{
-		ErrUnsupportedValueForVar,
-		ErrUnknownSystemVar,
-		ErrIncorrectScope,
-		ErrUnknownTimeZone,
-		ErrReadOnly,
-		ErrWrongValueForVar,
-		ErrWrongTypeForVar,
-		ErrTruncatedWrongValue,
-		ErrMaxPreparedStmtCountReached,
-		ErrUnsupportedIsolationLevel,
-	}
-	for _, err := range kvErrs {
-		require.True(t, terror.ToSQLError(err).Code != mysql.ErrUnknown)
-	}
-}
-
-func TestRegistrationOfNewSysVar(t *testing.T) {
-	count := len(GetSysVars())
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		return fmt.Errorf("set should fail")
-	}}
-
-	RegisterSysVar(&sv)
-	require.Len(t, GetSysVars(), count+1)
-
-	sysVar := GetSysVar("mynewsysvar")
-	require.NotNil(t, sysVar)
-
-	vars := NewSessionVars()
-
-	// It is a boolean, try to set it to a bogus value
-	_, err := sysVar.Validate(vars, "ABCD", ScopeSession)
-	require.Error(t, err)
-
-	// Boolean oN or 1 converts to canonical ON or OFF
-	normalizedVal, err := sysVar.Validate(vars, "oN", ScopeSession)
-	require.Equal(t, "ON", normalizedVal)
-	require.NoError(t, err)
-	normalizedVal, err = sysVar.Validate(vars, "0", ScopeSession)
-	require.Equal(t, "OFF", normalizedVal)
-	require.NoError(t, err)
-
-	err = sysVar.SetSessionFromHook(vars, "OFF") // default is on
-	require.Equal(t, "set should fail", err.Error())
-
-	// Test unregistration restores previous count
-	UnregisterSysVar("mynewsysvar")
-	require.Equal(t, len(GetSysVars()), count)
-}
-
-func TestIntValidation(t *testing.T) {
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeInt, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
-	vars := NewSessionVars()
-
-	_, err := sv.Validate(vars, "oN", ScopeSession)
-	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
-
-	val, err := sv.Validate(vars, "301", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "300", val)
-
-	val, err = sv.Validate(vars, "5", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
-
-	val, err = sv.Validate(vars, "300", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "300", val)
-
-	// out of range but permitted due to auto value
-	val, err = sv.Validate(vars, "-1", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "-1", val)
-}
-
-func TestUintValidation(t *testing.T) {
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeUnsigned, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
-	vars := NewSessionVars()
-
-	_, err := sv.Validate(vars, "oN", ScopeSession)
-	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
-
-	_, err = sv.Validate(vars, "", ScopeSession)
-	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
-
-	val, err := sv.Validate(vars, "301", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "300", val)
-
-	val, err = sv.Validate(vars, "-301", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
-
-	_, err = sv.Validate(vars, "-ERR", ScopeSession)
-	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
-
-	val, err = sv.Validate(vars, "5", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
-
-	val, err = sv.Validate(vars, "300", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "300", val)
-
-	// out of range but permitted due to auto value
-	val, err = sv.Validate(vars, "-1", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "-1", val)
-}
-
-func TestEnumValidation(t *testing.T) {
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	vars := NewSessionVars()
-
-	_, err := sv.Validate(vars, "randomstring", ScopeSession)
-	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of 'randomstring'", err.Error())
-
-	val, err := sv.Validate(vars, "oFf", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-
-	val, err = sv.Validate(vars, "On", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-
-	val, err = sv.Validate(vars, "auto", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "AUTO", val)
-
-	// Also settable by numeric offset.
-	val, err = sv.Validate(vars, "2", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "AUTO", val)
-}
-
-func TestSynonyms(t *testing.T) {
-	sysVar := GetSysVar(TxnIsolation)
-	require.NotNil(t, sysVar)
-
-	vars := NewSessionVars()
-
-	// It does not permit SERIALIZABLE by default.
-	_, err := sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
-	require.Error(t, err)
-	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
-
-	// Enable Skip isolation check
-	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"))
-
-	// Serializable is now permitted.
-	_, err = sysVar.Validate(vars, "SERIALIZABLE", ScopeSession)
-	require.NoError(t, err)
-
-	// Currently TiDB returns a warning because of SERIALIZABLE, but in future
-	// it may also return a warning because TxnIsolation is deprecated.
-
-	warn := vars.StmtCtx.GetWarnings()[0].Err
-	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", warn.Error())
-
-	require.Nil(t, sysVar.SetSessionFromHook(vars, "SERIALIZABLE"))
-
-	// When we set TxnIsolation, it also updates TransactionIsolation.
-	require.Equal(t, "SERIALIZABLE", vars.systems[TxnIsolation])
-	require.Equal(t, vars.systems[TxnIsolation], vars.systems[TransactionIsolation])
-}
-
-func TestDeprecation(t *testing.T) {
-	sysVar := GetSysVar(TiDBIndexLookupConcurrency)
-	require.NotNil(t, sysVar)
-
-	vars := NewSessionVars()
-
-	_, err := sysVar.Validate(vars, "123", ScopeSession)
-	require.NoError(t, err)
-
-	// There was no error but there is a deprecation warning.
-	warn := vars.StmtCtx.GetWarnings()[0].Err
-	require.Equal(t, "[variable:1287]'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead", warn.Error())
-}
-
-func TestScope(t *testing.T) {
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	require.True(t, sv.HasSessionScope())
-	require.True(t, sv.HasGlobalScope())
-	require.False(t, sv.HasInstanceScope())
-	require.False(t, sv.HasNoneScope())
-
-	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	require.False(t, sv.HasSessionScope())
-	require.True(t, sv.HasGlobalScope())
-	require.False(t, sv.HasInstanceScope())
-	require.False(t, sv.HasNoneScope())
-
-	sv = SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	require.True(t, sv.HasSessionScope())
-	require.False(t, sv.HasGlobalScope())
-	require.False(t, sv.HasInstanceScope())
-	require.False(t, sv.HasNoneScope())
-
-	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	require.False(t, sv.HasSessionScope())
-	require.False(t, sv.HasGlobalScope())
-	require.False(t, sv.HasInstanceScope())
-	require.True(t, sv.HasNoneScope())
-
-	sv = SysVar{Scope: ScopeInstance, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
-	require.False(t, sv.HasSessionScope())
-	require.False(t, sv.HasGlobalScope())
-	require.True(t, sv.HasInstanceScope())
-	require.False(t, sv.HasNoneScope())
-}
-
-func TestBuiltInCase(t *testing.T) {
-	// All Sysvars should have lower case names.
-	// This tests builtins.
-	for name := range GetSysVars() {
-		require.Equal(t, strings.ToLower(name), name)
-	}
-}
-
 func TestSQLSelectLimit(t *testing.T) {
 	sv := GetSysVar(SQLSelectLimit)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	val, err := sv.Validate(vars, "-10", ScopeSession)
 	require.NoError(t, err) // it has autoconvert out of range.
 	require.Equal(t, "0", val)
@@ -299,7 +50,7 @@ func TestSQLSelectLimit(t *testing.T) {
 
 func TestSQLModeVar(t *testing.T) {
 	sv := GetSysVar(SQLModeVar)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	val, err := sv.Validate(vars, "strict_trans_tabLES  ", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "STRICT_TRANS_TABLES", val)
@@ -332,7 +83,7 @@ func TestSQLModeVar(t *testing.T) {
 
 func TestMaxExecutionTime(t *testing.T) {
 	sv := GetSysVar(MaxExecutionTime)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	val, err := sv.Validate(vars, "-10", ScopeSession)
 	require.NoError(t, err) // it has autoconvert out of range.
@@ -348,7 +99,7 @@ func TestMaxExecutionTime(t *testing.T) {
 
 func TestCollationServer(t *testing.T) {
 	sv := GetSysVar(CollationServer)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	val, err := sv.Validate(vars, "LATIN1_bin", ScopeSession)
 	require.NoError(t, err)
@@ -366,7 +117,7 @@ func TestCollationServer(t *testing.T) {
 
 func TestTimeZone(t *testing.T) {
 	sv := GetSysVar(TimeZone)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	// TiDB uses the Golang TZ library, so TZs are case-sensitive.
 	// Unfortunately this is not strictly MySQL compatible. i.e.
@@ -396,21 +147,9 @@ func TestTimeZone(t *testing.T) {
 	require.Equal(t, tz, vars.TimeZone)
 }
 
-func TestForeignKeyChecks(t *testing.T) {
-	sv := GetSysVar(ForeignKeyChecks)
-	vars := NewSessionVars()
-
-	val, err := sv.Validate(vars, "on", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val) // warns and refuses to set ON.
-
-	warn := vars.StmtCtx.GetWarnings()[0].Err
-	require.Equal(t, "[variable:8047]variable 'foreign_key_checks' does not yet support value: on", warn.Error())
-}
-
 func TestTxnIsolation(t *testing.T) {
 	sv := GetSysVar(TxnIsolation)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	_, err := sv.Validate(vars, "on", ScopeSession)
 	require.Equal(t, "[variable:1231]Variable 'tx_isolation' can't be set to the value of 'on'", err.Error())
@@ -426,7 +165,7 @@ func TestTxnIsolation(t *testing.T) {
 	require.Equal(t, "[variable:8048]The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
 
 	// Enable global skip isolation check doesn't affect current session
-	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetGlobalFromHook(vars, "ON", true))
+	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetGlobalFromHook(context.Background(), vars, "ON", true))
 	_, err = sv.Validate(vars, "Serializable", ScopeSession)
 	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
 
@@ -438,7 +177,7 @@ func TestTxnIsolation(t *testing.T) {
 	require.Equal(t, "SERIALIZABLE", val)
 
 	// Init TiDBSkipIsolationLevelCheck like what loadCommonGlobalVariables does
-	vars = NewSessionVars()
+	vars = NewSessionVars(nil)
 	require.NoError(t, vars.SetSystemVarWithRelaxedValidation(TiDBSkipIsolationLevelCheck, "1"))
 	val, err = sv.Validate(vars, "Serializable", ScopeSession)
 	require.NoError(t, err)
@@ -447,7 +186,7 @@ func TestTxnIsolation(t *testing.T) {
 
 func TestTiDBMultiStatementMode(t *testing.T) {
 	sv := GetSysVar(TiDBMultiStatementMode)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	val, err := sv.Validate(vars, "on", ScopeSession)
 	require.NoError(t, err)
@@ -469,7 +208,7 @@ func TestTiDBMultiStatementMode(t *testing.T) {
 }
 
 func TestReadOnlyNoop(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
@@ -498,10 +237,10 @@ func TestReadOnlyNoop(t *testing.T) {
 			require.Equal(t, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
 		}
 		require.Equal(t, "OFF", val)
-		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "ON"))
+		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), TiDBEnableNoopFuncs, "ON"))
 		_, err = sv.Validate(vars, "on", ScopeGlobal)
 		require.NoError(t, err)
-		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "OFF"))
+		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), TiDBEnableNoopFuncs, "OFF"))
 	}
 }
 
@@ -519,57 +258,42 @@ func TestSkipInit(t *testing.T) {
 	require.True(t, sv.SkipInit())
 }
 
-// TestIsNoop is used by the documentation to auto-generate docs for real sysvars.
-func TestIsNoop(t *testing.T) {
-	sv := GetSysVar(TiDBMultiStatementMode)
-	require.False(t, sv.IsNoop)
-
-	sv = GetSysVar(InnodbLockWaitTimeout)
-	require.False(t, sv.IsNoop)
-
-	sv = GetSysVar(InnodbFastShutdown)
-	require.True(t, sv.IsNoop)
-
-	sv = GetSysVar(ReadOnly)
-	require.True(t, sv.IsNoop)
-}
-
 func TestSessionGetterFuncs(t *testing.T) {
-	vars := NewSessionVars()
-	val, err := vars.GetSessionOrGlobalSystemVar(TiDBCurrentTS)
+	vars := NewSessionVars(nil)
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBCurrentTS)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d", vars.TxnCtx.StartTS), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLastTxnInfo)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBLastTxnInfo)
 	require.NoError(t, err)
 	require.Equal(t, vars.LastTxnInfo, val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLastQueryInfo)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBLastQueryInfo)
 	require.NoError(t, err)
 	info, err := json.Marshal(vars.LastQueryInfo)
 	require.NoError(t, err)
 	require.Equal(t, string(info), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBFoundInPlanCache)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBFoundInPlanCache)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(vars.PrevFoundInPlanCache), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBFoundInBinding)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBFoundInBinding)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(vars.PrevFoundInBinding), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBTxnScope)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBTxnScope)
 	require.NoError(t, err)
 	require.Equal(t, vars.TxnScope.GetVarValue(), val)
 }
 
 func TestInstanceScopedVars(t *testing.T) {
-	vars := NewSessionVars()
-	val, err := vars.GetSessionOrGlobalSystemVar(TiDBGeneralLog)
+	vars := NewSessionVars(nil)
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBGeneralLog)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(ProcessGeneralLog.Load()), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBPProfSQLCPU)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBPProfSQLCPU)
 	require.NoError(t, err)
 	expected := "0"
 	if EnablePProfSQLCPU.Load() {
@@ -577,173 +301,73 @@ func TestInstanceScopedVars(t *testing.T) {
 	}
 	require.Equal(t, expected, val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBExpensiveQueryTimeThreshold)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBExpensiveQueryTimeThreshold)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryUsageAlarmRatio)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBMemoryUsageAlarmRatio)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBForcePriority)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBMemoryUsageAlarmKeepRecordNum)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%d", MemoryUsageAlarmKeepRecordNum.Load()), val)
+
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBForcePriority)
 	require.NoError(t, err)
 	require.Equal(t, mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBDDLSlowOprThreshold)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBDDLSlowOprThreshold)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(PluginDir)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), PluginDir)
 	require.NoError(t, err)
 	require.Equal(t, config.GetGlobalConfig().Instance.PluginDir, val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(PluginLoad)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), PluginLoad)
 	require.NoError(t, err)
 	require.Equal(t, config.GetGlobalConfig().Instance.PluginLoad, val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBSlowLogThreshold)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBSlowLogThreshold)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBRecordPlanInSlowLog)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBRecordPlanInSlowLog)
 	require.NoError(t, err)
 	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) == 1
 	require.Equal(t, BoolToOnOff(enabled), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBEnableSlowLog)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableSlowLog)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBCheckMb4ValueInUTF8)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBEnableCollectExecutionInfo)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableCollectExecutionInfo)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()), val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBConfig)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBConfig)
 	require.NoError(t, err)
 	expected, err = config.GetJSONConfig()
 	require.NoError(t, err)
 	require.Equal(t, expected, val)
 
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBLogFileMaxDays)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBLogFileMaxDays)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
-}
 
-// TestDefaultValuesAreSettable that sysvars defaults are logically valid. i.e.
-// the default itself must validate without error provided the scope and read-only is correct.
-// The default values should also be normalized for consistency.
-func TestDefaultValuesAreSettable(t *testing.T) {
-	vars := NewSessionVars()
-	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
-	for _, sv := range GetSysVars() {
-		if sv.HasSessionScope() && !sv.ReadOnly {
-			val, err := sv.Validate(vars, sv.Value, ScopeSession)
-			require.Equal(t, val, sv.Value)
-			require.NoError(t, err)
-		}
-
-		if sv.HasGlobalScope() && !sv.ReadOnly {
-			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
-			require.Equal(t, val, sv.Value)
-			require.NoError(t, err)
-		}
-	}
-}
-
-// TestSysVarNameIsLowerCase tests that no new sysvars are added with uppercase characters.
-// In MySQL variables are always lowercase, and can be set in a case-insensitive way.
-func TestSysVarNameIsLowerCase(t *testing.T) {
-	for _, sv := range GetSysVars() {
-		require.Equal(t, strings.ToLower(sv.Name), sv.Name, "sysvar name contains uppercase characters")
-	}
-}
-
-// TestSettersandGetters tests that sysvars are logically correct with getter and setter functions.
-// i.e. it doesn't make sense to have a SetSession function on a variable that is only globally scoped.
-func TestSettersandGetters(t *testing.T) {
-	for _, sv := range GetSysVars() {
-		if !sv.HasSessionScope() {
-			require.Nil(t, sv.SetSession)
-			require.Nil(t, sv.GetSession)
-		}
-		if !sv.HasGlobalScope() && !sv.HasInstanceScope() {
-			require.Nil(t, sv.SetGlobal)
-			if sv.Name == Timestamp {
-				// The Timestamp sysvar will have GetGlobal func even though it does not have global scope.
-				// It's GetGlobal func will only be called when "set timestamp = default".
-				continue
-			}
-			require.Nil(t, sv.GetGlobal)
-		}
-	}
-}
-
-// TestSkipInitIsUsed ensures that no new variables are added with skipInit: true.
-// This feature is deprecated, and if you need to run code to differentiate between init and "SET" (rare),
-// you can instead check if s.StmtCtx.StmtType == "Set".
-// The reason it is deprecated is that the behavior is typically wrong:
-// it means session settings won't inherit from global and don't apply until you first set
-// them in each session. This is a very weird behavior.
-// See: https://github.com/pingcap/tidb/issues/35051
-func TestSkipInitIsUsed(t *testing.T) {
-	for _, sv := range GetSysVars() {
-		if sv.skipInit {
-			// skipInit only ever applied to session scope, so if anyone is setting it on
-			// a variable without session, that doesn't make sense.
-			require.True(t, sv.HasSessionScope(), fmt.Sprintf("skipInit has no effect on a variable without session scope: %s", sv.Name))
-			// Since SetSession is the "init function" there is no init function to skip.
-			require.NotNil(t, sv.SetSession, fmt.Sprintf("skipInit has no effect on variables without an init (setsession) func: %s", sv.Name))
-			// Skipinit has no use on noop funcs, since noop funcs always skipinit.
-			require.False(t, sv.IsNoop, fmt.Sprintf("skipInit has no effect on noop variables: %s", sv.Name))
-
-			// Test for variables that have a default of "0" or "OFF"
-			// If it is session-only scoped there is likely no bug now.
-			// If it is also global-scoped, then there is a bug as soon as the global changes.
-			if !(sv.Name == RandSeed1 || sv.Name == RandSeed2) {
-				// The bug is because the tests might not realize the SetSession func was not called on init,
-				// because it would initialize some session field to the empty value anyway.
-				require.NotEqual(t, "0", sv.Value, fmt.Sprintf("default value is zero: %s", sv.Name))
-				require.NotEqual(t, "OFF", sv.Value, fmt.Sprintf("default value is OFF: %s", sv.Name))
-			}
-
-			// Many of these variables might allow skipInit to be removed,
-			// they need to be checked first. The purpose of this test is to make
-			// sure we don't introduce any new variables with skipInit, which seems
-			// to be a problem.
-			switch sv.Name {
-			case TiDBTxnScope,
-				TiDBSnapshot,
-				TiDBEnableChunkRPC,
-				TxnIsolationOneShot,
-				TiDBDDLReorgPriority,
-				TiDBSlowQueryFile,
-				TiDBWaitSplitRegionFinish,
-				TiDBWaitSplitRegionTimeout,
-				TiDBMetricSchemaStep,
-				TiDBMetricSchemaRangeDuration,
-				RandSeed1,
-				RandSeed2,
-				CollationDatabase,
-				CollationConnection,
-				CharsetDatabase,
-				CharacterSetConnection,
-				CharacterSetServer,
-				TiDBOptTiFlashConcurrencyFactor,
-				TiDBOptSeekFactor:
-				continue
-			}
-			require.Equal(t, false, sv.skipInit, fmt.Sprintf("skipInit should not be set on new system variables. variable %s is in violation", sv.Name))
-		}
-	}
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBRCReadCheckTS)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(EnableRCReadCheckTS.Load()), val)
 }
 
 func TestSecureAuth(t *testing.T) {
 	sv := GetSysVar(SecureAuth)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	_, err := sv.Validate(vars, "OFF", ScopeGlobal)
 	require.Equal(t, "[variable:1231]Variable 'secure_auth' can't be set to the value of 'OFF'", err.Error())
 	val, err := sv.Validate(vars, "ON", ScopeGlobal)
@@ -751,16 +375,9 @@ func TestSecureAuth(t *testing.T) {
 	require.Equal(t, "ON", val)
 }
 
-func TestValidateWithRelaxedValidation(t *testing.T) {
-	sv := GetSysVar(SecureAuth)
-	vars := NewSessionVars()
-	val := sv.ValidateWithRelaxedValidation(vars, "1", ScopeGlobal)
-	require.Equal(t, "ON", val)
-}
-
 func TestTiDBReplicaRead(t *testing.T) {
 	sv := GetSysVar(TiDBReplicaRead)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	val, err := sv.Validate(vars, "follower", ScopeGlobal)
 	require.Equal(t, val, "follower")
 	require.NoError(t, err)
@@ -768,7 +385,7 @@ func TestTiDBReplicaRead(t *testing.T) {
 
 func TestSQLAutoIsNull(t *testing.T) {
 	svSQL, svNoop := GetSysVar(SQLAutoIsNull), GetSysVar(TiDBEnableNoopFuncs)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	_, err := svSQL.Validate(vars, "ON", ScopeSession)
 	require.True(t, terror.ErrorEqual(err, ErrFunctionsNoopImpl))
@@ -793,30 +410,30 @@ func TestSQLAutoIsNull(t *testing.T) {
 }
 
 func TestLastInsertID(t *testing.T) {
-	vars := NewSessionVars()
-	val, err := vars.GetSessionOrGlobalSystemVar(LastInsertID)
+	vars := NewSessionVars(nil)
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), LastInsertID)
 	require.NoError(t, err)
 	require.Equal(t, val, "0")
 
 	vars.StmtCtx.PrevLastInsertID = 21
-	val, err = vars.GetSessionOrGlobalSystemVar(LastInsertID)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), LastInsertID)
 	require.NoError(t, err)
 	require.Equal(t, val, "21")
 }
 
 func TestTimestamp(t *testing.T) {
-	vars := NewSessionVars()
-	val, err := vars.GetSessionOrGlobalSystemVar(Timestamp)
+	vars := NewSessionVars(nil)
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), Timestamp)
 	require.NoError(t, err)
 	require.NotEqual(t, "", val)
 
 	vars.systems[Timestamp] = "10"
-	val, err = vars.GetSessionOrGlobalSystemVar(Timestamp)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), Timestamp)
 	require.NoError(t, err)
 	require.Equal(t, "10", val)
 
 	vars.systems[Timestamp] = "0" // set to default
-	val, err = vars.GetSessionOrGlobalSystemVar(Timestamp)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), Timestamp)
 	require.NoError(t, err)
 	require.NotEqual(t, "", val)
 	require.NotEqual(t, "10", val)
@@ -841,36 +458,41 @@ func TestTimestamp(t *testing.T) {
 }
 
 func TestIdentity(t *testing.T) {
-	vars := NewSessionVars()
-	val, err := vars.GetSessionOrGlobalSystemVar(Identity)
+	vars := NewSessionVars(nil)
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), Identity)
 	require.NoError(t, err)
 	require.Equal(t, val, "0")
 
 	vars.StmtCtx.PrevLastInsertID = 21
-	val, err = vars.GetSessionOrGlobalSystemVar(Identity)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), Identity)
 	require.NoError(t, err)
 	require.Equal(t, val, "21")
 }
 
 func TestLcTimeNamesReadOnly(t *testing.T) {
 	sv := GetSysVar("lc_time_names")
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
 	require.Error(t, err)
 }
 
-func TestLcMessagesReadOnly(t *testing.T) {
+func TestLcMessages(t *testing.T) {
 	sv := GetSysVar("lc_messages")
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
-	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
-	require.Error(t, err)
+	_, err := sv.Validate(vars, "zh_CN", ScopeGlobal)
+	require.NoError(t, err)
+	err = sv.SetSessionFromHook(vars, "zh_CN")
+	require.NoError(t, err)
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), "lc_messages")
+	require.NoError(t, err)
+	require.Equal(t, val, "zh_CN")
 }
 
 func TestDDLWorkers(t *testing.T) {
 	svWorkerCount, svBatchSize := GetSysVar(TiDBDDLReorgWorkerCount), GetSysVar(TiDBDDLReorgBatchSize)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
 	val, err := svWorkerCount.Validate(vars, "-100", ScopeGlobal)
@@ -895,93 +517,19 @@ func TestDDLWorkers(t *testing.T) {
 }
 
 func TestDefaultCharsetAndCollation(t *testing.T) {
-	vars := NewSessionVars()
-	val, err := vars.GetSessionOrGlobalSystemVar(CharacterSetConnection)
+	vars := NewSessionVars(nil)
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), CharacterSetConnection)
 	require.NoError(t, err)
 	require.Equal(t, val, mysql.DefaultCharset)
-	val, err = vars.GetSessionOrGlobalSystemVar(CollationConnection)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), CollationConnection)
 	require.NoError(t, err)
 	require.Equal(t, val, mysql.DefaultCollationName)
 }
 
-func TestInstanceConfigHasMatchingSysvar(t *testing.T) {
-	// This tests that each item in [instance] has a sysvar of the same name.
-	// The whole point of moving items to [instance] is to unify the name between
-	// config and sysvars. See: docs/design/2021-12-08-instance-scope.md#introduction
-	cfg, err := config.GetJSONConfig()
-	require.NoError(t, err)
-	var v interface{}
-	json.Unmarshal([]byte(cfg), &v)
-	data := v.(map[string]interface{})
-	for k, v := range data {
-		if k != "instance" {
-			continue
-		}
-		instanceSection := v.(map[string]interface{})
-		for instanceName := range instanceSection {
-			// Need to check there is a sysvar named instanceName.
-			sv := GetSysVar(instanceName)
-			require.NotNil(t, sv, fmt.Sprintf("config option: instance.%v requires a matching sysvar of the same name", instanceName))
-		}
-	}
-}
-
-func TestInstanceScope(t *testing.T) {
-	// Instance scope used to be settable via "SET SESSION", which is weird to any MySQL user.
-	// It is now settable via SET GLOBAL, but to work correctly a sysvar can only ever
-	// be INSTANCE scoped or GLOBAL scoped, never *both* at the same time (at least for now).
-	// Otherwise the semantics are confusing to users for how precedence applies.
-
-	for _, sv := range GetSysVars() {
-		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
-		if sv.HasInstanceScope() {
-			require.Nil(t, sv.GetSession)
-			require.Nil(t, sv.SetSession)
-		}
-	}
-
-	count := len(GetSysVars())
-	sv := SysVar{Scope: ScopeInstance, Name: "newinstancesysvar", Value: On, Type: TypeBool,
-		SetGlobal: func(s *SessionVars, val string) error {
-			return fmt.Errorf("set should fail")
-		},
-		GetGlobal: func(s *SessionVars) (string, error) {
-			return "", fmt.Errorf("get should fail")
-		},
-	}
-
-	RegisterSysVar(&sv)
-	require.Len(t, GetSysVars(), count+1)
-
-	sysVar := GetSysVar("newinstancesysvar")
-	require.NotNil(t, sysVar)
-
-	vars := NewSessionVars()
-
-	// It is a boolean, try to set it to a bogus value
-	_, err := sysVar.Validate(vars, "ABCD", ScopeInstance)
-	require.Error(t, err)
-
-	// Boolean oN or 1 converts to canonical ON or OFF
-	normalizedVal, err := sysVar.Validate(vars, "oN", ScopeInstance)
-	require.Equal(t, "ON", normalizedVal)
-	require.NoError(t, err)
-	normalizedVal, err = sysVar.Validate(vars, "0", ScopeInstance)
-	require.Equal(t, "OFF", normalizedVal)
-	require.NoError(t, err)
-
-	err = sysVar.SetGlobalFromHook(vars, "OFF", true) // default is on
-	require.Equal(t, "set should fail", err.Error())
-
-	// Test unregistration restores previous count
-	UnregisterSysVar("newinstancesysvar")
-	require.Equal(t, len(GetSysVars()), count)
-}
-
 func TestIndexMergeSwitcher(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
-	val, err := vars.GetSessionOrGlobalSystemVar(TiDBEnableIndexMerge)
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableIndexMerge)
 	require.NoError(t, err)
 	require.Equal(t, DefTiDBEnableIndexMerge, true)
 	require.Equal(t, BoolToOnOff(DefTiDBEnableIndexMerge), val)
@@ -989,7 +537,7 @@ func TestIndexMergeSwitcher(t *testing.T) {
 
 func TestNetBufferLength(t *testing.T) {
 	netBufferLength := GetSysVar(NetBufferLength)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
 	val, err := netBufferLength.Validate(vars, "1", ScopeGlobal)
@@ -1005,7 +553,7 @@ func TestNetBufferLength(t *testing.T) {
 
 func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
 	sv := GetSysVar(TiDBBatchPendingTiFlashCount)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	val, err := sv.Validate(vars, "-10", ScopeSession)
 	require.NoError(t, err) // it has autoconvert out of range.
 	require.Equal(t, "0", val)
@@ -1021,7 +569,7 @@ func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
 
 func TestTiDBMemQuotaQuery(t *testing.T) {
 	sv := GetSysVar(TiDBMemQuotaQuery)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	for _, scope := range []ScopeFlag{ScopeGlobal, ScopeSession} {
 		newVal := 32 * 1024 * 1024
@@ -1041,7 +589,7 @@ func TestTiDBMemQuotaQuery(t *testing.T) {
 
 func TestTiDBQueryLogMaxLen(t *testing.T) {
 	sv := GetSysVar(TiDBQueryLogMaxLen)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	newVal := 32 * 1024 * 1024
 	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
@@ -1067,7 +615,7 @@ func TestTiDBQueryLogMaxLen(t *testing.T) {
 
 func TestTiDBCommitterConcurrency(t *testing.T) {
 	sv := GetSysVar(TiDBCommitterConcurrency)
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 
 	newVal := 1024
 	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
@@ -1091,35 +639,93 @@ func TestTiDBCommitterConcurrency(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTiDBDDLFlashbackConcurrency(t *testing.T) {
+	sv := GetSysVar(TiDBDDLFlashbackConcurrency)
+	vars := NewSessionVars(nil)
+
+	newVal := 128
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "128")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = MaxConfigurableConcurrency + 1
+	expected := MaxConfigurableConcurrency
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 0
+	expected = 1
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+}
+
 func TestDefaultMemoryDebugModeValue(t *testing.T) {
-	vars := NewSessionVars()
-	val, err := vars.GetSessionOrGlobalSystemVar(TiDBMemoryDebugModeMinHeapInUse)
+	vars := NewSessionVars(nil)
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBMemoryDebugModeMinHeapInUse)
 	require.NoError(t, err)
 	require.Equal(t, val, "0")
-	val, err = vars.GetSessionOrGlobalSystemVar(TiDBMemoryDebugModeAlarmRatio)
+	val, err = vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBMemoryDebugModeAlarmRatio)
 	require.NoError(t, err)
 	require.Equal(t, val, "0")
 }
 
+func TestSetTIDBDistributeReorg(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// Set to on
+	err := mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableDistributeReorg, On)
+	require.NoError(t, err)
+	val, err := mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	require.NoError(t, err)
+	require.Equal(t, On, val)
+
+	// Set to off
+	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableDistributeReorg, Off)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDDLEnableDistributeReorg)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+}
+
+func TestDefaultPartitionPruneMode(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBPartitionPruneMode)
+	require.NoError(t, err)
+	require.Equal(t, "dynamic", val)
+	require.Equal(t, "dynamic", DefTiDBPartitionPruneMode)
+}
+
 func TestSetTIDBFastDDL(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 	fastDDL := GetSysVar(TiDBDDLEnableFastReorg)
 
-	// Default off
-	require.Equal(t, fastDDL.Value, Off)
+	// Default true
+	require.Equal(t, fastDDL.Value, On)
 
 	// Set to On
-	err := mock.SetGlobalSysVar(TiDBDDLEnableFastReorg, On)
+	err := mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableFastReorg, On)
 	require.NoError(t, err)
 	val, err1 := mock.GetGlobalSysVar(TiDBDDLEnableFastReorg)
 	require.NoError(t, err1)
 	require.Equal(t, On, val)
 
 	// Set to off
-	err = mock.SetGlobalSysVar(TiDBDDLEnableFastReorg, Off)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLEnableFastReorg, Off)
 	require.NoError(t, err)
 	val, err1 = mock.GetGlobalSysVar(TiDBDDLEnableFastReorg)
 	require.NoError(t, err1)
@@ -1127,7 +733,7 @@ func TestSetTIDBFastDDL(t *testing.T) {
 }
 
 func TestSetTIDBDiskQuota(t *testing.T) {
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
@@ -1142,37 +748,393 @@ func TestSetTIDBDiskQuota(t *testing.T) {
 	require.Equal(t, diskQuota.Value, strconv.FormatInt(100*gb, 10))
 
 	// MinValue is 100 GB, set to 50 Gb is not allowed
-	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(50*gb, 10))
+	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLDiskQuota, strconv.FormatInt(50*gb, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(100*gb, 10), val)
 
 	// Set to 100 GB
-	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(100*gb, 10))
+	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLDiskQuota, strconv.FormatInt(100*gb, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(100*gb, 10), val)
 
 	// Set to 200 GB
-	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(200*gb, 10))
+	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLDiskQuota, strconv.FormatInt(200*gb, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(200*gb, 10), val)
 
 	// Set to 1 Pb
-	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(pb, 10))
+	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLDiskQuota, strconv.FormatInt(pb, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(pb, 10), val)
 
 	// MaxValue is 1 PB, set to 2 Pb is not allowed, it will set back to 1 PB max allowed value.
-	err = mock.SetGlobalSysVar(TiDBDDLDiskQuota, strconv.FormatInt(2*pb, 10))
+	err = mock.SetGlobalSysVar(context.Background(), TiDBDDLDiskQuota, strconv.FormatInt(2*pb, 10))
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBDDLDiskQuota)
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(pb, 10), val)
+}
+
+func TestTiDBServerMemoryLimit(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	var (
+		mb  uint64 = 1 << 20
+		err error
+		val string
+	)
+	// Test tidb_server_memory_limit
+	serverMemoryLimit := GetSysVar(TiDBServerMemoryLimit)
+	// Check default value
+	require.Equal(t, serverMemoryLimit.Value, DefTiDBServerMemoryLimit)
+
+	// MinValue is 512 MB
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, strconv.FormatUint(100*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, "512MB", val)
+
+	// Test Close
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, strconv.FormatUint(0, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Test MaxValue
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, strconv.FormatUint(math.MaxUint64, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(math.MaxUint64, 10), val)
+
+	// Test Normal Value
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, strconv.FormatUint(1024*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(1024*mb, 10), val)
+
+	// Test tidb_server_memory_limit_sess_min_size
+	serverMemoryLimitSessMinSize := GetSysVar(TiDBServerMemoryLimitSessMinSize)
+	// Check default value
+	require.Equal(t, serverMemoryLimitSessMinSize.Value, strconv.FormatUint(DefTiDBServerMemoryLimitSessMinSize, 10))
+
+	// MinValue is 128 Bytes
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(100, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(128, 10), val)
+
+	// Test Close
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(0, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(0, 10), val)
+
+	// Test MaxValue
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(math.MaxUint64, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(math.MaxUint64, 10), val)
+
+	// Test Normal Value
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, strconv.FormatUint(200*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(200*mb, 10), val)
+}
+
+func TestTiDBServerMemoryLimit2(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	var (
+		err error
+		val string
+	)
+	// Test tidb_server_memory_limit
+	serverMemoryLimit := GetSysVar(TiDBServerMemoryLimit)
+	// Check default value
+	require.Equal(t, serverMemoryLimit.Value, DefTiDBServerMemoryLimit)
+
+	total := memory.GetMemTotalIgnoreErr()
+	if total > 0 {
+		// Can use percentage format when TiDB can obtain physical memory
+		// Test Percentage Format
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "1%")
+		require.NoError(t, err)
+		val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+		require.NoError(t, err)
+		if total/100 > uint64(512<<20) {
+			require.Equal(t, memory.ServerMemoryLimit.Load(), total/100)
+			require.Equal(t, "1%", val)
+		} else {
+			require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
+			require.Equal(t, "512MB", val)
+		}
+
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "0%")
+		require.Error(t, err)
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "100%")
+		require.Error(t, err)
+
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "75%")
+		require.NoError(t, err)
+		val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+		require.NoError(t, err)
+		require.Equal(t, "75%", val)
+		require.Equal(t, memory.ServerMemoryLimit.Load(), total/100*75)
+	}
+	// Test can't obtain physical memory
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/GetMemTotalError", `return(true)`))
+	require.Error(t, mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "75%"))
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/GetMemTotalError"))
+
+	// Test byteSize format
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "1234")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
+	require.Equal(t, "512MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "1234567890123")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(1234567890123))
+	require.Equal(t, "1234567890123", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "10KB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
+	require.Equal(t, "512MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "12345678KB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(12345678<<10))
+	require.Equal(t, "12345678KB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "10MB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(512<<20))
+	require.Equal(t, "512MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "700MB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(700<<20))
+	require.Equal(t, "700MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "20GB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(20<<30))
+	require.Equal(t, "20GB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "2TB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimit)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimit.Load(), uint64(2<<40))
+	require.Equal(t, "2TB", val)
+
+	// Test error
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "123aaa123")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "700MBaa")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "a700MB")
+	require.Error(t, err)
+}
+
+func TestTiDBServerMemoryLimitSessMinSize(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	var (
+		err error
+		val string
+	)
+
+	serverMemroyLimitSessMinSize := GetSysVar(TiDBServerMemoryLimitSessMinSize)
+	// Check default value
+	require.Equal(t, serverMemroyLimitSessMinSize.Value, strconv.FormatInt(DefTiDBServerMemoryLimitSessMinSize, 10))
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "123456")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimitSessMinSize.Load(), uint64(123456))
+	require.Equal(t, "123456", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "100")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimitSessMinSize.Load(), uint64(128))
+	require.Equal(t, "128", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "123MB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
+	require.NoError(t, err)
+	require.Equal(t, memory.ServerMemoryLimitSessMinSize.Load(), uint64(123<<20))
+	require.Equal(t, "128974848", val)
+}
+
+func TestTiDBServerMemoryLimitGCTrigger(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	var (
+		err error
+		val string
+	)
+
+	serverMemroyLimitGCTrigger := GetSysVar(TiDBServerMemoryLimitGCTrigger)
+	// Check default value
+	require.Equal(t, serverMemroyLimitGCTrigger.Value, strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64))
+	defer func() {
+		err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, strconv.FormatFloat(DefTiDBServerMemoryLimitGCTrigger, 'f', -1, 64))
+		require.NoError(t, err)
+	}()
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "0.8")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitGCTrigger)
+	require.NoError(t, err)
+	require.Equal(t, gctuner.GlobalMemoryLimitTuner.GetPercentage(), 0.8)
+	require.Equal(t, "0.8", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "90%")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitGCTrigger)
+	require.NoError(t, err)
+	require.Equal(t, gctuner.GlobalMemoryLimitTuner.GetPercentage(), 0.9)
+	require.Equal(t, "0.9", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "100%")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "101%")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "99%")
+	require.NoError(t, err)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerThreshold, "0.4")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "49%")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "51%")
+	require.NoError(t, err)
+}
+
+func TestSetAggPushDownGlobally(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	val, err := mock.GetGlobalSysVar(TiDBOptAggPushDown)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBOptAggPushDown, "ON")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBOptAggPushDown)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+}
+
+func TestSetJobScheduleWindow(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// default value
+	val, err := mock.GetGlobalSysVar(TiDBTTLJobScheduleWindowStartTime)
+	require.NoError(t, err)
+	require.Equal(t, "00:00 +0000", val)
+
+	// set and get variable in UTC
+	vars.TimeZone = time.UTC
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTTLJobScheduleWindowStartTime, "16:11")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBTTLJobScheduleWindowStartTime)
+	require.NoError(t, err)
+	require.Equal(t, "16:11 +0000", val)
+
+	// set variable in UTC, get it in Asia/Shanghai
+	vars.TimeZone = time.UTC
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTTLJobScheduleWindowStartTime, "16:11")
+	require.NoError(t, err)
+	vars.TimeZone, err = time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBTTLJobScheduleWindowStartTime)
+	require.NoError(t, err)
+	require.Equal(t, "16:11 +0000", val)
+
+	// set variable in Asia/Shanghai, get it it UTC
+	vars.TimeZone, err = time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBTTLJobScheduleWindowStartTime, "16:11")
+	require.NoError(t, err)
+	vars.TimeZone = time.UTC
+	val, err = mock.GetGlobalSysVar(TiDBTTLJobScheduleWindowStartTime)
+	require.NoError(t, err)
+	require.Equal(t, "16:11 +0800", val)
+}
+
+func TestTiDBEnableResourceControl(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	resourceControlEnabled := GetSysVar(TiDBEnableResourceControl)
+
+	// Default true
+	require.Equal(t, resourceControlEnabled.Value, Off)
+
+	// Set to On
+	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, On)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+
+	// Set to off
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, Off)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
 }

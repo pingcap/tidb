@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
@@ -114,7 +113,7 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMax, mysql.TypeString, 5, "4", "4", "4"),
 		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 5, types.TimeFromDays(369), types.TimeFromDays(369), types.TimeFromDays(369)),
 		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}),
-		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, json.CreateBinary(int64(4)), json.CreateBinary(int64(4)), json.CreateBinary(int64(4))),
+		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, types.CreateBinaryJSON(int64(4)), types.CreateBinaryJSON(int64(4)), types.CreateBinaryJSON(int64(4))),
 		buildAggTester(ast.AggFuncMax, mysql.TypeEnum, 5, enumE, enumC, enumE),
 		buildAggTester(ast.AggFuncMax, mysql.TypeSet, 5, setED, setED, setED),
 
@@ -126,7 +125,7 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeString, 5, "0", "2", "0"),
 		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
 		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
-		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, json.CreateBinary(int64(0)), json.CreateBinary(int64(2)), json.CreateBinary(int64(0))),
+		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, types.CreateBinaryJSON(int64(0)), types.CreateBinaryJSON(int64(2)), types.CreateBinaryJSON(int64(0))),
 		buildAggTester(ast.AggFuncMin, mysql.TypeEnum, 5, enumA, enumA, enumA),
 		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setC, setC, setC),
 	}
@@ -150,7 +149,7 @@ func TestMaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMax, mysql.TypeString, 5, nil, "4", "4"),
 		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 5, nil, types.TimeFromDays(369)),
 		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 5, nil, types.Duration{Duration: time.Duration(4)}),
-		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, nil, json.CreateBinary(int64(4))),
+		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, nil, types.CreateBinaryJSON(int64(4))),
 
 		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 5, nil, 0),
 		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, 5, nil, 0),
@@ -160,7 +159,7 @@ func TestMaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeString, 5, nil, "0"),
 		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 5, nil, types.TimeFromDays(365)),
 		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 5, nil, types.Duration{Duration: time.Duration(0)}),
-		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, nil, json.CreateBinary(int64(0))),
+		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, nil, types.CreateBinaryJSON(int64(0))),
 	}
 	for _, test := range tests {
 		test := test

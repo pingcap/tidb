@@ -31,3 +31,14 @@ func TestDateFormat(t *testing.T) {
 		require.Equal(t, ca.target, date)
 	}
 }
+
+func TestPrefix(t *testing.T) {
+	require.True(t, IsMetaDBKey([]byte("mDBs")))
+	require.False(t, IsMetaDBKey([]byte("mDDL")))
+	require.True(t, IsMetaDDLJobHistoryKey([]byte("mDDLJobHistory")))
+	require.False(t, IsMetaDDLJobHistoryKey([]byte("mDDL")))
+	require.True(t, MaybeDBOrDDLJobHistoryKey([]byte("mDL")))
+	require.True(t, MaybeDBOrDDLJobHistoryKey([]byte("mDB:")))
+	require.True(t, MaybeDBOrDDLJobHistoryKey([]byte("mDDLHistory")))
+	require.False(t, MaybeDBOrDDLJobHistoryKey([]byte("DDL")))
+}

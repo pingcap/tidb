@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -44,12 +45,20 @@ type schemaInfo struct {
 type Schemas struct {
 	// name -> schema
 	schemas map[string]*schemaInfo
+
+	// checkpoint: table id -> checksum
+	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 }
 
 func NewBackupSchemas() *Schemas {
 	return &Schemas{
-		schemas: make(map[string]*schemaInfo),
+		schemas:            make(map[string]*schemaInfo),
+		checkpointChecksum: nil,
 	}
+}
+
+func (ss *Schemas) SetCheckpointChecksum(checkpointChecksum map[int64]*checkpoint.ChecksumItem) {
+	ss.checkpointChecksum = checkpointChecksum
 }
 
 func (ss *Schemas) AddSchema(
@@ -73,6 +82,7 @@ func (ss *Schemas) AddSchema(
 func (ss *Schemas) BackupSchemas(
 	ctx context.Context,
 	metaWriter *metautil.MetaWriter,
+	checkpointRunner *checkpoint.CheckpointRunner,
 	store kv.Storage,
 	statsHandle *handle.Handle,
 	backupTS uint64,
@@ -100,6 +110,11 @@ func (ss *Schemas) BackupSchemas(
 			schema.dbInfo.Name = utils.TemporaryDBName(schema.dbInfo.Name.O)
 		}
 
+		var checksum *checkpoint.ChecksumItem
+		var exists bool = false
+		if ss.checkpointChecksum != nil {
+			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
+		}
 		workerPool.ApplyOnErrorGroup(errg, func() error {
 			if schema.tableInfo != nil {
 				logger := log.With(
@@ -109,16 +124,38 @@ func (ss *Schemas) BackupSchemas(
 
 				if !skipChecksum {
 					logger.Info("Calculate table checksum start")
-					start := time.Now()
-					err := schema.calculateChecksum(ectx, store.GetClient(), backupTS, copConcurrency)
-					if err != nil {
-						return errors.Trace(err)
+					if exists && checksum != nil {
+						schema.crc64xor = checksum.Crc64xor
+						schema.totalKvs = checksum.TotalKvs
+						schema.totalBytes = checksum.TotalBytes
+						logger.Info("Calculate table checksum completed (from checkpoint)",
+							zap.Uint64("Crc64Xor", schema.crc64xor),
+							zap.Uint64("TotalKvs", schema.totalKvs),
+							zap.Uint64("TotalBytes", schema.totalBytes))
+					} else {
+						start := time.Now()
+						err := schema.calculateChecksum(ectx, store.GetClient(), backupTS, copConcurrency)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						calculateCost := time.Since(start)
+						var flushCost time.Duration
+						if checkpointRunner != nil {
+							// if checkpoint runner is running and the checksum is not from checkpoint
+							// then flush the checksum by the checkpoint runner
+							startFlush := time.Now()
+							if err = checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes, calculateCost.Seconds()); err != nil {
+								return errors.Trace(err)
+							}
+							flushCost = time.Since(startFlush)
+						}
+						logger.Info("Calculate table checksum completed",
+							zap.Uint64("Crc64Xor", schema.crc64xor),
+							zap.Uint64("TotalKvs", schema.totalKvs),
+							zap.Uint64("TotalBytes", schema.totalBytes),
+							zap.Duration("calculate-take", calculateCost),
+							zap.Duration("flush-take", flushCost))
 					}
-					logger.Info("Calculate table checksum completed",
-						zap.Uint64("Crc64Xor", schema.crc64xor),
-						zap.Uint64("TotalKvs", schema.totalKvs),
-						zap.Uint64("TotalBytes", schema.totalBytes),
-						zap.Duration("take", time.Since(start)))
 				}
 				if statsHandle != nil {
 					if err := schema.dumpStatsToJSON(statsHandle); err != nil {
@@ -181,7 +218,7 @@ func (s *schemaInfo) calculateChecksum(
 
 func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle) error {
 	jsonTable, err := statsHandle.DumpStatsToJSON(
-		s.dbInfo.Name.String(), s.tableInfo, nil)
+		s.dbInfo.Name.String(), s.tableInfo, nil, true)
 	if err != nil {
 		return errors.Trace(err)
 	}

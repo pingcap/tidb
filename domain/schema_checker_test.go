@@ -26,7 +26,7 @@ import (
 func TestSchemaCheckerSimple(t *testing.T) {
 	lease := 5 * time.Millisecond
 	validator := NewSchemaValidator(lease, nil)
-	checker := &SchemaChecker{SchemaValidator: validator}
+	checker := &SchemaChecker{SchemaValidator: validator, needCheckSchema: true}
 
 	// Add some schema versions and delta table IDs.
 	ts := uint64(time.Now().UnixNano())
@@ -65,6 +65,6 @@ func TestSchemaCheckerSimple(t *testing.T) {
 
 	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
 	nowTS := uint64(time.Now().UnixNano())
-	_, result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
+	_, result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs, true)
 	require.Equal(t, ResultUnknown, result)
 }

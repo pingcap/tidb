@@ -66,8 +66,9 @@ func getTiFlashStores(ctx sessionctx.Context) ([]infoschema.ServerInfo, error) {
 type CompactTableTiFlashExec struct {
 	baseExecutor
 
-	tableInfo *model.TableInfo
-	done      bool
+	tableInfo    *model.TableInfo
+	partitionIDs []int64
+	done         bool
 
 	tikvStore tikv.Storage
 }
@@ -139,6 +140,7 @@ func (task *storeCompactTask) work() error {
 	log.Info("Begin compacting table in a store",
 		zap.String("table", task.parentExec.tableInfo.Name.O),
 		zap.Int64("table-id", task.parentExec.tableInfo.ID),
+		zap.Int64s("partition-id", task.parentExec.partitionIDs),
 		zap.String("store-address", task.targetStore.Address),
 	)
 
@@ -146,19 +148,24 @@ func (task *storeCompactTask) work() error {
 	task.lastProgressOutputAt = task.startAt
 
 	if task.parentExec.tableInfo.Partition != nil {
-		// There are partitions, let's do it partition by partition.
 		// There is no need for partition-level concurrency, as TiFlash will limit table compaction one at a time.
-		allPartitions := task.parentExec.tableInfo.Partition.Definitions
+		allPartitions := task.parentExec.partitionIDs
+		if len(allPartitions) == 0 {
+			// There are partitions, but user did not specify partitions.
+			for _, definition := range task.parentExec.tableInfo.Partition.Definitions {
+				allPartitions = append(allPartitions, definition.ID)
+			}
+		}
 		task.allPhysicalTables = len(allPartitions)
 		task.compactedPhysicalTables = 0
-		for _, partition := range allPartitions {
-			stopAllTasks, err = task.compactOnePhysicalTable(partition.ID)
+		for _, partitionID := range allPartitions {
+			stopAllTasks, err = task.compactOnePhysicalTable(partitionID)
 			task.compactedPhysicalTables++
 			if err != nil {
 				// Stop remaining partitions when error happens.
 				break
 			}
-		} // For partition table, there must be no data in task.parentExec.tableInfo.ID. So no need to compact it.
+		}
 	} else {
 		task.allPhysicalTables = 1
 		task.compactedPhysicalTables = 0
@@ -171,6 +178,7 @@ func (task *storeCompactTask) work() error {
 			zap.Duration("elapsed", time.Since(task.startAt)),
 			zap.String("table", task.parentExec.tableInfo.Name.O),
 			zap.Int64("table-id", task.parentExec.tableInfo.ID),
+			zap.Int64s("partition-id", task.parentExec.partitionIDs),
 			zap.String("store-address", task.targetStore.Address),
 		)
 	}
@@ -187,6 +195,7 @@ func (task *storeCompactTask) logFailure(otherFields ...zap.Field) {
 	allFields := []zap.Field{
 		zap.String("table", task.parentExec.tableInfo.Name.O),
 		zap.Int64("table-id", task.parentExec.tableInfo.ID),
+		zap.Int64s("partition-id", task.parentExec.partitionIDs),
 		zap.String("store-address", task.targetStore.Address),
 	}
 	log.Warn("Compact table failed", append(allFields, otherFields...)...)
@@ -201,6 +210,7 @@ func (task *storeCompactTask) logProgressOptionally() {
 			zap.Duration("elapsed", time.Since(task.startAt)),
 			zap.String("table", task.parentExec.tableInfo.Name.O),
 			zap.Int64("table-id", task.parentExec.tableInfo.ID),
+			zap.Int64s("partition-id", task.parentExec.partitionIDs),
 			zap.String("store-address", task.targetStore.Address),
 			zap.Int("all-physical-tables", task.allPhysicalTables),
 			zap.Int("compacted-physical-tables", task.compactedPhysicalTables),

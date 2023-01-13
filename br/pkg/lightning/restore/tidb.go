@@ -66,13 +66,15 @@ type TiDBManager struct {
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	param := common.MySQLConnectParam{
-		Host:             dsn.Host,
-		Port:             dsn.Port,
-		User:             dsn.User,
-		Password:         dsn.Psw,
-		SQLMode:          dsn.StrSQLMode,
-		MaxAllowedPacket: dsn.MaxAllowedPacket,
-		TLS:              dsn.TLS,
+		Host:                     dsn.Host,
+		Port:                     dsn.Port,
+		User:                     dsn.User,
+		Password:                 dsn.Psw,
+		SQLMode:                  dsn.StrSQLMode,
+		MaxAllowedPacket:         dsn.MaxAllowedPacket,
+		TLSConfig:                dsn.Security.TLSConfig,
+		AllowFallbackToPlaintext: dsn.Security.AllowFallbackToPlaintext,
+		Net:                      dsn.UUID,
 	}
 
 	db, err := param.Connect()
@@ -93,8 +95,10 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_opt_write_row_id": "1",
 		// always set auto-commit to ON
 		"autocommit": "1",
-		// alway set transaction mode to optimistic
+		// always set transaction mode to optimistic
 		"tidb_txn_mode": "optimistic",
+		// disable foreign key checks
+		"foreign_key_checks": "0",
 	}
 
 	if dsn.Vars != nil {
@@ -141,47 +145,6 @@ func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
 }
 
-func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema map[string]string) error {
-	logger := log.FromContext(ctx).With(zap.String("db", database))
-	sqlExecutor := g.GetSQLExecutor()
-
-	var createDatabase strings.Builder
-	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
-	common.WriteMySQLIdentifier(&createDatabase, database)
-	err := sqlExecutor.ExecuteWithLog(ctx, createDatabase.String(), "create database", logger)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	task := logger.Begin(zap.InfoLevel, "create tables")
-	var sqlCreateStmts []string
-loopCreate:
-	for tbl, sqlCreateTable := range tablesSchema {
-		task.Debug("create table", zap.String("schema", sqlCreateTable))
-
-		sqlCreateStmts, err = createIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
-		if err != nil {
-			break
-		}
-
-		// TODO: maybe we should put these createStems into a transaction
-		for _, s := range sqlCreateStmts {
-			err = sqlExecutor.ExecuteWithLog(
-				ctx,
-				s,
-				"create table",
-				logger.With(zap.String("table", common.UniqueTable(database, tbl))),
-			)
-			if err != nil {
-				break loopCreate
-			}
-		}
-	}
-	task.End(zap.ErrorLevel, err)
-
-	return errors.Trace(err)
-}
-
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
@@ -189,7 +152,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 	}
 
 	var res strings.Builder
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment, &res)
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment|format.RestoreWithTTLEnableOff, &res)
 
 	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
@@ -197,6 +160,9 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 		case *ast.CreateDatabaseStmt:
 			node.Name = model.NewCIStr(dbName)
 			node.IfNotExists = true
+		case *ast.DropDatabaseStmt:
+			node.Name = model.NewCIStr(dbName)
+			node.IfExists = true
 		case *ast.CreateTableStmt:
 			node.Table.Schema = model.NewCIStr(dbName)
 			node.Table.Name = model.NewCIStr(tblName)
@@ -261,13 +227,10 @@ func LoadSchemaInfo(
 				if m, ok := metric.FromContext(ctx); ok {
 					m.RecordTableCount(metric.TableStatePending, err)
 				}
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			if m, ok := metric.FromContext(ctx); ok {
 				m.RecordTableCount(metric.TableStatePending, err)
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
 			}
 			// Table names are case-sensitive in mydump.MDTableMeta.
 			// We should always use the original tbl.Name in checkpoints.

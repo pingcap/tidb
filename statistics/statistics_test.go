@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -646,7 +645,7 @@ func SubTestBuild() func(*testing.T) {
 		require.Equal(t, 99999, int(count))
 
 		datum := types.Datum{}
-		datum.SetMysqlJSON(json.BinaryJSON{TypeCode: json.TypeCodeLiteral})
+		datum.SetMysqlJSON(types.BinaryJSON{TypeCode: types.JSONTypeCodeLiteral})
 		item := &SampleItem{Value: datum}
 		collector = &SampleCollector{
 			Count:     1,

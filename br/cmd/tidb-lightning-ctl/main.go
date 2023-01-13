@@ -88,7 +88,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err = cfg.TiDB.Security.RegisterMySQL(); err != nil {
+	if err = cfg.TiDB.Security.BuildTLSConfig(); err != nil {
 		return err
 	}
 

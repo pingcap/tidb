@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -60,12 +61,12 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -81,12 +82,15 @@ func checkFileName(s string) bool {
 		"meta.txt",
 		"stats/test.t_dump_single.json",
 		"schema/test.t_dump_single.schema.txt",
+		"schema/schema_meta.txt",
 		"table_tiflash_replica.txt",
 		"variables.toml",
-		"sqls.sql",
 		"session_bindings.sql",
 		"global_bindings.sql",
-		"explain.txt",
+		"sql/sql0.sql",
+		"explain/sql0.txt",
+		"statsMem/test.t_dump_single.txt",
+		"sql_meta.toml",
 	}
 	for _, f := range files {
 		if strings.Compare(f, s) == 0 {
@@ -153,17 +157,65 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tk.MustExec("plan replayer dump explain select * from t where a=10")
-	tk.MustExec("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
+	tk.MustQuery("plan replayer dump explain select * from t where a=10")
+	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select * from t1")
 	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as select * from v1")
-	tk.MustExec("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
-	tk.MustExec("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
-	tk.MustExec("plan replayer dump explain select * from v1")
-	tk.MustExec("plan replayer dump explain select * from v2")
+	tk.MustQuery("plan replayer dump explain with tmp as (select a from t1 group by t1.a) select * from tmp, t2 where t2.a=tmp.a;")
+	tk.MustQuery("plan replayer dump explain select * from t1 where t1.a > (with cte1 as (select 1) select count(1) from cte1);")
+	tk.MustQuery("plan replayer dump explain select * from v1")
+	tk.MustQuery("plan replayer dump explain select * from v2")
+	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
+
+	// clear the status table and assert
+	tk.MustExec("delete from mysql.plan_replayer_status")
+	tk.MustQuery("plan replayer dump explain select * from v2")
+	token := tk.Session().GetSessionVars().LastPlanReplayerToken
+	rows := tk.MustQuery(fmt.Sprintf("select * from mysql.plan_replayer_status where token = '%v'", token)).Rows()
+	require.Len(t, rows, 1)
+}
+
+func TestPlanReplayerCapture(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("plan replayer capture '123' '123';")
+	tk.MustQuery("select sql_digest, plan_digest from mysql.plan_replayer_task;").Check(testkit.Rows("123 123"))
+	tk.MustGetErrMsg("plan replayer capture '123' '123';", "plan replayer capture task already exists")
+	tk.MustExec("delete from mysql.plan_replayer_task")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("prepare stmt from 'update t set id = ?  where id = ? + 1';")
+	tk.MustExec("SET @number = 5;")
+	tk.MustExec("execute stmt using @number,@number")
+	_, sqlDigest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+	_, planDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+	tk.MustExec("SET @@tidb_enable_plan_replayer_capture = ON;")
+	tk.MustExec(fmt.Sprintf("plan replayer capture '%v' '%v'", sqlDigest.String(), planDigest.String()))
+	err := dom.GetPlanReplayerHandle().CollectPlanReplayerTask()
+	require.NoError(t, err)
+	tk.MustExec("execute stmt using @number,@number")
+	task := dom.GetPlanReplayerHandle().DrainTask()
+	require.NotNil(t, task)
+}
+
+func TestPlanReplayerContinuesCapture(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	prHandle := dom.GetPlanReplayerHandle()
+	tk.MustExec("delete from mysql.plan_replayer_status;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int);")
+	tk.MustExec("set @@tidb_enable_plan_replayer_continues_capture = 'ON'")
+	tk.MustQuery("select * from t;")
+	task := prHandle.DrainTask()
+	require.NotNil(t, task)
+	worker := prHandle.GetWorker()
+	success := worker.HandleTask(task)
+	require.True(t, success)
+	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
 func TestShow(t *testing.T) {
@@ -1444,6 +1496,7 @@ func TestSetOperation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`drop table if exists t1, t2, t3`)
 	tk.MustExec(`create table t1(a int)`)
 	tk.MustExec(`create table t2 like t1`)
@@ -1468,6 +1521,21 @@ func TestSetOperation(t *testing.T) {
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
+
+	// from https://github.com/pingcap/tidb/issues/40279
+	tk.MustExec("CREATE TABLE `issue40279` (`a` char(155) NOT NULL DEFAULT 'on1unvbxp5sko6mbetn3ku26tuiyju7w3wc0olzto9ew7gsrx',`b` mediumint(9) NOT NULL DEFAULT '2525518',PRIMARY KEY (`b`,`a`) /*T![clustered_index] CLUSTERED */);")
+	tk.MustExec("insert into `issue40279` values ();")
+	tk.MustQuery("( select    `issue40279`.`b` as r0 , from_base64( `issue40279`.`a` ) as r1 from `issue40279` ) " +
+		"except ( " +
+		"select    `issue40279`.`a` as r0 , elt(2, `issue40279`.`a` , `issue40279`.`a` ) as r1 from `issue40279`);").
+		Check(testkit.Rows("2525518 <nil>"))
+	tk.MustExec("drop table if exists t2")
+
+	tk.MustExec("CREATE TABLE `t2` (   `a` varchar(20) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t2 values(0xCED2)")
+	result := tk.MustQuery("(select elt(2,t2.a,t2.a) from t2) except (select 0xCED2  from t2)")
+	rows := result.Rows()
+	require.Len(t, rows, 0)
 }
 
 func TestSetOperationOnDiffColType(t *testing.T) {
@@ -1505,6 +1573,7 @@ func TestIndexScanWithYearCol(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (c1 year(4), c2 int, key(c1));")
 	tk.MustExec("insert into t values(2001, 1);")
@@ -1550,7 +1619,7 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
 	path := testdata.ConvertRowsToStrings(res.Rows())
 
-	reader, err := zip.OpenReader(filepath.Join(domain.GetPlanReplayerDirName(), path[0]))
+	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
 	for _, file := range reader.File {
@@ -1903,7 +1972,7 @@ func TestCheckIndex(t *testing.T) {
 	tbInfo := tbl.Meta()
 
 	alloc := autoid.NewAllocator(store, dbInfo.ID, tbInfo.ID, false, autoid.RowIDAllocType)
-	tb, err := tables.TableFromMeta(autoid.NewAllocators(alloc), tbInfo)
+	tb, err := tables.TableFromMeta(autoid.NewAllocators(false, alloc), tbInfo)
 	require.NoError(t, err)
 
 	_, err = se.Execute(context.Background(), "admin check index t c")
@@ -2824,7 +2893,7 @@ func TestInsertIntoGivenPartitionSet(t *testing.T) {
 	tk.MustExec("insert into t1 partition(p0, p1) values(3, 'c'), (4, 'd')")
 	tk.MustQuery("select * from t1 partition(p1)").Check(testkit.Rows())
 
-	tk.MustGetErrMsg("insert into t1 values(1, 'a')", "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+	tk.MustGetErrMsg("insert into t1 values(1, 'a')", "[kv:1062]Duplicate entry '1' for key 't1.idx_a'")
 	tk.MustGetErrMsg("insert into t1 partition(p0, p_non_exist) values(1, 'a')", "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
 	tk.MustGetErrMsg("insert into t1 partition(p0, p1) values(40, 'a')", "[table:1748]Found a row not matching the given partition set")
 
@@ -2855,7 +2924,7 @@ func TestInsertIntoGivenPartitionSet(t *testing.T) {
 	tk.MustQuery("select * from t1 partition(p1) order by a").Check(testkit.Rows())
 	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 c", "4 d"))
 
-	tk.MustGetErrMsg("insert into t1 select 1, 'a'", "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+	tk.MustGetErrMsg("insert into t1 select 1, 'a'", "[kv:1062]Duplicate entry '1' for key 't1.idx_a'")
 	tk.MustGetErrMsg("insert into t1 partition(p0, p_non_exist) select 1, 'a'", "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
 	tk.MustGetErrMsg("insert into t1 partition(p0, p1) select 40, 'a'", "[table:1748]Found a row not matching the given partition set")
 
@@ -3021,7 +3090,7 @@ func TestPrevStmtDesensitization(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
 	require.Equal(t, "insert into `t` values ( ? ) , ( ? )", tk.Session().GetSessionVars().PrevStmt.String())
-	tk.MustGetErrMsg("insert into t values (1)", `[kv:1062]Duplicate entry '?' for key 'a'`)
+	tk.MustGetErrMsg("insert into t values (1)", `[kv:1062]Duplicate entry '?' for key 't.a'`)
 }
 
 func TestIssue19372(t *testing.T) {
@@ -3324,6 +3393,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
@@ -3364,7 +3434,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		"select /*+ inl_hash_join(t1) */ * from t t1 join t t2 on t1.f=t2.f",
 		"SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t",
 		"select /*+ hash_agg() */ count(f) from t group by a",
-		"select /*+ stream_agg() */ count(f) from t group by a",
+		"select /*+ stream_agg() */ count(f) from t",
 		"select * from t order by a, f",
 		"select * from t order by a, f limit 1",
 		"select * from t limit 1",
@@ -3501,7 +3571,7 @@ func TestOOMPanicAction(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b double);")
 	tk.MustExec("insert into t values (1,1)")
-	sm := &testutil.MockSessionManager{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -3567,10 +3637,10 @@ func TestPointGetPreparedPlan(t *testing.T) {
 
 	pspk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	pspk2Id, _, _, err := tk.Session().PrepareStmt("select * from t where ? = a ")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[pspk2Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -3610,7 +3680,7 @@ func TestPointGetPreparedPlan(t *testing.T) {
 	// unique index
 	psuk1Id, _, _, err := tk.Session().PrepareStmt("select * from t where b = ? ")
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[psuk1Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
 
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, psuk1Id, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
@@ -3728,7 +3798,7 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 
 	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
 	require.NoError(t, err)
-	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*plannercore.PlanCacheStmt).StmtCacheable = false
 
 	ctx := context.Background()
 	// first time plan generated
@@ -3794,11 +3864,11 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 
 	updateID1, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	require.Equal(t, 1, pc)
 	updateID2, pc, _, err := tk.Session().PrepareStmt(`update t set c = c + 2 where ? = a`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updateID2].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updateID2].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	require.Equal(t, 1, pc)
 
 	ctx := context.Background()
@@ -3833,7 +3903,7 @@ func TestPointUpdatePreparedPlan(t *testing.T) {
 	// unique index
 	updUkID1, _, _, err := tk.Session().PrepareStmt(`update t set c = c + 10 where b = ?`)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk.Session().GetSessionVars().PreparedStmts[updUkID1].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, updUkID1, expression.Args2Expressions4Test(3))
 	require.Nil(t, rs)
 	require.NoError(t, err)
@@ -3902,7 +3972,7 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 
 	ctx := context.Background()
 	updateID1, _, _, err := tk1.Session().PrepareStmt(`update t set c = c + 1 where a = ?`)
-	tk1.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).PreparedAst.UseCache = false
+	tk1.Session().GetSessionVars().PreparedStmts[updateID1].(*plannercore.PlanCacheStmt).StmtCacheable = false
 	require.NoError(t, err)
 
 	// first time plan generated
@@ -3971,12 +4041,13 @@ func TestApplyCache(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test;")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
 	tk.MustExec("analyze table t;")
 	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	require.Equal(t, "└─Apply_39", result.Rows()[1][0])
+	require.Contains(t, result.Rows()[1][0], "Apply")
 	var (
 		ind  int
 		flag bool
@@ -3996,7 +4067,7 @@ func TestApplyCache(t *testing.T) {
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	require.Equal(t, "└─Apply_39", result.Rows()[1][0])
+	require.Contains(t, result.Rows()[1][0], "Apply")
 	flag = false
 	value = (result.Rows()[1][5]).(string)
 	for ind = 0; ind < len(value)-5; ind++ {
@@ -4308,6 +4379,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
+	tk.Session().StmtCommit(context.Background())
 
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
@@ -4581,13 +4653,10 @@ func TestUnion2(t *testing.T) {
 	terr = errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(mysql.ErrWrongUsage), terr.Code())
 
-	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
-	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrWrongUsage), "err %v", err)
+	tk.MustGetDBError("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1", plannercore.ErrWrongUsage)
 
-	_, err = tk.Exec("(select a from t limit 1) union all select a from t limit 1")
-	require.NoError(t, err)
-	_, err = tk.Exec("(select a from t order by a) union all select a from t order by a")
-	require.NoError(t, err)
+	tk.MustExec("(select a from t limit 1) union all select a from t limit 1")
+	tk.MustExec("(select a from t order by a) union all select a from t order by a")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -4658,8 +4727,8 @@ func TestUnion2(t *testing.T) {
 	tk.MustExec("insert into t2 values(3,'c'),(4,'d'),(5,'f'),(6,'e')")
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
-	_, err = tk.Exec("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b")
-	require.Equal(t, "[planner:1250]Table 't1' from one of the SELECTs cannot be used in global ORDER clause", err.Error())
+	tk.MustGetErrMsg("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b",
+		"[planner:1250]Table 't1' from one of the SELECTs cannot be used in global ORDER clause")
 
 	// #issue 9900
 	tk.MustExec("drop table if exists t")
@@ -4813,15 +4882,11 @@ func TestSQLMode(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a tinyint not null)")
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
-	_, err := tk.Exec("insert t values ()")
-	require.Error(t, err)
-
-	_, err = tk.Exec("insert t values ('1000')")
-	require.Error(t, err)
+	tk.ExecToErr("insert t values ()")
+	tk.ExecToErr("insert t values ('1000')")
 
 	tk.MustExec("create table if not exists tdouble (a double(3,2))")
-	_, err = tk.Exec("insert tdouble values (10.23)")
-	require.Error(t, err)
+	tk.ExecToErr("insert tdouble values (10.23)")
 
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
@@ -4849,8 +4914,7 @@ func TestSQLMode(t *testing.T) {
 	tk2.MustQuery("select * from t2").Check(testkit.Rows("abc"))
 
 	// session1 is still in strict mode.
-	_, err = tk.Exec("insert t2 values ('abcd')")
-	require.Error(t, err)
+	tk.ExecToErr("insert t2 values ('abcd')")
 	// Restore original global strict mode.
 	tk.MustExec("set @@global.sql_mode = 'STRICT_TRANS_TABLES'")
 }
@@ -4929,7 +4993,7 @@ func TestIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
@@ -4962,7 +5026,7 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
@@ -5196,12 +5260,9 @@ func TestHistoryRead(t *testing.T) {
 	require.Greater(t, snapshotTS, curVer1.Ver)
 	require.Less(t, snapshotTS, curVer2.Ver)
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1"))
-	_, err = tk.Exec("insert history_read values (2)")
-	require.Error(t, err)
-	_, err = tk.Exec("update history_read set a = 3 where a = 1")
-	require.Error(t, err)
-	_, err = tk.Exec("delete from history_read where a = 1")
-	require.Error(t, err)
+	tk.MustExecToErr("insert history_read values (2)")
+	tk.MustExecToErr("update history_read set a = 3 where a = 1")
+	tk.MustExecToErr("delete from history_read where a = 1")
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("insert history_read values (3)")
@@ -5931,12 +5992,14 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int as(-a))")
 	tk.MustExec("insert into t(a) values(1), (3), (7)")
-	sm := &testutil.MockSessionManager{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustQuery("select variable_value from mysql.GLOBAL_VARIABLES where variable_name = 'tidb_mem_oom_action'").Check(testkit.Rows("LOG"))
+
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=1")
@@ -5980,6 +6043,40 @@ func TestIsFastPlan(t *testing.T) {
 	}
 }
 
+func TestCountDistinctJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(j JSON)")
+	tk.MustExec("insert into t values('2010')")
+	tk.MustExec("insert into t values('2011')")
+	tk.MustExec("insert into t values('2012')")
+	tk.MustExec("insert into t values('2010.000')")
+	tk.MustExec("insert into t values(cast(? as JSON))", uint64(math.MaxUint64))
+	tk.MustExec("insert into t values(cast(? as JSON))", float64(math.MaxUint64))
+
+	tk.MustQuery("select count(distinct j) from t").Check(testkit.Rows("5"))
+}
+
+func TestHashJoinJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int(11), j JSON, d DOUBLE)")
+	tk.MustExec("insert into t values(0, '2010', 2010)")
+	tk.MustExec("insert into t values(1, '2011', 2011)")
+	tk.MustExec("insert into t values(2, '2012', 2012)")
+	tk.MustExec("insert into t values(3, cast(? as JSON), ?)", uint64(math.MaxUint64), float64(math.MaxUint64))
+
+	tk.MustQuery("select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d;").Check(testkit.Rows("0 0", "1 1", "2 2"))
+}
+
 func TestBinaryStrNumericOperator(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -6000,4 +6097,225 @@ func TestBinaryStrNumericOperator(t *testing.T) {
 		"-61.56"))
 	// there should be no warning.
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestTableLockPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create user 'testuser'@'localhost'")
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil))
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't'")
+	tk.MustExec("REVOKE ALL ON test.* FROM 'testuser'@'localhost'")
+	tk.MustExec("GRANT SELECT ON test.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
+	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE")
+
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t2(a int)")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test2'")
+	tk.MustExec("GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost'")
+	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't2'")
+	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
+	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
+}
+
+func TestGlobalMemoryControl(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 512 << 20")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tracker1 := tk1.Session().GetSessionVars().MemTracker
+	tracker1.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
+
+	tk2 := testkit.NewTestKit(t, store)
+	tracker2 := tk2.Session().GetSessionVars().MemTracker
+	tracker2.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
+
+	tk3 := testkit.NewTestKit(t, store)
+	tracker3 := tk3.Session().GetSessionVars().MemTracker
+	tracker3.FallbackOldAndSetNewAction(&memory.PanicOnExceed{})
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk1.Session().ShowProcess(), tk2.Session().ShowProcess(), tk3.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tracker1.Consume(100 << 20) // 100 MB
+	tracker2.Consume(200 << 20) // 200 MB
+	tracker3.Consume(300 << 20) // 300 MB
+
+	test := make([]int, 128<<20)       // Keep 1GB HeapInUse
+	time.Sleep(500 * time.Millisecond) // The check goroutine checks the memory usage every 100ms. The Sleep() make sure that Top1Tracker can be Canceled.
+
+	// Kill Top1
+	require.False(t, tracker1.NeedKill.Load())
+	require.False(t, tracker2.NeedKill.Load())
+	require.True(t, tracker3.NeedKill.Load())
+	require.Equal(t, memory.MemUsageTop1Tracker.Load(), tracker3)
+	util.WithRecovery( // Next Consume() will panic and cancel the SQL
+		func() {
+			tracker3.Consume(1)
+		}, func(r interface{}) {
+			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+		})
+	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
+	time.Sleep(500 * time.Millisecond)
+	require.False(t, tracker2.NeedKill.Load())
+	// Kill Finished
+	tracker3.Consume(-(300 << 20))
+	// Simulated SQL is Canceled and the time is updated
+	sm.PSMu.Lock()
+	ps := *sm.PS[2]
+	ps.Time = time.Now()
+	sm.PS[2] = &ps
+	sm.PSMu.Unlock()
+	time.Sleep(500 * time.Millisecond)
+	// Kill the Next SQL
+	util.WithRecovery( // Next Consume() will panic and cancel the SQL
+		func() {
+			tracker2.Consume(1)
+		}, func(r interface{}) {
+			require.True(t, strings.Contains(r.(string), "Out Of Memory Quota!"))
+		})
+	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
+}
+
+func TestGlobalMemoryControl2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk0 := testkit.NewTestKit(t, store)
+	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
+	tk0.MustExec("set global tidb_server_memory_limit = 1 << 30")
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+
+	sm := &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+	}
+	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
+	go dom.ServerMemoryLimitHandle().Run()
+
+	tk0.MustExec("use test")
+	tk0.MustExec("create table t(a int)")
+	tk0.MustExec("insert into t select 1")
+	for i := 1; i <= 8; i++ {
+		tk0.MustExec("insert into t select * from t") // 256 Lines
+	}
+
+	var test []int
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		time.Sleep(100 * time.Millisecond) // Make sure the sql is running.
+		test = make([]int, 128<<20)        // Keep 1GB HeapInuse
+		wg.Done()
+	}()
+	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
+	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), "Out Of Memory Quota!"))
+	require.Equal(t, tk0.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
+	wg.Wait()
+	test[0] = 0
+	runtime.GC()
+}
+
+func TestCompileOutOfMemoryQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/38322
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+}
+
+func TestSignalCheckpointForSort(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/SignalCheckpointForSort", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/SignalCheckpointForSort"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("set tidb_mem_quota_query = 100000000")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", i))
+	}
+	tk.Session().GetSessionVars().ConnectionID = 123456
+
+	err := tk.QueryToErr("select * from t order by a")
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+}
+
+func TestSessionRootTrackerDetach(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("create table t1(a int, c int, index idx(a))")
+	tk.MustExec("set tidb_mem_quota_query=10")
+	tk.MustContainErrMsg("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a", "Out Of Memory Quota!")
+	tk.MustExec("set tidb_mem_quota_query=1000")
+	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	require.NoError(t, err)
+	require.NotNil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+	err = rs.Close()
+	require.NoError(t, err)
+	require.Nil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
+}
+
+func TestIssue39211(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists s;")
+
+	tk.MustExec("CREATE TABLE `t` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);")
+	tk.MustExec("CREATE TABLE `s` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);")
+	tk.MustExec("insert into t values(1,1),(2,2);")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+
+	tk.MustExec("insert into s values(3,3),(4,4),(1,null),(2,null),(null,null);")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+	tk.MustExec("insert into s select * from s;")
+
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+	tk.MustExec("set @@tidb_enable_null_aware_anti_join=true;")
+	tk.MustQuery("select * from t where (a,b) not in (select a, b from s);").Check(testkit.Rows())
 }

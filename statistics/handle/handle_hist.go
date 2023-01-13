@@ -59,21 +59,39 @@ type NeededItemTask struct {
 // SendLoadRequests send neededColumns requests
 func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error {
 	remainedItems := h.removeHistLoadedColumns(neededHistItems)
+
+	failpoint.Inject("assertSyncLoadItems", func(val failpoint.Value) {
+		if sc.OptimizeTracer != nil {
+			count := val.(int)
+			if len(remainedItems) != count {
+				panic("remained items count wrong")
+			}
+		}
+	})
+
 	if len(remainedItems) <= 0 {
 		return nil
 	}
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
 	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
+	tasks := make([]*NeededItemTask, 0)
 	for _, item := range remainedItems {
 		task := &NeededItemTask{
 			TableItemID: item,
 			ToTimeout:   time.Now().Local().Add(timeout),
 			ResultCh:    sc.StatsLoad.ResultCh,
 		}
-		err := h.AppendNeededItem(task, timeout)
-		if err != nil {
-			return err
+		tasks = append(tasks, task)
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for _, task := range tasks {
+		select {
+		case h.StatsLoad.NeededItemsCh <- task:
+			continue
+		case <-timer.C:
+			return errors.New("sync load stats channel is full and timeout sending task to channel")
 		}
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
@@ -81,9 +99,9 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 }
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
-func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
+func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
-		return true
+		return nil
 	}
 	var errorMsgs []string
 	defer func() {
@@ -110,15 +128,14 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 				delete(resultCheckMap, result.Item)
 				if len(resultCheckMap) == 0 {
 					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-					return true
+					return nil
 				}
 			} else {
-				return false
+				return errors.New("sync load stats channel closed unexpectedly")
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
-			logutil.BgLogger().Warn("SyncWaitStatsLoad timeout")
-			return false
+			return errors.New("sync load stats timeout")
 		}
 	}
 }
@@ -137,19 +154,23 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 			continue
 		}
 		colHist, ok := tbl.Columns[item.ID]
-		if !ok {
-			continue
-		}
-		if colHist.IsHistNeeded(tbl.Pseudo) {
+		if ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad() {
 			remainedItems = append(remainedItems, item)
 		}
 	}
 	return remainedItems
 }
 
-// AppendNeededItem appends needed columns/indices to ch, if exists, do not append the duplicated one.
+// AppendNeededItem appends needed columns/indices to ch, it is only used for test
 func (h *Handle) AppendNeededItem(task *NeededItemTask, timeout time.Duration) error {
-	return h.writeToChanWithTimeout(h.StatsLoad.NeededItemsCh, task, timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case h.StatsLoad.NeededItemsCh <- task:
+	case <-timer.C:
+		return errors.New("Channel is full and timeout writing to channel")
+	}
+	return nil
 }
 
 var errExit = errors.New("Stop loading since domain is closed")
@@ -345,34 +366,42 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
 		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
 	}
+	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {
 		idxHist := &statistics.Index{
-			Histogram: *hg,
-			CMSketch:  cms,
-			TopN:      topN,
-			FMSketch:  fms,
-			Info:      index.Info,
-			ErrorRate: index.ErrorRate,
-			StatsVer:  rows[0].GetInt64(0), Flag: index.Flag,
-			PhysicalID:        index.PhysicalID,
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			Histogram:  *hg,
+			CMSketch:   cms,
+			TopN:       topN,
+			FMSketch:   fms,
+			Info:       index.Info,
+			ErrorRate:  index.ErrorRate,
+			StatsVer:   statsVer,
+			Flag:       index.Flag,
+			PhysicalID: index.PhysicalID,
+		}
+		if statsVer != statistics.Version0 {
+			idxHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 		}
 		index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 		w.idx = idxHist
 	} else {
 		colHist := &statistics.Column{
-			PhysicalID:        item.TableID,
-			Histogram:         *hg,
-			Info:              c.Info,
-			CMSketch:          cms,
-			TopN:              topN,
-			FMSketch:          fms,
-			IsHandle:          c.IsHandle,
-			StatsVer:          rows[0].GetInt64(0),
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			PhysicalID: item.TableID,
+			Histogram:  *hg,
+			Info:       c.Info,
+			CMSketch:   cms,
+			TopN:       topN,
+			FMSketch:   fms,
+			IsHandle:   c.IsHandle,
+			StatsVer:   statsVer,
 		}
 		// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())
+		// When adding/modifying a column, we create its stats(all values are default values) without setting stats_ver.
+		// So we need add colHist.Count > 0 here.
+		if statsVer != statistics.Version0 || colHist.Count > 0 {
+			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		}
 		w.col = colHist
 	}
 	return w, nil

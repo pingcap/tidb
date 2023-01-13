@@ -38,6 +38,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const maxAvailableBufSize int = 20
+
 // invalidIterator is a trimmed down Iterator type which is invalid.
 type invalidIterator struct {
 	kv.Iterator
@@ -92,6 +94,12 @@ func (mb *kvMemBuf) Recycle(buf *bytesBuf) {
 	buf.idx = 0
 	buf.cap = len(buf.buf)
 	mb.Lock()
+	if len(mb.availableBufs) >= maxAvailableBufSize {
+		// too many byte buffers, evict one byte buffer and continue
+		evictedByteBuf := mb.availableBufs[0]
+		evictedByteBuf.destroy()
+		mb.availableBufs = mb.availableBufs[1:]
+	}
 	mb.availableBufs = append(mb.availableBufs, buf)
 	mb.Unlock()
 }
@@ -99,8 +107,20 @@ func (mb *kvMemBuf) Recycle(buf *bytesBuf) {
 func (mb *kvMemBuf) AllocateBuf(size int) {
 	mb.Lock()
 	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
-	if len(mb.availableBufs) > 0 && mb.availableBufs[0].cap >= size {
-		mb.buf = mb.availableBufs[0]
+	var (
+		existingBuf    *bytesBuf
+		existingBufIdx int
+	)
+	for i, buf := range mb.availableBufs {
+		if buf.cap >= size {
+			existingBuf = buf
+			existingBufIdx = i
+			break
+		}
+	}
+	if existingBuf != nil {
+		mb.buf = existingBuf
+		mb.availableBufs[existingBufIdx] = mb.availableBufs[0]
 		mb.availableBufs = mb.availableBufs[1:]
 	} else {
 		mb.buf = newBytesBuf(size)
@@ -243,6 +263,8 @@ type SessionOptions struct {
 	SysVars   map[string]string
 	// a seed used for tableKvEncoder's auto random bits value
 	AutoRandomSeed int64
+	// IndexID is used by the DuplicateManager. Only the key range with the specified index ID is scanned.
+	IndexID int64
 }
 
 // NewSession creates a new trimmed down Session matching the options.
@@ -251,8 +273,11 @@ func NewSession(options *SessionOptions, logger log.Logger) sessionctx.Context {
 }
 
 func newSession(options *SessionOptions, logger log.Logger) *session {
+	s := &session{
+		values: make(map[fmt.Stringer]interface{}, 1),
+	}
 	sqlMode := options.SQLMode
-	vars := variable.NewSessionVars()
+	vars := variable.NewSessionVars(s)
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
@@ -287,10 +312,7 @@ func newSession(options *SessionOptions, logger log.Logger) *session {
 			log.ShortError(err))
 	}
 	vars.TxnCtx = nil
-	s := &session{
-		vars:   vars,
-		values: make(map[fmt.Stringer]interface{}, 1),
-	}
+	s.vars = vars
 	s.txn.kvPairs = &KvPairs{}
 
 	return s

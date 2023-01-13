@@ -41,7 +41,7 @@ const (
 	loadDeleteRangeSQL           = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?`
 	recordDoneDeletedRangeSQL    = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
 	completeDeleteRangeSQL       = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
-	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id in (` // + idList + ")"
+	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %?`
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
@@ -51,8 +51,12 @@ const (
 	KeyOpRetryInterval = 30 * time.Millisecond
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
+	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
+	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// SessionTTL is the etcd session's TTL in seconds.
+	SessionTTL = 90
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -147,20 +151,8 @@ func RemoveFromGCDeleteRange(sctx sessionctx.Context, jobID, elementID int64) er
 }
 
 // RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
-func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, jobID int64, elementIDs []int64) error {
-	var buf strings.Builder
-	buf.WriteString(completeDeleteMultiRangesSQL)
-	paramIDs := make([]interface{}, 0, 1+len(elementIDs))
-	paramIDs = append(paramIDs, jobID)
-	for i, elementID := range elementIDs {
-		if i > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString("%?")
-		paramIDs = append(paramIDs, elementID)
-	}
-	buf.WriteString(")")
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, buf.String(), paramIDs...)
+func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, jobID int64) error {
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, completeDeleteMultiRangesSQL, jobID)
 	return errors.Trace(err)
 }
 

@@ -7,7 +7,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//ddl/util",
+        "//domain/infosync",
         "//metrics",
+        "//sessionctx/variable",
         "//util",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
@@ -28,6 +30,7 @@ go_test(
         "//ddl/util",
         "//infoschema",
         "//parser/terror",
+        "//sessionctx/variable",
         "//store/mockstore",
         "//util",
         "@com_github_pingcap_errors//:errors",

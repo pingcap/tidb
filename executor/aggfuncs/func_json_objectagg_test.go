@@ -17,12 +17,14 @@ package aggfuncs_test
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -31,10 +33,13 @@ func getJSONValue(secondArg types.Datum, valueType *types.FieldType) interface{}
 	if valueType.GetType() == mysql.TypeString && valueType.GetCharset() == charset.CharsetBin {
 		buf := make([]byte, valueType.GetFlen())
 		copy(buf, secondArg.GetBytes())
-		return json.Opaque{
+		return types.Opaque{
 			TypeCode: mysql.TypeString,
 			Buf:      buf,
 		}
+	}
+	if valueType.GetType() == mysql.TypeFloat {
+		return float64(secondArg.GetFloat32())
 	}
 	return secondArg.GetValue()
 }
@@ -43,12 +48,19 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 	typeList := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeFloat),
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeJSON),
 		types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(10).SetCharset(charset.CharsetBin).BuildP(),
+		types.NewFieldType(mysql.TypeDate),
+		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
 	for i := 0; i < len(typeList); i++ {
+		if typeList[i].GetCharset() == charset.CharsetBin {
+			// skip because binary charset cannot be used as key.
+			continue
+		}
 		for j := 0; j < len(typeList); j++ {
 			argTypes := []*types.FieldType{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
@@ -83,7 +95,7 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 			entries2[keyString] = getJSONValue(secondArg, valueType)
 		}
 
-		aggTest := buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg, argCombines[k], types.NewFieldType(mysql.TypeJSON), numRows, json.CreateBinary(entries1), json.CreateBinary(entries2), json.CreateBinary(entries1))
+		aggTest := buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg, argCombines[k], types.NewFieldType(mysql.TypeJSON), numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries1))
 
 		tests = append(tests, aggTest)
 	}
@@ -98,12 +110,19 @@ func TestJsonObjectagg(t *testing.T) {
 	typeList := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeFloat),
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeJSON),
 		types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(10).SetCharset(charset.CharsetBin).BuildP(),
+		types.NewFieldType(mysql.TypeDate),
+		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
 	for i := 0; i < len(typeList); i++ {
+		if typeList[i].GetCharset() == charset.CharsetBin {
+			// skip because binary charset cannot be used as key.
+			continue
+		}
 		for j := 0; j < len(typeList); j++ {
 			argTypes := []*types.FieldType{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
@@ -129,7 +148,7 @@ func TestJsonObjectagg(t *testing.T) {
 			entries[keyString] = getJSONValue(secondArg, valueType)
 		}
 
-		aggTest := buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg, argTypes, types.NewFieldType(mysql.TypeJSON), numRows, nil, json.CreateBinary(entries))
+		aggTest := buildMultiArgsAggTesterWithFieldType(ast.AggFuncJsonObjectAgg, argTypes, types.NewFieldType(mysql.TypeJSON), numRows, nil, types.CreateBinaryJSON(entries))
 
 		tests = append(tests, aggTest)
 	}
@@ -141,7 +160,7 @@ func TestJsonObjectagg(t *testing.T) {
 }
 
 func TestMemJsonObjectagg(t *testing.T) {
-	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
 		for j := 0; j < len(typeList); j++ {
@@ -177,11 +196,67 @@ func TestMemJsonObjectagg(t *testing.T) {
 		}
 
 		tests := []multiArgsAggMemTest{
-			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+hack.DefBucketMemoryUsageForMapStringToAny, defaultMultiArgsMemDeltaGens, true),
-			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+hack.DefBucketMemoryUsageForMapStringToAny, defaultMultiArgsMemDeltaGens, false),
+			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+hack.DefBucketMemoryUsageForMapStringToAny, jsonMultiArgsMemDeltaGens, true),
+			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+hack.DefBucketMemoryUsageForMapStringToAny, jsonMultiArgsMemDeltaGens, false),
 		}
 		for _, test := range tests {
 			testMultiArgsAggMemFunc(t, test)
 		}
 	}
+}
+
+func jsonMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+	m := make(map[string]bool)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		datum := row.GetDatum(0, dataTypes[0])
+		if datum.IsNull() {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+
+		memDelta := int64(0)
+		key, err := datum.ToString()
+		if err != nil {
+			return memDeltas, errors.Errorf("fail to get key - %s", key)
+		}
+		if _, ok := m[key]; ok {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		m[key] = true
+		memDelta += int64(len(key))
+
+		memDelta += aggfuncs.DefInterfaceSize
+		switch dataTypes[1].GetType() {
+		case mysql.TypeLonglong:
+			memDelta += aggfuncs.DefUint64Size
+		case mysql.TypeFloat:
+			memDelta += aggfuncs.DefFloat64Size
+		case mysql.TypeDouble:
+			memDelta += aggfuncs.DefFloat64Size
+		case mysql.TypeString:
+			val := row.GetString(1)
+			memDelta += int64(len(val))
+		case mysql.TypeJSON:
+			val := row.GetJSON(1)
+			// +1 for the memory usage of the JSONTypeCode of json
+			memDelta += int64(len(val.Value) + 1)
+		case mysql.TypeDuration:
+			memDelta += aggfuncs.DefDurationSize
+		case mysql.TypeDate:
+			memDelta += aggfuncs.DefTimeSize
+		case mysql.TypeNewDecimal:
+			memDelta += aggfuncs.DefFloat64Size
+		default:
+			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].GetType())
+		}
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
 }

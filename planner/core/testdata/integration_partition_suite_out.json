@@ -5,17 +5,17 @@
       {
         "SQL": "explain format = 'brief' select * from tint where a<=1",
         "Results": [
-          "TableReader 3323.33 root partition:p0 data:Selection",
-          "└─Selection 3323.33 cop[tikv]  le(list_col_partition_types.tint.a, 1)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tint keep order:false, stats:pseudo"
+          "TableReader 2.00 root partition:p0 data:Selection",
+          "└─Selection 2.00 cop[tikv]  le(list_col_partition_types.tint.a, 1)",
+          "  └─TableFullScan 4.00 cop[tikv] table:tint keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from tint where a in (0, 1)",
         "Results": [
-          "TableReader 20.00 root partition:p0 data:Selection",
-          "└─Selection 20.00 cop[tikv]  in(list_col_partition_types.tint.a, 0, 1)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tint keep order:false, stats:pseudo"
+          "TableReader 2.00 root partition:p0 data:Selection",
+          "└─Selection 2.00 cop[tikv]  in(list_col_partition_types.tint.a, 0, 1)",
+          "  └─TableFullScan 4.00 cop[tikv] table:tint keep order:false"
         ]
       },
       {
@@ -35,17 +35,17 @@
       {
         "SQL": "explain format = 'brief' select * from tdate where a<='2000-01-01'",
         "Results": [
-          "TableReader 3323.33 root partition:p0 data:Selection",
-          "└─Selection 3323.33 cop[tikv]  le(list_col_partition_types.tdate.a, 2000-01-01 00:00:00.000000)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tdate keep order:false, stats:pseudo"
+          "TableReader 1.00 root partition:p0 data:Selection",
+          "└─Selection 1.00 cop[tikv]  le(list_col_partition_types.tdate.a, 2000-01-01 00:00:00.000000)",
+          "  └─TableFullScan 4.00 cop[tikv] table:tdate keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from tdate where a in ('2000-01-01', '2000-01-02')",
         "Results": [
-          "TableReader 20.00 root partition:p0 data:Selection",
-          "└─Selection 20.00 cop[tikv]  in(list_col_partition_types.tdate.a, 2000-01-01 00:00:00.000000, 2000-01-02 00:00:00.000000)",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tdate keep order:false, stats:pseudo"
+          "TableReader 2.00 root partition:p0 data:Selection",
+          "└─Selection 2.00 cop[tikv]  in(list_col_partition_types.tdate.a, 2000-01-01 00:00:00.000000, 2000-01-02 00:00:00.000000)",
+          "  └─TableFullScan 4.00 cop[tikv] table:tdate keep order:false"
         ]
       },
       {
@@ -64,17 +64,17 @@
       {
         "SQL": "explain format = 'brief' select * from tstring where a<='b'",
         "Results": [
-          "TableReader 3323.33 root partition:p0 data:Selection",
-          "└─Selection 3323.33 cop[tikv]  le(list_col_partition_types.tstring.a, \"b\")",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+          "TableReader 2.00 root partition:p0 data:Selection",
+          "└─Selection 2.00 cop[tikv]  le(list_col_partition_types.tstring.a, \"b\")",
+          "  └─TableFullScan 4.00 cop[tikv] table:tstring keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from tstring where a in ('a', 'b')",
         "Results": [
-          "TableReader 20.00 root partition:p0 data:Selection",
-          "└─Selection 20.00 cop[tikv]  in(list_col_partition_types.tstring.a, \"a\", \"b\")",
-          "  └─TableFullScan 10000.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+          "TableReader 2.00 root partition:p0 data:Selection",
+          "└─Selection 2.00 cop[tikv]  in(list_col_partition_types.tstring.a, \"a\", \"b\")",
+          "  └─TableFullScan 4.00 cop[tikv] table:tstring keep order:false"
         ]
       },
       {
@@ -1059,13 +1059,13 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:avg(Column#4, Column#5)->Column#3",
           "└─PartitionUnion 2.00 root  ",
-          "  ├─StreamAgg 1.00 root  funcs:count(Column#8)->Column#4, funcs:sum(Column#9)->Column#5",
-          "  │ └─TableReader 1.00 root  data:StreamAgg",
-          "  │   └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tlist.a)->Column#8, funcs:sum(list_push_down.tlist.a)->Column#9",
+          "  ├─HashAgg 1.00 root  funcs:count(Column#6)->Column#4, funcs:sum(Column#7)->Column#5",
+          "  │ └─TableReader 1.00 root  data:HashAgg",
+          "  │   └─HashAgg 1.00 cop[tikv]  funcs:count(list_push_down.tlist.a)->Column#6, funcs:sum(list_push_down.tlist.a)->Column#7",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
-          "  └─StreamAgg 1.00 root  funcs:count(Column#12)->Column#4, funcs:sum(Column#13)->Column#5",
-          "    └─TableReader 1.00 root  data:StreamAgg",
-          "      └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tlist.a)->Column#12, funcs:sum(list_push_down.tlist.a)->Column#13",
+          "  └─HashAgg 1.00 root  funcs:count(Column#10)->Column#4, funcs:sum(Column#11)->Column#5",
+          "    └─TableReader 1.00 root  data:HashAgg",
+          "      └─HashAgg 1.00 cop[tikv]  funcs:count(list_push_down.tlist.a)->Column#10, funcs:sum(list_push_down.tlist.a)->Column#11",
           "        └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
         ]
       },
@@ -1116,13 +1116,13 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:avg(Column#4, Column#5)->Column#3",
           "└─PartitionUnion 2.00 root  ",
-          "  ├─StreamAgg 1.00 root  funcs:count(Column#8)->Column#4, funcs:sum(Column#9)->Column#5",
-          "  │ └─TableReader 1.00 root  data:StreamAgg",
-          "  │   └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tcollist.a)->Column#8, funcs:sum(list_push_down.tcollist.a)->Column#9",
+          "  ├─HashAgg 1.00 root  funcs:count(Column#6)->Column#4, funcs:sum(Column#7)->Column#5",
+          "  │ └─TableReader 1.00 root  data:HashAgg",
+          "  │   └─HashAgg 1.00 cop[tikv]  funcs:count(list_push_down.tcollist.a)->Column#6, funcs:sum(list_push_down.tcollist.a)->Column#7",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
-          "  └─StreamAgg 1.00 root  funcs:count(Column#12)->Column#4, funcs:sum(Column#13)->Column#5",
-          "    └─TableReader 1.00 root  data:StreamAgg",
-          "      └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tcollist.a)->Column#12, funcs:sum(list_push_down.tcollist.a)->Column#13",
+          "  └─HashAgg 1.00 root  funcs:count(Column#10)->Column#4, funcs:sum(Column#11)->Column#5",
+          "    └─TableReader 1.00 root  data:HashAgg",
+          "      └─HashAgg 1.00 cop[tikv]  funcs:count(list_push_down.tcollist.a)->Column#10, funcs:sum(list_push_down.tcollist.a)->Column#11",
           "        └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
         ]
       },

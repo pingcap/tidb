@@ -105,10 +105,6 @@ func CheckDataConsistency(
 	// 	}
 	// }
 
-	if err != nil {
-		return err
-	}
-
 	if rowInsertion.key != nil {
 		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo, t.Meta().Name.O); err != nil {
 			return errors.Trace(err)
@@ -144,12 +140,31 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			continue
 		}
 
-		indexInfo, ok := indexIDToInfo[m.indexID]
+		// Generate correct index id for check.
+		idxID := m.indexID & tablecodec.IndexIDMask
+		indexInfo, ok := indexIDToInfo[idxID]
 		if !ok {
 			return errors.New("index not found")
 		}
 
-		indexHandle, err := tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
+		// If this is the temporary index data, need to remove the last byte of index data(version about when it is written).
+		var (
+			value       []byte
+			orgKey      []byte
+			indexHandle kv.Handle
+		)
+		if idxID != m.indexID {
+			value = tablecodec.DecodeTempIndexOriginValue(m.value)
+			if len(value) == 0 {
+				// Skip the deleted operation values.
+				continue
+			}
+			orgKey = append(orgKey, m.key...)
+			tablecodec.TempIndexKey2IndexKey(idxID, orgKey)
+			indexHandle, err = tablecodec.DecodeIndexHandle(orgKey, value, len(indexInfo.Columns))
+		} else {
+			indexHandle, err = tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -182,22 +197,32 @@ func checkIndexKeys(
 ) error {
 	var indexData []types.Datum
 	for _, m := range indexMutations {
-		indexInfo, ok := indexIDToInfo[m.indexID]
+		var value []byte
+		// Generate correct index id for check.
+		idxID := m.indexID & tablecodec.IndexIDMask
+		indexInfo, ok := indexIDToInfo[idxID]
 		if !ok {
 			return errors.New("index not found")
 		}
-		rowColInfos, ok := indexIDToRowColInfos[m.indexID]
+		rowColInfos, ok := indexIDToRowColInfos[idxID]
 		if !ok {
 			return errors.New("index not found")
 		}
 
+		// If this is temp index data, need remove last byte of index data.
+		if idxID != m.indexID {
+			value = append(value, m.value[:len(m.value)-1]...)
+		} else {
+			value = append(value, m.value...)
+		}
+
 		// when we cannot decode the key to get the original value
-		if len(m.value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
+		if len(value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
 			continue
 		}
 
 		decodedIndexValues, err := tablecodec.DecodeIndexKV(
-			m.key, m.value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
+			m.key, value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
 		)
 		if err != nil {
 			return errors.Trace(err)
@@ -211,7 +236,7 @@ func checkIndexKeys(
 		}
 
 		for i, v := range decodedIndexValues {
-			fieldType := &t.Columns[indexInfo.Columns[i].Offset].FieldType
+			fieldType := t.Columns[indexInfo.Columns[i].Offset].FieldType.ArrayType()
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
 			if err != nil {
 				return errors.Trace(err)
@@ -219,7 +244,8 @@ func checkIndexKeys(
 			indexData = append(indexData, datum)
 		}
 
-		if len(m.value) == 0 {
+		// When it is in add index new backfill state.
+		if len(value) == 0 || (idxID != m.indexID && (tablecodec.CheckTempIndexValueIsDelete(value))) {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
@@ -321,7 +347,9 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
-		comparison, err := decodedMutationDatum.Compare(sc, &expectedDatum, collate.GetCollator(decodedMutationDatum.Collation()))
+		comparison, err := CompareIndexAndVal(sc, expectedDatum, decodedMutationDatum,
+			collate.GetCollator(decodedMutationDatum.Collation()),
+			cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -336,6 +364,30 @@ func compareIndexData(
 		}
 	}
 	return nil
+}
+
+// CompareIndexAndVal compare index valued and row value.
+func CompareIndexAndVal(sctx *stmtctx.StatementContext, rowVal types.Datum, idxVal types.Datum, collator collate.Collator, cmpMVIndex bool) (int, error) {
+	var cmpRes int
+	var err error
+	if cmpMVIndex {
+		// If it is multi-valued index, we should check the JSON contains the indexed value.
+		bj := rowVal.GetMysqlJSON()
+		count := bj.GetElemCount()
+		for elemIdx := 0; elemIdx < count; elemIdx++ {
+			jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
+			cmpRes, err = jsonDatum.Compare(sctx, &idxVal, collate.GetBinaryCollator())
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			if cmpRes == 0 {
+				break
+			}
+		}
+	} else {
+		cmpRes, err = idxVal.Compare(sctx, &rowVal, collator)
+	}
+	return cmpRes, err
 }
 
 // getColumnMaps tries to get the columnMaps from transaction options. If there isn't one, it builds one and stores it.
