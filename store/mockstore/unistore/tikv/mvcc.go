@@ -1018,16 +1018,16 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 		lock.Op = uint8(kvrpcpb.Op_Put)
 	}
 	if rowcodec.IsRowKey(m.Key) && lock.Op == uint8(kvrpcpb.Op_Put) {
-		if rowcodec.IsNewFormat(m.Value) {
-			reqCtx.buf = m.Value
-		} else {
+		if !rowcodec.IsNewFormat(m.Value) {
 			reqCtx.buf, err = encodeFromOldRow(m.Value, reqCtx.buf)
 			if err != nil {
 				log.Error("encode data failed", zap.Binary("value", m.Value), zap.Binary("key", m.Key), zap.Stringer("op", m.Op), zap.Error(err))
 				return nil, err
 			}
+
+			lock.Value = make([]byte, len(reqCtx.buf))
+			copy(lock.Value, reqCtx.buf)
 		}
-		lock.Value = reqCtx.buf
 	}
 
 	lock.ForUpdateTS = req.ForUpdateTs
