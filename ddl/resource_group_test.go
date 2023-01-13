@@ -47,6 +47,16 @@ func TestResourceGroupBaisc(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 
+	tk.MustExec("set global tidb_enable_resource_control = 'off'")
+	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustExec("create user usr1")
+	tk.MustGetErrCode("alter user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("create resource group x "+
+		"RRU_PER_SEC=1000 "+
+		"WRU_PER_SEC=2000", mysql.ErrResourceGroupSupportDisabled)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'on'")
+
 	tk.MustExec("create resource group x " +
 		"RRU_PER_SEC=1000 " +
 		"WRU_PER_SEC=2000")
@@ -60,6 +70,14 @@ func TestResourceGroupBaisc(t *testing.T) {
 	// Check the group is correctly reloaded in the information schema.
 	g := testResourceGroupNameFromIS(t, tk.Session(), "x")
 	checkFunc(g)
+
+	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
+	tk.MustGetErrCode("alter resource group x "+
+		"RRU_PER_SEC=2000 "+
+		"WRU_PER_SEC=3000", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("drop resource group x ", mysql.ErrResourceGroupSupportDisabled)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
 	tk.MustGetErrCode("create resource group x "+
 		"RRU_PER_SEC=1000 "+

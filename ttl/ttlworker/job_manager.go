@@ -20,8 +20,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
@@ -37,7 +40,7 @@ import (
 
 const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%?, %?)"
 const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
-	SET current_job_id = UUID(),
+	SET current_job_id = %?,
 		current_job_owner_id = %?,
 		current_job_start_time = %?,
 		current_job_status = 'waiting',
@@ -53,8 +56,8 @@ func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []
 	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}
 }
 
-func setTableStatusOwnerSQL(tableID int64, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
-	return setTableStatusOwnerTemplate, []interface{}{id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
+func setTableStatusOwnerSQL(uuid string, tableID int64, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
+	return setTableStatusOwnerTemplate, []interface{}{uuid, id, now.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
 }
 
 func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []interface{}) {
@@ -655,7 +658,13 @@ func (m *JobManager) couldTrySchedule(tableStatus *cache.TableStatus, table *cac
 
 	startTime := tableStatus.LastJobStartTime
 
-	return startTime.Add(table.TTLInfo.JobInterval.GoDuration()).Before(now)
+	interval := table.TTLInfo.JobInterval
+	d, err := duration.ParseDuration(interval)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("illegal job interval", zap.String("interval", interval))
+		return false
+	}
+	return startTime.Add(d).Before(now)
 }
 
 // occupyNewJob tries to occupy a new job in the ttl_table_status table. If it locks successfully, it will create a new
@@ -699,9 +708,33 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return err
 		}
 
-		sql, args = setTableStatusOwnerSQL(table.ID, now, expireTime, m.id)
+		jobID := uuid.New().String()
+		failpoint.Inject("set-job-uuid", func(val failpoint.Value) {
+			jobID = val.(string)
+		})
+
+		sql, args = setTableStatusOwnerSQL(jobID, table.ID, now, expireTime, m.id)
 		_, err = se.ExecuteSQL(ctx, sql, args...)
-		return errors.Wrapf(err, "execute sql: %s", sql)
+		if err != nil {
+			return errors.Wrapf(err, "execute sql: %s", sql)
+		}
+
+		ranges, err := table.SplitScanRanges(ctx, m.store, splitScanCount)
+		if err != nil {
+			return errors.Wrap(err, "split scan ranges")
+		}
+		for scanID, r := range ranges {
+			sql, args, err = cache.InsertIntoTTLTask(se, jobID, table.ID, scanID, r.Start, r.End, expireTime, now)
+			if err != nil {
+				return errors.Wrap(err, "encode scan task")
+			}
+			_, err = se.ExecuteSQL(ctx, sql, args...)
+			if err != nil {
+				return errors.Wrapf(err, "execute sql: %s", sql)
+			}
+		}
+
+		return nil
 	})
 	if err != nil {
 		return nil, err

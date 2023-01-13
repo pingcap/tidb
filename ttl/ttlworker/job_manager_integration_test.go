@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
 	dbsession "github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -61,7 +60,7 @@ func TestParallelLockNewJob(t *testing.T) {
 
 	sessionFactory := sessionFactory(t, store)
 
-	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: duration.Duration{Hour: 1}}}}
+	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
 	// simply lock a new job
 	m := ttlworker.NewJobManager("test-id", nil, store, nil)
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
@@ -127,6 +126,7 @@ func TestFinishJob(t *testing.T) {
 	job.Finish(se, time.Now())
 
 	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 {\"total_rows\":0,\"success_rows\":0,\"error_rows\":0,\"total_scan_task\":1,\"scheduled_scan_task\":0,\"finished_scan_task\":0,\"scan_task_err\":\"\\\"'an error message contains both single and double quote'\\\"\"}"))
+	tk.MustQuery("select * from mysql.tidb_ttl_task").Check(testkit.Rows())
 }
 
 func TestTTLAutoAnalyze(t *testing.T) {

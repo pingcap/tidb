@@ -2536,6 +2536,11 @@ error = '''
 Unknown resource group '%-.192s'
 '''
 
+["schema:8250"]
+error = '''
+Resource group feature is disabled
+'''
+
 ["session:8002"]
 error = '''
 [%d] can not retry select for update statement

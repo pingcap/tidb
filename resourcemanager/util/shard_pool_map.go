@@ -45,6 +45,11 @@ func (s *ShardPoolMap) Add(key string, pool *PoolContainer) error {
 	return s.pools[hash(key)].Add(key, pool)
 }
 
+// Del deletes a pool to the map.
+func (s *ShardPoolMap) Del(key string) {
+	s.pools[hash(key)].Del(key)
+}
+
 // Iter iterates the map
 func (s *ShardPoolMap) Iter(fn func(pool *PoolContainer)) {
 	for i := 0; i < shard; i++ {
@@ -69,6 +74,12 @@ func (p *poolMap) Add(key string, pool *PoolContainer) error {
 	}
 	p.poolMap[key] = pool
 	return nil
+}
+
+func (p *poolMap) Del(key string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.poolMap, key)
 }
 
 func (p *poolMap) Iter(fn func(pool *PoolContainer)) {
