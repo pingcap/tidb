@@ -81,7 +81,6 @@ func TestWaitGroupWrapperCheck(t *testing.T) {
 	quit := make(chan struct{})
 	wg.Run(func() {
 		<-quit
-		return
 	}, "test")
 
 	// directly skip check if exited is false
