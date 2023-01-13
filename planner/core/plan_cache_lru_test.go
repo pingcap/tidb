@@ -131,22 +131,25 @@ func TestLRUPCGet(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
 	}
+	limitParams := [][]uint64{
+		{1}, {2}, {3}, {4}, {5},
+	}
 	// 5 bucket
 	for i := 0; i < 5; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i%4), 10)}
-		vals[i] = &PlanCacheValue{ParamTypes: pTypes[i]}
-		lru.Put(keys[i], vals[i], pTypes[i], []uint64{})
+		vals[i] = &PlanCacheValue{ParamTypes: pTypes[i], limitOffsetAndCount: limitParams[i]}
+		lru.Put(keys[i], vals[i], pTypes[i], limitParams[i])
 	}
 
 	// test for non-existent elements
 	for i := 0; i < 2; i++ {
-		value, exists := lru.Get(keys[i], pTypes[i], []uint64{})
+		value, exists := lru.Get(keys[i], pTypes[i], limitParams[i])
 		require.False(t, exists)
 		require.Nil(t, value)
 	}
 
 	for i := 2; i < 5; i++ {
-		value, exists := lru.Get(keys[i], pTypes[i], []uint64{})
+		value, exists := lru.Get(keys[i], pTypes[i], limitParams[i])
 		require.True(t, exists)
 		require.NotNil(t, value)
 		require.Equal(t, vals[i], value)
