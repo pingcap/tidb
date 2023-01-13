@@ -622,7 +622,7 @@ import (
 	truncate              "TRUNCATE"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
-	ttlJobInterval    "TTL_JOB_INTERVAL"
+	ttlJobInterval        "TTL_JOB_INTERVAL"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -7280,8 +7280,13 @@ SimpleExpr:
 		if tp.GetDecimal() == types.UnspecifiedLength {
 			tp.SetDecimal(defaultDecimal)
 		}
-		tp.SetArray($6.(bool))
+		isArray := $6.(bool)
+		tp.SetArray(isArray)
 		explicitCharset := parser.explicitCharset
+		if isArray && !explicitCharset && tp.GetCharset() != charset.CharsetBin {
+			tp.SetCharset(charset.CharsetUTF8MB4)
+			tp.SetCollate(charset.CollationUTF8MB4)
+		}
 		parser.explicitCharset = false
 		$$ = &ast.FuncCastExpr{
 			Expr:            $3,

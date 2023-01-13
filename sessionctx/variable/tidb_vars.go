@@ -898,6 +898,8 @@ const (
 	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
 	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
+	// TiDBEnableResourceControl indicates whether resource control feature is enabled
+	TiDBEnableResourceControl = "tidb_enable_resource_control"
 )
 
 // TiDB intentional limits
@@ -1157,6 +1159,7 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                              = 4
 	DefTiDBTTLDeleteWorkerCount                            = 4
+	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 )
 
@@ -1234,6 +1237,7 @@ var (
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
 )
 
 var (
