@@ -3729,6 +3729,23 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
 	mockTablePlan.names = insertPlan.tableColNames
 
+	checkTblName := func(n ast.Node) error {
+		source := n.(*ast.TableSource).Source
+		switch source.(type) {
+		case *ast.TableName:
+			subTblname := source.(*ast.TableName).Name
+			srcTblname := tn.Name
+			subAsName := n.(*ast.TableSource).AsName
+
+			if srcTblname == subTblname && subAsName.O == "" {
+				err := ErrUpdateTableUsed.GenWithStackByArgs(srcTblname.O)
+				return err
+			}
+		}
+
+		return nil
+	}
+
 	checkRefColumn := func(n ast.Node) (ast.Node, error) {
 		if insertPlan.NeedFillDefaultValue {
 			return n, nil
@@ -3743,18 +3760,21 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 				if sel.(*ast.SelectStmt).From != nil {
 					left := sel.(*ast.SelectStmt).From.TableRefs.Left
 					switch left.(type) {
+					case *ast.Join:
+						l := left.(*ast.Join).Left
+						err := checkTblName(l)
+						if err != nil {
+							return n, err
+						}
+						r := left.(*ast.Join).Right
+						err = checkTblName(r)
+						if err != nil {
+							return n, err
+						}
 					case *ast.TableSource:
-						source := left.(*ast.TableSource).Source
-						switch source.(type) {
-						case *ast.TableName:
-							subTblname := source.(*ast.TableName).Name
-							srcTblname := tn.Name
-							subAsName := left.(*ast.TableSource).AsName
-
-							if srcTblname == subTblname && subAsName.O == "" {
-								err := ErrUpdateTableUsed.GenWithStackByArgs(srcTblname.O)
-								return n, err
-							}
+						err = checkTblName(left)
+						if err != nil {
+							return n, err
 						}
 					}
 				}
