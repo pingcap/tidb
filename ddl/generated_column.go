@@ -325,6 +325,8 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 			c.otherErr = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 			return inNode, true
 		}
+	case *ast.ParenthesesExpr:
+		return inNode, false
 	}
 	c.disallowCastArrayFunc = true
 	return inNode, false

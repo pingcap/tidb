@@ -23,6 +23,7 @@ go_library(
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/worker",
         "//br/pkg/storage",
+        "//config",
         "//parser/mysql",
         "//types",
         "//util/filter",
