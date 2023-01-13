@@ -23,7 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cockroachdb/cockroach/pkg/util/grunning"
+	"github.com/pingcap/tidb/util/grunning"
 	"github.com/stretchr/testify/require"
 )
 
