@@ -2753,7 +2753,8 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 			0,            /* totalRegions */
 			0,            /* startTS */
 			0,            /* commitTS */
-			variable.On /* tidb_ttl_job_enable */},
+			variable.On,  /* tidb_ttl_job_enable */
+			[]kv.KeyRange{} /* flashback key_ranges */},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
