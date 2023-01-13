@@ -301,8 +301,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
 			return err
 		}
+	} else if !d.conf.SQLConcurrent {
+		d.dumpSQL(writerCtx, baseConn, taskIn)
 	} else {
-		//d.dumpSQL(writerCtx, baseConn, taskIn)
 		tableInfo := &TableInfo{
 			Name: "t",
 			Type: TableTypeBase,
@@ -728,6 +729,9 @@ func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 }
 
 func (d *Dumper) handleBuffer(totalChunk int) {
+	if !d.conf.SQLConcurrent {
+		return
+	}
 	set := make(map[int]*bytes.Buffer)
 	cond := sync.NewCond(new(sync.Mutex))
 	finished := make(chan struct{})
@@ -863,7 +867,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		nextCutOff := new(big.Int).Add(cutoff, bigEstimatedStep)
 		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), nextCutOff)
 		var query string
-		if len(conf.SQL) > 0 {
+		if conf.SQLConcurrent && len(conf.SQL) > 0 {
 			query = conf.SQL
 			if whereCond := buildWhereCondition(conf, where); whereCond != "" {
 				query += " "
@@ -1028,7 +1032,7 @@ func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
 
 	for i, w := range where {
 		var query string
-		if len(conf.SQL) > 0 {
+		if conf.SQLConcurrent && len(conf.SQL) > 0 {
 			query = conf.SQL
 			if whereCond := buildWhereCondition(conf, w); whereCond != "" {
 				query += " "

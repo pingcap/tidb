@@ -52,6 +52,7 @@ const (
 	flagRows                     = "rows"
 	flagWhere                    = "where"
 	flagEscapeBackslash          = "escape-backslash"
+	flagSQLConcurrent            = "sql-concurrent"
 	flagFiletype                 = "filetype"
 	flagNoHeader                 = "no-header"
 	flagNoSchemas                = "no-schemas"
@@ -95,6 +96,7 @@ type Config struct {
 	EscapeBackslash          bool
 	DumpEmptyDatabase        bool
 	PosAfterConnect          bool
+	SQLConcurrent            bool
 	CompressType             storage.CompressType
 
 	Host     string
@@ -180,6 +182,7 @@ func DefaultConfig() *Config {
 		NoHeader:            false,
 		NoSchemas:           false,
 		NoData:              false,
+		SQLConcurrent:       false,
 		CsvNullValue:        "\\N",
 		SQL:                 "",
 		TableFilter:         allFilter,
@@ -264,6 +267,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
+	flags.Bool(flagSQLConcurrent, false, "")
 	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
@@ -376,6 +380,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.EscapeBackslash, err = flags.GetBool(flagEscapeBackslash)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.SQLConcurrent, err = flags.GetBool(flagSQLConcurrent)
 	if err != nil {
 		return errors.Trace(err)
 	}

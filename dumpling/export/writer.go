@@ -4,6 +4,7 @@ package export
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -234,9 +235,11 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		if err != nil {
 			return err
 		}
-		w.bufChan <- writeRes{
-			idx: currentChunk,
-			buf: bf,
+		if w.conf.SQLConcurrent {
+			w.bufChan <- writeRes{
+				idx: currentChunk,
+				buf: bf,
+			}
 		}
 		return nil
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
@@ -251,9 +254,20 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	}
 
 	somethingIsWritten := false
-	buf := bytes.NewBuffer(make([]byte, 0, 100663296))
+	var buf *bytes.Buffer
+	if w.conf.SQLConcurrent {
+		buf = bytes.NewBuffer(make([]byte, 0, 100663296))
+	}
 	for {
-		fileWriter, tearDown := buildNewInterceptFileWriter(tctx, w.extStorage, fileName, buf)
+		var (
+			fileWriter storage.ExternalFileWriter
+			tearDown   func(context.Context)
+		)
+		if w.conf.SQLConcurrent {
+			fileWriter, tearDown = buildNewInterceptFileWriter(tctx, w.extStorage, fileName, buf)
+		} else {
+			fileWriter, tearDown = buildInterceptFileWriter(tctx, w.extStorage, fileName, w.conf.CompressType)
+		}
 		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
 		tearDown(tctx)
 		if err != nil {
