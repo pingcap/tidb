@@ -866,9 +866,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		totalChunk++
 	}
 	d.handleBuffer(totalChunk)
-
 	selectField, selectLen := meta.SelectedField(), meta.SelectedLen()
-
 	chunkIndex := 0
 	nullValueCondition := ""
 	if conf.Where == "" {
@@ -1042,7 +1040,6 @@ func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
 	selectField, selectLen := meta.SelectedField(), meta.SelectedLen()
 	where := buildWhereClauses(handleColNames, handleVals)
 	orderByClause := buildOrderByClauseString(handleColNames)
-
 	for i, w := range where {
 		var query string
 		if conf.SQLConcurrent && len(conf.SQL) > 0 {
@@ -1051,12 +1048,10 @@ func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
 				query += " "
 				query += whereCond
 			}
-
 			if orderByClause != "" {
 				query += " "
 				query += orderByClause
 			}
-
 		} else {
 			query = buildSelectQuery(db, tbl, selectField, partition, buildWhereCondition(conf, w), orderByClause)
 		}

@@ -512,15 +512,17 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 	return fileWriter, tearDownRoutine
 }
 
-type ExternalBytesBuffer struct {
+type externalBytesBuffer struct {
 	buf *bytes.Buffer
 }
 
-func (e ExternalBytesBuffer) Write(ctx context.Context, p []byte) (int, error) {
+// Write implements ExternalFileWriter.Write
+func (e externalBytesBuffer) Write(_ context.Context, p []byte) (int, error) {
 	return e.buf.Write(p)
 }
 
-func (e ExternalBytesBuffer) Close(ctx context.Context) error {
+// Close implements ExternalFileWriter.Close
+func (_ externalBytesBuffer) Close(_ context.Context) error {
 	return nil
 }
 
@@ -531,7 +533,7 @@ func buildNewInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStora
 	initRoutine := func() error {
 		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
 		// which will cause a context canceled error when closing gcs's Writer
-		writer = ExternalBytesBuffer{buf: buf}
+		writer = externalBytesBuffer{buf: buf}
 		pCtx.L().Debug("opened file", zap.String("path", fullPath))
 		fileWriter.ExternalFileWriter = writer
 		return nil
