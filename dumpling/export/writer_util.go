@@ -540,18 +540,7 @@ func buildNewInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStora
 	}
 	fileWriter.initRoutine = initRoutine
 
-	tearDownRoutine := func(ctx context.Context) {
-		if writer == nil {
-			return
-		}
-		pCtx.L().Debug("tear down lazy file writer...", zap.String("path", fullPath))
-		err := writer.Close(ctx)
-		if err != nil {
-			pCtx.L().Warn("fail to close file",
-				zap.String("path", fullPath),
-				zap.Error(err))
-		}
-	}
+	tearDownRoutine := func(ctx context.Context) {}
 	return fileWriter, tearDownRoutine
 }
 

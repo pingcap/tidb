@@ -64,7 +64,13 @@ type Dumper struct {
 }
 
 func getTable(tables map[databaseName][]*TableInfo) (string, *TableInfo, error) {
+	if len(tables) != 1 {
+		return "", nil, errors.Errorf("invalid tables with %d db, expect one", len(tables))
+	}
 	for db, tbls := range tables {
+		if len(tbls) != 1 {
+			return "", nil, errors.Errorf("invalid tables with %d tables, expect one", len(tbls))
+		}
 		for _, tbl := range tbls {
 			return db, tbl, nil
 		}
@@ -317,14 +323,14 @@ func (d *Dumper) Dump() (dumpErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		meta, err := dumpTableMeta(tctx, conf, baseConn, db, tableInfo)
+		meta, err := dumpTableMeta(writerCtx, conf, baseConn, db, tableInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if conf.Rows == UnspecifiedSize {
 			conf.Rows = 200000
 		}
-		err = d.dumpTableData(tctx, baseConn, meta, taskIn)
+		err = d.dumpTableData(writerCtx, baseConn, meta, taskIn)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -737,7 +743,7 @@ func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 }
 
-func (d *Dumper) handleBuffer(totalChunk int) {
+func (d *Dumper) handleBuffer(tctx *tcontext.Context, totalChunk int) {
 	if !d.conf.SQLConcurrent {
 		return
 	}
@@ -747,6 +753,18 @@ func (d *Dumper) handleBuffer(totalChunk int) {
 	go func() {
 		for {
 			select {
+			case <-tctx.Done():
+				tick := time.NewTicker(time.Second)
+				for {
+					select {
+					case <-finished:
+						return
+					case <-tick.C:
+						cond.L.Lock()
+						cond.Signal()
+						cond.L.Unlock()
+					}
+				}
 			case <-finished:
 				return
 			case r := <-d.bufChan:
@@ -773,9 +791,13 @@ func (d *Dumper) handleBuffer(totalChunk int) {
 				return errors.Trace(err)
 			}
 			defer func() {
+				close(finished)
 				_ = w.Close(d.tctx)
 			}()
 			for id := 0; id < totalChunk; id++ {
+				if tctx.Err() != nil {
+					return tctx.Err()
+				}
 				cond.L.Lock()
 				if buf, ok := set[id]; ok {
 					delete(set, id)
@@ -867,7 +889,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		cutoff = nextCutOff
 		totalChunk++
 	}
-	d.handleBuffer(totalChunk)
+	d.handleBuffer(tctx, totalChunk)
 	selectField, selectLen := meta.SelectedField(), meta.SelectedLen()
 	chunkIndex := 0
 	nullValueCondition := ""
