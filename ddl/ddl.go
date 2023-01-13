@@ -188,6 +188,9 @@ type DDL interface {
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
+	CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
+	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
+	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
@@ -1340,7 +1343,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = newReorgHandler(t, sess).GetDDLReorgHandle(reorgJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(sess).GetDDLReorgHandle(reorgJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1534,7 +1537,7 @@ func (s *session) begin() error {
 }
 
 func (s *session) commit() error {
-	s.StmtCommit()
+	s.StmtCommit(context.Background())
 	return s.CommitTxn(context.Background())
 }
 
@@ -1543,12 +1546,12 @@ func (s *session) txn() (kv.Transaction, error) {
 }
 
 func (s *session) rollback() {
-	s.StmtRollback()
+	s.StmtRollback(context.Background(), false)
 	s.RollbackTxn(context.Background())
 }
 
 func (s *session) reset() {
-	s.StmtRollback()
+	s.StmtRollback(context.Background(), false)
 }
 
 func (s *session) execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {
@@ -1579,6 +1582,19 @@ func (s *session) execute(ctx context.Context, query string, label string) ([]ch
 
 func (s *session) session() sessionctx.Context {
 	return s.Context
+}
+
+func (s *session) runInTxn(f func(*session) error) (err error) {
+	err = s.begin()
+	if err != nil {
+		return err
+	}
+	err = f(s)
+	if err != nil {
+		s.rollback()
+		return
+	}
+	return errors.Trace(s.commit())
 }
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.
