@@ -898,6 +898,10 @@ func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
 
+func (msm *mockSessionManager1) GetMinStartTS(lowerBound uint64) uint64 {
+	return 0
+}
+
 func TestPreparedIssue17419(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
