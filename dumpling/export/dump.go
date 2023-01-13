@@ -328,7 +328,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return errors.Trace(err)
 		}
 		if conf.Rows == UnspecifiedSize {
-			conf.Rows = 200000
+			conf.Rows = defaultRows
 		}
 		err = d.dumpTableData(writerCtx, baseConn, meta, taskIn)
 		if err != nil {
