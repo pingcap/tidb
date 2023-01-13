@@ -65,14 +65,18 @@ func TestLRUPCPut(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeLong)},
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
 	}
+	limitParams := [][]uint64{
+		{1}, {2}, {3}, {4}, {5},
+	}
 
 	// one key corresponding to multi values
 	for i := 0; i < 5; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(1), 10)}
 		vals[i] = &PlanCacheValue{
-			ParamTypes: pTypes[i],
+			ParamTypes:          pTypes[i],
+			limitOffsetAndCount: limitParams[i],
 		}
-		lru.Put(keys[i], vals[i], pTypes[i], []uint64{})
+		lru.Put(keys[i], vals[i], pTypes[i], limitParams[i])
 	}
 	require.Equal(t, lru.size, lru.capacity)
 	require.Equal(t, uint(3), lru.size)
@@ -103,7 +107,7 @@ func TestLRUPCPut(t *testing.T) {
 
 		bucket, exist := lru.buckets[string(hack.String(keys[i].Hash()))]
 		require.True(t, exist)
-		element, exist := lru.pickFromBucket(bucket, pTypes[i], []uint64{})
+		element, exist := lru.pickFromBucket(bucket, pTypes[i], limitParams[i])
 		require.NotNil(t, element)
 		require.True(t, exist)
 		require.Equal(t, root, element)
@@ -178,23 +182,29 @@ func TestLRUPCDelete(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
 	}
+	limitParams := [][]uint64{
+		{1}, {2}, {3},
+	}
 	for i := 0; i < 3; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i), 10)}
-		vals[i] = &PlanCacheValue{ParamTypes: pTypes[i]}
+		vals[i] = &PlanCacheValue{
+			ParamTypes:          pTypes[i],
+			limitOffsetAndCount: limitParams[i],
+		}
 		lru.Put(keys[i], vals[i], pTypes[i], []uint64{})
 	}
 	require.Equal(t, 3, int(lru.size))
 
 	lru.Delete(keys[1])
-	value, exists := lru.Get(keys[1], pTypes[1], []uint64{})
+	value, exists := lru.Get(keys[1], pTypes[1], limitParams[1])
 	require.False(t, exists)
 	require.Nil(t, value)
 	require.Equal(t, 2, int(lru.size))
 
-	_, exists = lru.Get(keys[0], pTypes[0], []uint64{})
+	_, exists = lru.Get(keys[0], pTypes[0], limitParams[0])
 	require.True(t, exists)
 
-	_, exists = lru.Get(keys[2], pTypes[2], []uint64{})
+	_, exists = lru.Get(keys[2], pTypes[2], limitParams[2])
 	require.True(t, exists)
 }
 
