@@ -102,7 +102,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			tableID = task.idxIncrementalExec.tableID
 		}
 		// skip locked tables
-		if !statsHandle.IsTableLocked(tableID.TableID) {
+		if !statsHandle.IsTableLocked(tableID.TableID, true) {
 			tasks = append(tasks, task)
 		}
 		// generate warning message
@@ -115,7 +115,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 		//avoid generate duplicate tables
 		if !dup {
-			if statsHandle.IsTableLocked(tableID.TableID) {
+			if statsHandle.IsTableLocked(tableID.TableID, true) {
 				tbl, ok := is.TableByID(tableID.TableID)
 				if !ok {
 					return nil

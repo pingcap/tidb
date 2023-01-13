@@ -355,9 +355,11 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 }
 
 // IsTableLocked check whether table is locked in handle
-func (h *Handle) IsTableLocked(tableID int64) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+func (h *Handle) IsTableLocked(tableID int64, lock bool) bool {
+	if lock {
+		h.mu.RLock()
+		defer h.mu.RUnlock()
+	}
 	return isTableLocked(h.tableLocked, tableID)
 }
 
