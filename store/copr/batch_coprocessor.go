@@ -641,6 +641,7 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer,
 		if err != nil {
 			return nil, err
 		}
+		// todo: no need
 		if rpcCtxs == nil {
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
 			err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
@@ -657,9 +658,10 @@ func buildBatchCopTasksConsistentHash(bo *backoff.Backoffer,
 			regionInfo := RegionInfo{
 				// tasks and rpcCtxs are correspond to each other.
 				Region:         tasks[i].region,
-				Meta:           rpcCtx.Meta,
+				// todo: no need
+				// Meta:           rpcCtx.Meta,
 				Ranges:         tasks[i].ranges,
-				AllStores:      []uint64{rpcCtx.Store.StoreID()},
+				// AllStores:      []uint64{rpcCtx.Store.StoreID()},
 				PartitionIndex: tasks[i].partitionIndex,
 			}
 			if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
