@@ -18,10 +18,8 @@ go_test(
         "disabled_test.go",
         "enabled_test.go",
     ],
-    args = ["-test.timeout=295s"],
     deps = [
         ":grunning",
-        "@com_github_cockroachdb_cockroach//pkg/util/grunning",
         "@com_github_stretchr_testify//require",
     ],
 )
