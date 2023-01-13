@@ -46,7 +46,9 @@ func (ds *DataSource) generateIndexMergePath() error {
 	}
 
 	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
-	isPossibleIdxMerge := len(indexMergeConds) > 0 && len(ds.possibleAccessPaths) > 1
+	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
+		(len(ds.possibleAccessPaths) > 1 || // (have multiple index paths, or
+			(len(ds.possibleAccessPaths) == 1 && isMVIndexPath(ds.possibleAccessPaths[0]))) // have a MVIndex)
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
 	// We current do not consider `IndexMergePath`:
 	// 1. If there is an index path.
@@ -491,6 +493,75 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	return nil
 }
 
+// generateIndexMergeOnDNF4MVIndex generates IndexMerge paths for MVIndex upon DNF filters.
+/*
+	select * from t where ((1 member of (a) and b=1) or (2 member of (a) and b=2)) and (c > 10)
+		IndexMerge(OR)
+			IndexRangeScan(a, b, [1 1, 1 1])
+			IndexRangeScan(a, b, [2 2, 2 2])
+			Selection(c > 10)
+				TableRowIdScan(t)
+	Two limitations now:
+	1). all filters in the DNF have to be used as access-filters: ((1 member of (a)) or (2 member of (a)) or b > 10) cannot be used to access the MVIndex.
+	2). cannot support json_contains: (json_contains(a, '[1, 2]') or json_contains(a, '[3, 4]')) is not supported since a single IndexMerge cannot represent this SQL.
+*/
+func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
+	for idx := 0; idx < normalPathCnt; idx++ {
+		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
+			continue // not a MVIndex path
+		}
+
+		idxCols, ok := ds.prepareCols4MVIndex(ds.possibleAccessPaths[idx].Index)
+		if !ok {
+			continue
+		}
+
+		for current, filter := range filters {
+			sf, ok := filter.(*expression.ScalarFunction)
+			if !ok || sf.FuncName.L != ast.LogicOr {
+				continue
+			}
+			dnfFilters := expression.FlattenDNFConditions(sf) // [(1 member of (a) and b=1), (2 member of (a) and b=2)]
+
+			// build partial paths for each dnf filter
+			cannotFit := false
+			var partialPaths []*util.AccessPath
+			for _, dnfFilter := range dnfFilters {
+				mvIndexFilters := []expression.Expression{dnfFilter}
+				if sf, ok := dnfFilter.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+					mvIndexFilters = expression.FlattenCNFConditions(sf) // (1 member of (a) and b=1) --> [(1 member of (a)), b=1]
+				}
+
+				accessFilters, remainingFilters := ds.collectFilters4MVIndex(mvIndexFilters, idxCols)
+				if len(accessFilters) == 0 || len(remainingFilters) > 0 { // limitation 1
+					cannotFit = true
+					break
+				}
+				paths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, ds.possibleAccessPaths[idx].Index)
+				if err != nil {
+					return nil, err
+				}
+				if isIntersection || !ok { // limitation 2
+					cannotFit = true
+					break
+				}
+				partialPaths = append(partialPaths, paths...)
+			}
+			if cannotFit {
+				continue
+			}
+
+			var remainingFilters []expression.Expression
+			remainingFilters = append(remainingFilters, filters[:current]...)
+			remainingFilters = append(remainingFilters, filters[current+1:]...)
+
+			indexMergePath := ds.buildPartialPathUp4MVIndex(partialPaths, false, remainingFilters)
+			mvIndexPaths = append(mvIndexPaths, indexMergePath)
+		}
+	}
+	return
+}
+
 // generateIndexMergeJSONMVIndexPath generates paths for (json_member_of / json_overlaps / json_contains) on multi-valued index.
 /*
 	1. select * from t where 1 member of (a)
@@ -511,8 +582,14 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 			TableRowIdScan(t)
 */
 func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
+	dnfMVIndexPaths, err := ds.generateIndexMergeOnDNF4MVIndex(normalPathCnt, filters)
+	if err != nil {
+		return nil, err
+	}
+	mvIndexPaths = append(mvIndexPaths, dnfMVIndexPaths...)
+
 	for idx := 0; idx < normalPathCnt; idx++ {
-		if ds.possibleAccessPaths[idx].IsTablePath() || ds.possibleAccessPaths[idx].Index == nil || !ds.possibleAccessPaths[idx].Index.MVIndex {
+		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
 			continue // not a MVIndex path
 		}
 
@@ -526,34 +603,45 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue
 		}
 
-		partialPaths, isIntersection, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, ds.possibleAccessPaths[idx].Index)
+		partialPaths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, ds.possibleAccessPaths[idx].Index)
 		if err != nil {
 			return nil, err
 		}
-
-		indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
-		indexMergePath.IndexMergeIsIntersection = isIntersection
-		indexMergePath.TableFilters = remainingFilters
-
-		// TODO: use a naive estimation strategy here now for simplicity, make it more accurate.
-		minEstRows, maxEstRows := math.MaxFloat64, -1.0
-		for _, p := range indexMergePath.PartialIndexPaths {
-			minEstRows = math.Min(minEstRows, p.CountAfterAccess)
-			maxEstRows = math.Max(maxEstRows, p.CountAfterAccess)
-		}
-		if indexMergePath.IndexMergeIsIntersection {
-			indexMergePath.CountAfterAccess = minEstRows
-		} else {
-			indexMergePath.CountAfterAccess = maxEstRows
+		if !ok {
+			continue
 		}
 
-		mvIndexPaths = append(mvIndexPaths, indexMergePath)
+		mvIndexPaths = append(mvIndexPaths, ds.buildPartialPathUp4MVIndex(partialPaths, isIntersection, remainingFilters))
 	}
 	return
 }
 
+// buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
+func (ds *DataSource) buildPartialPathUp4MVIndex(partialPaths []*util.AccessPath, isIntersection bool, remainingFilters []expression.Expression) *util.AccessPath {
+	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
+	indexMergePath.IndexMergeIsIntersection = isIntersection
+	indexMergePath.TableFilters = remainingFilters
+
+	// TODO: use a naive estimation strategy here now for simplicity, make it more accurate.
+	minEstRows, maxEstRows := math.MaxFloat64, -1.0
+	for _, p := range indexMergePath.PartialIndexPaths {
+		minEstRows = math.Min(minEstRows, p.CountAfterAccess)
+		maxEstRows = math.Max(maxEstRows, p.CountAfterAccess)
+	}
+	if indexMergePath.IndexMergeIsIntersection {
+		indexMergePath.CountAfterAccess = minEstRows
+	} else {
+		indexMergePath.CountAfterAccess = maxEstRows
+	}
+	return indexMergePath
+}
+
+// buildPartialPaths4MVIndex builds partial paths by using these accessFilters upon this MVIndex.
+// The accessFilters must be corresponding to these idxCols.
+// OK indicates whether it builds successfully. These partial paths should be ignored if ok==false.
 func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expression,
-	idxCols []*expression.Column, mvIndex *model.IndexInfo) ([]*util.AccessPath, bool, error) {
+	idxCols []*expression.Column, mvIndex *model.IndexInfo) (
+	partialPaths []*util.AccessPath, isIntersection bool, ok bool, err error) {
 	var virColID = -1
 	for i := range idxCols {
 		if idxCols[i].VirtualExpr != nil {
@@ -562,39 +650,38 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		}
 	}
 	if virColID == -1 { // unexpected, no vir-col on this MVIndex
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	if len(accessFilters) <= virColID { // no filter related to the vir-col, build a partial path directly.
 		partialPath, ok, err := ds.buildPartialPath4MVIndex(accessFilters, idxCols, mvIndex)
-		return []*util.AccessPath{partialPath}, ok, err
+		return []*util.AccessPath{partialPath}, false, ok, err
 	}
 
 	virCol := idxCols[virColID]
 	jsonType := virCol.GetType().ArrayType()
 	targetJSONPath, ok := unwrapJSONCast(virCol.VirtualExpr)
 	if !ok {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 
 	// extract values related to this vir-col, for example, extract [1, 2] from `json_contains(j, '[1, 2]')`
 	var virColVals []expression.Expression
-	var isIntersection bool
 	sf, ok := accessFilters[virColID].(*expression.ScalarFunction)
 	if !ok {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	switch sf.FuncName.L {
 	case ast.JSONMemberOf: // (1 member of a->'$.zip')
 		v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
 		if !ok {
-			return nil, false, nil
+			return nil, false, false, nil
 		}
 		virColVals = append(virColVals, v)
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 		isIntersection = true
 		virColVals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1], jsonType)
 		if !ok {
-			return nil, false, nil
+			return nil, false, false, nil
 		}
 	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
 		var jsonPathIdx int
@@ -603,33 +690,32 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		} else if sf.GetArgs()[1].Equal(ds.ctx, targetJSONPath) {
 			jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 		} else {
-			return nil, false, nil
+			return nil, false, false, nil
 		}
 		var ok bool
 		virColVals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx], jsonType)
 		if !ok {
-			return nil, false, nil
+			return nil, false, false, nil
 		}
 	default:
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 
-	partialPaths := make([]*util.AccessPath, 0, len(virColVals))
 	for _, v := range virColVals {
 		// rewrite json functions to EQ to calculate range, `(1 member of j)` -> `j=1`.
 		eq, err := expression.NewFunction(ds.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
 		if err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
 		accessFilters[virColID] = eq
 
 		partialPath, ok, err := ds.buildPartialPath4MVIndex(accessFilters, idxCols, mvIndex)
 		if !ok || err != nil {
-			return nil, ok, err
+			return nil, false, ok, err
 		}
 		partialPaths = append(partialPaths, partialPath)
 	}
-	return partialPaths, isIntersection, nil
+	return partialPaths, isIntersection, true, nil
 }
 
 // buildPartialPath4MVIndex builds a partial path on this MVIndex with these accessFilters.
@@ -809,4 +895,8 @@ func unwrapJSONCast(expr expression.Expression) (expression.Expression, bool) {
 		return nil, false
 	}
 	return sf.GetArgs()[0], true
+}
+
+func isMVIndexPath(path *util.AccessPath) bool {
+	return !path.IsTablePath() && path.Index != nil && path.Index.MVIndex
 }

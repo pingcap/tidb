@@ -246,6 +246,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
+		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
 		Build()
 }
 
@@ -263,6 +264,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
+		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
 		Build()
 }
 

@@ -84,7 +84,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		}
 		if col.FieldType.IsArray() {
 			if mvIndex {
-				return nil, false, dbterror.ErrNotSupportedYet.GenWithStack("'more than one multi-valued key part per index'")
+				return nil, false, dbterror.ErrNotSupportedYet.GenWithStackByArgs("more than one multi-valued key part per index")
 			}
 			mvIndex = true
 		}
@@ -882,7 +882,13 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-	rh := newReorgHandler(t, w.sess)
+	sctx, err1 := w.sessPool.get()
+	if err1 != nil {
+		err = err1
+		return
+	}
+	defer w.sessPool.put(sctx)
+	rh := newReorgHandler(newSession(sctx))
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return false, ver, errors.Trace(err)
@@ -1274,13 +1280,10 @@ func (w *baseIndexWorker) String() string {
 }
 
 func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
-	sess, ok := w.backfillCtx.sessCtx.(*session)
-	if !ok {
-		return errors.Errorf("sess ctx:%#v convert session failed", w.backfillCtx.sessCtx)
-	}
+	s := newSession(w.backfillCtx.sessCtx)
 
-	return runInTxn(sess, func(se *session) error {
-		jobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
+	return s.runInTxn(func(se *session) error {
+		jobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
 			bfJob.JobID, bfJob.EleID, bfJob.EleKey, bfJob.ID), "update_backfill_task")
 		if err != nil {
 			return err
@@ -1297,26 +1300,23 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 			return err
 		}
 		bfJob.InstanceLease = GetLeaseGoTime(currTime, InstanceLease)
-		return updateBackfillJob(sess, BackfillTable, bfJob, "update_backfill_task")
+		return updateBackfillJob(se, BackfillTable, bfJob, "update_backfill_task")
 	})
 }
 
 func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
-	sess, ok := w.backfillCtx.sessCtx.(*session)
-	if !ok {
-		return errors.Errorf("sess ctx:%#v convert session failed", w.backfillCtx.sessCtx)
-	}
-	return runInTxn(sess, func(se *session) error {
+	s := newSession(w.backfillCtx.sessCtx)
+	return s.runInTxn(func(se *session) error {
 		txn, err := se.txn()
 		if err != nil {
 			return errors.Trace(err)
 		}
 		bfJob.FinishTS = txn.StartTS()
-		err = RemoveBackfillJob(sess, false, bfJob)
+		err = RemoveBackfillJob(se, false, bfJob)
 		if err != nil {
 			return err
 		}
-		return AddBackfillHistoryJob(sess, []*BackfillJob{bfJob})
+		return AddBackfillHistoryJob(se, []*BackfillJob{bfJob})
 	})
 }
 

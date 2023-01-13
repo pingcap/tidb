@@ -906,6 +906,7 @@ import (
 	DropDatabaseStmt           "DROP DATABASE statement"
 	DropImportStmt             "DROP IMPORT statement"
 	DropIndexStmt              "DROP INDEX statement"
+	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
 	DropTableStmt              "DROP TABLE statement"
@@ -7282,8 +7283,13 @@ SimpleExpr:
 		if tp.GetDecimal() == types.UnspecifiedLength {
 			tp.SetDecimal(defaultDecimal)
 		}
-		tp.SetArray($6.(bool))
+		isArray := $6.(bool)
+		tp.SetArray(isArray)
 		explicitCharset := parser.explicitCharset
+		if isArray && !explicitCharset && tp.GetCharset() != charset.CharsetBin {
+			tp.SetCharset(charset.CharsetUTF8MB4)
+			tp.SetCollate(charset.CollationUTF8MB4)
+		}
 		parser.explicitCharset = false
 		$$ = &ast.FuncCastExpr{
 			Expr:            $3,
@@ -11494,6 +11500,7 @@ Statement:
 |	DropSequenceStmt
 |	DropViewStmt
 |	DropUserStmt
+|	DropResourceGroupStmt
 |	DropRoleStmt
 |	DropStatisticsStmt
 |	DropStatsStmt
@@ -13046,7 +13053,7 @@ ResourceGroupNameOption:
 	{
 		$$ = nil
 	}
-|	"RESOURCE" "GROUP" stringLit
+|	"RESOURCE" "GROUP" ResourceGroupName
 	{
 		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
 	}
@@ -14220,8 +14227,8 @@ AlterResourceGroupStmt:
 		}
 	}
 
-DropPolicyStmt:
-	"DROP" "RESOURCE" "GROUP" IfExists PolicyName
+DropResourceGroupStmt:
+	"DROP" "RESOURCE" "GROUP" IfExists ResourceGroupName
 	{
 		$$ = &ast.DropResourceGroupStmt{
 			IfExists:          $4.(bool),
