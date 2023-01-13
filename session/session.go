@@ -1269,10 +1269,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 			s.txn.onStmtEnd()
 			if err != nil {
-				s.StmtRollback()
+				s.StmtRollback(ctx, false)
 				break
 			}
-			s.StmtCommit()
+			s.StmtCommit(ctx)
 		}
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
@@ -2356,7 +2356,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if rs != nil {
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
-				se.StmtCommit()
+				se.StmtCommit(ctx)
 				if err := se.CommitTxn(ctx); err != nil {
 					return nil, err
 				}

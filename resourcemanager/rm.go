@@ -80,3 +80,8 @@ func (r *ResourceManager) Register(pool util.GorotinuePool, name string, compone
 func (r *ResourceManager) registerPool(name string, pool *util.PoolContainer) error {
 	return r.poolMap.Add(name, pool)
 }
+
+// Unregister is to unregister pool into resource manager.
+func (r *ResourceManager) Unregister(name string) {
+	r.poolMap.Del(name)
+}
