@@ -35,4 +35,16 @@ func TestShardPoolMap(t *testing.T) {
 		cnt.Add(1)
 	})
 	require.Equal(t, rc, int(cnt.Load()))
+
+	for i := 0; i < rc; i++ {
+		id := strconv.FormatInt(int64(i), 10)
+		pm.Del(id)
+	}
+	cnt.Store(0)
+	pm.Iter(func(pool *PoolContainer) {
+		cnt.Add(1)
+	})
+	require.Equal(t, 0, int(cnt.Load()))
+	id := strconv.FormatInt(int64(0), 10)
+	pm.Del(id)
 }

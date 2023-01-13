@@ -69,6 +69,11 @@ func TestPool(t *testing.T) {
 	require.Equal(t, uint32(10), count.Load())
 	// close pool
 	pool.ReleaseAndWait()
+
+	// test renew is normal
+	pool, err = NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestPool", 10, rmutil.UNKNOWN)
+	require.NoError(t, err)
+	pool.ReleaseAndWait()
 }
 
 func TestPoolWithEnoughCapacity(t *testing.T) {
