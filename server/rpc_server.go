@@ -55,6 +55,12 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 			Time:    time.Duration(config.Status.GRPCKeepAliveTime) * time.Second,
 			Timeout: time.Duration(config.Status.GRPCKeepAliveTimeout) * time.Second,
 		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			// Allow clients send consecutive pings in every 5 seconds.
+			// The default value of MinTime is 5 minutes,
+			// which is too long compared with 10 seconds of TiDB's keepalive time.
+			MinTime: 5 * time.Second,
+		}),
 		grpc.MaxConcurrentStreams(uint32(config.Status.GRPCConcurrentStreams)),
 		grpc.InitialWindowSize(int32(config.Status.GRPCInitialWindowSize)),
 		grpc.MaxSendMsgSize(config.Status.GRPCMaxSendMsgSize),

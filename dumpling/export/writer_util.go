@@ -229,6 +229,7 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 			failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
 				failpoint.Return(0, errors.New("connection is closed"))
 			})
+			failpoint.Inject("AtEveryRow", nil)
 
 			fileRowIter.Next()
 			shouldSwitch := wp.ShouldSwitchStatement()

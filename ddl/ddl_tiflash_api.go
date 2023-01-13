@@ -419,11 +419,11 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 
 			logutil.BgLogger().Debug("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica), zap.Int64("tableID", tb.ID))
 
-			var stats helper.PDRegionStats
-			if err := infosync.GetTiFlashPDRegionRecordStats(context.Background(), tb.ID, &stats); err != nil {
+			var regionCount int
+			if err := infosync.GetTiFlashRegionCountFromPD(context.Background(), tb.ID, &regionCount); err != nil {
+				logutil.BgLogger().Error("Fail to get regionCount from PD.", zap.Int64("tableID", tb.ID))
 				return allReplicaReady, err
 			}
-			regionCount := stats.Count
 			flashRegionCount := len(regionReplica)
 			avail := regionCount == flashRegionCount
 			failpoint.Inject("PollTiFlashReplicaStatusReplaceCurAvailableValue", func(val failpoint.Value) {

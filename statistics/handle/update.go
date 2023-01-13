@@ -1402,10 +1402,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count)
+		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count, t.ModifyCount)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, true)
+		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, t.ModifyCount, true)
 	}
 	q.Expected = int64(expected)
 	return err
