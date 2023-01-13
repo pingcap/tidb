@@ -119,7 +119,7 @@ func TestCompressReaderWriter(t *testing.T) {
 		// make sure compressed file is written correctly
 		file, err := os.Open(filepath.Join(dir, fileName))
 		require.NoError(t, err)
-		r, err := newCompressReader(test.compressType, file)
+		r, err := newCompressReader(ctx, test.compressType, file)
 		require.NoError(t, err)
 		var bf bytes.Buffer
 		_, err = bf.ReadFrom(r)

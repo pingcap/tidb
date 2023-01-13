@@ -365,7 +365,10 @@ type local struct {
 
 	engineMemCacheSize      int
 	localWriterMemCacheSize int64
+	regionSplitSize         int64
+	regionSplitKeys         int
 	supportMultiIngest      bool
+	skipSort                bool
 
 	checkTiKVAvaliable  bool
 	duplicateDetection  bool
@@ -473,6 +476,20 @@ func NewLocalBackend(
 		alloc.RefCnt = new(atomic.Int64)
 		LastAlloc = alloc
 	}
+
+	regionSplitSize := int64(cfg.TikvImporter.RegionSplitSize)
+	regionSplitKeys := cfg.TikvImporter.RegionSplitKeys
+
+	if regionSplitSize == 0 {
+		regionSplitSize = int64(config.SplitRegionSize)
+	}
+	if regionSplitKeys == 0 {
+		if regionSplitSize > int64(config.SplitRegionSize) {
+			regionSplitKeys = int(float64(regionSplitSize) / float64(config.SplitRegionSize) * float64(config.SplitRegionKeys))
+		} else {
+			regionSplitKeys = config.SplitRegionKeys
+		}
+	}
 	local := &local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
@@ -492,6 +509,9 @@ func NewLocalBackend(
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		regionSplitSize:         regionSplitSize,
+		regionSplitKeys:         regionSplitKeys,
+		skipSort:                cfg.TikvImporter.SkipSort,
 		duplicateDetection:      duplicateDetection,
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
@@ -1865,16 +1885,38 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
+	return openLocalWriter(
+		cfg,
+		engine,
+		local.localWriterMemCacheSize, local.regionSplitSize,
+		local.regionSplitKeys,
+		local.skipSort,
+		local.bufferPool.NewBuffer(),
+		local.tikvCli,
+		local.importClientFactory,
+	)
 }
 
-func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+func openLocalWriter(
+	cfg *backend.LocalWriterConfig,
+	engine *Engine,
+	cacheSize, regionSplitSize int64,
+	regionSplitKeys int,
+	skipSort bool,
+	kvBuffer *membuf.Buffer,
+	kvStore *tikvclient.KVStore,
+	importClientFactory ImportClientFactory) (*Writer, error) {
 	w := &Writer{
-		engine:             engine,
-		memtableSizeLimit:  cacheSize,
-		kvBuffer:           kvBuffer,
-		isKVSorted:         cfg.IsKVSorted,
-		isWriteBatchSorted: true,
+		engine:              engine,
+		memtableSizeLimit:   cacheSize,
+		regionSplitSize:     regionSplitSize,
+		regionSplitKeys:     regionSplitKeys,
+		kvBuffer:            kvBuffer,
+		isKVSorted:          cfg.IsKVSorted,
+		skipSort:            skipSort,
+		isWriteBatchSorted:  true,
+		kvStore:             kvStore,
+		importClientFactory: importClientFactory,
 	}
 	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
 	// this can help save about 3% of CPU.
