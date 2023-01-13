@@ -383,7 +383,8 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.PitrBatchSize == 0 {
 		cfg.PitrBatchSize = defaultPiTRBatchSize
 	}
-
+	// another goroutine is used to iterate the backup file
+	cfg.PitrConcurrency += 1
 	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
 	cfg.Config.Concurrency = cfg.PitrConcurrency
 }
