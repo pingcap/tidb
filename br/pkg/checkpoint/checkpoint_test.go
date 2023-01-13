@@ -16,6 +16,7 @@ package checkpoint_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestCheckpointMeta(t *testing.T) {
@@ -49,6 +51,19 @@ func TestCheckpointMeta(t *testing.T) {
 	require.Equal(t, checkpointMeta.BackupTS, checkpointMeta2.BackupTS)
 }
 
+type mockTimer struct {
+	p int64
+	l int64
+}
+
+func NewMockTimer(p, l int64) *mockTimer {
+	return &mockTimer{p: p, l: l}
+}
+
+func (t *mockTimer) GetTS(ctx context.Context) (int64, int64, error) {
+	return t.p, t.l, nil
+}
+
 func TestCheckpointRunner(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
@@ -61,7 +76,8 @@ func TestCheckpointRunner(t *testing.T) {
 		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
 		CipherKey:  []byte("01234567890123456789012345678901"),
 	}
-	checkpointRunner := checkpoint.StartCheckpointRunnerForTest(ctx, s, cipher, 5*time.Second)
+	checkpointRunner, err := checkpoint.StartCheckpointRunnerForTest(ctx, s, cipher, 5*time.Second, NewMockTimer(10, 10))
+	require.NoError(t, err)
 
 	data := map[string]struct {
 		StartKey string
@@ -172,4 +188,43 @@ func TestCheckpointRunner(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, count, 2)
+}
+
+func getLockData(p, l int64) ([]byte, error) {
+	lock := checkpoint.CheckpointLock{
+		LockId:   oracle.ComposeTS(p, l),
+		LockAt:   p,
+		ExpireAt: p + 10,
+	}
+	return json.Marshal(lock)
+}
+
+func TestCheckpointRunnerLock(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	s, err := storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	os.MkdirAll(base+checkpoint.CheckpointDataDir, 0o755)
+	os.MkdirAll(base+checkpoint.CheckpointChecksumDir, 0o755)
+
+	cipher := &backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+		CipherKey:  []byte("01234567890123456789012345678901"),
+	}
+
+	data, err := getLockData(10, 20)
+	require.NoError(t, err)
+	err = s.WriteFile(ctx, checkpoint.CheckpointLockPath, data)
+	require.NoError(t, err)
+
+	_, err = checkpoint.StartCheckpointRunnerForTest(ctx, s, cipher, 5*time.Second, NewMockTimer(10, 10))
+	require.Error(t, err)
+
+	runner, err := checkpoint.StartCheckpointRunnerForTest(ctx, s, cipher, 5*time.Second, NewMockTimer(30, 10))
+	require.NoError(t, err)
+
+	_, err = checkpoint.StartCheckpointRunnerForTest(ctx, s, cipher, 5*time.Second, NewMockTimer(40, 10))
+	require.Error(t, err)
+
+	runner.WaitForFinish()
 }

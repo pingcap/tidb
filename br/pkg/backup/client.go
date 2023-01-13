@@ -312,7 +312,7 @@ func (bc *Client) StartCheckpointRunner(
 		}
 	}
 
-	bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher)
+	bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
 	return nil
 }
 
