@@ -118,23 +118,17 @@ func TestETLOperations(t *testing.T) {
 	}
 
 	insert := mustParseOne("insert into t select tmp1.id, tmp1.v, tmp2.v from (select * from t1) tmp1 join (select * from t2) tmp2 on tmp1.id = tmp2.id")
-	shardedInsert := tidbCtx.tryETL(insert)
-	require.NotNil(t, shardedInsert)
-	require.Equal(t, shardedInsert.DMLStmt, insert)
-	require.Equal(t, shardedInsert.ShardColumn.Schema.L, "test")
+	require.True(t, tidbCtx.tryETL(insert))
 
 	selfInsert := mustParseOne("insert into t select * from t")
-	require.Nil(t, tidbCtx.tryETL(selfInsert))
+	require.False(t, tidbCtx.tryETL(selfInsert))
 
 	nullInsert := mustParseOne("insert into t2(id) select null")
-	require.Nil(t, tidbCtx.tryETL(nullInsert))
+	require.False(t, tidbCtx.tryETL(nullInsert))
 
 	asNameInsert := mustParseOne("insert into t(id, v1) select tmp2.id, tmp2.v from (select * from t1 tmp1) tmp2")
-	asNameETL := tidbCtx.tryETL(asNameInsert)
-	require.NotNil(t, asNameETL)
+	require.True(t, tidbCtx.tryETL(asNameInsert))
 
 	cascadeAsNameInsert := mustParseOne("insert into t(id, v1, v2) select tmp3.id, tmp3.v, tmp4.v from (select tmp2.id, tmp2.v from (select * from t1 tmp1) tmp2) tmp3 join (select * from t2) tmp4")
-	cascadeAsNameETL := tidbCtx.tryETL(cascadeAsNameInsert)
-	require.NotNil(t, cascadeAsNameETL)
-	require.Equal(t, cascadeAsNameETL.ShardColumn.Table.L, "t2")
+	require.True(t, tidbCtx.tryETL(cascadeAsNameInsert))
 }
