@@ -49,12 +49,10 @@ func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess() {
 	ticker := time.NewTimer(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		select {
-		case <-ticker.C:
-			continueCheck := w.check()
-			if !continueCheck {
-				return
-			}
+		<-ticker.C
+		continueCheck := w.check()
+		if !continueCheck {
+			return
 		}
 	}
 }
