@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -420,7 +421,7 @@ func (c *castAsArrayFunctionClass) verifyArgs(args []Expression) error {
 	}
 
 	if args[0].GetType().EvalType() != types.ETJson {
-		return types.ErrInvalidJSONData.GenWithStackByArgs("1", "cast_as_array")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "cast_as_array")
 	}
 
 	return nil
@@ -432,11 +433,14 @@ func (c *castAsArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	arrayType := c.tp.ArrayType()
 	switch arrayType.GetType() {
-	case mysql.TypeYear, mysql.TypeJSON:
+	case mysql.TypeYear, mysql.TypeJSON, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeNewDecimal:
 		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", arrayType.String()))
 	}
 	if arrayType.EvalType() == types.ETString && arrayType.GetCharset() != charset.CharsetUTF8MB4 && arrayType.GetCharset() != charset.CharsetBin {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index", arrayType.String())
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index")
+	}
+	if arrayType.EvalType() == types.ETString && arrayType.GetFlen() == types.UnspecifiedLength {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing data to array of char/binary BLOBs")
 	}
 
 	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
@@ -457,19 +461,95 @@ func (b *castJSONAsArrayFunctionSig) Clone() builtinFunc {
 	return newSig
 }
 
+// fakeSctx is used to ignore the sql mode, `cast as array` should always return error if any.
+var fakeSctx = &stmtctx.StatementContext{InInsertStmt: true}
+
 func (b *castJSONAsArrayFunctionSig) evalJSON(row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
 
-	if val.TypeCode != types.JSONTypeCodeArray {
-		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing Non-JSON Array type to array")
+	if val.TypeCode == types.JSONTypeCodeObject {
+		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing JSON OBJECT type to array")
 	}
 
-	// TODO: impl the cast(... as ... array) function
+	arrayVals := make([]any, 0, 8)
+	ft := b.tp.ArrayType()
+	f := convertJSON2Tp(ft.EvalType())
+	if f == nil {
+		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAS-ing data to array of %s", ft.String()))
+	}
+	if val.TypeCode != types.JSONTypeCodeArray {
+		item, err := f(fakeSctx, val, ft)
+		if err != nil {
+			return types.BinaryJSON{}, false, err
+		}
+		arrayVals = append(arrayVals, item)
+	} else {
+		for i := 0; i < val.GetElemCount(); i++ {
+			item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
+			if err != nil {
+				return types.BinaryJSON{}, false, err
+			}
+			arrayVals = append(arrayVals, item)
+		}
+	}
+	return types.CreateBinaryJSON(arrayVals), false, nil
+}
 
-	return types.BinaryJSON{}, false, nil
+// ConvertJSON2Tp returns a function that can convert JSON to the specified type.
+func ConvertJSON2Tp(v types.BinaryJSON, targetType *types.FieldType) (any, error) {
+	convertFunc := convertJSON2Tp(targetType.EvalType())
+	if convertFunc == nil {
+		return nil, ErrInvalidJSONForFuncIndex
+	}
+	return convertFunc(fakeSctx, v, targetType)
+}
+
+func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, types.BinaryJSON, *types.FieldType) (any, error) {
+	switch evalType {
+	case types.ETString:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeString {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return types.ProduceStrWithSpecifiedTp(string(item.GetString()), tp, sc, false)
+		}
+	case types.ETInt:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			jsonToInt, err := types.ConvertJSONToInt(sc, item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
+			if mysql.HasUnsignedFlag(tp.GetFlag()) {
+				return uint64(jsonToInt), err
+			}
+			return jsonToInt, err
+		}
+	case types.ETDatetime:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			res := item.GetTime()
+			res.SetType(tp.GetType())
+			if tp.GetType() == mysql.TypeDate {
+				// Truncate hh:mm:ss part if the type is Date.
+				res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+			}
+			return res, nil
+		}
+	case types.ETDuration:
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+			if item.TypeCode != types.JSONTypeCodeDuration {
+				return nil, ErrInvalidJSONForFuncIndex
+			}
+			return item.GetDuration(), nil
+		}
+	default:
+		return nil
+	}
 }
 
 type castAsJSONFunctionClass struct {

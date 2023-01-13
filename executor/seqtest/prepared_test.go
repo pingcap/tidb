@@ -280,11 +280,11 @@ func TestPreparedLimitOffset(t *testing.T) {
 		r.Check(testkit.Rows("2"))
 
 		tk.MustExec(`set @a=1.1`)
-		r = tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
-		r.Check(testkit.Rows("2"))
+		_, err := tk.Exec(`execute stmt_test_1 using @a, @b;`)
+		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
 		tk.MustExec(`set @c="-1"`)
-		_, err := tk.Exec("execute stmt_test_1 using @c, @c")
+		_, err = tk.Exec("execute stmt_test_1 using @c, @c")
 		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
@@ -766,4 +766,24 @@ func TestPreparedIssue17419(t *testing.T) {
 	// require.NotNil(t, tk1.Session().ShowProcess().Plan)
 	// _, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
 	// require.True(t, ok)
+}
+
+func TestLimitUnsupportedCase(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+
+	tk.MustExec("set @a = 1.2")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = 1.")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = '0'")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = '1'")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = 1_2")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 }

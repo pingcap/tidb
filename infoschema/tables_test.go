@@ -264,6 +264,8 @@ func TestCurrentTimestampAsDefault(t *testing.T) {
 					c_timestamp timestamp,
 					c_timestamp_default timestamp default current_timestamp,
 					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+					c_date_default date default current_date,
+					c_date_default_2 date default curdate(),
 					c_varchar_default varchar(20) default "current_timestamp",
 					c_varchar_default_3 varchar(20) default "current_timestamp(3)",
 					c_varchar_default_on_update datetime default current_timestamp on update current_timestamp,
@@ -276,6 +278,8 @@ func TestCurrentTimestampAsDefault(t *testing.T) {
 					WHERE table_schema = "default_time_test" AND table_name = "default_time_table"
 					ORDER BY column_name`,
 	).Check(testkit.Rows(
+		"c_date_default CURRENT_DATE ",
+		"c_date_default_2 CURRENT_DATE ",
 		"c_datetime <nil> ",
 		"c_datetime_default CURRENT_TIMESTAMP ",
 		"c_datetime_default_2 CURRENT_TIMESTAMP(2) ",
@@ -593,6 +597,7 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"10",
 			"",
+			"",
 			"0",
 			"1",
 			"0",
@@ -665,6 +670,7 @@ func TestSlowQuery(t *testing.T) {
 			"100.054",
 			"0",
 			"0",
+			"",
 			"",
 			"0",
 			"1",
@@ -1669,10 +1675,6 @@ func TestVariablesInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skip("skip test when concurrent DDL is disabled")
-	}
 
 	tk.MustExec("use information_schema")
 	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")

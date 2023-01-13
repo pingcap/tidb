@@ -33,6 +33,27 @@ import (
 	"go.uber.org/zap"
 )
 
+// The following two functions are using `sqlexec.SQLExecutor` to represent session
+// which is actually not correct. It's a work around for the cyclic dependency problem.
+// It actually doesn't accept arbitrary SQLExecutor, but just `*session.session`, which means
+// you cannot pass the `(ttl/session).Session` into it.
+// Use `sqlexec.SQLExecutor` and `sessionctx.Session` or another other interface (including
+// `interface{}`) here is the same, I just pick one small enough interface.
+// Also, we cannot use the functions in `session/session.go` (to avoid cyclic dependency), so
+// registering function here is really needed.
+
+// AttachStatsCollector attaches the stats collector for the session.
+// this function is registered in BootstrapSession in /session/session.go
+var AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
+
+// DetachStatsCollector removes the stats collector for the session
+// this function is registered in BootstrapSession in /session/session.go
+var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
+
 type sessionPool interface {
 	Get() (pools.Resource, error)
 	Put(pools.Resource)
@@ -80,8 +101,12 @@ func getSession(pool sessionPool) (session.Session, error) {
 			terror.Log(err)
 		}
 
+		DetachStatsCollector(exec)
+
 		pool.Put(resource)
 	})
+
+	exec = AttachStatsCollector(exec)
 
 	// store and set the retry limit to 0
 	_, err = se.ExecuteSQL(context.Background(), "set tidb_retry_limit=0")
@@ -127,7 +152,7 @@ type ttlTableSession struct {
 	expire time.Time
 }
 
-func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (rows []chunk.Row, shouldRetry bool, err error) {
+func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) ([]chunk.Row, bool, error) {
 	tracer := metrics.PhaseTracerFromCtx(ctx)
 	defer tracer.EnterPhase(tracer.Phase())
 
@@ -136,14 +161,16 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 		return nil, false, errors.New("global TTL job is disabled")
 	}
 
-	if err = s.ResetWithGlobalTimeZone(ctx); err != nil {
+	if err := s.ResetWithGlobalTimeZone(ctx); err != nil {
 		return nil, false, err
 	}
 
-	err = s.RunInTxn(ctx, func() error {
+	var result []chunk.Row
+	shouldRetry := true
+	err := s.RunInTxn(ctx, func() error {
 		tracer.EnterPhase(metrics.PhaseQuery)
 		defer tracer.EnterPhase(tracer.Phase())
-		rows, err = s.ExecuteSQL(ctx, sql)
+		rows, err := s.ExecuteSQL(ctx, sql)
 		tracer.EnterPhase(metrics.PhaseCheckTTL)
 		// We must check the configuration after ExecuteSQL because of MDL and the meta the current transaction used
 		// can only be determined after executed one query.
@@ -153,9 +180,10 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 		}
 
 		if err != nil {
-			shouldRetry = true
 			return err
 		}
+
+		result = rows
 		return nil
 	})
 
@@ -163,7 +191,7 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 		return nil, shouldRetry, err
 	}
 
-	return rows, false, nil
+	return result, false, nil
 }
 
 func validateTTLWork(ctx context.Context, s session.Session, tbl *cache.PhysicalTable, expire time.Time) error {

@@ -332,10 +332,12 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), errno.ErrPrivilegeCheckFail)
 	tk.MustExec("drop user 'testflashback'@'localhost';")
 
-	// Flashback failed because of ddl history.
-	tk.MustExec("use test;")
-	tk.MustExec("create table t(a int);")
-	tk.MustMatchErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs), "Detected schema change due to another DDL job during \\[.*, now\\), can't do flashback")
+	// update tidb_server_version
+	nowTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	tk.MustExec("update mysql.tidb set VARIABLE_VALUE=VARIABLE_VALUE+1 where VARIABLE_NAME='tidb_server_version'")
+	errorMsg := fmt.Sprintf("[ddl:-1]Detected TiDB upgrade during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).String())
+	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS)), errorMsg)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))

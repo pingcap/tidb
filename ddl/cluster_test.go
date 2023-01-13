@@ -42,15 +42,16 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 
 	kvRanges, err := ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
-	// The results are 6 key ranges
-	// 0: (stats_meta,stats_histograms,stats_buckets)
+	// The results are 8 key ranges
+	// 0: (stats_meta,stats_histograms,stats_buckets, gc_delete_range)
 	// 1: (stats_feedback)
 	// 2: (stats_top_n)
 	// 3: (stats_extended)
 	// 4: (stats_fm_sketch)
 	// 5: (stats_history, stats_meta_history)
 	// 6: (stats_table_locked)
-	require.Len(t, kvRanges, 7)
+	// 7: meta Ranges
+	require.Len(t, kvRanges, 8)
 
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE employees (" +
@@ -64,7 +65,7 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 		");")
 	tk.MustExec("truncate table mysql.analyze_jobs")
 
-	// truncate all `stats_` tables, make table ID consecutive.
+	// truncate all `stats_` and `gc_delete_range` tables, make table ID consecutive.
 	tk.MustExec("truncate table mysql.stats_meta")
 	tk.MustExec("truncate table mysql.stats_histograms")
 	tk.MustExec("truncate table mysql.stats_buckets")
@@ -75,14 +76,15 @@ func TestGetFlashbackKeyRanges(t *testing.T) {
 	tk.MustExec("truncate table mysql.stats_history")
 	tk.MustExec("truncate table mysql.stats_meta_history")
 	tk.MustExec("truncate table mysql.stats_table_locked")
+	tk.MustExec("truncate table mysql.gc_delete_range")
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
-	require.Len(t, kvRanges, 2)
+	require.Len(t, kvRanges, 3)
 
 	tk.MustExec("truncate table test.employees")
 	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
 	require.NoError(t, err)
-	require.Len(t, kvRanges, 1)
+	require.Len(t, kvRanges, 2)
 }
 
 func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
@@ -120,6 +122,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 
+	time.Sleep(10 * time.Millisecond)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 
@@ -142,6 +145,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
+	time.Sleep(10 * time.Millisecond)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 
@@ -180,6 +184,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
+	time.Sleep(10 * time.Millisecond)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 
@@ -207,12 +212,16 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 			rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
 			assert.NoError(t, err)
 			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+			rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
+			assert.NoError(t, err)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 		}
 	}
 	dom.DDL().SetHook(hook)
-	// first try with `tidb_gc_enable` = on and `tidb_super_read_only` = off
+	// first try with `tidb_gc_enable` = on and `tidb_super_read_only` = off and `tidb_ttl_job_enable` = on
 	tk.MustExec("set global tidb_gc_enable = on")
 	tk.MustExec("set global tidb_super_read_only = off")
+	tk.MustExec("set global tidb_ttl_job_enable = on")
 
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
@@ -222,10 +231,14 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 
-	// second try with `tidb_gc_enable` = off and `tidb_super_read_only` = on
+	// second try with `tidb_gc_enable` = off and `tidb_super_read_only` = on and `tidb_ttl_job_enable` = off
 	tk.MustExec("set global tidb_gc_enable = off")
 	tk.MustExec("set global tidb_super_read_only = on")
+	tk.MustExec("set global tidb_ttl_job_enable = off")
 
 	ts, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
@@ -236,6 +249,9 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
+	assert.NoError(t, err)
+	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 
 	dom.DDL().SetHook(originHook)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
@@ -247,6 +263,8 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	originHook := dom.DDL().GetHook()
 	tk := testkit.NewTestKit(t, store)
+
+	time.Sleep(10 * time.Millisecond)
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 
@@ -266,8 +284,13 @@ func TestCancelFlashbackCluster(t *testing.T) {
 		return job.SchemaState == model.StateDeleteOnly
 	})
 	dom.DDL().SetHook(hook)
+	tk.MustExec("set global tidb_ttl_job_enable = on")
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)), errno.ErrCancelledDDLJob)
 	hook.MustCancelDone(t)
+
+	rs, err := tk.Exec("show variables like 'tidb_ttl_job_enable'")
+	assert.NoError(t, err)
+	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
 
 	// Try canceled on StateWriteReorganization, cancel failed
 	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
@@ -276,6 +299,10 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 	hook.MustCancelFailed(t)
+
+	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
+	assert.NoError(t, err)
+	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 
 	dom.DDL().SetHook(originHook)
 
