@@ -77,54 +77,15 @@ func (msm *MockSessionManager) DeleteInternalSession(se interface{}) {}
 func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
-<<<<<<< HEAD
-=======
-
-// KillNonFlashbackClusterConn implement SessionManager interface.
-func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
-	for _, se := range msm.conn {
-		processInfo := se.ShowProcess()
-		ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
-		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false)
-			continue
-		}
-		_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
-		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false)
-			continue
-		}
-	}
-}
-
-// CheckOldRunningTxn implement SessionManager interface.
-func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
-	msm.mu.Lock()
-	for _, se := range msm.conn {
-		session.RemoveLockDDLJobs(se, job2ver, job2ids)
-	}
-	msm.mu.Unlock()
-}
 
 // GetMinStartTS implements SessionManager interface.
 func (msm *MockSessionManager) GetMinStartTS(lowerBound uint64) (ts uint64) {
-	msm.PSMu.RLock()
-	defer msm.PSMu.RUnlock()
 	if len(msm.PS) > 0 {
 		for _, pi := range msm.PS {
 			if thisTS := pi.GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
 				ts = thisTS
 			}
 		}
-		return
-	}
-	msm.mu.Lock()
-	defer msm.mu.Unlock()
-	for _, s := range msm.conn {
-		if thisTS := s.ShowProcess().GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
-			ts = thisTS
-		}
 	}
 	return
 }
->>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))

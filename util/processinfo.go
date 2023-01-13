@@ -25,28 +25,12 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-<<<<<<< HEAD
-// ProcessInfo is a struct used for show processlist statement.
-type ProcessInfo struct {
-	ID               uint64
-	User             string
-	Host             string
-	Port             string
-	DB               string
-	Digest           string
-	Plan             interface{}
-	PlanExplainRows  [][]string
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	Time             time.Time
-	Info             string
-	CurTxnStartTS    uint64
-	StmtCtx          *stmtctx.StatementContext
-	StatsInfo        func(interface{}) map[string]uint64
-=======
 // ProtectedTSList holds a list of timestamps that should delay GC.
 type ProtectedTSList interface {
 	// HoldTS holds the timestamp to prevent its data from being GCed.
@@ -55,36 +39,26 @@ type ProtectedTSList interface {
 	GetMinProtectedTS(lowerBound uint64) (ts uint64)
 }
 
-// OOMAlarmVariablesInfo is a struct for OOM alarm variables.
-type OOMAlarmVariablesInfo struct {
-	SessionAnalyzeVersion         int
-	SessionEnabledRateLimitAction bool
-	SessionMemQuotaQuery          int64
-}
-
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
 	ProtectedTSList
-	Time                  time.Time
-	ExpensiveLogTime      time.Time
-	Plan                  interface{}
-	StmtCtx               *stmtctx.StatementContext
-	RefCountOfStmtCtx     *stmtctx.ReferenceCount
-	MemTracker            *memory.Tracker
-	DiskTracker           *disk.Tracker
-	StatsInfo             func(interface{}) map[string]uint64
-	RuntimeStatsColl      *execdetails.RuntimeStatsColl
-	DB                    string
-	Digest                string
-	Host                  string
-	User                  string
-	Info                  string
-	Port                  string
-	PlanExplainRows       [][]string
-	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
-	ID                    uint64
-	CurTxnStartTS         uint64
->>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
+	Time             time.Time
+	ExpensiveLogTime time.Time
+	Plan             interface{}
+	StmtCtx          *stmtctx.StatementContext
+	MemTracker       *memory.Tracker
+	DiskTracker      *disk.Tracker
+	StatsInfo        func(interface{}) map[string]uint64
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
+	DB               string
+	Digest           string
+	Host             string
+	User             string
+	Info             string
+	Port             string
+	PlanExplainRows  [][]string
+	ID               uint64
+	CurTxnStartTS    uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64
@@ -237,15 +211,8 @@ type SessionManager interface {
 	DeleteInternalSession(se interface{})
 	// Get all startTS of every transactions running in the current internal sessions
 	GetInternalSessionStartTSList() []uint64
-<<<<<<< HEAD
-=======
-	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions
-	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
-	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
-	KillNonFlashbackClusterConn()
 	// GetMinStartTS returns the minimum start-ts (used to delay GC) that greater than `lowerBound` (0 if no such one).
 	GetMinStartTS(lowerBound uint64) uint64
->>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.

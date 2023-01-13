@@ -343,6 +343,11 @@ func (trs *tidbResultSet) Close() error {
 	return err
 }
 
+// IsClosed implements ResultSet.IsClosed interface.
+func (trs *tidbResultSet) IsClosed() bool {
+	return atomic.LoadInt32(&trs.closed) == 1
+}
+
 // OnFetchReturned implements fetchNotifier#OnFetchReturned
 func (trs *tidbResultSet) OnFetchReturned() {
 	if cl, ok := trs.recordSet.(fetchNotifier); ok {

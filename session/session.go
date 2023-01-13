@@ -1394,7 +1394,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		p = explain.TargetPlan
 	}
 	pi := util.ProcessInfo{
-<<<<<<< HEAD
 		ID:               s.sessionVars.ConnectionID,
 		Port:             s.sessionVars.Port,
 		DB:               s.sessionVars.CurrentDB,
@@ -1410,28 +1409,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
 		RedactSQL:        s.sessionVars.EnableRedactLog,
-=======
-		ID:                    s.sessionVars.ConnectionID,
-		Port:                  s.sessionVars.Port,
-		DB:                    s.sessionVars.CurrentDB,
-		Command:               command,
-		Plan:                  p,
-		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
-		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
-		Time:                  t,
-		State:                 s.Status(),
-		Info:                  sql,
-		CurTxnStartTS:         curTxnStartTS,
-		StmtCtx:               s.sessionVars.StmtCtx,
-		RefCountOfStmtCtx:     &s.sessionVars.RefCountOfStmtCtx,
-		MemTracker:            s.sessionVars.MemTracker,
-		DiskTracker:           s.sessionVars.DiskTracker,
-		StatsInfo:             plannercore.GetStatsInfo,
-		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
-		MaxExecutionTime:      maxExecutionTime,
-		RedactSQL:             s.sessionVars.EnableRedactLog,
-		ProtectedTSList:       &s.sessionVars.ProtectedTSList,
->>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
+		ProtectedTSList:  &s.sessionVars.ProtectedTSList,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {

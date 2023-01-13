@@ -253,14 +253,15 @@ func TestParseStmtFetchCmd(t *testing.T) {
 }
 
 func TestCursorReadHoldTS(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	srv := CreateMockServer(t, store)
 	srv.SetDomain(dom)
 	defer srv.Close()
 
 	appendUint32 := binary.LittleEndian.AppendUint32
 	ctx := context.Background()
-	c := CreateMockConn(t, srv)
+	c := CreateMockConn(t, store, srv)
 	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -275,7 +276,7 @@ func TestCursorReadHoldTS(t *testing.T) {
 	// should hold ts after executing stmt with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x1, 0x1, 0x0, 0x0, 0x0,
 	)))
 	ts := tk.Session().ShowProcess().GetMinStartTS(0)
 	require.Positive(t, ts)
@@ -292,7 +293,7 @@ func TestCursorReadHoldTS(t *testing.T) {
 	// should hold ts after executing stmt with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x1, 0x1, 0x0, 0x0, 0x0,
 	)))
 	require.Positive(t, tk.Session().ShowProcess().GetMinStartTS(0))
 	// should unhold ts when stmt reset
@@ -302,7 +303,7 @@ func TestCursorReadHoldTS(t *testing.T) {
 	// should hold ts after executing stmt with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x1, 0x1, 0x0, 0x0, 0x0,
 	)))
 	require.Positive(t, tk.Session().ShowProcess().GetMinStartTS(0))
 	// should unhold ts when stmt closed
@@ -314,7 +315,7 @@ func TestCursorReadHoldTS(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt1.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x1, 0x1, 0x0, 0x0, 0x0,
 	)))
 	ts1 := tk.Session().ShowProcess().GetMinStartTS(0)
 	require.Positive(t, ts1)
@@ -322,7 +323,7 @@ func TestCursorReadHoldTS(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt2.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+		0x1, 0x1, 0x0, 0x0, 0x0,
 	)))
 	ts2 := tk.Session().ShowProcess().GetMinStartTS(ts1)
 	require.Positive(t, ts2)

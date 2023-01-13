@@ -870,44 +870,6 @@ func setSystemTimeZoneVariable() {
 		variable.SetSysVar("system_time_zone", tz)
 	})
 }
-<<<<<<< HEAD
-=======
-
-// CheckOldRunningTxn implements SessionManager interface.
-func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
-	s.rwlock.RLock()
-	defer s.rwlock.RUnlock()
-	for _, client := range s.clients {
-		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids)
-		}
-	}
-}
-
-// KillNonFlashbackClusterConn implements SessionManager interface.
-func (s *Server) KillNonFlashbackClusterConn() {
-	s.rwlock.RLock()
-	connIDs := make([]uint64, 0, len(s.clients))
-	for _, client := range s.clients {
-		if client.ctx.Session != nil {
-			processInfo := client.ctx.Session.ShowProcess()
-			ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
-			if !ok {
-				connIDs = append(connIDs, client.connectionID)
-				continue
-			}
-			_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
-			if !ok {
-				connIDs = append(connIDs, client.connectionID)
-				continue
-			}
-		}
-	}
-	s.rwlock.RUnlock()
-	for _, id := range connIDs {
-		s.Kill(id, false)
-	}
-}
 
 // GetMinStartTS implements SessionManager interface.
 func (s *Server) GetMinStartTS(lowerBound uint64) (ts uint64) {
@@ -942,4 +904,3 @@ func (s *Server) GetMinStartTS(lowerBound uint64) (ts uint64) {
 	}()
 	return
 }
->>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))

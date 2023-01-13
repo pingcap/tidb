@@ -1415,16 +1415,16 @@ func TestLogAndShowSlowLog(t *testing.T) {
 }
 
 func TestReportingMinStartTimestamp(t *testing.T) {
-<<<<<<< HEAD
-	_, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	defer clean()
-=======
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
->>>>>>> 0fe61bd41a (*: prevent cursor read from being cancelled by GC (#39950))
 
 	infoSyncer := dom.InfoSyncer()
+	sm := &testkit.MockSessionManager{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	infoSyncer.SetSessionManager(sm)
 	beforeTS := oracle.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
 	afterTS := oracle.GoTimeToTS(time.Now())
@@ -1433,7 +1433,6 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	now := time.Now()
 	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
 	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
-	sm := se.GetSessionManager().(*testkit.MockSessionManager)
 	sm.PS = []*util.ProcessInfo{
 		{CurTxnStartTS: 0, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
 		{CurTxnStartTS: math.MaxUint64, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
