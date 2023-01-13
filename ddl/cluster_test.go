@@ -24,9 +24,10 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/assert"
@@ -34,57 +35,32 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestGetFlashbackKeyRanges(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
+func TestGetTableDataKeyRanges(t *testing.T) {
+	// case 1, empty flashbackIDs
+	keyRanges := ddl.GetTableDataKeyRanges([]int64{})
+	require.Len(t, keyRanges, 1)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
 
-	kvRanges, err := ddl.GetFlashbackKeyRanges(se)
-	require.NoError(t, err)
-	// The results are 8 key ranges
-	// 0: (stats_meta,stats_histograms,stats_buckets, gc_delete_range)
-	// 1: (stats_feedback)
-	// 2: (stats_top_n)
-	// 3: (stats_extended)
-	// 4: (stats_fm_sketch)
-	// 5: (stats_history, stats_meta_history)
-	// 6: (stats_table_locked)
-	// 7: meta Ranges
-	require.Len(t, kvRanges, 8)
+	// case 2, insert a execluded table ID
+	keyRanges = ddl.GetTableDataKeyRanges([]int64{3})
+	require.Len(t, keyRanges, 2)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
+	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
 
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE employees (" +
-		"    id INT NOT NULL," +
-		"    store_id INT NOT NULL" +
-		") PARTITION BY RANGE (store_id) (" +
-		"    PARTITION p0 VALUES LESS THAN (6)," +
-		"    PARTITION p1 VALUES LESS THAN (11)," +
-		"    PARTITION p2 VALUES LESS THAN (16)," +
-		"    PARTITION p3 VALUES LESS THAN (21)" +
-		");")
-	tk.MustExec("truncate table mysql.analyze_jobs")
-
-	// truncate all `stats_` and `gc_delete_range` tables, make table ID consecutive.
-	tk.MustExec("truncate table mysql.stats_meta")
-	tk.MustExec("truncate table mysql.stats_histograms")
-	tk.MustExec("truncate table mysql.stats_buckets")
-	tk.MustExec("truncate table mysql.stats_feedback")
-	tk.MustExec("truncate table mysql.stats_top_n")
-	tk.MustExec("truncate table mysql.stats_extended")
-	tk.MustExec("truncate table mysql.stats_fm_sketch")
-	tk.MustExec("truncate table mysql.stats_history")
-	tk.MustExec("truncate table mysql.stats_meta_history")
-	tk.MustExec("truncate table mysql.stats_table_locked")
-	tk.MustExec("truncate table mysql.gc_delete_range")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
-	require.NoError(t, err)
-	require.Len(t, kvRanges, 3)
-
-	tk.MustExec("truncate table test.employees")
-	kvRanges, err = ddl.GetFlashbackKeyRanges(se)
-	require.NoError(t, err)
-	require.Len(t, kvRanges, 2)
+	// case 3, insert some execluded table ID
+	keyRanges = ddl.GetTableDataKeyRanges([]int64{3, 5, 9})
+	require.Len(t, keyRanges, 4)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
+	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(5))
+	require.Equal(t, keyRanges[2].StartKey, tablecodec.EncodeTablePrefix(6))
+	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
+	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
+	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
 }
 
 func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
