@@ -4,6 +4,7 @@ package export
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -32,6 +33,13 @@ type Writer struct {
 	rebuildConnFn       func(*sql.Conn, bool) (*sql.Conn, error)
 	finishTaskCallBack  func(Task)
 	finishTableCallBack func(Task)
+
+	bufChan chan writeRes
+}
+
+type writeRes struct {
+	idx int
+	buf *bytes.Buffer
 }
 
 // NewWriter returns a new Writer with given configurations
@@ -42,6 +50,7 @@ func NewWriter(
 	conn *sql.Conn,
 	externalStore storage.ExternalStorage,
 	metrics *metrics,
+	bufChan chan writeRes,
 ) *Writer {
 	sw := &Writer{
 		id:                  id,
@@ -52,6 +61,7 @@ func NewWriter(
 		metrics:             metrics,
 		finishTaskCallBack:  func(Task) {},
 		finishTableCallBack: func(Task) {},
+		bufChan:             bufChan,
 	}
 	switch strings.ToLower(config.FileType) {
 	case FileFormatSQLTextString:
@@ -221,25 +231,47 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		defer func() {
 			_ = ir.Close()
 		}()
-		return w.tryToWriteTableData(tctx, meta, ir, currentChunk)
+		bf, err := w.tryToWriteTableData(tctx, meta, ir, currentChunk)
+		if err != nil {
+			return err
+		}
+		if w.conf.SQLConcurrent {
+			w.bufChan <- writeRes{
+				idx: currentChunk,
+				buf: bf,
+			}
+		}
+		return nil
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
-func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
+func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) (*bytes.Buffer, error) {
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
 	fileName, err := namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	somethingIsWritten := false
+	var buf *bytes.Buffer
+	if w.conf.SQLConcurrent {
+		buf = bytes.NewBuffer(make([]byte, 0, 100663296))
+	}
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
+		var (
+			fileWriter storage.ExternalFileWriter
+			tearDown   func(context.Context)
+		)
+		if w.conf.SQLConcurrent {
+			fileWriter, tearDown = buildNewInterceptFileWriter(tctx, w.extStorage, fileName, buf)
+		} else {
+			fileWriter, tearDown = buildInterceptFileWriter(tctx, w.extStorage, fileName, w.conf.CompressType)
+		}
 		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
 		tearDown(tctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if w, ok := fileWriter.(*InterceptFileWriter); ok && !w.SomethingIsWritten {
@@ -258,7 +290,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		}
 		fileName, err = namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if !somethingIsWritten {
@@ -267,7 +299,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 			zap.String("table", meta.TableName()),
 			zap.Int("chunkIdx", curChkIdx))
 	}
-	return nil
+	return buf, nil
 }
 
 func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.ExternalStorage, path string, compressType storage.CompressType) error {

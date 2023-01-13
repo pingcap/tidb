@@ -29,6 +29,7 @@ import (
 
 const (
 	orderByTiDBRowID = "ORDER BY `_tidb_rowid`"
+	defaultRows      = 200000
 )
 
 type listTableType int
@@ -471,7 +472,6 @@ func SelectTiDBRowID(tctx *tcontext.Context, db *BaseConn, database, table strin
 // GetSuitableRows gets suitable rows for each table
 func GetSuitableRows(avgRowLength uint64) uint64 {
 	const (
-		defaultRows  = 200000
 		maxRows      = 1000000
 		bytesPerFile = 128 * 1024 * 1024 // 128MB per file by default
 	)

@@ -512,6 +512,38 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 	return fileWriter, tearDownRoutine
 }
 
+type externalBytesBuffer struct {
+	buf *bytes.Buffer
+}
+
+// Write implements ExternalFileWriter.Write
+func (e externalBytesBuffer) Write(_ context.Context, p []byte) (int, error) {
+	return e.buf.Write(p)
+}
+
+// Close implements ExternalFileWriter.Close
+func (externalBytesBuffer) Close(_ context.Context) error {
+	return nil
+}
+
+func buildNewInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage, fileName string, buf *bytes.Buffer) (storage.ExternalFileWriter, func(context.Context)) {
+	var writer storage.ExternalFileWriter
+	fullPath := s.URI() + "/" + fileName
+	fileWriter := &InterceptFileWriter{}
+	initRoutine := func() error {
+		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
+		// which will cause a context canceled error when closing gcs's Writer
+		writer = externalBytesBuffer{buf: buf}
+		pCtx.L().Debug("opened file", zap.String("path", fullPath))
+		fileWriter.ExternalFileWriter = writer
+		return nil
+	}
+	fileWriter.initRoutine = initRoutine
+
+	tearDownRoutine := func(ctx context.Context) {}
+	return fileWriter, tearDownRoutine
+}
+
 // LazyStringWriter is an interceptor of io.StringWriter,
 // will lazily create file the first time StringWriter need to write something.
 type LazyStringWriter struct {
