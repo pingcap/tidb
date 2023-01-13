@@ -706,6 +706,7 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 	if !ran.HighExclude {
 		high = kv.Key(high).PrefixNext()
 	}
+<<<<<<< HEAD
 
 	var hasNull bool
 	for _, highVal := range ran.HighVal {
@@ -719,5 +720,7 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
 		high = kv.Key(high).Next()
 	}
+=======
+>>>>>>> bd7fb08838 (distsql: fix a bug of ranger.Range to kv.KeyRange conversion (#40204))
 	return low, high, nil
 }
