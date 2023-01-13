@@ -2063,14 +2063,14 @@ func (rc *Client) RestoreKVFiles(
 		}
 	}
 
-	if supportBatch {
-		err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
-	} else {
-		err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
-	}
-	if err != nil {
+	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+		if supportBatch {
+			err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+		} else {
+			err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
+		}
 		return errors.Trace(err)
-	}
+	})
 
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
 	if skipFile > 0 {
