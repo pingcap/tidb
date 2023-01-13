@@ -2296,6 +2296,16 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableResourceControl, Value: BoolToOnOff(DefTiDBEnableResourceControl), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EnableResourceControl.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableResourceControl.Load()), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionAggressiveLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionAggressiveLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PessimisticTransactionAggressiveLocking = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

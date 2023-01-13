@@ -1564,7 +1564,7 @@ func TestCreateTableWithTTL(t *testing.T) {
 
 	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL_JOB_INTERVAL = '1h'", "[ddl:8150]Cannot set TTL_JOB_INTERVAL on a table without TTL config")
 
-	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '24h'")
+	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1d'")
 	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 	tk.MustExec("DROP TABLE t")
 
@@ -1586,7 +1586,7 @@ func TestAlterTTLInfo(t *testing.T) {
 	tk.MustExec("ALTER TABLE t TTL_ENABLE = 'OFF'")
 	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
-	tk.MustExec("ALTER TABLE t TTL_JOB_INTERVAL = '24h'")
+	tk.MustExec("ALTER TABLE t TTL_JOB_INTERVAL = '1d'")
 	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 
 	tk.MustGetErrMsg("ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR", "[ddl:1054]Unknown column 'not_exist' in 'TTL config'")
