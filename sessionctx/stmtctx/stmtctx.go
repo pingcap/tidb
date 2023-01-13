@@ -379,6 +379,9 @@ type StatementContext struct {
 	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
+
+	// ETLMode indicates whether enable the concurrency in insert executor.
+	ETLMode bool
 }
 
 // StmtHints are SessionVars related sql hints.

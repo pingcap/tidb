@@ -8147,3 +8147,105 @@ func TestFullJoinSimple(t *testing.T) {
 	tk.MustQuery("select * from t1 full join t2 on t1.a=t2.a").Sort().Check(testkit.Rows("1 <nil>", "2 2", "<nil> 3"))
 	tk.MustQuery("select * from t1 full outer join t2 on t1.a=t2.a").Sort().Check(testkit.Rows("1 <nil>", "2 2", "<nil> 3"))
 }
+
+func TestMppVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint, b bigint)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	// test default behavior: no mpp-version info in explain result
+	{
+		rows := [][]interface{}{
+			{"TableReader_41", "root", "data:ExchangeSender_40"},
+			{"└─ExchangeSender_40", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
+			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
+			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]"},
+			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
+			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		}
+		res := tk.MustQuery("explain select count(*) as cnt from t group by a, b;")
+
+		res.CheckAt([]int{0, 2, 4}, rows)
+	}
+
+	tk.MustExec("set @@explain_show_mpp_feature = on")
+	// explain show mpp features
+	{
+		tk.MustExec("set @@mpp_version = 1")
+		tk.MustExec("set @@mpp_exchange_compression_mode = UNSPECIFIED")
+
+		rows := [][]interface{}{
+			{"TableReader_41", "root", "MppVersion: 1, data:ExchangeSender_40"},
+			{"└─ExchangeSender_40", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
+			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
+			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compression: FAST"},
+			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
+			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		}
+		res := tk.MustQuery("explain select count(*) as cnt from t group by a, b;")
+
+		res.CheckAt([]int{0, 2, 4}, rows)
+	}
+
+	// mpp-version 0 can NOT enable data compression in exchange operator
+	{
+		tk.MustExec("set @@mpp_version = 0")
+		tk.MustExec("set @@mpp_exchange_compression_mode = FAST")
+
+		rows := [][]interface{}{
+			{"TableReader_41", "root", "MppVersion: 0, data:ExchangeSender_40"},
+			{"└─ExchangeSender_40", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
+			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
+			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]"},
+			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
+			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		}
+		res := tk.MustQuery("explain select count(*) as cnt from t group by a, b;")
+
+		res.CheckAt([]int{0, 2, 4}, rows)
+	}
+
+	// use HC mode
+	{
+		tk.MustExec("set @@mpp_version = 1")
+		tk.MustExec("set @@mpp_exchange_compression_mode = high_compression")
+
+		rows := [][]interface{}{
+			{"TableReader_41", "root", "MppVersion: 1, data:ExchangeSender_40"},
+			{"└─ExchangeSender_40", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection_36", "mpp[tiflash]", "Column#4"},
+			{"    └─HashAgg_37", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4"},
+			{"      └─ExchangeReceiver_39", "mpp[tiflash]", ""},
+			{"        └─ExchangeSender_38", "mpp[tiflash]", "ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compression: HIGH_COMPRESSION"},
+			{"          └─HashAgg_34", "mpp[tiflash]", "group by:test.t.a, test.t.b, funcs:count(1)->Column#8"},
+			{"            └─TableFullScan_23", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		}
+		res := tk.MustQuery("explain select count(*) as cnt from t group by a, b;")
+
+		res.CheckAt([]int{0, 2, 4}, rows)
+	}
+}

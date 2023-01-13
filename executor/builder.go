@@ -3412,11 +3412,20 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		b.err = err
 		return nil
 	}
+
+	// `func useMPPExecution` should guarantee the type of its `tablePlan` is `plannercore.PhysicalExchangeSender`.
+	sender, ok := v.GetTablePlan().(*plannercore.PhysicalExchangeSender)
+	if !ok {
+		b.err = errors.New("failed to build MPPGather, plan of table reader should be exchange sender")
+		return nil
+	}
+
 	gather := &MPPGather{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
+		MppVersion:   sender.MppVersion,
 	}
 	return gather
 }

@@ -79,29 +79,32 @@ type tasksAndFrags struct {
 }
 
 type mppTaskGenerator struct {
-	ctx     sessionctx.Context
-	startTS uint64
-	is      infoschema.InfoSchema
-	frags   []*Fragment
-	cache   map[int]tasksAndFrags
+	ctx        sessionctx.Context
+	startTS    uint64
+	is         infoschema.InfoSchema
+	frags      []*Fragment
+	cache      map[int]tasksAndFrags
+	MppVersion kv.MppVersion
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema, mppVersion kv.MppVersion) ([]*Fragment, error) {
 	g := &mppTaskGenerator{
-		ctx:     ctx,
-		startTS: startTs,
-		is:      is,
-		cache:   make(map[int]tasksAndFrags),
+		ctx:        ctx,
+		startTS:    startTs,
+		is:         is,
+		cache:      make(map[int]tasksAndFrags),
+		MppVersion: mppVersion,
 	}
 	return g.generateMPPTasks(sender)
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
-	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)))
+	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)), zap.Int64("mpp-version", e.MppVersion.ToInt64()))
 	tidbTask := &kv.MPPTask{
-		StartTs: e.startTS,
-		ID:      -1,
+		StartTs:    e.startTS,
+		ID:         -1,
+		MppVersion: e.MppVersion,
 	}
 	_, frags, err := e.generateMPPTasksForExchangeSender(s)
 	if err != nil {
@@ -132,10 +135,11 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 		_, ok := addressMap[addr]
 		if !ok {
 			mppTask := &kv.MPPTask{
-				Meta:    &mppAddr{addr: addr},
-				ID:      e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS),
-				StartTs: e.startTS,
-				TableID: -1,
+				Meta:       &mppAddr{addr: addr},
+				ID:         e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS),
+				StartTs:    e.startTS,
+				TableID:    -1,
+				MppVersion: e.MppVersion,
 			}
 			newTasks = append(newTasks, mppTask)
 			addressMap[addr] = struct{}{}
@@ -385,7 +389,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		task := &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: ts.Table.ID, PartitionTableIDs: allPartitionsIDs}
+		task := &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: ts.Table.ID, PartitionTableIDs: allPartitionsIDs, MppVersion: e.MppVersion}
+
 		tasks = append(tasks, task)
 	}
 	return tasks, nil
