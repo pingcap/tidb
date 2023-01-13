@@ -1535,13 +1535,13 @@ func (s *SessionVars) SaveCache(cr *CacheResult) {
 	cacheSize := int64(len(s.cacheRes))
 	maxAllowCacheSize := ResultCacheSize.Load()
 	if cacheSize >= maxAllowCacheSize {
-		for i := int64(0); i <= cacheSize-maxAllowCacheSize+1; i++ {
+		for i := int64(0); i < cacheSize-maxAllowCacheSize+1; i++ {
 			s.clearOneTimeoutCacheResult()
 		}
 	}
 	cacheSize = int64(len(s.cacheRes))
 	if cacheSize >= maxAllowCacheSize {
-		for i := int64(0); i <= cacheSize-maxAllowCacheSize+1; i++ {
+		for i := int64(0); i < cacheSize-maxAllowCacheSize+1; i++ {
 			s.clearEarlistCacheResult()
 		}
 	}
