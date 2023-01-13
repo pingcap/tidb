@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -198,15 +199,16 @@ func makeAddIdxBackfillJobs(schemaID, tblID, jobID, eleID int64, cnt int, query 
 			},
 		}
 		bj := &ddl.BackfillJob{
-			ID:       int64(i),
-			JobID:    jobID,
-			EleID:    eleID,
-			EleKey:   meta.IndexElementKey,
-			State:    model.JobStateNone,
-			CurrKey:  sKey,
-			StartKey: sKey,
-			EndKey:   eKey,
-			Meta:     bm,
+			ID:            int64(i),
+			JobID:         jobID,
+			EleID:         eleID,
+			EleKey:        meta.IndexElementKey,
+			State:         model.JobStateNone,
+			InstanceLease: types.ZeroTimestamp,
+			CurrKey:       sKey,
+			StartKey:      sKey,
+			EndKey:        eKey,
+			Meta:          bm,
 		}
 		bJobs = append(bJobs, bj)
 	}
@@ -263,8 +265,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, instanceLease)
 	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job").Error())
 	require.Nil(t, bJobs)
-	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
-		jobID1, eleID2, meta.IndexElementKey), "check_backfill_job_count")
+	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID2), "check_backfill_job_count")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
 	// Test some backfill jobs, add backfill jobs to the table.
@@ -276,6 +277,9 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bjTestCases = append(bjTestCases, bJobs1...)
 	bjTestCases = append(bjTestCases, bJobs2...)
 	bjTestCases = append(bjTestCases, bJobs3...)
+	err = ddl.AddBackfillJobs(se, bjTestCases)
+	require.Equal(t, err.Error(), "[table:1292]Incorrect timestamp value: '0000-00-00 00:00:00' for column 'exec_lease' at row 1")
+	tk.Session().GetSessionVars().SQLMode = mysql.ModeNone
 	err = ddl.AddBackfillJobs(se, bjTestCases)
 	// ID     jobID     eleID    InstanceID
 	// -------------------------------------
@@ -423,12 +427,17 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
-	equalBackfillJob(t, bJobs1[1], bJobs[0], types.ZeroTime)
+	equalBackfillJob(t, bJobs1[1], bJobs[0], types.ZeroTimestamp)
 	// test the BackfillJob's AbbrStr
 	require.Equal(t, fmt.Sprintf("ID:2, JobID:1, EleID:11, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
 	require.Equal(t, "ID:3, JobID:1, EleID:11, Type:add index, State:cancelled, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
 	require.Equal(t, "ID:0, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[0].AbbrStr())
 	require.Equal(t, "ID:1, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[1].AbbrStr())
+	// test select tidb_ddl_backfill
+	tk.MustQuery(fmt.Sprintf("select exec_id, exec_lease from mysql.tidb_ddl_backfill where id = %d and  %s", bJobs1[0].ID, getIdxConditionStr(jobID1, eleID1))).
+		Check(testkit.Rows(fmt.Sprintf("%s 0000-00-00 00:00:00", uuid)))
+	tk.MustQuery(fmt.Sprintf("select exec_id, exec_lease from mysql.tidb_ddl_backfill where id = %d and  %s", bJobs1[1].ID, getIdxConditionStr(jobID1, eleID1))).
+		Check(testkit.Rows(" 0000-00-00 00:00:00"))
 	// test GetBackfillMetas
 	bfErr := ddl.GetBackfillErr(se, jobID1, eleID1, eleKey)
 	require.Error(t, bfErr, dbterror.ErrCancelledDDLJob)
@@ -559,6 +568,7 @@ func TestGetTasks(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := ddl.NewSession(tk.Session())
+	se.GetSessionVars().SQLMode = mysql.ModeNone
 	d := dom.DDL()
 
 	jobID1 := int64(1)

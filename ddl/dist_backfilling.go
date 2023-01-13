@@ -40,7 +40,7 @@ type backfillWorkerContext struct {
 
 type newBackfillerFunc func(bfCtx *backfillCtx) (bf backfiller, err error)
 
-func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, workerCnt int, reorgTp model.ReorgType,
+func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, workerCnt int, bfMeta *model.BackfillMeta,
 	bfFunc newBackfillerFunc) (*backfillWorkerContext, error) {
 	if workerCnt <= 0 {
 		return nil, nil
@@ -51,24 +51,36 @@ func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, worker
 		logutil.BgLogger().Debug("[ddl] no backfill context available now", zap.Int("backfillCtx", len(bCtxs)), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
-	seCtxs := make([]sessionctx.Context, 0, len(bCtxs))
+	bwCtx := &backfillWorkerContext{backfillWorkers: bCtxs, sessCtxs: make([]sessionctx.Context, 0, len(bCtxs))}
+	defer func() {
+		if err != nil {
+			bwCtx.close(d)
+		}
+	}()
+
 	for i := 0; i < len(bCtxs); i++ {
-		se, err := d.sessPool.get()
+		var se sessionctx.Context
+		se, err = d.sessPool.get()
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] new backfill worker context, get a session failed", zap.Error(err))
 			return nil, errors.Trace(err)
 		}
-		sess := newSession(se)
-		bfCtx := newBackfillCtx(d.ddlCtx, 0, sess, reorgTp, schemaName, tbl)
-		bf, err := bfFunc(bfCtx)
+		err = initSessCtx(se, bfMeta.SQLMode, bfMeta.Location)
+		if err != nil {
+			logutil.BgLogger().Error("[ddl] new backfill worker context, init the session ctx failed", zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		bfCtx := newBackfillCtx(d.ddlCtx, 0, se, bfMeta.ReorgTp, schemaName, tbl)
+		var bf backfiller
+		bf, err = bfFunc(bfCtx)
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] new backfill worker context, do bfFunc failed", zap.Error(err))
 			return nil, errors.Trace(err)
 		}
-		seCtxs = append(seCtxs, se)
+		bwCtx.sessCtxs = append(bwCtx.sessCtxs, se)
 		bCtxs[i].backfiller = bf
 	}
-	return &backfillWorkerContext{backfillWorkers: bCtxs, sessCtxs: seCtxs}, nil
+	return bwCtx, nil
 }
 
 func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
@@ -82,6 +94,15 @@ func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
 	bwCtx.currID++
 	bwCtx.mu.Unlock()
 	return bw
+}
+
+func (bwCtx *backfillWorkerContext) close(d *ddl) {
+	for _, s := range bwCtx.sessCtxs {
+		d.sessPool.put(s)
+	}
+	for _, w := range bwCtx.backfillWorkers {
+		d.backfillCtxPool.put(w)
+	}
 }
 
 type backfilWorkerManager struct {
@@ -124,12 +145,7 @@ func (bwm *backfilWorkerManager) close(d *ddl) error {
 	close(bwm.exitCh)
 	bwm.wg.Wait()
 
-	for _, s := range bwm.bwCtx.sessCtxs {
-		d.sessPool.put(s)
-	}
-	for _, w := range bwm.bwCtx.backfillWorkers {
-		d.backfillCtxPool.put(w)
-	}
+	bwm.bwCtx.close(d)
 
 	return bwm.unsyncErr
 }

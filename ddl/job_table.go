@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gpool/spmc"
@@ -693,6 +694,7 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 		if i != 0 {
 			sqlBuilder.WriteString(", ")
 		}
+		bj.InstanceLease.SetFsp(0)
 		sqlBuilder.WriteString(fmt.Sprintf("(%d, %d, %d, %s, %d, %d, '%s', '%s', %d, %s, %s, %s, %d, %d, %d, %s)",
 			bj.ID, bj.JobID, bj.EleID, wrapKey2String(bj.EleKey), bj.StoreID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State, wrapKey2String(bj.CurrKey),
 			wrapKey2String(bj.StartKey), wrapKey2String(bj.EndKey), bj.StartTS, bj.FinishTS, bj.RowCount, wrapKey2String(mateByte)))
@@ -757,10 +759,11 @@ func GetBackfillJobsForOneEle(s *session, batch int, excludedJobIDs []int64, lea
 		if err != nil {
 			return err
 		}
+		leaseStr := currTime.Add(-lease).Format(types.TimeFormat)
 
 		bJobs, err = GetBackfillJobs(se, BackfillTable,
 			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by ddl_job_id, ele_key, ele_id limit %d",
-				currTime.Add(-lease), eJobIDsBuilder.String(), batch), "get_backfill_job")
+				leaseStr, eJobIDsBuilder.String(), batch), "get_backfill_job")
 		return err
 	})
 	if err != nil || len(bJobs) == 0 {
@@ -789,10 +792,11 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 		if err != nil {
 			return err
 		}
+		leaseStr := currTime.Add(-lease).Format(types.TimeFormat)
 
 		bJobs, err = GetBackfillJobs(se, BackfillTable,
 			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and ddl_job_id = %d order by ddl_job_id, ele_key, ele_id limit %d",
-				currTime.Add(-lease), jobID, batch), "get_mark_backfill_job")
+				leaseStr, jobID, batch), "get_mark_backfill_job")
 		if err != nil {
 			return err
 		}
@@ -937,6 +941,7 @@ func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob
 	if err != nil {
 		return err
 	}
+	backfillJob.InstanceLease.SetFsp(0)
 	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_lease = '%s', state = %d, curr_key = %s, row_count = %d, backfill_meta = %s where ddl_job_id = %d and ele_id = %d and ele_key = %s and id = %d",
 		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State, wrapKey2String(backfillJob.CurrKey), backfillJob.RowCount,
 		wrapKey2String(mate), backfillJob.JobID, backfillJob.EleID, wrapKey2String(backfillJob.EleKey), backfillJob.ID)

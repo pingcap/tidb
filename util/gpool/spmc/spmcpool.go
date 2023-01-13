@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/gpool"
@@ -78,11 +79,10 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.capacity.Add(size)
 	result.workers = newWorkerLoopQueue[T, U, C, CT, TF](int(size))
 	result.cond = sync.NewCond(result.lock)
-	// TODO: wait https://github.com/pingcap/tidb/pull/40547
-	// err := resourcemanager.GlobalResourceManager.Register(result, name, component)
-	// if err != nil {
-	// 	return nil, err
-	// }
+	err := resourcemanager.GlobalResourceManager.Register(result, name, component)
+	if err != nil {
+		return nil, err
+	}
 	// Start a goroutine to clean up expired workers periodically.
 	go result.purgePeriodically()
 	return result, nil

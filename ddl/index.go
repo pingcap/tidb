@@ -1387,7 +1387,7 @@ func newAddIndexWorkerContext(d *ddl, sess *session, schemaName model.CIStr, tbl
 	bfJob *BackfillJob, jobCtx *JobContext) (*backfillWorkerContext, error) {
 	//nolint:forcetypeassert
 	phyTbl := tbl.(table.PhysicalTable)
-	return newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.Meta.ReorgTp,
+	return newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.Meta,
 		func(bfCtx *backfillCtx) (backfiller, error) {
 			decodeColMap, err := makeupDecodeColMap(sess, schemaName, phyTbl)
 			if err != nil {

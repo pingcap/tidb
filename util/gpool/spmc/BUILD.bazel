@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/gpool/spmc",
     visibility = ["//visibility:public"],
     deps = [
+        "//resourcemanager",
         "//resourcemanager/pooltask",
         "//resourcemanager/util",
         "//util/gpool",

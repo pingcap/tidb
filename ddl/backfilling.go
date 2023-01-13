@@ -776,11 +776,16 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, dbName model.CIStr, t table.
 	return decodeColMap, nil
 }
 
-func setSessCtxLocation(sctx sessionctx.Context, info *reorgInfo) error {
+func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocation) error {
 	// It is set to SystemLocation to be compatible with nil LocationInfo.
-	*sctx.GetSessionVars().TimeZone = *timeutil.SystemLocation()
-	if info.ReorgMeta.Location != nil {
-		loc, err := info.ReorgMeta.Location.GetLocation()
+	tz := *timeutil.SystemLocation()
+	if sctx.GetSessionVars().TimeZone == nil {
+		sctx.GetSessionVars().TimeZone = &tz
+	} else {
+		*sctx.GetSessionVars().TimeZone = tz
+	}
+	if tzLocation != nil {
+		loc, err := tzLocation.GetLocation()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -829,15 +834,21 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sessio
 func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
 	reorgInfo := b.reorgInfo
 	sessCtx := newContext(reorgInfo.d.store)
+	if err := initSessCtx(sessCtx, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return sessCtx, nil
+}
+
+func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) error {
 	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 	// Set the row encode format version.
 	rowFormat := variable.GetDDLReorgRowFormat()
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
 	// Simulate the sql mode environment in the worker sessionCtx.
-	sqlMode := reorgInfo.ReorgMeta.SQLMode
 	sessCtx.GetSessionVars().SQLMode = sqlMode
-	if err := setSessCtxLocation(sessCtx, reorgInfo); err != nil {
-		return nil, errors.Trace(err)
+	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
+		return errors.Trace(err)
 	}
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
@@ -846,7 +857,7 @@ func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
-	return sessCtx, nil
+	return nil
 }
 
 func (b *backfillScheduler) setMaxWorkerSize(maxSize int) {
@@ -1097,6 +1108,7 @@ func addBatchBackfillJobs(sess *session, bfWorkerType backfillerType, reorgInfo 
 	if notDistTask {
 		instanceID = reorgInfo.d.uuid
 	}
+
 	// TODO: Adjust the number of ranges(region) for each task.
 	for _, task := range batchTasks {
 		bm := &model.BackfillMeta{
@@ -1194,6 +1206,12 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 		return errors.Trace(err)
 	}
 
+	defaultSQLMode := sess.GetSessionVars().SQLMode
+	defer func() {
+		sess.GetSessionVars().SQLMode = defaultSQLMode
+	}()
+	// Make timestamp type can be inserted ZeroTimestamp.
+	sess.GetSessionVars().SQLMode = mysql.ModeNone
 	currBackfillJobID := int64(1)
 	err := checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
 	if err != nil {
