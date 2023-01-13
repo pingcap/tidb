@@ -2207,7 +2207,8 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := openReader(ctx, chunk.FileMeta, store)
+	readerCtx := context.WithValue(ctx, storage.CompressReaderBufferType, int(cfg.Mydumper.IOBufferSize))
+	reader, err := openReader(readerCtx, chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2641,13 +2642,6 @@ func (cr *chunkRestore) encodeLoop(
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
-			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
-				realOffset, realOffsetErr = cr.parser.RealPos()
-				if realOffsetErr != nil {
-					logger.Warn("fail to get data engine RealPos, progress may not be accurate",
-						log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
-				}
-			}
 
 			switch errors.Cause(err) {
 			case nil:
@@ -2719,6 +2713,15 @@ func (cr *chunkRestore) encodeLoop(
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 			// so add this check.
 			if kvSize >= minDeliverBytes || len(kvPacket) >= maxKvPairsCnt || newOffset == cr.chunk.Chunk.EndOffset {
+				if !rc.cfg.Mydumper.DisableRealOffset && cr.chunk.FileMeta.Compression != mydump.CompressionNone {
+					realOffset, realOffsetErr = cr.parser.RealPos()
+					if realOffsetErr != nil {
+						logger.Warn("fail to get data engine RealPos, progress may not be accurate",
+							log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
+					} else {
+						kvPacket[len(kvPacket)-1].realOffset = realOffset
+					}
+				}
 				canDeliver = true
 				kvSize = 0
 			}
