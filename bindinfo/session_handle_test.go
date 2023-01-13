@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"strconv"
 	"testing"
 	"time"
@@ -520,4 +521,21 @@ func TestPreparedStmt(t *testing.T) {
 	tk.MustExec("execute stmt using @p,@p")
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 1)
 	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+}
+
+func TestSetVarBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b varchar(20))")
+	tk.MustExec("insert into t1 values (1, '111111111111111')")
+	tk.MustExec("insert into t1 values (2, '222222222222222')")
+	tk.MustExec("create binding for select group_concat(b) from test.t1 using select /*+ SET_VAR(group_concat_max_len = 4) */ group_concat(b) from test.t1 ;")
+	explainStrings := testdata.ConvertRowsToStrings(tk.MustQuery("select group_concat(b) from test.t1").Rows())
+	if len(explainStrings) == 1 && explainStrings[0] == "1111" {
+		t.Log("Set var in hint")
+	} else {
+		t.Log("The result is error")
+		t.Fail()
+	}
 }
