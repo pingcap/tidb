@@ -879,27 +879,23 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 
 // outOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
-// The maximum row count it can get is the increaseCount. It reaches the maximum when out-of-range width reaches histogram range width.
+// The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
 // Note that we assume histL-boundL == histR-histL == boundR-histR here.
 //
-//	          /│             │\
-//	        /  │             │  \
-//	      /x│  │◄─histogram─►│    \
-//	    / xx│  │    range    │      \
-//	  / │xxx│  │             │        \
-//	/   │xxx│  │             │          \
-//
-// ────┴────┴───┴──┴─────────────┴───────────┴─────
-//
-//	▲    ▲   ▲  ▲             ▲           ▲
-//	│    │   │  │             │           │
-//
-// boundL  │   │histL         histR       boundR
-//
-//	     │   │
-//	lDatum  rDatum
-func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCount int64) float64 {
+//	               /│             │\
+//	             /  │             │  \
+//	           /x│  │◄─histogram─►│    \
+//	         / xx│  │    range    │      \
+//	       / │xxx│  │             │        \
+//	     /   │xxx│  │             │          \
+//	────┴────┴───┴──┴─────────────┴───────────┴─────
+//	    ▲    ▲   ▲  ▲             ▲           ▲
+//	    │    │   │  │             │           │
+//	 boundL  │   │histL         histR       boundR
+//	         │   │
+//	    lDatum  rDatum
+func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount int64) float64 {
 	if hg.Len() == 0 {
 		return 0
 	}
@@ -983,8 +979,14 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 		totalPercent = 1
 	}
 	rowCount := totalPercent * hg.notNullCount()
-	if rowCount > float64(increaseCount) {
-		return float64(increaseCount)
+
+	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
+	// a rather loose upper bound.
+	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
+	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
+	// can produce a reasonable results in this scenario.
+	if rowCount > float64(modifyCount) {
+		return float64(modifyCount)
 	}
 	return rowCount
 }
@@ -1209,7 +1211,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Range, realtimeRowCount int64, pkIsHandle bool) (float64, error) {
+func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	var rowCount float64
 	for _, rg := range ranges {
@@ -1306,11 +1308,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			increaseCount := realtimeRowCount - int64(c.TotalRowCount())
-			if increaseCount < 0 {
-				increaseCount = 0
-			}
-			cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, increaseCount)
+			cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, modifyCount)
 		}
 
 		rowCount += cnt
@@ -1433,11 +1431,12 @@ func (idx *Index) QueryBytes(d []byte) uint64 {
 
 // GetRowCount returns the row count of the given ranges.
 // It uses the modifyCount to adjust the influence of modifications on the table.
-func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount int64) (float64, error) {
+func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
+		var count float64
 		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
 		if err != nil {
 			return 0, err
@@ -1458,7 +1457,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 					totalCount += 1
 					continue
 				}
-				count := idx.equalRowCount(lb, realtimeRowCount)
+				count = idx.equalRowCount(lb, realtimeRowCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				totalCount += count
@@ -1478,7 +1477,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 		r := types.NewBytesDatum(rb)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if isSingleCol && lowIsNull {
-			totalCount += float64(idx.NullCount)
+			count += float64(idx.NullCount)
 		}
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
@@ -1513,24 +1512,21 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				if expBackoffCnt > upperLimit {
 					expBackoffCnt = upperLimit
 				}
-				totalCount += expBackoffCnt
+				count += expBackoffCnt
 			}
 		}
 		if !expBackoffSuccess {
-			totalCount += idx.BetweenRowCount(l, r)
+			count += idx.BetweenRowCount(l, r)
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
-		totalCount *= idx.GetIncreaseFactor(realtimeRowCount)
+		count *= idx.GetIncreaseFactor(realtimeRowCount)
 
 		// handling the out-of-range part
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			increaseCount := realtimeRowCount - int64(idx.TotalRowCount())
-			if increaseCount < 0 {
-				increaseCount = 0
-			}
-			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
+			count += idx.Histogram.outOfRangeRowCount(&l, &r, modifyCount)
 		}
+		totalCount += count
 	}
 	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
 	return totalCount, nil
