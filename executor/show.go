@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"golang.org/x/exp/slices"
@@ -306,13 +307,14 @@ func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var bindRecords []*bindinfo.BindRecord
+	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		bindRecords = handle.GetAllBindRecord()
+		tmp = handle.GetAllBindRecord()
 	} else {
-		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
+	bindRecords := slice.Copy(tmp)
 	// Remove the invalid bindRecord.
 	ind := 0
 	for _, bindData := range bindRecords {
@@ -1256,6 +1258,18 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			} else {
 				restoreCtx.WriteString("OFF")
 			}
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
 			return nil
 		})
 

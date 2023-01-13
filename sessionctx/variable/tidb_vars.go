@@ -592,9 +592,6 @@ const (
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
-	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
-	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
-
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
@@ -789,6 +786,10 @@ const (
 
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
+
+	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// is enabled.
+	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
 )
 
 // TiDB vars that have only global scope
@@ -881,8 +882,6 @@ const (
 	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
 	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
 	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
-	// TiDBTTLJobRunInterval represents the schedule interval between two jobs for one TTL table
-	TiDBTTLJobRunInterval = "tidb_ttl_job_run_interval"
 	// TiDBTTLJobScheduleWindowStartTime is used to restrict the start time of the time window of scheduling the ttl jobs.
 	TiDBTTLJobScheduleWindowStartTime = "tidb_ttl_job_schedule_window_start_time"
 	// TiDBTTLJobScheduleWindowEndTime is used to restrict the end time of the time window of scheduling the ttl jobs.
@@ -897,6 +896,10 @@ const (
 	PasswordReuseTime = "password_reuse_interval"
 	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
 	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
+	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
+	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
+	// TiDBEnableResourceControl indicates whether resource control feature is enabled
+	TiDBEnableResourceControl = "tidb_enable_resource_control"
 )
 
 // TiDB intentional limits
@@ -1030,7 +1033,6 @@ const (
 	DefTiDBShardAllocateStep                       = math.MaxInt64
 	DefTiDBEnableTelemetry                         = true
 	DefTiDBEnableParallelApply                     = false
-	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
 	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
@@ -1132,31 +1134,33 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold                float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan                  = true
-	DefTiDBExternalTS                                = 0
-	DefTiDBEnableExternalTSRead                      = false
-	DefTiDBEnableReusechunk                          = true
-	DefTiDBUseAlloc                                  = false
-	DefTiDBEnablePlanReplayerCapture                 = false
-	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
-	DefTiDBTTLJobEnable                              = true
-	DefTiDBTTLScanBatchSize                          = 500
-	DefTiDBTTLScanBatchMaxSize                       = 10240
-	DefTiDBTTLScanBatchMinSize                       = 1
-	DefTiDBTTLDeleteBatchSize                        = 100
-	DefTiDBTTLDeleteBatchMaxSize                     = 10240
-	DefTiDBTTLDeleteBatchMinSize                     = 1
-	DefTiDBTTLDeleteRateLimit                        = 0
-	DefPasswordReuseHistory                          = 0
-	DefPasswordReuseTime                             = 0
-	DefTiDBStoreBatchSize                            = 0
-	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
-	DefTiDBTTLJobRunInterval                         = "1h0m0s"
-	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount                        = 4
-	DefTiDBTTLDeleteWorkerCount                      = 4
+	DefTiDBGOGCTunerThreshold                      float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                        = true
+	DefTiDBExternalTS                                      = 0
+	DefTiDBEnableExternalTSRead                            = false
+	DefTiDBEnableReusechunk                                = true
+	DefTiDBUseAlloc                                        = false
+	DefTiDBEnablePlanReplayerCapture                       = false
+	DefTiDBIndexMergeIntersectionConcurrency               = ConcurrencyUnset
+	DefTiDBTTLJobEnable                                    = true
+	DefTiDBTTLScanBatchSize                                = 500
+	DefTiDBTTLScanBatchMaxSize                             = 10240
+	DefTiDBTTLScanBatchMinSize                             = 1
+	DefTiDBTTLDeleteBatchSize                              = 100
+	DefTiDBTTLDeleteBatchMaxSize                           = 10240
+	DefTiDBTTLDeleteBatchMinSize                           = 1
+	DefTiDBTTLDeleteRateLimit                              = 0
+	DefPasswordReuseHistory                                = 0
+	DefPasswordReuseTime                                   = 0
+	DefTiDBStoreBatchSize                                  = 0
+	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture                 = false
+	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                              = 4
+	DefTiDBTTLDeleteWorkerCount                            = 4
+	DefTiDBEnableResourceControl                           = false
+	DefTiDBPessimisticTransactionAggressiveLocking         = false
 )
 
 // Process global variables.
@@ -1223,7 +1227,6 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
-	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
 	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
 	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
 	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
@@ -1233,6 +1236,8 @@ var (
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
 )
 
 var (

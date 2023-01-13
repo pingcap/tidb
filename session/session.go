@@ -683,16 +683,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
-	if sessVars.EnableAmendPessimisticTxn {
-		if !variable.EnableFastReorg.Load() {
-			s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
-		} else {
-			logutil.BgLogger().Warn("@@tidb_enable_amend_pessimistic_txn takes no effect when @@tidb_ddl_enable_fast_reorg is true")
-		}
-	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	s.txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
@@ -1275,10 +1269,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 			s.txn.onStmtEnd()
 			if err != nil {
-				s.StmtRollback()
+				s.StmtRollback(ctx, false)
 				break
 			}
-			s.StmtCommit()
+			s.StmtCommit(ctx)
 		}
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
@@ -2362,7 +2356,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if rs != nil {
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
-				se.StmtCommit()
+				se.StmtCommit(ctx)
 				if err := se.CommitTxn(ctx); err != nil {
 					return nil, err
 				}
@@ -2685,7 +2679,13 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 		}
 		return err
 	}
-	s.sessionVars.ResourceGroupName = info.ResourceGroupName
+
+	// If tidb_resource_control_enable is disabled, set resource group to empty
+	if variable.EnableResourceControl.Load() {
+		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
+	} else {
+		s.sessionVars.ResourceGroupName = ""
+	}
 	if info.InSandBoxMode {
 		// Enter sandbox mode, only execute statement for resetting password.
 		s.EnableSandBoxMode()

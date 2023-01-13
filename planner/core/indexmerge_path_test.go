@@ -30,7 +30,92 @@ func TestIndexMergeJSONMemberOf(t *testing.T) {
 a int, j0 json, j1 json,
 index j0_0((cast(j0->'$.path0' as signed array))),
 index j0_1((cast(j0->'$.path1' as signed array))),
+index j0_string((cast(j0->'$.path_string' as char(10) array))),
+index j0_date((cast(j0->'$.path_date' as date array))),
 index j1((cast(j1 as signed array))))`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	planSuiteData := core.GetIndexMergeSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, query := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = query
+		})
+		result := tk.MustQuery("explain format = 'brief' " + query)
+		testdata.OnRecord(func() {
+			output[i].Plan = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		result.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestDNFOnMVIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, b int, c int, j json,
+index idx1((cast(j as signed array))),
+index idx2(a, b, (cast(j as signed array)), c))`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	planSuiteData := core.GetIndexMergeSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, query := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = query
+		})
+		result := tk.MustQuery("explain format = 'brief' " + query)
+		testdata.OnRecord(func() {
+			output[i].Plan = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		result.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestCompositeMVIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, b int , c int, j json,
+index idx(a, b, (cast(j as signed array)), c),
+index idx2(a, b, (cast(j->'$.str' as char(10) array)), c))`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	planSuiteData := core.GetIndexMergeSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, query := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = query
+		})
+		result := tk.MustQuery("explain format = 'brief' " + query)
+		testdata.OnRecord(func() {
+			output[i].Plan = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		result.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestMVIndexSelection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, j json,
+index i_int((cast(j->'$.int' as signed array))))`)
 
 	var input []string
 	var output []struct {

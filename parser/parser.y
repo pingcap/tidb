@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/parser/duration"
 )
 
 %}
@@ -621,6 +622,7 @@ import (
 	truncate              "TRUNCATE"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
+	ttlJobInterval        "TTL_JOB_INTERVAL"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -903,6 +905,7 @@ import (
 	DropDatabaseStmt           "DROP DATABASE statement"
 	DropImportStmt             "DROP IMPORT statement"
 	DropIndexStmt              "DROP INDEX statement"
+	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
 	DropTableStmt              "DROP TABLE statement"
@@ -1603,13 +1606,13 @@ ResourceGroupOptionList:
 	}
 
 DirectResourceGroupOption:
-	"RRU_PER_SEC" EqOpt stringLit
+	"RRU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, UintValue: $3.(uint64)}
 	}
-|	"WRU_PER_SEC" EqOpt stringLit
+|	"WRU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, UintValue: $3.(uint64)}
 	}
 |	"CPU" EqOpt stringLit
 	{
@@ -1617,11 +1620,11 @@ DirectResourceGroupOption:
 	}
 |	"IO_READ_BANDWIDTH" EqOpt stringLit
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadRate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadBandwidth, StrValue: $3}
 	}
 |	"IO_WRITE_BANDWIDTH" EqOpt stringLit
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteRate, StrValue: $3}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteBandwidth, StrValue: $3}
 	}
 
 PlacementOptionList:
@@ -6480,6 +6483,7 @@ UnReservedKeyword:
 |	"TOKEN_ISSUER"
 |	"TTL"
 |	"TTL_ENABLE"
+|	"TTL_JOB_INTERVAL"
 |	"FAILED_LOGIN_ATTEMPTS"
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
@@ -7276,8 +7280,13 @@ SimpleExpr:
 		if tp.GetDecimal() == types.UnspecifiedLength {
 			tp.SetDecimal(defaultDecimal)
 		}
-		tp.SetArray($6.(bool))
+		isArray := $6.(bool)
+		tp.SetArray(isArray)
 		explicitCharset := parser.explicitCharset
+		if isArray && !explicitCharset && tp.GetCharset() != charset.CharsetBin {
+			tp.SetCharset(charset.CharsetUTF8MB4)
+			tp.SetCollate(charset.CollationUTF8MB4)
+		}
 		parser.explicitCharset = false
 		$$ = &ast.FuncCastExpr{
 			Expr:            $3,
@@ -11488,6 +11497,7 @@ Statement:
 |	DropSequenceStmt
 |	DropViewStmt
 |	DropUserStmt
+|	DropResourceGroupStmt
 |	DropRoleStmt
 |	DropStatisticsStmt
 |	DropStatsStmt
@@ -11892,6 +11902,15 @@ TableOption:
 			yylex.AppendError(yylex.Errorf("The TTL_ENABLE option has to be set 'ON' or 'OFF'"))
 			return 1
 		}
+	}
+|	"TTL_JOB_INTERVAL" EqOpt stringLit
+	{
+		_, err := duration.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The TTL_JOB_INTERVAL option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
 	}
 
 ForceOpt:
@@ -13031,7 +13050,7 @@ ResourceGroupNameOption:
 	{
 		$$ = nil
 	}
-|	"RESOURCE" "GROUP" stringLit
+|	"RESOURCE" "GROUP" ResourceGroupName
 	{
 		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
 	}
@@ -14192,8 +14211,8 @@ AlterResourceGroupStmt:
 		}
 	}
 
-DropPolicyStmt:
-	"DROP" "RESOURCE" "GROUP" IfExists PolicyName
+DropResourceGroupStmt:
+	"DROP" "RESOURCE" "GROUP" IfExists ResourceGroupName
 	{
 		$$ = &ast.DropResourceGroupStmt{
 			IfExists:          $4.(bool),

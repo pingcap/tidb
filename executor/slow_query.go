@@ -622,6 +622,9 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogHostStr, host, e.checker, fileLine)
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogBackoffDetail, line, e.checker, fileLine)
+				} else if strings.HasPrefix(line, variable.SlowLogWarnings) {
+					line = line[len(variable.SlowLogWarnings+variable.SlowLogSpaceMarkStr):]
+					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogWarnings, line, e.checker, fileLine)
 				} else {
 					fields, values := splitByColon(line)
 					for i := 0; i < len(fields); i++ {
@@ -781,7 +784,7 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 		}, nil
 	case variable.SlowLogUserStr, variable.SlowLogHostStr, execdetails.BackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
 		variable.SlowLogStatsInfoStr, variable.SlowLogCopProcAddr, variable.SlowLogCopWaitAddr, variable.SlowLogPlanDigest,
-		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr:
+		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogWarnings:
 		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil

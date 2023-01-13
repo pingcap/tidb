@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -375,17 +376,30 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var allPartitionsIDs []int64
 	var err error
 	splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(ts.Ranges, false, false, ts.Table.IsCommonHandle)
+	// True when:
+	// 0. Is disaggregated tiflash. because in non-disaggregated tiflash, we dont use mpp for static pruning.
+	// 1. Is partition table.
+	// 2. Dynamic prune is not used.
+	var isDisaggregatedTiFlashStaticPrune bool
 	if ts.Table.GetPartitionInfo() != nil {
+		isDisaggregatedTiFlashStaticPrune = config.GetGlobalConfig().DisaggregatedTiFlash &&
+			!e.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune()
+
 		tmp, _ := e.is.TableByID(ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
-		var partitions []table.PhysicalTable
-		partitions, err = partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if !isDisaggregatedTiFlashStaticPrune {
+			var partitions []table.PhysicalTable
+			partitions, err = partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions)
+		} else {
+			singlePartTbl := tbl.GetPartition(ts.physicalTableID)
+			req, err = e.constructMPPBuildTaskForNonPartitionTable(singlePartTbl.GetPhysicalID(), ts.Table.IsCommonHandle, splitedRanges)
 		}
-		req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions)
 	} else {
-		req, err = e.constructMPPBuildTaskForNonPartitionTable(ts, splitedRanges)
+		req, err = e.constructMPPBuildTaskForNonPartitionTable(ts.Table.ID, ts.Table.IsCommonHandle, splitedRanges)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -403,12 +417,15 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		task := &kv.MPPTask{Meta: meta,
-			ID:                AllocMPPTaskID(e.ctx),
-			StartTs:           e.startTS,
-			MppQueryID:        e.mppQueryID,
-			TableID:           ts.Table.ID,
-			PartitionTableIDs: allPartitionsIDs}
+		task := &kv.MPPTask{
+			Meta:                              meta,
+			ID:                                AllocMPPTaskID(e.ctx),
+			StartTs:                           e.startTS,
+			MppQueryID:                        e.mppQueryID,
+			TableID:                           ts.Table.ID,
+			PartitionTableIDs:                 allPartitionsIDs,
+			IsDisaggregatedTiFlashStaticPrune: isDisaggregatedTiFlashStaticPrune,
+		}
 		tasks = append(tasks, task)
 	}
 	return tasks, nil
@@ -435,8 +452,8 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 	return &kv.MPPBuildTasksRequest{PartitionIDAndRanges: partitionIDAndRanges}, allPartitionsIDs, nil
 }
 
-func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range) (*kv.MPPBuildTasksRequest, error) {
-	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{ts.Table.ID}, ts.Table.IsCommonHandle, splitedRanges, nil)
+func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(tid int64, isCommonHandle bool, splitedRanges []*ranger.Range) (*kv.MPPBuildTasksRequest, error) {
+	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tid}, isCommonHandle, splitedRanges, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
