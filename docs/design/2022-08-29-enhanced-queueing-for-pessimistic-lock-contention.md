@@ -1,4 +1,4 @@
-# Enhanced Queueing for Pessimistic Lock Contention
+# Aggressive Locking: Enhanced Queueing for Pessimistic Lock Contention
 
 - Author(s): [MyonKeminta](http://github.com/MyonKeminta)
 - Tracking Issue: https://github.com/tikv/tikv/issues/13298
@@ -47,7 +47,8 @@ func (*KVTxn) CancelAggressiveLocking()
 func (*KVTxn) DoneAggressiveLocking()
 ```
 
-These functions will implement the behavior stated above, and the basic pattern of using these functions is like (pseudo code):
+These functions will implement the behavior stated above, and the basic pattern of using these functions is like
+(pseudo code, the actual invocations of `(Retry|Cancel|Done)AggressiveLocking` are put in `OnStmtRetry`, `OnStmtRollback`, `OnStmtCommit` instead of the retry loop):
 
 ```go
 txn.StartAggressiveLocking()
@@ -77,7 +78,7 @@ It would be complicated to totally solve the problem, but we have a simpler idea
 
 We want to avoid introducing new configurations that user must know to make use of the new behavior, but it's a fact that the optimization is very complicated and there's known performance regression in a few scenarios. It would be risky if the new behavior is always enabled unconditionally. We can introduce a hidden system variable which can be used to disable the optimization in case there's any problem.
 
-#### `tidb_txn_enhanced_lock_queueing`
+#### `tidb_pessimistic_txn_aggressive_locking`
 
 Specifies whether the optimization stated above is enabled.
 
