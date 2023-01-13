@@ -72,7 +72,7 @@ func TestLRUPCPut(t *testing.T) {
 		vals[i] = &PlanCacheValue{
 			ParamTypes: pTypes[i],
 		}
-		lru.Put(keys[i], vals[i], pTypes[i])
+		lru.Put(keys[i], vals[i], pTypes[i], []uint64{})
 	}
 	require.Equal(t, lru.size, lru.capacity)
 	require.Equal(t, uint(3), lru.size)
@@ -103,7 +103,7 @@ func TestLRUPCPut(t *testing.T) {
 
 		bucket, exist := lru.buckets[string(hack.String(keys[i].Hash()))]
 		require.True(t, exist)
-		element, exist := lru.pickFromBucket(bucket, pTypes[i])
+		element, exist := lru.pickFromBucket(bucket, pTypes[i], []uint64{})
 		require.NotNil(t, element)
 		require.True(t, exist)
 		require.Equal(t, root, element)
@@ -135,18 +135,18 @@ func TestLRUPCGet(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i%4), 10)}
 		vals[i] = &PlanCacheValue{ParamTypes: pTypes[i]}
-		lru.Put(keys[i], vals[i], pTypes[i])
+		lru.Put(keys[i], vals[i], pTypes[i], []uint64{})
 	}
 
 	// test for non-existent elements
 	for i := 0; i < 2; i++ {
-		value, exists := lru.Get(keys[i], pTypes[i])
+		value, exists := lru.Get(keys[i], pTypes[i], []uint64{})
 		require.False(t, exists)
 		require.Nil(t, value)
 	}
 
 	for i := 2; i < 5; i++ {
-		value, exists := lru.Get(keys[i], pTypes[i])
+		value, exists := lru.Get(keys[i], pTypes[i], []uint64{})
 		require.True(t, exists)
 		require.NotNil(t, value)
 		require.Equal(t, vals[i], value)
@@ -178,20 +178,20 @@ func TestLRUPCDelete(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i), 10)}
 		vals[i] = &PlanCacheValue{ParamTypes: pTypes[i]}
-		lru.Put(keys[i], vals[i], pTypes[i])
+		lru.Put(keys[i], vals[i], pTypes[i], []uint64{})
 	}
 	require.Equal(t, 3, int(lru.size))
 
 	lru.Delete(keys[1])
-	value, exists := lru.Get(keys[1], pTypes[1])
+	value, exists := lru.Get(keys[1], pTypes[1], []uint64{})
 	require.False(t, exists)
 	require.Nil(t, value)
 	require.Equal(t, 2, int(lru.size))
 
-	_, exists = lru.Get(keys[0], pTypes[0])
+	_, exists = lru.Get(keys[0], pTypes[0], []uint64{})
 	require.True(t, exists)
 
-	_, exists = lru.Get(keys[2], pTypes[2])
+	_, exists = lru.Get(keys[2], pTypes[2], []uint64{})
 	require.True(t, exists)
 }
 
@@ -207,14 +207,14 @@ func TestLRUPCDeleteAll(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i), 10)}
 		vals[i] = &PlanCacheValue{ParamTypes: pTypes[i]}
-		lru.Put(keys[i], vals[i], pTypes[i])
+		lru.Put(keys[i], vals[i], pTypes[i], []uint64{})
 	}
 	require.Equal(t, 3, int(lru.size))
 
 	lru.DeleteAll()
 
 	for i := 0; i < 3; i++ {
-		value, exists := lru.Get(keys[i], pTypes[i])
+		value, exists := lru.Get(keys[i], pTypes[i], []uint64{})
 		require.False(t, exists)
 		require.Nil(t, value)
 		require.Equal(t, 0, int(lru.size))
@@ -242,7 +242,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(1), 10)}
 		vals[i] = &PlanCacheValue{ParamTypes: pTypes[i]}
-		lru.Put(keys[i], vals[i], pTypes[i])
+		lru.Put(keys[i], vals[i], pTypes[i], []uint64{})
 	}
 	require.Equal(t, lru.size, lru.capacity)
 	require.Equal(t, uint(5), lru.size)
@@ -292,7 +292,7 @@ func TestIssue37914(t *testing.T) {
 	val := &PlanCacheValue{ParamTypes: pTypes}
 
 	require.NotPanics(t, func() {
-		lru.Put(key, val, pTypes)
+		lru.Put(key, val, pTypes, []uint64{})
 	})
 }
 
@@ -313,7 +313,7 @@ func TestIssue38244(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		keys[i] = &planCacheKey{database: strconv.FormatInt(int64(i), 10)}
 		vals[i] = &PlanCacheValue{ParamTypes: pTypes[i]}
-		lru.Put(keys[i], vals[i], pTypes[i])
+		lru.Put(keys[i], vals[i], pTypes[i], []uint64{})
 	}
 	require.Equal(t, lru.size, lru.capacity)
 	require.Equal(t, uint(3), lru.size)
@@ -334,7 +334,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		k := randomPlanCacheKey()
 		v := randomPlanCacheValue(pTypes)
-		lru.Put(k, v, pTypes)
+		lru.Put(k, v, pTypes, []uint64{})
 		res += k.MemoryUsage() + v.MemoryUsage()
 		require.Equal(t, lru.MemoryUsage(), res)
 	}
@@ -342,7 +342,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	p := &PhysicalTableScan{}
 	k := &planCacheKey{database: "3"}
 	v := &PlanCacheValue{Plan: p}
-	lru.Put(k, v, pTypes)
+	lru.Put(k, v, pTypes, []uint64{})
 	res += k.MemoryUsage() + v.MemoryUsage()
 	for kk, vv := range evict {
 		res -= kk.(*planCacheKey).MemoryUsage() + vv.(*PlanCacheValue).MemoryUsage()

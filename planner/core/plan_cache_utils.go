@@ -194,7 +194,6 @@ type planCacheKey struct {
 	inRestrictedSQL          bool
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
-	limitOffsetAndCount      []uint64
 
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
@@ -231,9 +230,6 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
-		for _, l := range key.limitOffsetAndCount {
-			key.hash = codec.EncodeUint(key.hash, l)
-		}
 	}
 	return key.hash
 }
@@ -275,7 +271,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string, offsetAndCount []uint64) (kvcache.Key, error) {
+	lastUpdatedSchemaVersion int64, bindSQL string) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -303,7 +299,6 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		inRestrictedSQL:          sessionVars.InRestrictedSQL,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
-		limitOffsetAndCount:      offsetAndCount,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -343,11 +338,12 @@ func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan              Plan
-	OutPutNames       []*types.FieldName
-	TblInfo2UnionScan map[*model.TableInfo]bool
-	ParamTypes        FieldSlice
-	memoryUsage       int64
+	Plan                Plan
+	OutPutNames         []*types.FieldName
+	TblInfo2UnionScan   map[*model.TableInfo]bool
+	ParamTypes          FieldSlice
+	memoryUsage         int64
+	limitOffsetAndCount []uint64
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
@@ -395,7 +391,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	paramTypes []*types.FieldType) *PlanCacheValue {
+	paramTypes []*types.FieldType, limitParams []uint64) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -405,10 +401,11 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		userParamTypes[i] = tp.Clone()
 	}
 	return &PlanCacheValue{
-		Plan:              plan,
-		OutPutNames:       names,
-		TblInfo2UnionScan: dstMap,
-		ParamTypes:        userParamTypes,
+		Plan:                plan,
+		OutPutNames:         names,
+		TblInfo2UnionScan:   dstMap,
+		ParamTypes:          userParamTypes,
+		limitOffsetAndCount: limitParams,
 	}
 }
 
