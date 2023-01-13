@@ -15,11 +15,11 @@
 package util
 
 import (
-	"go.uber.org/atomic"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
