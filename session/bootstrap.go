@@ -479,7 +479,7 @@ const (
          PRIMARY KEY (Host,User,Password_timestamp )
         ) COMMENT='Password history for user accounts' `
 
-	// CreateTTLTableStatus is a table about TTL task schedule
+	// CreateTTLTableStatus is a table about TTL job schedule
 	CreateTTLTableStatus = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_table_status (
 		table_id bigint(64) PRIMARY KEY,
         parent_table_id bigint(64),
@@ -499,6 +499,24 @@ const (
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 
+	// CreateTTLTask is a table about parallel ttl tasks
+	CreateTTLTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_task (
+		job_id varchar(64) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		scan_id int NOT NULL,
+		scan_range_start BLOB,
+		scan_range_end BLOB,
+		expire_time timestamp NOT NULL,
+		owner_id varchar(64) DEFAULT NULL,
+		owner_addr varchar(64) DEFAULT NULL,
+		owner_hb_time timestamp DEFAULT NULL,
+		status varchar(64) DEFAULT 'waiting',
+		status_update_time timestamp NULL DEFAULT NULL,
+		state text,
+		created_time timestamp NOT NULL,
+		primary key(job_id, scan_id),
+		key(created_time));`
+  
 	// CreateBackTaskOpsTable is the CREATE TABLE SQL of `backend_tasks_schedule` to do runtime operation on backend tasks.
 	CreateBackTaskOpsTable = `CREATE TABLE  IF NOT EXISTS mysql.tidb_backend_task_operation (
    	    op_id    bigint not null primary key auto_increment,
@@ -516,6 +534,7 @@ const (
 		op_meta   blob,
         start_time datetime,
         end_time datetime);`
+  
 )
 
 // bootstrap initiates system DB for a store.
@@ -757,13 +776,15 @@ const (
 	version109 = 109
 	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version110 = 110
-	// version111 add mysql.tidb_backend_tasks_operation and mysql.tidb_backend_tasks_operation_history
+	// version111 adds the table tidb_ttl_task
 	version111 = 111
+  // version112 add mysql.tidb_backend_tasks_operation and mysql.tidb_backend_tasks_operation_history
+  version112 = 112
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version111
+var currentBootstrapVersion int64 = version112
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -882,6 +903,7 @@ var (
 		upgradeToVer109,
 		upgradeToVer110,
 		upgradeToVer111,
+    upgradeToVer112,
 	}
 )
 
@@ -2234,6 +2256,13 @@ func upgradeToVer110(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
+func upgradeToVer111(s Session, ver int64) {
+	if ver >= version111 {
+		return
+	}
+	doReentrantDDL(s, CreateTTLTask)
+}
+
 // Create backend task pause｜resume related table.
 func upgradeToVer111(s Session, ver int64) {
 	if ver >= version110 {
@@ -2349,7 +2378,9 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
-	// Create tidb_backend_task_operation table
+	// Create tidb_ttl_task table
+	mustExecute(s, CreateTTLTask)
+  // Create tidb_backend_task_operation table
 	mustExecute(s, CreateBackTaskOpsTable)
 	// Create tidb_backend_task_operation_history table
 	mustExecute(s, CreateBackTaskOpsHistoryTable)
