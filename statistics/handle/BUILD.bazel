@@ -72,6 +72,7 @@ go_test(
     ],
     embed = [":handle"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//config",
