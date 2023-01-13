@@ -1094,9 +1094,8 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	}
 	w.batchCount = cnt
 
-	if (w.skipSort && (w.isKVSorted && (w.batchSize > w.regionSplitSize || w.batchCount > w.regionSplitKeys)) ||
-		(!w.isKVSorted && w.batchSize > w.memtableSizeLimit)) ||
-		(!w.skipSort && w.batchSize > w.memtableSizeLimit) {
+	if (w.isKVSorted && (w.batchSize > w.regionSplitSize || w.batchCount > w.regionSplitKeys)) ||
+		(!w.isKVSorted && w.batchSize > w.memtableSizeLimit) {
 		if err := w.flushKVs(ctx); err != nil {
 			return err
 		}
