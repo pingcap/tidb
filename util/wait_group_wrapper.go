@@ -15,8 +15,8 @@
 package util
 
 import (
+	"go.uber.org/atomic"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
@@ -38,6 +38,9 @@ func NewWaitGroupEnhancedWrapper(source string, exited *atomic.Bool) *WaitGroupE
 		source:          source,
 		registerProcess: sync.Map{},
 	}
+	if len(source) > 0 {
+		go wgew.checkUnExitedProcess()
+	}
 	return wgew
 }
 
@@ -48,31 +51,64 @@ func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess() {
 	for {
 		select {
 		case <-ticker.C:
-			if !w.exited.Load() {
-				continue
-			}
-			unexitedProcess := make([]string, 0)
-			w.registerProcess.Range(func(key, value any) bool {
-				unexitedProcess = append(unexitedProcess, key.(string))
-				return true
-			})
-			if len(unexitedProcess) > 0 {
-				logutil.BgLogger().Warn("background process unexited while received exited signal",
-					zap.Strings("process", unexitedProcess),
-					zap.String("source", w.source))
-			} else {
-				logutil.BgLogger().Info("waitGroupWrapper finish checking unexited process", zap.String("source", w.source))
+			continueCheck := w.check()
+			if !continueCheck {
 				return
 			}
 		}
 	}
 }
 
+func (w *WaitGroupEnhancedWrapper) check() bool {
+	if !w.exited.Load() {
+		return true
+	}
+	unexitedProcess := make([]string, 0)
+	w.registerProcess.Range(func(key, value any) bool {
+		unexitedProcess = append(unexitedProcess, key.(string))
+		return true
+	})
+	if len(unexitedProcess) > 0 {
+		logutil.BgLogger().Warn("background process unexited while received exited signal",
+			zap.Strings("process", unexitedProcess),
+			zap.String("source", w.source))
+		return true
+	}
+	logutil.BgLogger().Info("waitGroupWrapper finish checking unexited process", zap.String("source", w.source))
+	return false
+}
+
+// Run runs a function in a goroutine, adds 1 to WaitGroup
+// and calls done when function returns. Please DO NOT use panic
+// in the cb function.
 func (w *WaitGroupEnhancedWrapper) Run(exec func(), label string) {
 	w.onStart(label)
 	w.Add(1)
 	go func() {
-		defer w.onExit(label)
+		defer func() {
+			w.Done()
+			w.onExit(label)
+		}()
+		exec()
+	}()
+}
+
+// RunWithRecover wraps goroutine startup call with force recovery, add 1 to WaitGroup
+// and call done when function return. it will dump current goroutine stack into log if catch any recover result.
+// exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
+// passing `nil` means noop.
+func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r interface{}), label string) {
+	w.onStart(label)
+	w.Add(1)
+	go func() {
+		defer func() {
+			r := recover()
+			if recoverFn != nil {
+				recoverFn(r)
+			}
+			w.Done()
+			w.onExit(label)
+		}()
 		exec()
 	}()
 }
@@ -85,7 +121,6 @@ func (w *WaitGroupEnhancedWrapper) onStart(label string) {
 			zap.String("label", label))
 	}
 	w.registerProcess.Store(label, struct{}{})
-	w.Add(1)
 	logutil.BgLogger().Info("background process started",
 		zap.String("source", w.source),
 		zap.String("process", label))
@@ -93,7 +128,6 @@ func (w *WaitGroupEnhancedWrapper) onStart(label string) {
 
 func (w *WaitGroupEnhancedWrapper) onExit(label string) {
 	w.registerProcess.Delete(label)
-	w.Done()
 	logutil.BgLogger().Info("background process exited",
 		zap.String("source", w.source),
 		zap.String("process", label))
