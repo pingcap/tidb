@@ -516,7 +516,7 @@ const (
 		created_time timestamp NOT NULL,
 		primary key(job_id, scan_id),
 		key(created_time));`
-  
+
 	// CreateBackTaskOpsTable is the CREATE TABLE SQL of `backend_tasks_schedule` to do runtime operation on backend tasks.
 	CreateBackTaskOpsTable = `CREATE TABLE  IF NOT EXISTS mysql.tidb_backend_task_operation (
    	    op_id    bigint not null primary key auto_increment,
@@ -534,7 +534,6 @@ const (
 		op_meta   blob,
         start_time datetime,
         end_time datetime);`
-  
 )
 
 // bootstrap initiates system DB for a store.
@@ -778,8 +777,8 @@ const (
 	version110 = 110
 	// version111 adds the table tidb_ttl_task
 	version111 = 111
-  // version112 add mysql.tidb_backend_tasks_operation and mysql.tidb_backend_tasks_operation_history
-  version112 = 112
+	// version112 add mysql.tidb_backend_tasks_operation and mysql.tidb_backend_tasks_operation_history
+	version112 = 112
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -903,7 +902,7 @@ var (
 		upgradeToVer109,
 		upgradeToVer110,
 		upgradeToVer111,
-    upgradeToVer112,
+		upgradeToVer112,
 	}
 )
 
@@ -2264,7 +2263,7 @@ func upgradeToVer111(s Session, ver int64) {
 }
 
 // Create backend task pause｜resume related table.
-func upgradeToVer111(s Session, ver int64) {
+func upgradeToVer112(s Session, ver int64) {
 	if ver >= version110 {
 		return
 	}
@@ -2380,7 +2379,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLTableStatus)
 	// Create tidb_ttl_task table
 	mustExecute(s, CreateTTLTask)
-  // Create tidb_backend_task_operation table
+	// Create tidb_backend_task_operation table
 	mustExecute(s, CreateBackTaskOpsTable)
 	// Create tidb_backend_task_operation_history table
 	mustExecute(s, CreateBackTaskOpsHistoryTable)
