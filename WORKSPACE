@@ -29,13 +29,16 @@ go_rules_dependencies()
 
 go_download_sdk(
     name = "go_sdk",
-    urls = [
-        "http://ats.apps.svc/golang/{}",
-        "http://bazel-cache.pingcap.net:8080/golang/{}",
-        "https://mirrors.aliyun.com/golang/{}",
-        "https://dl.google.com/go/{}",
-    ],
-    version = "1.19.5",
+    sdks = {
+        "darwin_amd64": ("go1.19.4.darwin-amd64.tar.gz", "6fa1e9087b36fba65625869c885ca9c6f1db734306d8e74836b212248c20d55d"),
+        "darwin_arm64": ("go1.19.4.darwin-arm64.tar.gz", "bb3bc5d7655b9637cfe2b5e90055dee93b0ead50e2ffd091df320d1af1ca853f"),
+        "freebsd_amd64": ("go1.19.4.freebsd-amd64.tar.gz", "84489ebb63f1757b79574d7345c647bd40bc6414cecb868c93e24476c2d2b9b6"),
+        "linux_amd64": ("go1.19.4.linux-amd64.tar.gz", "e52774e4d6a0bb5bcc5a0f1d11e337929de826b40c99c408283b8854336d9dc4"),
+        "linux_arm64": ("go1.19.4.linux-arm64.tar.gz", "8bb193126fea46dca70658b7916b458a22fddb8e37d6deb463f14e10d6f06552"),
+        "windows_amd64": ("go1.19.4.windows-amd64.tar.gz", "ced538537d190c03e6e4bffb3b60049794d70f09af7900bd8419b44245b2b5dc"),
+    },
+    urls = ["https://storage.googleapis.com/public-bazel-artifacts/go/20221219-000617/{}"],
+    version = "1.19.4",
 )
 
 go_register_toolchains(
