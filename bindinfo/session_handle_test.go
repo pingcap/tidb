@@ -521,3 +521,14 @@ func TestPreparedStmt(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 1)
 	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 }
+
+func TestSetVarBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b varchar(20))")
+	tk.MustExec("insert into t1 values (1, '111111111111111')")
+	tk.MustExec("insert into t1 values (2, '222222222222222')")
+	tk.MustExec("create binding for select group_concat(b) from test.t1 using select /*+ SET_VAR(group_concat_max_len = 4) */ group_concat(b) from test.t1 ;")
+	tk.MustQuery("select group_concat(b) from test.t1").Check(testkit.Rows("1111"))
+}

@@ -215,6 +215,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
 			sessVars.StmtCtx.StmtHints = curStmtHints
+			// update session var by hint /set_var/
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				err := sessVars.SetStmtVar(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+			}
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
