@@ -193,7 +193,6 @@ func TestCheckpointRunner(t *testing.T) {
 func getLockData(p, l int64) ([]byte, error) {
 	lock := checkpoint.CheckpointLock{
 		LockId:   oracle.ComposeTS(p, l),
-		LockAt:   p,
 		ExpireAt: p + 10,
 	}
 	return json.Marshal(lock)

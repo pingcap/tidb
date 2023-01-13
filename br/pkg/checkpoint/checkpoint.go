@@ -263,7 +263,7 @@ func StartCheckpointRunnerForTest(ctx context.Context, storage storage.ExternalS
 
 	err := runner.initialLock(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotate(err, "Failed to initialize checkpoint lock.")
 	}
 	runner.startCheckpointLoop(ctx, tick, tick)
 	return runner, nil
@@ -385,7 +385,7 @@ func (r *CheckpointRunner) startCheckpointRunner(ctx context.Context, wg *sync.W
 					return
 				}
 				if err := r.updateLock(ctx); err != nil {
-					errCh <- err
+					errCh <- errors.Annotate(err, "Failed to update checkpoint lock.")
 					return
 				}
 			}
@@ -526,7 +526,6 @@ func (r *CheckpointRunner) doFlush(ctx context.Context, meta map[string]*RangeGr
 
 type CheckpointLock struct {
 	LockId   uint64 `json:"lock-id"`
-	LockAt   int64  `json:"lock-at"`
 	ExpireAt int64  `json:"expire-at"`
 }
 
@@ -556,10 +555,9 @@ func (r *CheckpointRunner) getTS(ctx context.Context) (int64, int64, error) {
 func (r *CheckpointRunner) flushLock(ctx context.Context, p int64) error {
 	lock := &CheckpointLock{
 		LockId:   r.lockId,
-		LockAt:   p,
 		ExpireAt: p + lockTimeToLive.Milliseconds(),
 	}
-	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", lock.LockAt), zap.Int64("expire-at", lock.ExpireAt))
+	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", p), zap.Int64("expire-at", lock.ExpireAt))
 	data, err := json.Marshal(lock)
 	if err != nil {
 		return errors.Trace(err)
@@ -570,7 +568,7 @@ func (r *CheckpointRunner) flushLock(ctx context.Context, p int64) error {
 }
 
 // check whether this lock belongs to this BR
-func (r *CheckpointRunner) checkLockFile(ctx context.Context, caller string, now int64) error {
+func (r *CheckpointRunner) checkLockFile(ctx context.Context, now int64) error {
 	data, err := r.storage.ReadFile(ctx, CheckpointLockPath)
 	if err != nil {
 		return errors.Trace(err)
@@ -581,13 +579,13 @@ func (r *CheckpointRunner) checkLockFile(ctx context.Context, caller string, now
 		return errors.Trace(err)
 	}
 	if lock.ExpireAt >= now && lock.LockId != r.lockId {
-		return errors.New(fmt.Sprintf("Failed to %s. The existing lock will expire in %d seconds. "+
+		return errors.Errorf("The existing lock will expire in %d seconds. "+
 			"There may be another BR(%d) running. If not, you can wait for the lock to expire, or delete the file `%s%s` manually.",
-			caller, (lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.storage.URI(), "/"), CheckpointLockPath))
+			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.storage.URI(), "/"), CheckpointLockPath)
 	}
 	if lock.LockId > r.lockId {
-		return errors.New(fmt.Sprintf("Failed to %s. There are another BR(%d) running after but setting lock before this one(%d). "+
-			"Please check whether the BR is running. If not, you can retry.", caller, lock.LockId, r.lockId))
+		return errors.Errorf("There are another BR(%d) running after but setting lock before this one(%d). "+
+			"Please check whether the BR is running. If not, you can retry.", lock.LockId, r.lockId)
 	}
 	if lock.LockId == r.lockId {
 		log.Warn("The lock has expired.", zap.Int64("expire-at(ms)", lock.ExpireAt), zap.Int64("now(ms)", now))
@@ -601,7 +599,7 @@ func (r *CheckpointRunner) updateLock(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = r.checkLockFile(ctx, "update checkpoint lock", p); err != nil {
+	if err = r.checkLockFile(ctx, p); err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(r.flushLock(ctx, p))
@@ -619,7 +617,7 @@ func (r *CheckpointRunner) initialLock(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if exist {
-		if err := r.checkLockFile(ctx, "initialize checkpoint lock", p); err != nil {
+		if err := r.checkLockFile(ctx, p); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -629,7 +627,7 @@ func (r *CheckpointRunner) initialLock(ctx context.Context) error {
 
 	// wait for 3 seconds to check whether the lock file is overwritten by another BR
 	time.Sleep(3 * time.Second)
-	err = r.checkLockFile(ctx, "initialize checkpoint lock", p)
+	err = r.checkLockFile(ctx, p)
 	return errors.Trace(err)
 }
 
