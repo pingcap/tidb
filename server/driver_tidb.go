@@ -24,11 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
@@ -246,11 +244,8 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
 		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {
-		if shardedInsert := tc.tryETL(stmt); shardedInsert != nil {
-			rs, err = session.HandleNonTransactionalDML(ctx, shardedInsert, tc.Session)
-		} else {
-			rs, err = tc.Session.ExecuteStmt(ctx, stmt)
-		}
+		tc.tryETL(stmt)
+		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
 	}
 	if err != nil {
 		tc.Session.GetSessionVars().StmtCtx.AppendError(err)
@@ -550,244 +545,77 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	return
 }
 
-func (tc *TiDBContext) tryETL(stmt ast.StmtNode) *ast.NonTransactionalDMLStmt {
+func (tc *TiDBContext) tryETL(stmt ast.StmtNode) bool {
 	sessVars := tc.Session.GetSessionVars()
 	if sessVars.InRestrictedSQL {
-		return nil
+		return false
 	}
 	if sessVars.ETLConcurrency == 0 {
-		return nil
+		return false
 	}
 	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
-		return nil
+		return false
 	}
 
-	var extractTbls func(parent *ast.SelectStmt, stmt ast.ResultSetNode, tbl2sel map[string]*ast.SelectStmt, sel2parent map[*ast.SelectStmt]*ast.SelectStmt, inJoin bool) []*ast.TableSource
-	extractTbls = func(parent *ast.SelectStmt, stmt ast.ResultSetNode, tbl2sel map[string]*ast.SelectStmt, sel2parent map[*ast.SelectStmt]*ast.SelectStmt, inJoin bool) []*ast.TableSource {
+	var extractTbls func(stmt ast.ResultSetNode) []*ast.TableName
+	extractTbls = func(stmt ast.ResultSetNode) []*ast.TableName {
 		if stmt == nil {
 			return nil
 		}
-		tbls := make([]*ast.TableSource, 0)
+		tbls := make([]*ast.TableName, 0)
 		switch v := stmt.(type) {
 		case *ast.Join:
-			lefts, rights := extractTbls(parent, v.Left, tbl2sel, sel2parent, true), extractTbls(parent, v.Right, tbl2sel, sel2parent, true)
+			lefts, rights := extractTbls(v.Left), extractTbls(v.Right)
 			tbls = append(tbls, lefts...)
 			tbls = append(tbls, rights...)
 		case *ast.TableSource:
 			switch x := v.Source.(type) {
 			case *ast.TableName:
-				tbls = append(tbls, v)
+				tbls = append(tbls, x)
 			case *ast.SelectStmt:
 				if x.From == nil {
 					return tbls
 				}
-				if parent != nil {
-					sel2parent[x] = parent
-				}
-				if tblSource, ok := x.From.TableRefs.Left.(*ast.TableSource); ok && x.From.TableRefs.Right == nil {
-					if tblName, ok := tblSource.Source.(*ast.TableName); ok {
-						if inJoin {
-							tbls = append(tbls, tblSource)
-							tbl2sel[tblName.Name.L] = x
-						}
-						return tbls
-					}
-				}
-				subTbls := extractTbls(x, x.From.TableRefs, tbl2sel, sel2parent, false)
+				subTbls := extractTbls(x.From.TableRefs)
 				tbls = append(tbls, subTbls...)
 			}
 		}
 		return tbls
 	}
 
-	findSchema := func(lower string) *model.DBInfo {
-		is := tc.Session.GetDomainInfoSchema().(infoschema.InfoSchema)
-		currDB, ok := is.SchemaByName(model.NewCIStr(sessVars.CurrentDB))
-		if ok {
-			for _, t := range currDB.Tables {
-				if t.Name.L == lower {
-					return currDB
-				}
-			}
-		}
-		schemas := is.AllSchemas()
-		for _, s := range schemas {
-			if currDB != nil {
-				if s.Name.L == currDB.Name.L {
-					continue
-				}
-			}
-			for _, t := range s.Tables {
-				if t.Name.L == lower {
-					return s
-				}
-			}
-		}
-		return nil
-	}
-
 	insert, ok := stmt.(*ast.InsertStmt)
 	if !ok {
-		return nil
+		return false
 	}
 	if insert.Table == nil || insert.Table.TableRefs == nil || insert.Table.TableRefs.Left == nil {
-		return nil
+		return false
 	}
 	insertTable, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
-		return nil
+		return false
 	}
 	insertTableName, ok := insertTable.Source.(*ast.TableName)
 	if !ok {
-		return nil
+		return false
 	}
 	if insert.Select == nil {
-		return nil
+		return false
 	}
 	selectStmt, ok := insert.Select.(*ast.SelectStmt)
 	if !ok {
-		return nil
+		return false
 	}
 	if selectStmt.From == nil || selectStmt.From.TableRefs == nil {
-		return nil
+		return false
 	}
-	tbl2sel := make(map[string]*ast.SelectStmt)
-	sel2parent := make(map[*ast.SelectStmt]*ast.SelectStmt)
-	tbls := extractTbls(nil, selectStmt.From.TableRefs, tbl2sel, sel2parent, false)
-	if len(tbls) == 0 {
-		return nil
-	}
-
-	// do not apply nt-txn to self-insert.
+	tbls := extractTbls(selectStmt.From.TableRefs)
+	// do not apply etl insert to self-insert.
 	for _, tbl := range tbls {
-		tblName, ok := tbl.Source.(*ast.TableName)
-		if !ok {
-			continue
-		}
-		if tblName.Name.L == insertTableName.Name.L {
-			return nil
-		}
-	}
-	var (
-		leftMostTbl *ast.TableSource
-		finalTbl    *ast.TableSource
-	)
-	for _, tbl := range tbls {
-		tblName, ok := tbl.Source.(*ast.TableName)
-		if !ok {
-			continue
-		}
-		if leftMostTbl == nil {
-			leftMostTbl = tbl
-		}
-		if finalTbl == nil {
-			sel, ok := tbl2sel[tblName.Name.L]
-			if ok {
-				_, ok = sel2parent[sel]
-				if !ok {
-					finalTbl = tbl
-				}
-			}
-		}
-	}
-	if finalTbl == nil {
-		finalTbl = leftMostTbl
-	}
-	schema := findSchema(finalTbl.Source.(*ast.TableName).Name.L)
-	if schema == nil {
-		return nil
-	}
-
-	ntStmt := new(ast.NonTransactionalDMLStmt)
-	ntStmt.TransferFromInsert = true
-	ntStmt.DMLStmt = insert
-	if sessVars.ETLBatchSize > 0 {
-		ntStmt.Limit = uint64(sessVars.ETLBatchSize)
-	} else {
-		ntStmt.Limit = 1000
-	}
-
-	var colName model.CIStr
-	var tableInfo *model.TableInfo
-	for _, t := range schema.Tables {
-		if t.Name.L == finalTbl.Source.(*ast.TableName).Name.L {
-			tableInfo = t
-			break
-		}
-	}
-	if tableInfo == nil {
-		return nil
-	}
-	if tableInfo.GetPrimaryKey() != nil {
-		colName = model.NewCIStr(tableInfo.GetPrimaryKey().Columns[0].Name.L)
-	} else {
-		colName = model.NewCIStr("_tidb_rowid")
-		sel, ok := tbl2sel[finalTbl.Source.(*ast.TableName).Name.L]
-		if !ok {
-			return nil
-		}
-		var table model.CIStr
-		if finalTbl.AsName.L != "" {
-			table = model.NewCIStr(finalTbl.AsName.L)
-		} else {
-			table = model.NewCIStr(finalTbl.Source.(*ast.TableName).Name.L)
-		}
-		rowidField := &ast.SelectField{
-			Expr: &ast.ColumnNameExpr{
-				Name: &ast.ColumnName{
-					Table: table,
-					Name:  colName,
-				},
-			},
-		}
-		sel.Fields.Fields = append(sel.Fields.Fields, rowidField)
-
-		sel, ok = sel2parent[sel]
-		if ok {
-			// expose _tidb_rowid to upper selects.
-			for {
-				parent, ok := sel2parent[sel]
-				if !ok {
-					break
-				}
-				tblSource, ok := sel.From.TableRefs.Left.(*ast.TableSource)
-				if !ok {
-					break
-				}
-				var rowidField *ast.SelectField
-				if tblSource.AsName.L != "" {
-					rowidField = &ast.SelectField{
-						Expr: &ast.ColumnNameExpr{
-							Name: &ast.ColumnName{
-								Table: model.NewCIStr(tblSource.AsName.L),
-								Name:  model.NewCIStr("_tidb_rowid"),
-							},
-						},
-					}
-				} else {
-					tblName, ok := tblSource.Source.(*ast.TableName)
-					if !ok {
-						break
-					}
-					rowidField = &ast.SelectField{
-						Expr: &ast.ColumnNameExpr{
-							Name: &ast.ColumnName{
-								Table: model.NewCIStr(tblName.Name.L),
-								Name:  model.NewCIStr("_tidb_rowid"),
-							},
-						},
-					}
-				}
-				sel.Fields.Fields = append(sel.Fields.Fields, rowidField)
-				sel = parent
-			}
+		if tbl.Name.L == insertTableName.Name.L {
+			return false
 		}
 	}
 
-	ntStmt.ShardColumn = &ast.ColumnName{
-		Schema: schema.Name,
-		Table:  finalTbl.Source.(*ast.TableName).Name,
-		Name:   colName,
-	}
-	return ntStmt
+	insert.Concurrent = true
+	return true
 }
