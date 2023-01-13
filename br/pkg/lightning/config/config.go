@@ -550,6 +550,7 @@ type TikvImporter struct {
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
+	SkipSort            bool                         `toml:"skip-sort" json:"skip-sort"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`

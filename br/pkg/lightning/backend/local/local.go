@@ -368,6 +368,7 @@ type local struct {
 	regionSplitSize         int64
 	regionSplitKeys         int
 	supportMultiIngest      bool
+	skipSort                bool
 
 	checkTiKVAvaliable  bool
 	duplicateDetection  bool
@@ -510,6 +511,7 @@ func NewLocalBackend(
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
 		regionSplitSize:         regionSplitSize,
 		regionSplitKeys:         regionSplitKeys,
+		skipSort:                cfg.TikvImporter.SkipSort,
 		duplicateDetection:      duplicateDetection,
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
@@ -1888,6 +1890,7 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		engine,
 		local.localWriterMemCacheSize, local.regionSplitSize,
 		local.regionSplitKeys,
+		local.skipSort,
 		local.bufferPool.NewBuffer(),
 		local.tikvCli,
 		local.importClientFactory,
@@ -1899,6 +1902,7 @@ func openLocalWriter(
 	engine *Engine,
 	cacheSize, regionSplitSize int64,
 	regionSplitKeys int,
+	skipSort bool,
 	kvBuffer *membuf.Buffer,
 	kvStore *tikvclient.KVStore,
 	importClientFactory ImportClientFactory) (*Writer, error) {
@@ -1909,6 +1913,7 @@ func openLocalWriter(
 		regionSplitKeys:     regionSplitKeys,
 		kvBuffer:            kvBuffer,
 		isKVSorted:          cfg.IsKVSorted,
+		skipSort:            skipSort,
 		isWriteBatchSorted:  true,
 		kvStore:             kvStore,
 		importClientFactory: importClientFactory,

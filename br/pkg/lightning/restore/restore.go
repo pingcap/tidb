@@ -2638,7 +2638,7 @@ func (cr *chunkRestore) encodeLoop(
 		var realOffsetErr error
 	outLoop:
 		for !canDeliver {
-			//readDurStart := time.Now()
+			readDurStart := time.Now()
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
@@ -2676,13 +2676,13 @@ func (cr *chunkRestore) encodeLoop(
 				err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(&cr.chunk.Key, newOffset)
 				return
 			}
-			//readDur += time.Since(readDurStart)
-			//encodeDurStart := time.Now()
+			readDur += time.Since(readDurStart)
+			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			lastRow.Row = append(lastRow.Row, extendVals...)
 			// sql -> kv
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
-			//encodeDur += time.Since(encodeDurStart)
+			encodeDur += time.Since(encodeDurStart)
 
 			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
@@ -2735,13 +2735,13 @@ func (cr *chunkRestore) encodeLoop(
 		}
 
 		if len(kvPacket) != 0 {
-			//deliverKvStart := time.Now()
+			deliverKvStart := time.Now()
 			if err = send(kvPacket); err != nil {
 				return
 			}
-			//if m, ok := metric.FromContext(ctx); ok {
-			//	m.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
-			//}
+			if m, ok := metric.FromContext(ctx); ok {
+				m.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
+			}
 		}
 	}
 

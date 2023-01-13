@@ -1012,6 +1012,7 @@ type Writer struct {
 	// if the KVs are append in order, we can directly write the into SST file,
 	// else we must first store them in writeBatch and then batch flush into SST file.
 	isKVSorted bool
+	skipSort   bool
 	writer     *sstWriter
 
 	// bytes buffer for writeBatch
@@ -1093,8 +1094,9 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	}
 	w.batchCount = cnt
 
-	if (w.isKVSorted && (w.batchSize > w.regionSplitSize || w.batchCount > w.regionSplitKeys)) ||
-		(!w.isKVSorted && w.batchSize > w.memtableSizeLimit) {
+	if (w.skipSort && (w.isKVSorted && (w.batchSize > w.regionSplitSize || w.batchCount > w.regionSplitKeys)) ||
+		(!w.isKVSorted && w.batchSize > w.memtableSizeLimit)) ||
+		(!w.skipSort && w.batchSize > w.memtableSizeLimit) {
 		if err := w.flushKVs(ctx); err != nil {
 			return err
 		}
@@ -1124,9 +1126,9 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 		}
 	}
 
-	//if w.isKVSorted {
-	//	return w.appendRowsSorted(kvs)
-	//}
+	if !w.skipSort && w.isKVSorted {
+		return w.appendRowsSorted(kvs)
+	}
 	return w.appendRowsUnsorted(ctx, kvs)
 }
 
