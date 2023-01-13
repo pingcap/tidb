@@ -63,6 +63,15 @@ type Dumper struct {
 	wg            *errgroup.Group
 }
 
+func getTable(tables map[databaseName][]*TableInfo) (string, *TableInfo, error) {
+	for db, tbls := range tables {
+		for _, tbl := range tbls {
+			return db, tbl, nil
+		}
+	}
+	return "", nil, errors.New("table list not found for dump process")
+}
+
 // NewDumper returns a new Dumper
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
@@ -304,11 +313,11 @@ func (d *Dumper) Dump() (dumpErr error) {
 	} else if !d.conf.SQLConcurrent {
 		d.dumpSQL(writerCtx, baseConn, taskIn)
 	} else {
-		tableInfo := &TableInfo{
-			Name: "t",
-			Type: TableTypeBase,
+		db, tableInfo, err := getTable(d.conf.Tables)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		meta, err := dumpTableMeta(tctx, conf, baseConn, "test", tableInfo)
+		meta, err := dumpTableMeta(tctx, conf, baseConn, db, tableInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -750,7 +759,11 @@ func (d *Dumper) handleBuffer(totalChunk int) {
 	}()
 	d.wg.Go(
 		func() error {
-			namer := newOutputFileNamer(newMockTableIR("test", "t", nil, nil, nil), 0, true, false)
+			db, tableInfo, err := getTable(d.conf.Tables)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			namer := newOutputFileNamer(newMockTableIR(db, tableInfo.Name, nil, nil, nil), 0, true, false)
 			fileName, err := namer.NextName(d.conf.OutputFileTemplate, d.conf.FileType)
 			if err != nil {
 				return errors.Trace(err)
