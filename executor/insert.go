@@ -49,6 +49,8 @@ type InsertExec struct {
 	row4Update     []types.Datum
 
 	Priority mysql.PriorityEnum
+
+	init bool
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
@@ -323,7 +325,7 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	if len(e.children) > 0 && e.children[0] != nil {
-		return insertRowsFromSelect(ctx, e)
+		return insertRowsFromSelect(ctx, e, e.ctx.GetSessionVars().StmtCtx.ETLMode)
 	}
 	err := insertRows(ctx, e)
 	if err != nil {
