@@ -598,7 +598,8 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 
 	// Double Read Cost
 	doubleReadCost := zeroCostVer2
-	if p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 {
+	if p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 &&
+		buildRows > 10000 { // ignore double-read costs for small IndexJoin
 		batchSize := float64(p.ctx.GetSessionVars().IndexJoinBatchSize)
 		taskPerBatch := 1024.0 // TODO: remove this magic number
 		doubleReadTasks := buildRows / batchSize * taskPerBatch

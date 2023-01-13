@@ -257,6 +257,7 @@ func TestIndexJoinPenaltyCost(t *testing.T) {
 	tk.MustExec(`create table t2 (a int, key(a))`)
 
 	// default value 0
+	tk.MustExec("set tidb_index_join_double_read_penalty_cost_rate=0")
 	tk.MustQuery("select @@tidb_index_join_double_read_penalty_cost_rate").Check(testkit.Rows("0"))
 	//tk.MustQuery("select global @@tidb_index_join_double_read_penalty_cost_rate").Check(testkit.Rows("0"))
 
