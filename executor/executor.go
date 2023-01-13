@@ -1491,10 +1491,11 @@ func (e *LimitExec) Close() error {
 		logutil.BgLogger().Info("limit executor close takes a long time",
 			zap.Duration("elapsed", elapsed))
 		if e.span != nil {
-			span1 := e.span.Tracer().StartSpan("limitExec.Close", opentracing.ChildOf(span.Context()), opentracing.StartTime(start))
+			span1 := e.span.Tracer().StartSpan("limitExec.Close", opentracing.ChildOf(e.span.Context()), opentracing.StartTime(start))
 			defer span1.Finish()
 		}
 	}
+	return err
 }
 
 func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
