@@ -54,7 +54,7 @@ const tickDurationForFlush = 30 * time.Second
 
 const tickDurationForLock = 4 * time.Minute
 
-const LockTimeToLive = 5 * time.Minute
+const lockTimeToLive = 5 * time.Minute
 
 type CheckpointMessage struct {
 	// start-key of the origin range
@@ -557,8 +557,9 @@ func (r *CheckpointRunner) flushLock(ctx context.Context, p int64) error {
 	lock := &CheckpointLock{
 		LockId:   r.lockId,
 		LockAt:   p,
-		ExpireAt: p + LockTimeToLive.Milliseconds(),
+		ExpireAt: p + lockTimeToLive.Milliseconds(),
 	}
+	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", lock.LockAt), zap.Int64("expire-at", lock.ExpireAt))
 	data, err := json.Marshal(lock)
 	if err != nil {
 		return errors.Trace(err)
