@@ -559,6 +559,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	probeConcurrency := float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
+	requestFactor := getTaskRequestFactorVer2(p, taskType)
 
 	buildFilterCost := filterCostVer2(option, buildRows, buildFilters, cpuFactor)
 	buildChildCost, err := build.getPlanCostVer2(taskType, option)
@@ -595,7 +596,17 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	batchRatio := 6.0
 	probeCost := divCostVer2(mulCostVer2(probeChildCost, buildRows), batchRatio)
 
-	p.planCostVer2 = sumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2(probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	// Double Read Cost
+	var doubleReadCost costVer2
+	if p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 {
+		batchSize := float64(p.ctx.GetSessionVars().IndexJoinBatchSize)
+		taskPerBatch := 32.0 // TODO: remove this magic number
+		doubleReadTasks := buildRows / batchSize * taskPerBatch
+		doubleReadCost = doubleReadCostVer2(option, doubleReadTasks, requestFactor)
+		doubleReadCost = mulCostVer2(doubleReadCost, p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate)
+	}
+
+	p.planCostVer2 = sumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, divCostVer2(sumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
