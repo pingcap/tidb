@@ -460,7 +460,7 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 // ETLLogStep is the step of log.
 const ETLLogStep = 1000_000
 
-func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) (err error) {
+func insertRowsFromSelect(ctx context.Context, base insertCommon) (err error) {
 	// process `insert|replace into ... select ... from ...`
 	e := base.insertCommon()
 	selectExec := e.children[0]
@@ -481,9 +481,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 		dataCh chan *chunk.Chunk
 	)
 	etlConcurrency, etlBatchSize := sessVars.ETLConcurrency, sessVars.ETLBatchSize
-	if etlConcurrency <= 1 {
-		etlMode = false
-	}
+	etlMode := etlConcurrency > 1
 	if etlMode {
 		var workers []insertCommon
 		workers, err = createFromSelectWorkers(ctx, base, etlConcurrency)
@@ -493,7 +491,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 			// executor not support, fallback to single thread.
 			etlMode = false
 		} else {
-			affectedRow := uint64(0)
+			var affectedRow atomic.Uint64
+			affectedRow.Store(0)
 			maxCap := e.maxChunkSize
 			dataCh = make(chan *chunk.Chunk, etlConcurrency*(etlBatchSize/maxCap+1))
 			chunkBackCh := make(chan *chunk.Chunk, etlConcurrency*(etlBatchSize/maxCap+1))
@@ -522,13 +521,16 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon, etlMode bool) 
 
 			defer func() {
 				close(dataCh)
-				err = eg.Wait()
+				err2 := eg.Wait()
+				if err == nil {
+					err = err2
+				}
 				for range dataCh {
 				}
 				close(chunkBackCh)
 				for range chunkBackCh {
 				}
-				sessVars.StmtCtx.SetAffectedRows(affectedRow)
+				sessVars.StmtCtx.SetAffectedRows(affectedRow.Load())
 				for _, worker := range workers {
 					switch w := worker.(type) {
 					case *InsertExec:
@@ -694,7 +696,7 @@ func createFromSelectWorkers(ctx context.Context, base insertCommon, concurrency
 }
 
 func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSize int, dataCh <-chan *chunk.Chunk,
-	chunkBackCh chan<- *chunk.Chunk, globalAffectedRows *uint64, killed *uint32) (err error) {
+	chunkBackCh chan<- *chunk.Chunk, globalAffectedRows *atomic.Uint64, killed *uint32) (err error) {
 	e := base.insertCommon()
 	selectExec := e.children[0]
 	fields := retTypes(selectExec)
@@ -757,7 +759,7 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 		}
 		CloseSession(se)
 		// hack here, the stmt context is not cleaned, so the affected row count is accumulated.
-		atomic.AddUint64(globalAffectedRows, sessVars.StmtCtx.AffectedRows())
+		globalAffectedRows.Add(sessVars.StmtCtx.AffectedRows())
 	}()
 
 	var (
