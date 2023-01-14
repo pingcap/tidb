@@ -778,7 +778,7 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 		rowsCache[i] = make([]types.Datum, columnLen)
 	}
 	rowsCacheIndex := 0
-	datumRow := make([]types.Datum, columnLen) //nolint:makezero
+	datumRow := make([]types.Datum, columnLen)
 	hasValue := make([]bool, columnLen)
 	for {
 		if atomic.LoadUint32(killed) == 1 {
@@ -800,7 +800,7 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 			if len(datumRow) < length {
 				diff := length - len(datumRow)
 				for i := 0; i < diff; i++ {
-					datumRow = append(datumRow, types.Datum{})
+					datumRow = append(datumRow, types.Datum{}) //nolint:makezero
 				}
 			} else {
 				datumRow = datumRow[:length]
@@ -811,7 +811,7 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 			datumRow := innerChunkRow.GetDatumRowWithBuffer(fields, datumRow)
 			var row []types.Datum
 			if rowsCacheIndex >= len(rowsCache) {
-				rowsCache = append(rowsCache, make([]types.Datum, columnLen))
+				rowsCache = append(rowsCache, make([]types.Datum, columnLen)) //nolint:makezero
 			}
 			row = rowsCache[rowsCacheIndex]
 			rowsCacheIndex++
