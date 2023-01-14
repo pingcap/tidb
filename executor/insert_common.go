@@ -768,7 +768,7 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 	)
 	columnLen := len(e.Table.Cols())
 	rows = make([][]types.Datum, 0, 1024)
-	rowsCache := make([][]types.Datum, 0, 1024)
+	rowsCache := make([][]types.Datum, 1024)
 	for i := 0; i < len(rowsCache); i++ {
 		rowsCache[i] = make([]types.Datum, columnLen)
 	}
@@ -792,10 +792,16 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 		iter := chunk.NewIterator4Chunk(chk)
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			length := innerChunkRow.Len()
-			if length > cap(datumRow) {
-				datumRow = make([]types.Datum, length)
+			if len(datumRow) < length {
+				diff := length - len(datumRow)
+				for i := 0; i < diff; i++ {
+					datumRow = append(datumRow, types.Datum{})
+				}
 			} else {
 				datumRow = datumRow[:length]
+				for i := 0; i < length; i++ {
+					datumRow[i] = types.Datum{}
+				}
 			}
 			datumRow := innerChunkRow.GetDatumRowWithBuffer(fields, datumRow)
 			var row []types.Datum

@@ -120,13 +120,8 @@ func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
 }
 
 // GetDatumRowWithBuffer gets datum using the buffer datumRow.
-// Buffer may has some dirty values, so need to set zero value.
 func (r Row) GetDatumRowWithBuffer(fields []*types.FieldType, datumRow []types.Datum) []types.Datum {
-	length := len(datumRow)
-	for i := 0; i < length; i++ {
-		datumRow[i] = types.Datum{}
-	}
-	for colIdx := 0; colIdx < length; colIdx++ {
+	for colIdx := 0; colIdx < len(datumRow); colIdx++ {
 		r.GetDatumWithBuffer(colIdx, fields[colIdx], &datumRow[colIdx])
 	}
 	return datumRow
