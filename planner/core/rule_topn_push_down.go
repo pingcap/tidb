@@ -82,7 +82,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 		return ls.children[0].pushDownTopN(topN, opt)
 	}
 	// If a TopN is pushed down, this sort is useless.
-	// The proj below sort will prevent optimizer from pushing the proj down to TiDB/TiFlash.
+	// The proj below sort will prevent optimizer from pushing the topN down to TiDB/TiFlash.
 	if projection, ok := ls.children[0].(*LogicalProjection); ok {
 		for i, child := range projection.Children() {
 			projection.Children()[i] = child.pushDownTopN(nil, opt)
