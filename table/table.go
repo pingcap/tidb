@@ -114,6 +114,7 @@ type AddRecordOpt struct {
 	CreateIdxOpt
 	IsUpdate      bool
 	ReserveAutoID int
+	CacheRowID    *int
 }
 
 // AddRecordOption is defined for the AddRecord() method of the Table interface.
@@ -127,6 +128,14 @@ type WithReserveAutoIDHint int
 // ApplyOn implements the AddRecordOption interface.
 func (n WithReserveAutoIDHint) ApplyOn(opt *AddRecordOpt) {
 	opt.ReserveAutoID = int(n)
+}
+
+// WithCacheRowID tells the AddRecord operation to use the cached datum memory with the given id.
+type WithCacheRowID int
+
+// ApplyOn implements the AddRecordOption interface.
+func (n WithCacheRowID) ApplyOn(opt *AddRecordOpt) {
+	opt.CacheRowID = (*int)(&n)
 }
 
 // ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc

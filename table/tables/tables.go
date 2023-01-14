@@ -70,6 +70,7 @@ type TableCommon struct {
 	meta                            *model.TableInfo
 	allocs                          autoid.Allocators
 	sequence                        *sequenceCommon
+	CachedRow                       [][]types.Datum
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -768,7 +769,12 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		row = recordCtx.row[:0]
 	} else {
 		colIDs = make([]int64, 0, len(r))
-		row = make([]types.Datum, 0, len(r))
+		if opt.CacheRowID != nil {
+			row = t.CachedRow[*opt.CacheRowID]
+			row = row[:0]
+		} else {
+			row = make([]types.Datum, 0, len(r))
+		}
 	}
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()

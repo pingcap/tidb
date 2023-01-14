@@ -102,6 +102,9 @@ type InsertValues struct {
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
+
+	// used by cache row in Table.AddRecord.
+	workerID *int
 }
 
 type defaultVal struct {
@@ -648,6 +651,7 @@ func createFromSelectWorkers(ctx context.Context, base insertCommon, concurrency
 	inserts := make([]insertCommon, 0, concurrency)
 	for i := 0; i < concurrency; i++ {
 		se, err := CreateSession(insert.ctx)
+		workerID := i
 		if err != nil {
 			logutil.Logger(ctx).Error("create session failed", zap.Error(err))
 			return nil, err
@@ -680,6 +684,7 @@ func createFromSelectWorkers(ctx context.Context, base insertCommon, concurrency
 			isLoadData:                insert.isLoadData,
 			fkChecks:                  nil,
 			fkCascades:                nil,
+			workerID:                  &workerID,
 		}
 		insertValues.collectRuntimeStatsEnabled()
 		newInsert := &InsertExec{
@@ -691,6 +696,13 @@ func createFromSelectWorkers(ctx context.Context, base insertCommon, concurrency
 			Priority:       insert.Priority,
 		}
 		inserts = append(inserts, newInsert)
+	}
+	if tableCommon, ok := insert.Table.(*tables.TableCommon); ok {
+		tableCommon.CachedRow = make([][]types.Datum, concurrency)
+		columnLen := len(insert.Table.Cols())
+		for i := 0; i < concurrency; i++ {
+			tableCommon.CachedRow[i] = make([]types.Datum, columnLen)
+		}
 	}
 	return inserts, nil
 }
@@ -1590,9 +1602,17 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 		vars.PresumeKeyNotExists = true
 	}
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+		if e.workerID != nil {
+			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), table.WithCacheRowID(*e.workerID))
+		} else {
+			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+		}
 	} else {
-		_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+		if e.workerID != nil {
+			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithCacheRowID(*e.workerID))
+		} else {
+			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
+		}
 	}
 	vars.PresumeKeyNotExists = false
 	if err != nil {
