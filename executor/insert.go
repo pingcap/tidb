@@ -325,7 +325,7 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	if len(e.children) > 0 && e.children[0] != nil {
-		return insertRowsFromSelect(ctx, e, e.ctx.GetSessionVars().StmtCtx.ETLMode)
+		return insertRowsFromSelect(ctx, e)
 	}
 	err := insertRows(ctx, e)
 	if err != nil {

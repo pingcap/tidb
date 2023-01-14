@@ -1177,7 +1177,7 @@ const (
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
 	DefEnableDynamicPartitionPruning                 = false
-	DefTiDBETLConcurrency                            = 256
+	DefTiDBETLConcurrency                            = 1
 	DefTiDBETLBatchSize                              = 1000
 	DefTiDBResultCacheSize                           = 0
 	DefTiDBResultCacheTimeout                        = 0
