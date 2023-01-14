@@ -104,7 +104,7 @@ type InsertValues struct {
 	fkCascades []*FKCascadeExec
 
 	// used by cache row in Table.AddRecord.
-	workerID *int
+	cachedRow []types.Datum
 }
 
 type defaultVal struct {
@@ -648,10 +648,10 @@ func createFromSelectWorkers(ctx context.Context, base insertCommon, concurrency
 	if !ok {
 		return nil, nil
 	}
+	columnLen := len(insert.Table.Cols())
 	inserts := make([]insertCommon, 0, concurrency)
 	for i := 0; i < concurrency; i++ {
 		se, err := CreateSession(insert.ctx)
-		workerID := i
 		if err != nil {
 			logutil.Logger(ctx).Error("create session failed", zap.Error(err))
 			return nil, err
@@ -684,7 +684,7 @@ func createFromSelectWorkers(ctx context.Context, base insertCommon, concurrency
 			isLoadData:                insert.isLoadData,
 			fkChecks:                  nil,
 			fkCascades:                nil,
-			workerID:                  &workerID,
+			cachedRow:                 make([]types.Datum, columnLen),
 		}
 		insertValues.collectRuntimeStatsEnabled()
 		newInsert := &InsertExec{
@@ -696,13 +696,6 @@ func createFromSelectWorkers(ctx context.Context, base insertCommon, concurrency
 			Priority:       insert.Priority,
 		}
 		inserts = append(inserts, newInsert)
-	}
-	if tableCommon, ok := insert.Table.(*tables.TableCommon); ok {
-		tableCommon.CachedRow = make([][]types.Datum, concurrency)
-		columnLen := len(insert.Table.Cols())
-		for i := 0; i < concurrency; i++ {
-			tableCommon.CachedRow[i] = make([]types.Datum, columnLen)
-		}
 	}
 	return inserts, nil
 }
@@ -785,7 +778,7 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 		rowsCache[i] = make([]types.Datum, columnLen)
 	}
 	rowsCacheIndex := 0
-	datumRow := make([]types.Datum, columnLen)
+	datumRow := make([]types.Datum, columnLen) // nolint:makezero
 	hasValue := make([]bool, columnLen)
 	for {
 		if atomic.LoadUint32(killed) == 1 {
@@ -1602,14 +1595,14 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 		vars.PresumeKeyNotExists = true
 	}
 	if reserveAutoIDCount > 0 {
-		if e.workerID != nil {
-			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), table.WithCacheRowID(*e.workerID))
+		if e.cachedRow != nil {
+			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), table.WithCachedRow(e.cachedRow))
 		} else {
 			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
 		}
 	} else {
-		if e.workerID != nil {
-			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithCacheRowID(*e.workerID))
+		if e.cachedRow != nil {
+			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx), table.WithCachedRow(e.cachedRow))
 		} else {
 			_, err = e.Table.AddRecord(e.ctx, row, table.WithCtx(ctx))
 		}
