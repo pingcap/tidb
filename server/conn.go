@@ -2092,7 +2092,6 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	cc.audit(plugin.Starting)
 	var rs ResultSet
 	var err error
-	rs, err = cc.ctx.ExecuteStmt(ctx, stmt)
 	cs, ok := cc.ctx.GetSessionVars().GetCache(stmt)
 	if !ok {
 		if variable.ResultCacheSize.Load() != 0 {
@@ -2100,15 +2099,10 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		} else {
 			cc.ctx.GetSessionVars().Stmt = nil
 		}
+		rs, err = cc.ctx.ExecuteStmt(ctx, stmt)
 	} else {
 		cc.ctx.GetSessionVars().Stmt = nil
-		if rs != nil {
-			err = rs.Close()
-			if err != nil {
-				return false, err
-			}
-			rs = newGetResult(cs)
-		}
+		rs = newGetResult(cs)
 	}
 	reg.End()
 	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
