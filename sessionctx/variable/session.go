@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	ptypes "github.com/pingcap/tidb/parser/types"
@@ -51,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -1345,6 +1343,7 @@ type SessionVars struct {
 	ETLBatchSize int
 	Stmt         ast.StmtNode
 	cacheRes     map[uint32]*CacheResult
+	cachestr     string
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool
@@ -1545,14 +1544,7 @@ func (s *SessionVars) SaveCache(cr *CacheResult) {
 			s.clearEarlistCacheResult()
 		}
 	}
-	var buf bytes.Buffer
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
-	err := s.Stmt.Restore(restoreCtx)
-	if err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("Error occur restore %v", err))
-		return
-	}
-	key := crc32.ChecksumIEEE(buf.Bytes())
+	key := crc32.ChecksumIEEE([]byte(s.cachestr))
 	cr.LastUpdateTime = time.Now()
 	s.cacheRes[key] = cr
 }
@@ -1562,17 +1554,10 @@ func (s *SessionVars) GetCache(stmt ast.StmtNode) (*CacheResult, bool) {
 	if ResultCacheSize.Load() == 0 {
 		return nil, false
 	}
-	var buf bytes.Buffer
-	if stmt == nil {
-		return nil, false
-	}
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
-	err := stmt.Restore(restoreCtx)
-	if err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("Error occur restore %v", err))
-		return nil, false
-	}
-	key := crc32.ChecksumIEEE(buf.Bytes())
+	sql := stmt.Text()
+	sql = sql + ":currentDB:" + s.CurrentDB
+	s.cachestr = sql
+	key := crc32.ChecksumIEEE([]byte(sql))
 	cs, ok := s.cacheRes[key]
 	if ok && time.Since(cs.LastUpdateTime).Milliseconds() >=
 		ResultCacheTimeout.Load() {
