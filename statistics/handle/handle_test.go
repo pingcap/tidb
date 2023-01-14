@@ -3299,7 +3299,7 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 
 	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta())
+	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta(), tableInfo.Meta().ID, false)
 	require.NoError(t, err)
 
 	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()

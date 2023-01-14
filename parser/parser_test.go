@@ -2823,6 +2823,11 @@ func TestDDL(t *testing.T) {
 		{"create table t (a int default (rand(1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
 		{"create table t (a int default (((rand()))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
 		{"create table t (a int default (((rand(1)))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
+		{"create table t (d date default current_date())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default current_date)", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default (current_date()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default (curdate()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default curdate())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3640,17 +3645,17 @@ func TestDDL(t *testing.T) {
 		{"create resource group x cpu ='8c'", true, "CREATE RESOURCE GROUP `x` CPU = '8c'"},
 		{"create resource group x region ='us, 3'", false, ""},
 		{"create resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", true, "CREATE RESOURCE GROUP `x` CPU = '8c' IO_READ_BANDWIDTH = '2GB/s' IO_WRITE_BANDWIDTH = '200MB/s'"},
-		{"create resource group x rru_per_sec='2000'", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = '2000'"},
-		{"create resource group x wru_per_sec='200000'", true, "CREATE RESOURCE GROUP `x` WRU_PER_SEC = '200000'"},
-		{"create resource group x rru_per_sec='2000' wru_per_sec='200000'", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = '2000' WRU_PER_SEC = '200000'"},
+		{"create resource group x rru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = 2000"},
+		{"create resource group x wru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` WRU_PER_SEC = 200000"},
+		{"create resource group x rru_per_sec=2000 wru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = 2000 WRU_PER_SEC = 200000"},
 		{"create resource group x followers=0", false, ""},
 
 		{"alter resource group x cpu ='8c'", true, "ALTER RESOURCE GROUP `x` CPU = '8c'"},
 		{"alter resource group x region ='us, 3'", false, ""},
 		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", true, "ALTER RESOURCE GROUP `x` CPU = '8c' IO_READ_BANDWIDTH = '2GB/s' IO_WRITE_BANDWIDTH = '200MB/s'"},
-		{"alter resource group x rru_per_sec='2000'", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = '2000'"},
-		{"alter resource group x wru_per_sec='200000'", true, "ALTER RESOURCE GROUP `x` WRU_PER_SEC = '200000'"},
-		{"alter resource group x rru_per_sec='2000' wru_per_sec='200000'", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = '2000' WRU_PER_SEC = '200000'"},
+		{"alter resource group x rru_per_sec=2000", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = 2000"},
+		{"alter resource group x wru_per_sec=200000", true, "ALTER RESOURCE GROUP `x` WRU_PER_SEC = 200000"},
+		{"alter resource group x rru_per_sec=2000 wru_per_sec=200000", true, "ALTER RESOURCE GROUP `x` RRU_PER_SEC = 2000 WRU_PER_SEC = 200000"},
 		{"alter resource group x followers=0", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
@@ -4522,10 +4527,10 @@ func TestPrivilege(t *testing.T) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true, "CREATE USER `root`@`localhost` IDENTIFIED BY 'new-password'"},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true, "CREATE USER `root`@`localhost` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true, "CREATE USER `root`@`localhost` IDENTIFIED BY 'new-password', `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
-		{`CREATE USER 'root'@'127.0.0.1' IDENTIFIED BY 'hashstring' RESOURCE GROUP 'rg1'`, true, "CREATE USER `root`@`127.0.0.1` IDENTIFIED BY 'hashstring' RESOURCE GROUP 'rg1'"},
+		{`CREATE USER 'root'@'127.0.0.1' IDENTIFIED BY 'hashstring' RESOURCE GROUP rg1`, true, "CREATE USER `root`@`127.0.0.1` IDENTIFIED BY 'hashstring' RESOURCE GROUP `rg1`"},
 		{`ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true, "ALTER USER IF EXISTS `root`@`localhost` IDENTIFIED BY 'new-password'"},
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true, "ALTER USER `root`@`localhost` IDENTIFIED BY 'new-password'"},
-		{`ALTER USER 'root'@'localhost' RESOURCE GROUP 'rg2'`, true, "ALTER USER `root`@`localhost` RESOURCE GROUP 'rg2'"},
+		{`ALTER USER 'root'@'localhost' RESOURCE GROUP rg2`, true, "ALTER USER `root`@`localhost` RESOURCE GROUP `rg2`"},
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true, "ALTER USER `root`@`localhost` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`ALTER USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true, "ALTER USER `root`@`localhost` IDENTIFIED BY 'new-password', `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'"},
 		{`ALTER USER USER() IDENTIFIED BY 'new-password'`, true, "ALTER USER USER() IDENTIFIED BY 'new-password'"},
@@ -7106,6 +7111,7 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR"},
 		{"create table t (created_at datetime) TTL = created_at + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
 		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF'"},
+		{"create table t (created_at datetime) TTL created_at + INTERVAL 1 YEAR TTL_ENABLE 'OFF' TTL_JOB_INTERVAL='8h'", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '8h'"},
 		{"create table t (created_at datetime) /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", true, "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON'"},
 
 		// alter table with various temporal interval
@@ -7113,7 +7119,10 @@ func TestTTLTableOption(t *testing.T) {
 		{"alter table t TTL_ENABLE = 'ON'", true, "ALTER TABLE `t` TTL_ENABLE = 'ON'"},
 		{"alter table t TTL_ENABLE = 'OFF'", true, "ALTER TABLE `t` TTL_ENABLE = 'OFF'"},
 		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF'", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 MONTH TTL_ENABLE = 'OFF'"},
+		{"alter table t TTL = created_at + INTERVAL 1 MONTH TTL_ENABLE 'OFF' TTL_JOB_INTERVAL '1h'", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 MONTH TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1h'"},
 		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON'"},
+		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON' TTL_JOB_INTERVAL='8h'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON' TTL_JOB_INTERVAL = '8h'"},
+		{"alter table t /*T![ttl] ttl=created_at + INTERVAL 1 YEAR ttl_enable='ON' TTL_JOB_INTERVAL='8.645124531235h'*/", true, "ALTER TABLE `t` TTL = `created_at` + INTERVAL 1 YEAR TTL_ENABLE = 'ON' TTL_JOB_INTERVAL = '8.645124531235h'"},
 
 		// alter table to remove ttl settings
 		{"alter table t remove ttl", true, "ALTER TABLE `t` REMOVE TTL"},
@@ -7122,6 +7131,11 @@ func TestTTLTableOption(t *testing.T) {
 		{"create table t (created_at datetime) TTL_ENABLE = 'test_case'", false, ""},
 		{"create table t (created_at datetime) /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
 		{"alter table t /*T![ttl] TTL_ENABLE = 'test_case' */", false, ""},
+
+		// validate invalid TTL_JOB_INTERVAL settings
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '@monthly'", false, ""},
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '10hourxx'", false, ""},
+		{"create table t (created_at datetime) TTL_JOB_INTERVAL = '10.10.255h'", false, ""},
 	}
 
 	RunTest(t, table, false)

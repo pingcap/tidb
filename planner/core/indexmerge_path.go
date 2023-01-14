@@ -26,6 +26,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -43,7 +46,9 @@ func (ds *DataSource) generateIndexMergePath() error {
 	}
 
 	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
-	isPossibleIdxMerge := len(indexMergeConds) > 0 && len(ds.possibleAccessPaths) > 1
+	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
+		(len(ds.possibleAccessPaths) > 1 || // (have multiple index paths, or
+			(len(ds.possibleAccessPaths) == 1 && isMVIndexPath(ds.possibleAccessPaths[0]))) // have a MVIndex)
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
 	// We current do not consider `IndexMergePath`:
 	// 1. If there is an index path.
@@ -63,7 +68,19 @@ func (ds *DataSource) generateIndexMergePath() error {
 			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
 			stmtCtx.SetWarnings(warnings)
 			stmtCtx.SetExtraWarnings(extraWarnings)
-			if len(remaining) != 0 {
+
+			remainingExpr := 0
+			for _, expr := range remaining {
+				// Handle these 3 functions specially since they can be used to access MVIndex.
+				if sf, ok := expr.(*expression.ScalarFunction); ok {
+					if sf.FuncName.L == ast.JSONMemberOf || sf.FuncName.L == ast.JSONOverlaps ||
+						sf.FuncName.L == ast.JSONContains {
+						continue
+					}
+				}
+				remainingExpr++
+			}
+			if remainingExpr > 0 {
 				needConsiderIndexMerge = false
 			}
 		}
@@ -435,8 +452,16 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	if indexMergeAndPath != nil {
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
 	}
+	// 3. Generate possible IndexMerge paths for MVIndex.
+	mvIndexMergePath, err := ds.generateIndexMerge4MVIndex(regularPathCount, indexMergeConds)
+	if err != nil {
+		return err
+	}
+	if mvIndexMergePath != nil {
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvIndexMergePath...)
+	}
 
-	// 3. If needed, append a warning if no IndexMerge is generated.
+	// 4. If needed, append a warning if no IndexMerge is generated.
 
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
@@ -466,4 +491,412 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 		}
 	}
 	return nil
+}
+
+// generateIndexMergeOnDNF4MVIndex generates IndexMerge paths for MVIndex upon DNF filters.
+/*
+	select * from t where ((1 member of (a) and b=1) or (2 member of (a) and b=2)) and (c > 10)
+		IndexMerge(OR)
+			IndexRangeScan(a, b, [1 1, 1 1])
+			IndexRangeScan(a, b, [2 2, 2 2])
+			Selection(c > 10)
+				TableRowIdScan(t)
+	Two limitations now:
+	1). all filters in the DNF have to be used as access-filters: ((1 member of (a)) or (2 member of (a)) or b > 10) cannot be used to access the MVIndex.
+	2). cannot support json_contains: (json_contains(a, '[1, 2]') or json_contains(a, '[3, 4]')) is not supported since a single IndexMerge cannot represent this SQL.
+*/
+func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
+	for idx := 0; idx < normalPathCnt; idx++ {
+		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
+			continue // not a MVIndex path
+		}
+
+		idxCols, ok := ds.prepareCols4MVIndex(ds.possibleAccessPaths[idx].Index)
+		if !ok {
+			continue
+		}
+
+		for current, filter := range filters {
+			sf, ok := filter.(*expression.ScalarFunction)
+			if !ok || sf.FuncName.L != ast.LogicOr {
+				continue
+			}
+			dnfFilters := expression.FlattenDNFConditions(sf) // [(1 member of (a) and b=1), (2 member of (a) and b=2)]
+
+			// build partial paths for each dnf filter
+			cannotFit := false
+			var partialPaths []*util.AccessPath
+			for _, dnfFilter := range dnfFilters {
+				mvIndexFilters := []expression.Expression{dnfFilter}
+				if sf, ok := dnfFilter.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+					mvIndexFilters = expression.FlattenCNFConditions(sf) // (1 member of (a) and b=1) --> [(1 member of (a)), b=1]
+				}
+
+				accessFilters, remainingFilters := ds.collectFilters4MVIndex(mvIndexFilters, idxCols)
+				if len(accessFilters) == 0 || len(remainingFilters) > 0 { // limitation 1
+					cannotFit = true
+					break
+				}
+				paths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, ds.possibleAccessPaths[idx].Index)
+				if err != nil {
+					return nil, err
+				}
+				if isIntersection || !ok { // limitation 2
+					cannotFit = true
+					break
+				}
+				partialPaths = append(partialPaths, paths...)
+			}
+			if cannotFit {
+				continue
+			}
+
+			var remainingFilters []expression.Expression
+			remainingFilters = append(remainingFilters, filters[:current]...)
+			remainingFilters = append(remainingFilters, filters[current+1:]...)
+
+			indexMergePath := ds.buildPartialPathUp4MVIndex(partialPaths, false, remainingFilters)
+			mvIndexPaths = append(mvIndexPaths, indexMergePath)
+		}
+	}
+	return
+}
+
+// generateIndexMergeJSONMVIndexPath generates paths for (json_member_of / json_overlaps / json_contains) on multi-valued index.
+/*
+	1. select * from t where 1 member of (a)
+		IndexMerge(AND)
+			IndexRangeScan(a, [1,1])
+			TableRowIdScan(t)
+	2. select * from t where json_contains(a, '[1, 2, 3]')
+		IndexMerge(AND)
+			IndexRangeScan(a, [1,1])
+			IndexRangeScan(a, [2,2])
+			IndexRangeScan(a, [3,3])
+			TableRowIdScan(t)
+	3. select * from t where json_overlap(a, '[1, 2, 3]')
+		IndexMerge(OR)
+			IndexRangeScan(a, [1,1])
+			IndexRangeScan(a, [2,2])
+			IndexRangeScan(a, [3,3])
+			TableRowIdScan(t)
+*/
+func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
+	dnfMVIndexPaths, err := ds.generateIndexMergeOnDNF4MVIndex(normalPathCnt, filters)
+	if err != nil {
+		return nil, err
+	}
+	mvIndexPaths = append(mvIndexPaths, dnfMVIndexPaths...)
+
+	for idx := 0; idx < normalPathCnt; idx++ {
+		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
+			continue // not a MVIndex path
+		}
+
+		idxCols, ok := ds.prepareCols4MVIndex(ds.possibleAccessPaths[idx].Index)
+		if !ok {
+			continue
+		}
+
+		accessFilters, remainingFilters := ds.collectFilters4MVIndex(filters, idxCols)
+		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
+			continue
+		}
+
+		partialPaths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, ds.possibleAccessPaths[idx].Index)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+
+		mvIndexPaths = append(mvIndexPaths, ds.buildPartialPathUp4MVIndex(partialPaths, isIntersection, remainingFilters))
+	}
+	return
+}
+
+// buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
+func (ds *DataSource) buildPartialPathUp4MVIndex(partialPaths []*util.AccessPath, isIntersection bool, remainingFilters []expression.Expression) *util.AccessPath {
+	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
+	indexMergePath.IndexMergeIsIntersection = isIntersection
+	indexMergePath.TableFilters = remainingFilters
+
+	// TODO: use a naive estimation strategy here now for simplicity, make it more accurate.
+	minEstRows, maxEstRows := math.MaxFloat64, -1.0
+	for _, p := range indexMergePath.PartialIndexPaths {
+		minEstRows = math.Min(minEstRows, p.CountAfterAccess)
+		maxEstRows = math.Max(maxEstRows, p.CountAfterAccess)
+	}
+	if indexMergePath.IndexMergeIsIntersection {
+		indexMergePath.CountAfterAccess = minEstRows
+	} else {
+		indexMergePath.CountAfterAccess = maxEstRows
+	}
+	return indexMergePath
+}
+
+// buildPartialPaths4MVIndex builds partial paths by using these accessFilters upon this MVIndex.
+// The accessFilters must be corresponding to these idxCols.
+// OK indicates whether it builds successfully. These partial paths should be ignored if ok==false.
+func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expression,
+	idxCols []*expression.Column, mvIndex *model.IndexInfo) (
+	partialPaths []*util.AccessPath, isIntersection bool, ok bool, err error) {
+	var virColID = -1
+	for i := range idxCols {
+		if idxCols[i].VirtualExpr != nil {
+			virColID = i
+			break
+		}
+	}
+	if virColID == -1 { // unexpected, no vir-col on this MVIndex
+		return nil, false, false, nil
+	}
+	if len(accessFilters) <= virColID { // no filter related to the vir-col, build a partial path directly.
+		partialPath, ok, err := ds.buildPartialPath4MVIndex(accessFilters, idxCols, mvIndex)
+		return []*util.AccessPath{partialPath}, false, ok, err
+	}
+
+	virCol := idxCols[virColID]
+	jsonType := virCol.GetType().ArrayType()
+	targetJSONPath, ok := unwrapJSONCast(virCol.VirtualExpr)
+	if !ok {
+		return nil, false, false, nil
+	}
+
+	// extract values related to this vir-col, for example, extract [1, 2] from `json_contains(j, '[1, 2]')`
+	var virColVals []expression.Expression
+	sf, ok := accessFilters[virColID].(*expression.ScalarFunction)
+	if !ok {
+		return nil, false, false, nil
+	}
+	switch sf.FuncName.L {
+	case ast.JSONMemberOf: // (1 member of a->'$.zip')
+		v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
+		if !ok {
+			return nil, false, false, nil
+		}
+		virColVals = append(virColVals, v)
+	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
+		isIntersection = true
+		virColVals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1], jsonType)
+		if !ok {
+			return nil, false, false, nil
+		}
+	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+		var jsonPathIdx int
+		if sf.GetArgs()[0].Equal(ds.ctx, targetJSONPath) {
+			jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
+		} else if sf.GetArgs()[1].Equal(ds.ctx, targetJSONPath) {
+			jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
+		} else {
+			return nil, false, false, nil
+		}
+		var ok bool
+		virColVals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx], jsonType)
+		if !ok {
+			return nil, false, false, nil
+		}
+	default:
+		return nil, false, false, nil
+	}
+
+	for _, v := range virColVals {
+		// rewrite json functions to EQ to calculate range, `(1 member of j)` -> `j=1`.
+		eq, err := expression.NewFunction(ds.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
+		if err != nil {
+			return nil, false, false, err
+		}
+		accessFilters[virColID] = eq
+
+		partialPath, ok, err := ds.buildPartialPath4MVIndex(accessFilters, idxCols, mvIndex)
+		if !ok || err != nil {
+			return nil, false, ok, err
+		}
+		partialPaths = append(partialPaths, partialPath)
+	}
+	return partialPaths, isIntersection, true, nil
+}
+
+// buildPartialPath4MVIndex builds a partial path on this MVIndex with these accessFilters.
+func (ds *DataSource) buildPartialPath4MVIndex(accessFilters []expression.Expression, idxCols []*expression.Column, mvIndex *model.IndexInfo) (*util.AccessPath, bool, error) {
+	partialPath := &util.AccessPath{Index: mvIndex}
+	partialPath.Ranges = ranger.FullRange()
+	for i := 0; i < len(idxCols); i++ {
+		partialPath.IdxCols = append(partialPath.IdxCols, idxCols[i])
+		partialPath.IdxColLens = append(partialPath.IdxColLens, mvIndex.Columns[i].Length)
+		partialPath.FullIdxCols = append(partialPath.FullIdxCols, idxCols[i])
+		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, mvIndex.Columns[i].Length)
+	}
+	if err := ds.detachCondAndBuildRangeForPath(partialPath, accessFilters); err != nil {
+		return nil, false, err
+	}
+	if len(partialPath.AccessConds) != len(accessFilters) || len(partialPath.TableFilters) > 0 {
+		// not all filters are used in this case.
+		return nil, false, nil
+	}
+	return partialPath, true, nil
+}
+
+func (ds *DataSource) prepareCols4MVIndex(mvIndex *model.IndexInfo) (idxCols []*expression.Column, ok bool) {
+	var virColNum = 0
+	for i := range mvIndex.Columns {
+		colOffset := mvIndex.Columns[i].Offset
+		colMeta := ds.table.Meta().Cols()[colOffset]
+		var col *expression.Column
+		for _, c := range ds.TblCols {
+			if c.ID == colMeta.ID {
+				col = c
+				break
+			}
+		}
+		if col == nil { // unexpected, no vir-col on this MVIndex
+			return nil, false
+		}
+		if col.VirtualExpr != nil {
+			virColNum++
+			col = col.Clone().(*expression.Column)
+			col.RetType = col.GetType().ArrayType() // use the underlying type directly: JSON-ARRAY(INT) --> INT
+		}
+		idxCols = append(idxCols, col)
+	}
+	if virColNum != 1 { // assume only one vir-col in the MVIndex
+		return nil, false
+	}
+	return idxCols, true
+}
+
+// collectFilters4MVIndex splits these filters into 2 parts where accessFilters can be used to access this index directly.
+// For idx(x, cast(a as array), z), `x=1 and (2 member of a) and z=1 and x+z>0` is splitted to:
+// accessFilters: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
+func (ds *DataSource) collectFilters4MVIndex(filters []expression.Expression, idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression) {
+	usedAsAccess := make([]bool, len(filters))
+	for _, col := range idxCols {
+		found := false
+		for i, f := range filters {
+			if usedAsAccess[i] {
+				continue
+			}
+			if ds.checkFilter4MVIndexColumn(f, col) {
+				accessFilters = append(accessFilters, f)
+				usedAsAccess[i] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			break
+		}
+	}
+	for i := range usedAsAccess {
+		if !usedAsAccess[i] {
+			remainingFilters = append(remainingFilters, filters[i])
+		}
+	}
+	return accessFilters, remainingFilters
+}
+
+// checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.
+func (ds *DataSource) checkFilter4MVIndexColumn(filter expression.Expression, idxCol *expression.Column) bool {
+	sf, ok := filter.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	if idxCol.VirtualExpr != nil { // the virtual column on the MVIndex
+		targetJSONPath, ok := unwrapJSONCast(idxCol.VirtualExpr)
+		if !ok {
+			return false
+		}
+		switch sf.FuncName.L {
+		case ast.JSONMemberOf: // (1 member of a)
+			return targetJSONPath.Equal(ds.ctx, sf.GetArgs()[1])
+		case ast.JSONContains: // json_contains(a, '1')
+			return targetJSONPath.Equal(ds.ctx, sf.GetArgs()[0])
+		case ast.JSONOverlaps: // json_overlaps(a, '1') or json_overlaps('1', a)
+			return targetJSONPath.Equal(ds.ctx, sf.GetArgs()[0]) ||
+				targetJSONPath.Equal(ds.ctx, sf.GetArgs()[1])
+		default:
+			return false
+		}
+	} else {
+		if sf.FuncName.L != ast.EQ { // only support EQ now
+			return false
+		}
+		args := sf.GetArgs()
+		var argCol *expression.Column
+		var argConst *expression.Constant
+		if c, isCol := args[0].(*expression.Column); isCol {
+			if con, isCon := args[1].(*expression.Constant); isCon {
+				argCol, argConst = c, con
+			}
+		} else if c, isCol := args[1].(*expression.Column); isCol {
+			if con, isCon := args[0].(*expression.Constant); isCon {
+				argCol, argConst = c, con
+			}
+		}
+		if argCol == nil || argConst == nil {
+			return false
+		}
+		if argCol.Equal(ds.ctx, idxCol) {
+			return true
+		}
+	}
+	return false
+}
+
+// jsonArrayExpr2Exprs converts a JsonArray expression to expression list: cast('[1, 2, 3]' as JSON) --> []expr{1, 2, 3}
+func jsonArrayExpr2Exprs(sctx sessionctx.Context, jsonArrayExpr expression.Expression, targetType *types.FieldType) ([]expression.Expression, bool) {
+	if !expression.IsInmutableExpr(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
+		return nil, false
+	}
+
+	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx, chunk.Row{})
+	if isNull || err != nil {
+		return nil, false
+	}
+	if jsonArray.TypeCode != types.JSONTypeCodeArray {
+		single, ok := jsonValue2Expr(jsonArray, targetType) // '1' -> []expr{1}
+		if ok {
+			return []expression.Expression{single}, true
+		}
+		return nil, false
+	}
+	var exprs []expression.Expression
+	for i := 0; i < jsonArray.GetElemCount(); i++ { // '[1, 2, 3]' -> []expr{1, 2, 3}
+		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i), targetType)
+		if !ok {
+			return nil, false
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs, true
+}
+
+func jsonValue2Expr(v types.BinaryJSON, targetType *types.FieldType) (expression.Expression, bool) {
+	datum, err := expression.ConvertJSON2Tp(v, targetType)
+	if err != nil {
+		return nil, false
+	}
+	return &expression.Constant{
+		Value:   types.NewDatum(datum),
+		RetType: targetType,
+	}, true
+}
+
+func unwrapJSONCast(expr expression.Expression) (expression.Expression, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return nil, false
+	}
+	if sf == nil || sf.FuncName.L != ast.Cast || sf.GetType().EvalType() != types.ETJson {
+		return nil, false
+	}
+	return sf.GetArgs()[0], true
+}
+
+func isMVIndexPath(path *util.AccessPath) bool {
+	return !path.IsTablePath() && path.Index != nil && path.Index.MVIndex
 }

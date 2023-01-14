@@ -21,5 +21,6 @@ go_test(
     srcs = ["cpu_test.go"],
     embed = [":cpu"],
     flaky = True,
+    race = "on",
     deps = ["@com_github_stretchr_testify//require"],
 )

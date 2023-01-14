@@ -1176,6 +1176,11 @@ error = '''
 Column '%s' has an expression index dependency and cannot be dropped or renamed
 '''
 
+["ddl:3855"]
+error = '''
+Column '%s' has a partitioning function dependency and cannot be dropped or renamed
+'''
+
 ["ddl:4135"]
 error = '''
 Sequence '%-.64s.%-.64s' has run out
@@ -1218,7 +1223,7 @@ Cannot drop column '%-.192s': needed in TTL config
 
 ["ddl:8150"]
 error = '''
-Cannot set TTL_ENABLE on a table without TTL config
+Cannot set %s on a table without TTL config
 '''
 
 ["ddl:8151"]
@@ -1229,6 +1234,11 @@ Set TTL for temporary table is not allowed
 ["ddl:8152"]
 error = '''
 Set TTL for a table referenced by foreign key is not allowed
+'''
+
+["ddl:8153"]
+error = '''
+Unsupported clustered primary key type FLOAT/DOUBLE for TTL
 '''
 
 ["ddl:8200"]
@@ -1696,6 +1706,21 @@ error = '''
 Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.
 '''
 
+["expression:3752"]
+error = '''
+Value is out of range for expression index '%s' at row %d
+'''
+
+["expression:3903"]
+error = '''
+Invalid JSON value for CAST for expression index '%s'
+'''
+
+["expression:3907"]
+error = '''
+Data too long for expression index '%s'
+'''
+
 ["expression:8128"]
 error = '''
 Invalid TABLESAMPLE: %s
@@ -1839,6 +1864,16 @@ Placement policy '%-.192s' already exists
 ["meta:8239"]
 error = '''
 Unknown placement policy '%-.192s'
+'''
+
+["meta:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["meta:8249"]
+error = '''
+Unknown resource group '%-.192s'
 '''
 
 ["planner:1044"]
@@ -2486,6 +2521,21 @@ error = '''
 Unknown placement policy '%-.192s'
 '''
 
+["schema:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["schema:8249"]
+error = '''
+Unknown resource group '%-.192s'
+'''
+
+["schema:8250"]
+error = '''
+Resource group feature is disabled
+'''
+
 ["session:8002"]
 error = '''
 [%d] can not retry select for update statement
@@ -2658,7 +2708,7 @@ TTL manager has timed out, pessimistic locks may expire, please commit or rollba
 
 ["tikv:9001"]
 error = '''
-PD server timeout
+PD server timeout: %s
 '''
 
 ["tikv:9002"]

@@ -32,7 +32,6 @@ go_library(
         "//parser/types",
         "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",
-        "//sessionctx/variable/featuretag/concurrencyddl",
         "//sessionctx/variable/featuretag/distributereorg",
         "//tidb-binlog/pump_client",
         "//types",
