@@ -766,6 +766,15 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 		chk *chunk.Chunk
 		ok  bool
 	)
+	columnLen := len(e.Table.Cols())
+	rows = make([][]types.Datum, 0, 1024)
+	rowsCache := make([][]types.Datum, 0, 1024)
+	for i := 0; i < len(rowsCache); i++ {
+		rowsCache[i] = make([]types.Datum, columnLen)
+	}
+	rowsCacheIndex := 0
+	datumRow := make([]types.Datum, columnLen)
+	hasValue := make([]bool, columnLen)
 	for {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil
@@ -778,18 +787,30 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 		case <-ctx.Done():
 			return nil
 		}
-		rows = make([][]types.Datum, 0, chk.NumRows())
+		rows = rows[:0]
+		rowsCacheIndex = 0
 		iter := chunk.NewIterator4Chunk(chk)
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-			innerRow := innerChunkRow.GetDatumRow(fields)
+			length := innerChunkRow.Len()
+			if length > cap(datumRow) {
+				datumRow = make([]types.Datum, length)
+			} else {
+				datumRow = datumRow[:length]
+			}
+			datumRow := innerChunkRow.GetDatumRowWithBuffer(fields, datumRow)
 			var row []types.Datum
-			row, err = e.getRow(ctx, innerRow)
+			if rowsCacheIndex >= len(rowsCache) {
+				rowsCache = append(rowsCache, make([]types.Datum, columnLen))
+			}
+			row = rowsCache[rowsCacheIndex]
+			rowsCacheIndex++
+			row, err = e.getRowWithBuffer(ctx, datumRow, row, hasValue)
 			if err != nil {
 				logutil.Logger(ctx).Error("parallel insert get row error", zap.Error(err))
 				return err
 			}
 			if extraColsInSel != nil {
-				extraColsInSel = append(extraColsInSel, innerRow[e.rowLen:])
+				extraColsInSel = append(extraColsInSel, datumRow[e.rowLen:])
 			}
 			rows = append(rows, row)
 		}
@@ -834,6 +855,31 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 		offset := e.insertColumns[i].Offset
 		row[offset] = casted
 		hasValue[offset] = true
+	}
+
+	return e.fillRow(ctx, row, hasValue)
+}
+
+// Buffer(row and hasValue) may has some dirty values, so need to set zero value.
+func (e *InsertValues) getRowWithBuffer(ctx context.Context, vals []types.Datum, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
+	length := len(e.Table.Cols())
+	for i := 0; i < length; i++ {
+		hasValue[i] = false
+	}
+	for i := 0; i < e.rowLen; i++ {
+		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
+		if e.handleErr(nil, &vals[i], 0, err) != nil {
+			return nil, err
+		}
+
+		offset := e.insertColumns[i].Offset
+		row[offset] = casted
+		hasValue[offset] = true
+	}
+	for i := 0; i < length; i++ {
+		if !hasValue[i] {
+			row[i] = types.Datum{}
+		}
 	}
 
 	return e.fillRow(ctx, row, hasValue)
