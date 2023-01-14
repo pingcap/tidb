@@ -778,7 +778,7 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 		rowsCache[i] = make([]types.Datum, columnLen)
 	}
 	rowsCacheIndex := 0
-	datumRow := make([]types.Datum, columnLen) // nolint:makezero
+	datumRow := make([]types.Datum, columnLen) //nolint:makezero
 	hasValue := make([]bool, columnLen)
 	for {
 		if atomic.LoadUint32(killed) == 1 {
