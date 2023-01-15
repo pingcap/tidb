@@ -787,3 +787,57 @@ func TestLimitUnsupportedCase(t *testing.T) {
 	tk.MustExec("set @a = 1_2")
 	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 }
+
+func TestSetPCLimitAndSubquerySwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit=OFF;")
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit=1;")
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit=off;")
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit=ON;")
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("1"))
+	//
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_subquery=OFF;")
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_subquery=1;")
+	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_for_subquery=off;")
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_for_subquery=ON;")
+	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("1"))
+}
+
+func TestPCLimitAndSubquerySwitch(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+
+	// todo: after feature pr merged, supply cases
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit = OFF;")
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
+
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_subquery = OFF;")
+	tk.MustExec("prepare stmt from 'select * from t t1 where t1.a > (select 1 from t t2 where t2.a < ?)'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+}
