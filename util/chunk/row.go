@@ -122,7 +122,7 @@ func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
 // GetDatumRowWithBuffer gets datum using the buffer datumRow.
 func (r Row) GetDatumRowWithBuffer(fields []*types.FieldType, datumRow []types.Datum) []types.Datum {
 	for colIdx := 0; colIdx < len(datumRow); colIdx++ {
-		r.GetDatumWithBuffer(colIdx, fields[colIdx], &datumRow[colIdx])
+		r.SetDatumFromBuffer(colIdx, fields[colIdx], &datumRow[colIdx])
 	}
 	return datumRow
 }
@@ -130,12 +130,12 @@ func (r Row) GetDatumRowWithBuffer(fields []*types.FieldType, datumRow []types.D
 // GetDatum implements the chunk.Row interface.
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
-	r.GetDatumWithBuffer(colIdx, tp, &d)
+	r.SetDatumFromBuffer(colIdx, tp, &d)
 	return d
 }
 
-// GetDatumWithBuffer gets datum using the buffer d.
-func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) types.Datum {
+// SetDatumFromBuffer sets the given datum using the buffer d.
+func (r Row) SetDatumFromBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if !r.IsNull(colIdx) {
@@ -205,7 +205,6 @@ func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum)
 	if r.IsNull(colIdx) {
 		d.SetNull()
 	}
-	return *d
 }
 
 // GetRaw returns the underlying raw bytes with the colIdx.
