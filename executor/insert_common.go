@@ -804,9 +804,9 @@ func insertRowsFromSelectWorker(ctx context.Context, base insertCommon, batchSiz
 				}
 			} else {
 				datumRow = datumRow[:length]
-				for i := 0; i < length; i++ {
-					datumRow[i] = types.Datum{}
-				}
+			}
+			for i := 0; i < length; i++ {
+				datumRow[i] = types.Datum{}
 			}
 			datumRow := innerChunkRow.GetDatumRowWithBuffer(fields, datumRow)
 			var row []types.Datum
