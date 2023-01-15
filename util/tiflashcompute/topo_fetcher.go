@@ -107,7 +107,6 @@ type MockTopoFetcher struct {
 	mu struct {
 		sync.RWMutex
 		topo   []string
-		topoTS int64
 	}
 	// Mock AutoScaler addr.
 	addr string
@@ -117,7 +116,6 @@ type MockTopoFetcher struct {
 func NewMockAutoScalerFetcher(addr string) *MockTopoFetcher {
 	f := &MockTopoFetcher{}
 	f.mu.topo = make([]string, 0, 8)
-	f.mu.topoTS = -1
 	f.addr = addr
 	return f
 }
@@ -230,4 +228,31 @@ func httpGetAndParseResp(url string) ([]string, error) {
 	}
 	logutil.BgLogger().Debug("assureTopo succeed", zap.Any("new topo", newTopo))
 	return newTopo, nil
+}
+
+type AWSTopoFetcher struct {
+	mu struct {
+		sync.RWMutex
+		topo []string
+		topoTS int64
+	}
+	// AWS AutoScaler addr.
+	addr string
+	IsFixedPool bool
+}
+
+func NewAWSAutoScalerFetcher(addr string) *AWSTopoFetcher {
+	f := &AWSTopoFetcher{}
+	f.mu.topo = make([]string, 0, 8)
+	f.mu.topoTS = -1
+	f.addr = addr
+	return f
+}
+
+func (f *AWSTopoFetcher) AssureAndGetTopo() ([]string, error) {
+	return nil, nil
+}
+
+func (f *AWSTopoFetcher) FetchAndGetTopo() ([]string, error) {
+	return nil, nil
 }
