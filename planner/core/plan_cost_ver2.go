@@ -597,7 +597,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	probeCost := divCostVer2(mulCostVer2(probeChildCost, buildRows), batchRatio)
 
 	// Double Read Cost
-	doubleReadCost := zeroCostVer2
+	doubleReadCost := newZeroCostVer2(traceCost(option))
 	if p.ctx.GetSessionVars().IndexJoinDoubleReadPenaltyCostRate > 0 &&
 		buildRows > 10000 { // ignore double-read costs for small IndexJoin
 		batchSize := float64(p.ctx.GetSessionVars().IndexJoinBatchSize)

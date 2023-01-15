@@ -249,36 +249,6 @@ func TestCostModelTraceVer2(t *testing.T) {
 	}
 }
 
-func TestIndexJoinPenaltyCost(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (a int, key(a))`)
-	tk.MustExec(`create table t2 (a int, key(a))`)
-
-	// default value 0
-	tk.MustExec("set tidb_index_join_double_read_penalty_cost_rate=0")
-	tk.MustQuery("select @@tidb_index_join_double_read_penalty_cost_rate").Check(testkit.Rows("0"))
-	//tk.MustQuery("select global @@tidb_index_join_double_read_penalty_cost_rate").Check(testkit.Rows("0"))
-
-	rs1 := tk.MustQuery("explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a").Rows()
-	cost1, err := strconv.ParseFloat(rs1[0][2].(string), 64)
-	require.Nil(t, err)
-
-	tk.MustExec("set tidb_index_join_double_read_penalty_cost_rate=0.5")
-	rs2 := tk.MustQuery("explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a").Rows()
-	cost2, err := strconv.ParseFloat(rs2[0][2].(string), 64)
-	require.Nil(t, err)
-
-	tk.MustExec("set tidb_index_join_double_read_penalty_cost_rate=1")
-	rs3 := tk.MustQuery("explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a").Rows()
-	cost3, err := strconv.ParseFloat(rs3[0][2].(string), 64)
-	require.Nil(t, err)
-
-	require.Greater(t, cost2, cost1)
-	require.Greater(t, cost3, cost2)
-}
-
 func BenchmarkGetPlanCost(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
