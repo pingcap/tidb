@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	res "github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -529,10 +530,10 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 
 	var (
 		interval  ast.PartitionInterval
-		startIdx  int    = 0
-		endIdx    int    = len(tbInfo.Partition.Definitions) - 1
-		isIntType bool   = true
-		minVal    string = "0"
+		startIdx  = 0
+		endIdx    = len(tbInfo.Partition.Definitions) - 1
+		isIntType = true
+		minVal    = "0"
 	)
 	if len(tbInfo.Partition.Columns) > 0 {
 		partCol := findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
@@ -1761,7 +1762,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				return ver, err1
 			}
 			defer w.sessPool.put(sctx)
-			rh := newReorgHandler(newSession(sctx))
+			rh := newReorgHandler(res.NewSession(sctx))
 			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
@@ -2085,8 +2086,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			if err != nil {
 				failpoint.Return(ver, err)
 			}
-			sess := newSession(se)
-			_, err = sess.execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
+			sess := res.NewSession(se)
+			_, err = sess.Execute(context.Background(), "insert ignore into test.pt values (40000000)", "exchange_partition_test")
 			if err != nil {
 				failpoint.Return(ver, err)
 			}

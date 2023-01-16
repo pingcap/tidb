@@ -1104,6 +1104,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrColumnInChange:               mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
 	ErrResourceGroupSupportDisabled: mysql.Message("Resource group feature is disabled", nil),
 
+	// TiDB resource management errors
+	ErrUnsupportedBackendOpType: mysql.Message("'%s' is unsupported PAUSE/RESUME operation type.", nil),
+	ErrDuplicatePauseOperation:  mysql.Message("'%s' is duplicate for PAUSE operation type.", nil),
+	ErrNoCounterPauseForResume:  mysql.Message("'%s' no PAUSE operation issued for RESUME operation type.", nil),
+	ErrOnExecOperation:          mysql.Message("'%s' Exec PAUSE or RESUME operation issued error", nil),
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),

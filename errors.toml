@@ -2336,6 +2336,26 @@ error = '''
 %s is not granted to %s
 '''
 
+["resource:8300"]
+error = '''
+'%s' is unsupported PAUSE/RESUME operation type.
+'''
+
+["resource:8301"]
+error = '''
+'%s' is duplicate for PAUSE operation type.
+'''
+
+["resource:8302"]
+error = '''
+'%s' no PAUSE operation issued for RESUME operation type.
+'''
+
+["resource:8303"]
+error = '''
+'%s' Exec PAUSE or RESUME operation issued error
+'''
+
 ["schema:1007"]
 error = '''
 Can't create database '%-.192s'; database exists

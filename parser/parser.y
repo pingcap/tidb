@@ -502,6 +502,7 @@ import (
 	partitioning          "PARTITIONING"
 	partitions            "PARTITIONS"
 	password              "PASSWORD"
+	pause                 "PAUSE"
 	percent               "PERCENT"
 	per_db                "PER_DB"
 	per_table             "PER_TABLE"
@@ -6488,6 +6489,7 @@ UnReservedKeyword:
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"PAUSE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -10577,6 +10579,21 @@ AdminStmt:
 		ret.LimitSimple.Count = $6.(*ast.LimitSimple).Count
 		ret.LimitSimple.Offset = $6.(*ast.LimitSimple).Offset
 		$$ = ret
+	}
+|	"ADMIN" "PAUSE" Identifier ForceOpt
+	{
+		$$ = &ast.AdminStmt{
+			Tp:       ast.AdminPause,
+			TaskType: strings.ToUpper($3),
+			Force:    $4.(bool),
+		}
+	}
+|	"ADMIN" "RESUME" Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp:       ast.AdminResume,
+			TaskType: strings.ToUpper($3),
+		}
 	}
 |	"ADMIN" "SHOW" "SLOW" AdminShowSlow
 	{

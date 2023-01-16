@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	res "github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -747,10 +748,10 @@ func canUseIngest(w *worker) bool {
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
 func IngestJobsNotExisted(ctx sessionctx.Context) bool {
-	sess := session{ctx}
+	sess := res.Session{Context: ctx}
 	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
 	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
-	rows, err := sess.execute(context.Background(), sql, "check-pitr")
+	rows, err := sess.Execute(context.Background(), sql, "check-pitr")
 	if err != nil {
 		logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
 		return false
@@ -888,7 +889,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return
 	}
 	defer w.sessPool.put(sctx)
-	rh := newReorgHandler(newSession(sctx))
+	rh := newReorgHandler(res.NewSession(sctx))
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return false, ver, errors.Trace(err)
@@ -1280,9 +1281,9 @@ func (w *baseIndexWorker) String() string {
 }
 
 func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
-	s := newSession(w.backfillCtx.sessCtx)
+	s := res.NewSession(w.backfillCtx.sessCtx)
 
-	return s.runInTxn(func(se *session) error {
+	return res.RunInTxn(s, func(se *res.Session) error {
 		jobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
 			bfJob.JobID, bfJob.EleID, bfJob.EleKey, bfJob.ID), "update_backfill_task")
 		if err != nil {
@@ -1305,9 +1306,9 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 }
 
 func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
-	s := newSession(w.backfillCtx.sessCtx)
-	return s.runInTxn(func(se *session) error {
-		txn, err := se.txn()
+	s := res.NewSession(w.backfillCtx.sessCtx)
+	return res.RunInTxn(s, func(se *res.Session) error {
+		txn, err := se.GetTxn()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1712,7 +1713,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 				return errors.Trace(err)
 			}
 			defer w.sessPool.put(sCtx)
-			return w.controlWritePhysicalTableRecord(newSession(sCtx), phyTbl, typeAddIndexWorker, reorgInfo)
+			return w.controlWritePhysicalTableRecord(res.NewSession(sCtx), phyTbl, typeAddIndexWorker, reorgInfo)
 		}
 		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
 	}

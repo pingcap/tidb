@@ -131,6 +131,23 @@ type CancelDDLJobs struct {
 	JobIDs []int64
 }
 
+// PauseBackendTask represents a Pause DDL backend tasks plan.
+type PauseBackendTask struct {
+	baseSchemaProducer
+
+	OriginalSQL string
+	TaskType    string
+	Force       bool
+}
+
+// ResumeBackendTask represents a Resume DDL backend tasks plan.
+type ResumeBackendTask struct {
+	baseSchemaProducer
+
+	OriginalSQL string
+	TaskType    string
+}
+
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
 type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer

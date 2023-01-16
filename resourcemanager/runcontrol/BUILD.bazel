@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "runcontrol",
+    srcs = ["operation.go"],
+    importpath = "github.com/pingcap/tidb/resourcemanager/runcontrol",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//resourcemanager",
+        "//sessionctx",
+        "//util/dbterror",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)
+
+go_test(
+    name = "runcontrol_test",
+    srcs = ["operation_test.go"],
+    deps = [
+        "//errno",
+        "//testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

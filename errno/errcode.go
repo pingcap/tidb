@@ -1097,6 +1097,12 @@ const (
 	ErrResourceGroupNotExists             = 8249
 	ErrResourceGroupSupportDisabled       = 8250
 
+	// TiDB resource management errors
+	ErrUnsupportedBackendOpType = 8300
+	ErrDuplicatePauseOperation  = 8301
+	ErrNoCounterPauseForResume  = 8302
+	ErrOnExecOperation          = 8303
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
