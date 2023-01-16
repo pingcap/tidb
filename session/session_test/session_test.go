@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
@@ -4101,5 +4102,9 @@ func TestHandleAssertionFailureForPartitionedTable(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
 	failpoint.Enable("github.com/pingcap/tidb/table/tables/addRecordForceAssertExist", "return")
 	defer failpoint.Disable("github.com/pingcap/tidb/table/tables/addRecordForceAssertExist")
-	tk.MustExec("insert into t values (1, 1, 1)")
+
+	ctx, hook := testutil.WithLogHook(context.TODO(), t, "table")
+	_, err := tk.ExecWithContext(ctx, "insert into t values (1, 1, 1)")
+	require.ErrorContains(t, err, "assertion")
+	hook.CheckLogCount(t, 0)
 }
