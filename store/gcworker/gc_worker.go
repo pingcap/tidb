@@ -303,7 +303,6 @@ func (w *GCWorker) tick(ctx context.Context) {
 
 // getGCSafePoint returns the current gc safe point.
 func getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
-
 	// If there is try to set gc safepoint is 0, the interface will not set gc safepoint to 0,
 	// it will return current gc safepoint.
 	safePoint, err := pdClient.UpdateGCSafePoint(ctx, 0)
@@ -314,10 +313,12 @@ func getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
 }
 
 func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) error {
-
-	// Get safepoint from PD.
+	// Get safe point from PD.
 	safePoint, err := getGCSafePoint(ctx, w.pdClient)
-
+	if safePoint == 0 {
+		logutil.Logger(ctx).Info("[gc worker] get gc safe point error", zap.Error(errors.Trace(err)))
+		return nil
+	}
 	keyspaceID := w.store.GetCodec().GetKeyspaceID()
 	logutil.Logger(ctx).Info("[gc worker] start keyspace delete range",
 		zap.String("uuid", w.uuid),
@@ -326,7 +327,7 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) 
 		zap.Uint64("GCSafepoint", safePoint))
 
 	if safePoint == 0 {
-		logutil.Logger(ctx).Info("[gc worker] skip keyspace delete range, because gc safepoint is 0")
+		logutil.Logger(ctx).Info("[gc worker] skip keyspace delete range, because gc safe point is 0")
 		return nil
 	}
 
@@ -371,7 +372,6 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 
 	// Do keyspace delete range
 	if w.store.GetCodec().GetKeyspace() == nil {
-
 		// When the worker is just started, or an old GC job has just finished,
 		// wait a while before starting a new job.
 		if time.Since(w.lastFinish) < gcWaitTime {

@@ -967,7 +967,6 @@ func (do *Domain) Init(
 			return err
 		}
 		if addrs != nil {
-
 			cli, err := newEtcdCli(addrs, ebd)
 			if err != nil {
 				return errors.Trace(err)
