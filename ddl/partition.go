@@ -184,7 +184,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			// For available state, the new added partition should wait it's replica to
 			// be finished. Otherwise the query to this partition will be blocked.
-			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, d)
+			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, 1, addingDefinitions, d)
 			if err != nil {
 				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 			}
@@ -352,10 +352,15 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 	return nil
 }
 
-func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
+func checkPartitionReplica(replicaCount, minCount uint64, addingDefinitions []model.PartitionDefinition, d *ddlCtx) (needWait bool, err error) {
 	failpoint.Inject("mockWaitTiFlashReplica", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(true, nil)
+		}
+	})
+	failpoint.Inject("mockWaitTiFlashReplicaOK", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(false, nil)
 		}
 	})
 
@@ -388,17 +393,17 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 			if err != nil {
 				return needWait, errors.Trace(err)
 			}
-			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
+			tiflashPeerOK := checkTiFlashPeerStore(stores, minCount, regionState.Meta.Peers)
 			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
-				tiflashPeerAtLeastOne = v.(bool)
+				tiflashPeerOK = v.(bool)
 			})
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
-			if tiflashPeerAtLeastOne {
+			if tiflashPeerOK {
 				continue
 			}
 			needWait = true
-			logutil.BgLogger().Info("[ddl] partition replicas check failed in replica-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Meta.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
+			logutil.BgLogger().Info("[ddl] partition replicas check failed in replica-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Meta.Id), zap.Bool("tiflash peer count OK", tiflashPeerOK), zap.Time("check time", time.Now()))
 			return needWait, nil
 		}
 	}
@@ -406,11 +411,15 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 	return needWait, nil
 }
 
-func checkTiFlashPeerStoreAtLeastOne(stores []*metapb.Store, peers []*metapb.Peer) bool {
+func checkTiFlashPeerStore(stores []*metapb.Store, minCount uint64, peers []*metapb.Peer) bool {
+	cnt := uint64(0)
 	for _, peer := range peers {
 		for _, store := range stores {
 			if peer.StoreId == store.Id && storeHasEngineTiFlashLabel(store) {
-				return true
+				cnt++
+				if cnt >= minCount {
+					return true
+				}
 			}
 		}
 	}
@@ -1710,6 +1719,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
 		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
 		if err != nil {
+			// Why cancel here and not try to clean up as much as possible?
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
@@ -1812,6 +1822,22 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				}
 				return ver, errors.Trace(err)
 			}
+		}
+		if tblInfo.TiFlashReplica != nil {
+			// Remove the partitions
+			ids := tblInfo.TiFlashReplica.AvailablePartitionIDs
+			// Rarely called, so OK to take some time, to make it easy
+			for _, id := range physicalTableIDs {
+				for i, avail := range ids {
+					if id == avail {
+						tmp := ids[:i]
+						tmp = append(tmp, ids[i+1:]...)
+						ids = tmp
+						break
+					}
+				}
+			}
+			tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 		}
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
@@ -2374,7 +2400,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			// For available state, the new added partition should wait its replica to
 			// be finished, otherwise the query to this partition will be blocked.
 			count := tblInfo.TiFlashReplica.Count
-			needRetry, err := checkPartitionReplica(count, addingDefinitions, d)
+			needRetry, err := checkPartitionReplica(count, count, addingDefinitions, d)
 			if err != nil {
 				// need to rollback, since we tried to register the new
 				// partitions before!
@@ -2786,6 +2812,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		// First run, have not yet started backfilling index data
 		// Restart with the first new partition.
 		// TODO: handle remove partitioning
+		// TODO: Check if there is a better way to restart?
 		reorgInfo.PhysicalTableID = firstNewPartitionID
 	} else {
 		// The job was interrupted and has been restarted,

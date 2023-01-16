@@ -1745,6 +1745,8 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	}
 	if pid == 0 {
 		// Next partition does not exist, all the job done.
+		// TODO: Remove the ReorgMeta job?
+		// Or better, set to last key, since already processed!
 		return true, nil
 	}
 

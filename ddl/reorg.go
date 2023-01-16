@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -300,6 +301,11 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if progress > 1 {
 			progress = 1
 		}
+		// TODO: change back to Debug
+		logutil.BgLogger().Info("[ddl] update progress",
+			zap.Float64("progress", progress),
+			zap.Int64("addedRowCount", addedRowCount),
+			zap.Int64("totalCount", totalCount))
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
@@ -330,9 +336,20 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if !ok {
 		return statistics.PseudoRowCount
 	}
-	// TODO: if Reorganize Partition, only select number of rows from the selected partitions!
-	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	rows, _, err := executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+	var rows []chunk.Row
+	if tblInfo.Partition != nil && len(tblInfo.Partition.DroppingDefinitions) > 0 {
+		// if Reorganize Partition, only select number of rows from the selected partitions!
+		defs := tblInfo.Partition.DroppingDefinitions
+		partIDs := make([]string, 0, len(defs))
+		for _, def := range defs {
+			partIDs = append(partIDs, strconv.FormatInt(def.ID, 10))
+		}
+		sql := "select sum(table_rows) from information_schema.partitions where tidb_partition_id in (%?);"
+		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, strings.Join(partIDs, ","))
+	} else {
+		sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
+		rows, _, err = executor.ExecRestrictedSQL(w.ctx, nil, sql, tblInfo.ID)
+	}
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
@@ -553,12 +570,12 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
-		logutil.BgLogger().Info("[ddl] get noop table range",
+		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle",
 			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
-			zap.String("start key", hex.EncodeToString(startHandleKey)),
-			zap.String("end key", hex.EncodeToString(endHandleKey)),
-			zap.Bool("is empty table", isEmptyTable))
+			zap.Bool("isEmptyTable", isEmptyTable),
+			zap.String("endHandle", hex.EncodeToString(endHandleKey)),
+			zap.String("startHandle", hex.EncodeToString(startHandleKey)))
 		endHandleKey = startHandleKey
 	}
 	return
@@ -694,7 +711,6 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 		}
 		pid = partitionIDs[0]
 		physTbl := tbl.GetPartition(pid)
-
 		start, end, err = getTableRange(ctx, d, physTbl, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)

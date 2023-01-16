@@ -288,6 +288,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdStoreSafeTS:
 		resp.Resp, err = c.usSvr.GetStoreSafeTS(ctx, req.StoreSafeTS())
 		return resp, err
+	case tikvrpc.CmdUnsafeDestroyRange:
+		// Pretend it was done. Unistore does not have and "destroy", and the
+		// keys has already been removed one-by-one before through:
+		// (dr *delRange) startEmulator()
+		resp.Resp = &kvrpcpb.UnsafeDestroyRangeResponse{}
+		return resp, nil
 	default:
 		err = errors.Errorf("not support this request type %v", req.Type)
 	}
