@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//resourcemanager/scheduler",
+        "//resourcemanager/taskgroup",
         "//resourcemanager/util",
         "//util",
         "//util/cpu",
