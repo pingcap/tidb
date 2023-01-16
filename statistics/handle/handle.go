@@ -66,11 +66,19 @@ const (
 
 // Handle can update stats info periodically.
 type Handle struct {
+
+	// initStatsCtx is the ctx only used for initStats
+	initStatsCtx sessionctx.Context
+
 	mu struct {
 		syncutil.RWMutex
 		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
+	}
+
+	schemaMu struct {
+		sync.RWMutex
 		// pid2tid is the map from partition ID to table ID.
 		pid2tid map[int64]int64
 		// schemaVersion is the version of information schema when `pid2tid` is built.
@@ -468,7 +476,7 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
+func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
 		ddlEventCh:       make(chan *ddlUtil.Event, 1000),
@@ -478,6 +486,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tr
 		sysProcTracker:   tracker,
 		serverIDGetter:   serverIDGetter,
 	}
+	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
@@ -941,11 +950,13 @@ func (h *Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchS
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	if is.SchemaMetaVersion() != h.mu.schemaVersion {
-		h.mu.schemaVersion = is.SchemaMetaVersion()
-		h.mu.pid2tid = buildPartitionID2TableID(is)
+	h.schemaMu.Lock()
+	defer h.schemaMu.Unlock()
+	if is.SchemaMetaVersion() != h.schemaMu.schemaVersion {
+		h.schemaMu.schemaVersion = is.SchemaMetaVersion()
+		h.schemaMu.pid2tid = buildPartitionID2TableID(is)
 	}
-	if id, ok := h.mu.pid2tid[physicalID]; ok {
+	if id, ok := h.schemaMu.pid2tid[physicalID]; ok {
 		return is.TableByID(id)
 	}
 	return is.TableByID(physicalID)
