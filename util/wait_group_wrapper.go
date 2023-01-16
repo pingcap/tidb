@@ -50,6 +50,7 @@ func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess(exit chan struct{}) {
 		ticker := time.NewTimer(10 * time.Second)
 		defer ticker.Stop()
 		for {
+			<-ticker.C
 			continueCheck := w.check()
 			if !continueCheck {
 				return
