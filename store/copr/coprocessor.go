@@ -392,7 +392,8 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				RowCountHint:  hint,
 			}
 			// only keep-order need chan inside task.
-			if req.KeepOrder {
+			// tasks by region error will reuse the channel of parent task.
+			if req.KeepOrder && opt.respChan {
 				task.respChan = make(chan *copResponse, chanSize)
 			}
 			if err = builder.handle(task); err != nil {
