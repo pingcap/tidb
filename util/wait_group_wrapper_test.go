@@ -36,8 +36,7 @@ func TestWaitGroupWrapperRun(t *testing.T) {
 	require.Equal(t, expect, val.Load())
 
 	val.Store(0)
-	exited := atomic.NewBool(false)
-	wg2 := NewWaitGroupEnhancedWrapper("", exited)
+	wg2 := NewWaitGroupEnhancedWrapper("", nil)
 	for i := int32(0); i < expect; i++ {
 		wg2.Run(func() {
 			val.Inc()
@@ -62,8 +61,7 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 	require.Equal(t, expect, val.Load())
 
 	val.Store(0)
-	exited := atomic.NewBool(false)
-	wg2 := NewWaitGroupEnhancedWrapper("", exited)
+	wg2 := NewWaitGroupEnhancedWrapper("",, nil)
 	for i := int32(0); i < expect; i++ {
 		wg2.RunWithRecover(func() {
 			panic("test1")
@@ -76,8 +74,8 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 }
 
 func TestWaitGroupWrapperCheck(t *testing.T) {
-	exited := atomic.NewBool(false)
-	wg := NewWaitGroupEnhancedWrapper("", exited)
+	exit := make(chan struct{})
+	wg := NewWaitGroupEnhancedWrapper("", exit)
 	quit := make(chan struct{})
 	wg.Run(func() {
 		<-quit
@@ -87,7 +85,7 @@ func TestWaitGroupWrapperCheck(t *testing.T) {
 	require.True(t, wg.check())
 
 	// need continue check as existed unexited process
-	exited.Store(true)
+	close(exit)
 	require.True(t, wg.check())
 
 	// no need to continue check as all process exited
