@@ -2262,18 +2262,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		if err != nil {
 			return ver, err
 		}
-		var sctx sessionctx.Context
-		if w.sess == nil {
-			tmpSession, err := w.sessPool.get()
-			defer w.sessPool.put(tmpSession)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			sctx = tmpSession
-		} else {
-			sctx = w.sess.Context
-		}
+		sctx := w.sess.Context
 		if err = checkReorgPartitionDefs(sctx, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
 			return ver, err
 		}
