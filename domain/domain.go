@@ -1947,7 +1947,7 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	for i, ctx := range ctxList {
 		statsHandle.StatsLoad.SubCtxs[i] = ctx
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
+		go statsHandle.SubLoadWorker(ctx, do.exit, &do.wg)
 	}
 }
 
@@ -2532,7 +2532,7 @@ func (do *Domain) StartTTLJobManager() {
 		if err != nil {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
-	}, "ttlJobManager")
+	})
 }
 
 // TTLJobManager returns the ttl job manager on this domain
