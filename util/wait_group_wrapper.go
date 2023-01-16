@@ -32,20 +32,26 @@ type WaitGroupEnhancedWrapper struct {
 
 // NewWaitGroupEnhancedWrapper returns WaitGroupEnhancedWrapper, the empty source indicates the unit test, then
 // the `checkUnExitedProcess` won't be executed.
-func NewWaitGroupEnhancedWrapper(source string, exit chan struct{}) *WaitGroupEnhancedWrapper {
+func NewWaitGroupEnhancedWrapper(source string, exit chan struct{}, exitedCheck bool) *WaitGroupEnhancedWrapper {
 	wgew := &WaitGroupEnhancedWrapper{
 		source:          source,
 		registerProcess: sync.Map{},
 	}
-	if len(source) > 0 {
+	if exitedCheck {
+		wgew.Add(1)
 		go wgew.checkUnExitedProcess(exit)
 	}
 	return wgew
 }
 
 func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess(exit chan struct{}) {
+	defer func() {
+		logutil.BgLogger().Info("waitGroupWrapper exit-checking exited", zap.String("source", w.source))
+		w.Done()
+	}()
+	logutil.BgLogger().Info("waitGroupWrapper enable exit-checking", zap.String("source", w.source))
 	<-exit
-	logutil.BgLogger().Info("waitGroupWrapper ready to check unexited process", zap.String("source", w.source))
+	logutil.BgLogger().Info("waitGroupWrapper start exit-checking", zap.String("source", w.source))
 	if w.check() {
 		ticker := time.NewTimer(10 * time.Second)
 		defer ticker.Stop()

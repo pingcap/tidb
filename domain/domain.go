@@ -921,7 +921,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsIdsMap: make(map[int64]string),
 		},
 	}
-	do.ewg = util.NewWaitGroupEnhancedWrapper("domain", do.exit)
+	do.ewg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, enableEnhancedWaitGroupCheck.Load())
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
@@ -1707,10 +1707,17 @@ func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
 }
 
 var planReplayerHandleLease atomic.Uint64
+var enableEnhancedWaitGroupCheck atomic.Bool
 
 func init() {
 	planReplayerHandleLease.Store(uint64(10 * time.Second))
 	enableDumpHistoricalStats.Store(true)
+	enableEnhancedWaitGroupCheck.Store(true)
+}
+
+// DisableEnhancedWaitGroupCheck4Test diable check in test
+func DisableEnhancedWaitGroupCheck4Test() {
+	enableEnhancedWaitGroupCheck.Store(false)
 }
 
 // DisablePlanReplayerBackgroundJob4Test disable plan replayer handle for test
@@ -1924,7 +1931,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
-		do.ewg.Run(do.loadStatsWorker, "loadStatsWorker")
+		do.wg.Run(do.loadStatsWorker)
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
