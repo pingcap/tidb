@@ -35,9 +35,9 @@ func mockGenPromQL(promQL string) string {
 func TestMetricSchemaDef(t *testing.T) {
 	for name, def := range infoschema.MetricTableMap {
 		if strings.Contains(def.PromQL, "$QUANTILE") || strings.Contains(def.PromQL, "histogram_quantile") {
-			require.Greaterf(t, def.Quantile, float64(0), "the quantile of metric table %v should > 0", name)
+			require.Truef(t, def.HasQuantile(), "the metric table %v should define at least one quantiles", name)
 		} else {
-			require.Equalf(t, float64(0), def.Quantile, "metric table %v has quantile, but doesn't contain $QUANTILE in promQL ", name)
+			require.Falsef(t, def.HasQuantile(), "metric table %v has quantile, but doesn't contain $QUANTILE in promQL ", name)
 		}
 		if strings.Contains(def.PromQL, "$LABEL_CONDITIONS") {
 			require.Greaterf(t, len(def.Labels), 0, "the labels of metric table %v should not be nil", name)

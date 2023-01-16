@@ -72,7 +72,11 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	totalRows := make([][]types.Datum, 0)
 	quantiles := e.extractor.Quantiles
 	if len(quantiles) == 0 {
-		quantiles = []float64{tblDef.Quantile}
+		if len(tblDef.Quantiles) == 0 {
+			quantiles = []float64{0}
+		} else {
+			quantiles = tblDef.Quantiles
+		}
 	}
 	for _, quantile := range quantiles {
 		var queryValue pmodel.Value
@@ -170,7 +174,7 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 		}
 		record = append(record, types.NewStringDatum(v))
 	}
-	if e.tblDef.Quantile > 0 {
+	if e.tblDef.HasQuantile() {
 		record = append(record, types.NewFloat64Datum(quantile))
 	}
 	if math.IsNaN(float64(pair.Value)) {
@@ -218,7 +222,7 @@ func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.
 			continue
 		}
 		var sql string
-		if def.Quantile > 0 {
+		if len(def.Quantiles) > 0 {
 			var qs []string
 			if len(e.extractor.Quantiles) > 0 {
 				for _, q := range e.extractor.Quantiles {
@@ -241,7 +245,7 @@ func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.
 		}
 		for _, row := range rows {
 			var quantile interface{}
-			if def.Quantile > 0 {
+			if def.HasQuantile() {
 				quantile = row.GetFloat64(row.Len() - 1)
 			}
 			totalRows = append(totalRows, types.MakeDatums(
@@ -296,7 +300,7 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 		}
 		cols := def.Labels
 		cond := condition
-		if def.Quantile > 0 {
+		if def.HasQuantile() {
 			cols = append(cols, "quantile")
 			if len(e.extractor.Quantiles) > 0 {
 				qs := make([]string, len(e.extractor.Quantiles))
@@ -342,7 +346,7 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 				labels = append(labels, val)
 			}
 			var quantile interface{}
-			if def.Quantile > 0 {
+			if def.HasQuantile() {
 				quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 			}
 			totalRows = append(totalRows, types.MakeDatums(

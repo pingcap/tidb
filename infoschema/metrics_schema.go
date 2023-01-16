@@ -62,10 +62,10 @@ func init() {
 
 // MetricTableDef is the metric table define.
 type MetricTableDef struct {
-	PromQL   string
-	Labels   []string
-	Quantile float64
-	Comment  string
+	PromQL    string
+	Labels    []string
+	Quantiles []float64
+	Comment   string
 }
 
 // IsMetricTable uses to checks whether the table is a metric table.
@@ -83,6 +83,11 @@ func GetMetricTableDef(lowerTableName string) (*MetricTableDef, error) {
 	return &def, nil
 }
 
+// HasQuantile returns whether this metric table defines quantile fields.
+func (def *MetricTableDef) HasQuantile() bool {
+	return len(def.Quantiles) > 0
+}
+
 func (def *MetricTableDef) genColumnInfos() []columnInfo {
 	cols := []columnInfo{
 		{name: "time", tp: mysql.TypeDatetime, size: 19, deflt: "CURRENT_TIMESTAMP"},
@@ -90,8 +95,8 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 	for _, label := range def.Labels {
 		cols = append(cols, columnInfo{name: label, tp: mysql.TypeVarchar, size: 512})
 	}
-	if def.Quantile > 0 {
-		defaultValue := strconv.FormatFloat(def.Quantile, 'f', -1, 64)
+	if def.HasQuantile() {
+		defaultValue := strconv.FormatFloat(def.Quantiles[0], 'f', -1, 64)
 		cols = append(cols, columnInfo{name: "quantile", tp: mysql.TypeDouble, size: 22, deflt: defaultValue})
 	}
 	cols = append(cols, columnInfo{name: "value", tp: mysql.TypeDouble, size: 22})

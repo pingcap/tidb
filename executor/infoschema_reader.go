@@ -1604,14 +1604,23 @@ func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
 	rows := make([][]types.Datum, 0, len(tables))
 	for _, name := range tables {
 		schema := infoschema.MetricTableMap[name]
-		record := types.MakeDatums(
-			name,                             // METRICS_NAME
-			schema.PromQL,                    // PROMQL
-			strings.Join(schema.Labels, ","), // LABELS
-			schema.Quantile,                  // QUANTILE
-			schema.Comment,                   // COMMENT
-		)
-		rows = append(rows, record)
+		labels := strings.Join(schema.Labels, ",")
+		var quantiles []float64
+		if schema.HasQuantile() {
+			quantiles = schema.Quantiles
+		} else {
+			quantiles = []float64{0}
+		}
+		for _, quantile := range quantiles {
+			record := types.MakeDatums(
+				name,           // METRICS_NAME
+				schema.PromQL,  // PROMQL
+				labels,         // LABELS
+				quantile,       // QUANTILE
+				schema.Comment, // COMMENT
+			)
+			rows = append(rows, record)
+		}
 	}
 	e.rows = rows
 }

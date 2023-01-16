@@ -441,7 +441,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 			cols := def.Labels
 			comment := def.Comment
 			cond := condition
-			if def.Quantile > 0 {
+			if def.HasQuantile() {
 				cols = append(cols, "quantile")
 				if len(e.extractor.Quantiles) > 0 {
 					qs := make([]string, len(e.extractor.Quantiles))
@@ -487,7 +487,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					labels = append(labels, val)
 				}
 				var quantile interface{}
-				if def.Quantile > 0 {
+				if def.HasQuantile() {
 					quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 				}
 				finalRows = append(finalRows, types.MakeDatums(

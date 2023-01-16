@@ -977,7 +977,7 @@ func (e *MetricTableExtractor) GetMetricTablePromQL(sctx sessionctx.Context, low
 		return ""
 	}
 	if len(quantiles) == 0 {
-		quantiles = []float64{def.Quantile}
+		quantiles = def.Quantiles
 	}
 	var buf bytes.Buffer
 	for i, quantile := range quantiles {
