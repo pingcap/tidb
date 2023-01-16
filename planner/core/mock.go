@@ -401,9 +401,13 @@ func MockContext() sessionctx.Context {
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{},
 	}
+	initStatsCtx := mock.NewContext()
+	initStatsCtx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := domain.NewMockDomain()
-	if err := do.CreateStatsHandle(ctx); err != nil {
+	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
 	domain.BindDomain(ctx, do)
