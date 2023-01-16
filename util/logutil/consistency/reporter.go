@@ -266,15 +266,29 @@ func (r *RecordData) String() string {
 
 // ReportAdminCheckInconsistent reports inconsistent when single index row not found in record rows.
 func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.Handle, idxRow, tblRow *RecordData) error {
+	tblName := r.Tbl.Name.O
+	if r.Tbl.Partition != nil {
+		found := false
+		for _, def := range r.Tbl.Partition.Definitions {
+			if def.ID == r.Tbl.ID {
+				tblName += " partition " + def.Name.O
+				found = true
+				break
+			}
+		}
+		if !found {
+			tblName += " partitioned"
+		}
+	}
 	if r.Sctx.GetSessionVars().EnableRedactLog {
 		logutil.Logger(ctx).Error("admin check found data inconsistency",
-			zap.String("table_name", r.Tbl.Name.O),
+			zap.String("table_name", tblName),
 			zap.String("index", r.Idx.Name.O),
 			zap.Stack("stack"),
 		)
 	} else {
 		fs := []zap.Field{
-			zap.String("table_name", r.Tbl.Name.O),
+			zap.String("table_name", tblName),
 			zap.String("index_name", r.Idx.Name.O),
 			zap.Stringer("row_id", handle),
 			zap.Stringer("index", idxRow),
@@ -290,5 +304,5 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 		fs = append(fs, zap.Stack("stack"))
 		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
 	}
-	return ErrAdminCheckInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, fmt.Sprint(handle), fmt.Sprint(idxRow), fmt.Sprint(tblRow))
+	return ErrAdminCheckInconsistent.GenWithStackByArgs(tblName, r.Idx.Name.O, fmt.Sprint(handle), fmt.Sprint(idxRow), fmt.Sprint(tblRow))
 }

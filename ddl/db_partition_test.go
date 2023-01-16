@@ -4563,7 +4563,6 @@ func TestIssue40135Ver2(t *testing.T) {
 	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
 	wg.Wait()
 	require.NoError(t, checkErr)
-	tk.MustQuery(`show create table t40135`).Check(testkit.Rows(""))
 	tk.MustExec("admin check table t40135")
 }
 
@@ -4580,6 +4579,7 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 	tk.MustExec(`set sql_mode = ''`)
 	tk.MustExec(`alter table t modify a varchar(5)`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1265 2 warnings with this error code, first warning: Data truncated for column 'a', value is ' 654321'`))
+	tk.MustExec(`admin check table t`)
 }
 
 func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
@@ -4655,9 +4655,9 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 			" PARTITION `p1` VALUES LESS THAN (20),\n" +
 			" PARTITION `p2` VALUES LESS THAN (30),\n" +
 			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`admin check table t`)
 	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
-	// TODO: fix #39915
-	//tk.MustExec(`admin check table t`)
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(10) unsigned NOT NULL,\n" +
@@ -4782,12 +4782,14 @@ func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {
 	tk.MustExec(`create table t (b int unsigned, a varchar(255), key (b)) partition by range columns (a) (partition p0 values less than (""), partition p1 values less than ("11111"), partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34 💥💥Longer than 11111"),(46,"46"),(57,"57")`)
 	tk.MustExec(`alter table t modify a varchar(50)`)
+	tk.MustExec(`admin check table t`)
 	tk.MustGetErrCode(`alter table t modify a float`, mysql.ErrFieldTypeNotAllowedAsPartitionField)
 	tk.MustGetErrCode(`alter table t modify a int`, errno.ErrUnsupportedDDLOperation)
 	tk.MustContainErrMsg(`alter table t modify a varchar(4)`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
 	tk.MustGetErrCode(`alter table t modify a varchar(5)`, errno.WarnDataTruncated)
 	tk.MustExec(`SET SQL_MODE = ''`)
 	tk.MustExec(`alter table t modify a varchar(5)`)
+	tk.MustExec(`admin check table t`)
 	// fix https://github.com/pingcap/tidb/issues/38669 and update this
 	//tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1265 Data truncated for column 'a', value is '34 💥💥Longer than 11111'"))
 	tk.MustExec(`SET SQL_MODE = DEFAULT`)
@@ -4815,6 +4817,7 @@ func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {
 	tk.MustExec("create table t (a int, b varchar(255), key (b)) partition by range (a) (partition `p-300` values less than (-300), partition p0 values less than (0), partition p300 values less than (300))")
 	tk.MustExec(`insert into t values (-400, "-400"), (-100, "-100"), (0, "0"), (100, "100"), (290, "290")`)
 	tk.MustContainErrMsg(`alter table t modify a int unsigned`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+	tk.MustExec(`admin check table t`)
 	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
 	tk.MustExec(`set sql_mode = ''`)
 	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
@@ -4822,6 +4825,7 @@ func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {
 	tk.MustExec(`set sql_mode = default`)
 	tk.MustContainErrMsg(`alter table t modify a smallint`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
 	tk.MustExec(`alter table t modify a bigint`)
+	tk.MustExec(`admin check table t`)
 	tk.MustExec(`drop table t`)
 	tk.MustExec("create table t (a int, b varchar(255), key (b)) partition by range columns (a) (partition `p-300` values less than (-300), partition p0 values less than (0), partition p300 values less than (300))")
 	tk.MustExec(`insert into t values (-400, "-400"), (-100, "-100"), (0, "0"), (100, "100"), (290, "290")`)
@@ -4833,7 +4837,9 @@ func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {
 	tk.MustExec(`set sql_mode = default`)
 	// OK to decrease, since with RANGE COLUMNS, it will check the partition definition values against the new type
 	tk.MustExec(`alter table t modify a smallint`)
+	tk.MustExec(`admin check table t`)
 	tk.MustExec(`alter table t modify a bigint`)
+	tk.MustExec(`admin check table t`)
 
 	tk.MustExec(`drop table t`)
 
