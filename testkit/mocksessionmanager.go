@@ -77,3 +77,15 @@ func (msm *MockSessionManager) DeleteInternalSession(se interface{}) {}
 func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
+
+// GetMinStartTS implements SessionManager interface.
+func (msm *MockSessionManager) GetMinStartTS(lowerBound uint64) (ts uint64) {
+	if len(msm.PS) > 0 {
+		for _, pi := range msm.PS {
+			if thisTS := pi.GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
+			}
+		}
+	}
+	return
+}

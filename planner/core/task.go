@@ -1662,8 +1662,12 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			inputRows = t.count()
 			attachPlan2Task(p, t)
 		} else {
-			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+			storeType := cop.getStoreType()
+			// TiFlash doesn't support Stream Aggregation
+			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
+				return invalidTask
+			}
+			partialAgg, finalAgg := p.newPartialAggregate(storeType, false)
 			if finalAgg != nil {
 				final = finalAgg.(*PhysicalStreamAgg)
 			}

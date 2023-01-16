@@ -104,6 +104,9 @@ func CreateMockConn(t *testing.T, store kv.Storage, server *Server) MockConn {
 		},
 	}
 	cc.setCtx(tc)
+	cc.server.rwlock.Lock()
+	server.clients[cc.connectionID] = cc
+	cc.server.rwlock.Unlock()
 	return &mockConn{
 		clientConn: cc,
 		t:          t,
