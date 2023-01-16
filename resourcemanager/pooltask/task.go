@@ -33,15 +33,15 @@ func (NilContext) GetContext() any {
 }
 
 const (
-	// PendingTask is a task waiting to start
+	// PendingTask is a task waiting to start.
 	PendingTask int32 = iota
-	// RunningTask is a task running
+	// RunningTask is a task running.
 	RunningTask
-	// StopTask is a stop task
+	// StopTask is a stop task.
 	StopTask
 )
 
-// TaskBox is a box which contains all info about pooltask.
+// TaskBox is a box which contains all info about pool task.
 type TaskBox[T any, U any, C any, CT any, TF Context[CT]] struct {
 	constArgs   C
 	contextFunc TF
@@ -64,7 +64,7 @@ func (t *TaskBox[T, U, C, CT, TF]) SetStatus(s int32) {
 
 // NewTaskBox is to create a task box for pool.
 func NewTaskBox[T any, U any, C any, CT any, TF Context[CT]](constArgs C, contextFunc TF, wg *sync.WaitGroup, taskCh chan Task[T], resultCh chan U, taskID uint64) TaskBox[T, U, C, CT, TF] {
-	// we still need to do some work after a taskbox finish.
+	// We still need to do some work after a TaskBox finishes.
 	// So we need to add 1 to waitgroup. After we finish the work, we need to call TaskBox.Finish()
 	wg.Add(1)
 	return TaskBox[T, U, C, CT, TF]{
