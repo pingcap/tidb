@@ -81,6 +81,7 @@ func (w *WaitGroupEnhancedWrapper) check() bool {
 // Run runs a function in a goroutine, adds 1 to WaitGroup
 // and calls done when function returns. Please DO NOT use panic
 // in the cb function.
+// Note that the registered label shouldn't be duplicated.
 func (w *WaitGroupEnhancedWrapper) Run(exec func(), label string) {
 	w.onStart(label)
 	w.Add(1)
@@ -97,6 +98,7 @@ func (w *WaitGroupEnhancedWrapper) Run(exec func(), label string) {
 // and call done when function return.
 // exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
 // passing `nil` means noop.
+// Note that the registered label shouldn't be duplicated.
 func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r interface{}), label string) {
 	w.onStart(label)
 	w.Add(1)
@@ -104,7 +106,7 @@ func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r 
 		defer func() {
 			r := recover()
 			if r != nil && recoverFn != nil {
-				logutil.BgLogger().Info("WaitGroupEnhancedWrapper exec panic recovered", zap.String("label", label))
+				logutil.BgLogger().Info("WaitGroupEnhancedWrapper exec panic recovered", zap.String("process", label))
 				recoverFn(r)
 			}
 			w.onExit(label)
@@ -119,7 +121,7 @@ func (w *WaitGroupEnhancedWrapper) onStart(label string) {
 	if ok {
 		logutil.BgLogger().Panic("WaitGroupEnhancedWrapper received duplicated source process",
 			zap.String("source", w.source),
-			zap.String("label", label))
+			zap.String("process", label))
 	}
 	w.registerProcess.Store(label, struct{}{})
 	logutil.BgLogger().Info("background process started",
