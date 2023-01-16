@@ -4530,7 +4530,6 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 }
 
 func TestIssue40135Ver2(t *testing.T) {
-	t.Skip(`TODO: Fix #40620`)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
