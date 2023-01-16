@@ -4627,6 +4627,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"12 12 21",
 		"23 23 32"))
 	tk.MustExec(`alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -4669,6 +4670,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"12 12 21",
 		"23 23 32"))
 	tk.MustExec(`alter table t reorganize partition p2,pMax into (partition p2 values less than (35),partition p3 values less than (47), partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
 		"1 1 1",
 		"12 12 21",
@@ -4703,6 +4705,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 	tk.MustQuery(`select * from t partition (pMax)`).Sort().Check(testkit.Rows("" +
 		"56 56 65"))
 	tk.MustExec(`alter table t reorganize partition p0,p1 into (partition p1 values less than (20))`)
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -4726,6 +4729,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		"56 56 65"))
 	tk.MustExec(`alter table t drop index b`)
 	tk.MustExec(`alter table t drop index c`)
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -4767,6 +4771,7 @@ func TestReorganizeRangePartition(t *testing.T) {
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 	// But allowed to change from MAXVALUE if no existing values is outside the new range!
 	tk.MustExec(`alter table t2 reorganize partition pMax into (partition p4 values less than (90))`)
+	tk.MustExec(`admin check table t2`)
 	tk.MustQuery(`show create table t2`).Check(testkit.Rows("" +
 		"t2 CREATE TABLE `t2` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -4791,6 +4796,7 @@ func TestReorganizeListPartition(t *testing.T) {
 		` (partition p1 values in (12,23,51,14), partition p2 values in (24,63), partition p3 values in (45))`)
 	tk.MustExec(`insert into t values (12,"12",21), (24,"24",42),(51,"51",15),(23,"23",32),(63,"63",36),(45,"45",54)`)
 	tk.MustExec(`alter table t reorganize partition p1 into (partition p0 values in (12,51,13), partition p1 values in (23))`)
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -4807,6 +4813,7 @@ func TestReorganizeListPartition(t *testing.T) {
 	// Note: MySQL cannot reorganize two non-consecutive list partitions :)
 	// ERROR 1519 (HY000): When reorganizing a set of partitions they must be in consecutive order
 	tk.MustExec(`alter table t reorganize partition p1, p3 into (partition pa values in (45,23,15))`)
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
@@ -4840,6 +4847,7 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
 		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
 		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
+	tk.MustExec(`admin check table t`)
 }
 
 func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
@@ -4956,6 +4964,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	// StateWriteOnly
 	wait <- true
 	tk.MustExec(`insert into t values (11, "11", 11),(12,"12",21)`)
+	tk.MustExec(`admin check table t`)
 	writeOnlyInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	require.Equal(t, int64(1), writeOnlyInfoSchema.SchemaMetaVersion()-deleteOnlyInfoSchema.SchemaMetaVersion())
 	deleteOnlyTbl, err := deleteOnlyInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
@@ -4967,7 +4976,9 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	// If not DeleteOnly is working, then this would show up when reorg is done
 	tk.MustExec(`delete from t where a = 11`)
 	tk.MustExec(`update t set b = "12b", c = 12 where a = 12`)
+	tk.MustExec(`admin check table t`)
 	writeOnlyTbl.Meta().Partition = writeOnlyParts
+	tk.MustExec(`admin check table t`)
 	wait <- true
 
 	// StateWriteReorganization
@@ -5009,6 +5020,8 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	require.NoError(t, err)
 	currPart := currTbl.Meta().Partition
 	currTbl.Meta().Partition = oldTbl.Meta().Partition
+	tk.MustQuery(`select * from t where b = "16"`).Sort().Check(testkit.Rows("16 16 16"))
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -5038,6 +5051,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		"14 14 14",
 		"15 15 15",
 		"16 16 16"))
+	tk.MustExec(`admin check table t`)
 	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-deleteReorgInfoSchema.SchemaMetaVersion())
 	oldTbl, err = deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
@@ -5076,6 +5090,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`admin check table t`)
 	newTbl.Meta().Partition = newPart
 	syncOnChanged <- true
 	require.NoError(t, <-alterErr)
@@ -5116,12 +5131,14 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	wait <- true
 	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
 	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, mysql.ErrDupEntry)
+	tk.MustExec(`admin check table t`)
 	wait <- true
 	require.NoError(t, <-alterErr)
 	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
 		"12 12 21",
 		"14 14 14",
 		"15 15 15"))
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -5164,6 +5181,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	require.Equal(t, 0, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 14`)
 	tk.MustExec(`insert into t values (13, "13", 31),(14,"14b",14),(16, "16",16)`)
+	tk.MustExec(`admin check table t`)
 	wait <- true
 	wait <- true
 	tbl, err = infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
@@ -5171,9 +5189,11 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	require.Equal(t, 5, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 15`)
 	tk.MustExec(`insert into t values (11, "11", 11),(15,"15b",15),(17, "17",17)`)
+	tk.MustExec(`admin check table t`)
 	wait <- true
 	require.NoError(t, <-alterErr)
 
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`select * from t where a between 10 and 22`).Sort().Check(testkit.Rows(""+
 		"11 11 11",
 		"12 12 21",
@@ -5274,6 +5294,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	}()
 	tk.MustExec(`alter table t reorganize partition p1, p2 into (partition p1 values in (34,2,23),
     partition p2 values in (12,56,9),partition p3 values in (1,8,19))`)
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -5341,8 +5362,10 @@ func TestReorgPartitionFailInject(t *testing.T) {
 	wait <- true
 	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
 	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, mysql.ErrDupEntry)
+	tk.MustExec(`admin check table t`)
 	wait <- true
 	require.NoError(t, <-alterErr)
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
 		"12 12 21",
 		"14 14 14",
@@ -5380,6 +5403,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 	// (partitions used during reorg, but was dropped)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`))
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
+	tk.MustExec(`admin check table t`)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
@@ -5392,6 +5416,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 		require.NoError(t, err)
 	}()
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
@@ -5432,6 +5457,7 @@ func TestReorgPartitionData(t *testing.T) {
 	tk.MustExec(`SET @@session.sql_mode = default`)
 	tk.MustExec(`alter table t reorganize partition p1M into (partition p0 values less than (1), partition p2M values less than (2000000))`)
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("0 Zero value! 0 2022-02-30 00:00:00"))
+	tk.MustExec(`admin check table t`)
 }
 
 // TODO Test with/without PK, indexes, UK, virtual, virtual stored columns

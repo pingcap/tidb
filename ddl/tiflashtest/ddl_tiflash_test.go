@@ -1363,6 +1363,7 @@ func TestTiflashReorgPartition(t *testing.T) {
 	tk.MustQuery("select /*+ read_from_storage(tiflash[reorgPartTiFlash]) */  count(*) from reorgPartTiFlash partition(p0, p1)").Check(testkit.Rows("3"))
 	tk.MustQuery("select /*+ read_from_storage(tiflash[reorgPartTiFlash]) */  count(*) from reorgPartTiFlash partition(p0)").Check(testkit.Rows("2"))
 	tk.MustExec(`alter table reorgPartTiFlash reorganize partition p0 into (partition p0 values less than (500000), partition p500k values less than (1000000))`)
+	tk.MustExec(`admin check table reorgPartTiFlash`)
 	_, ok = s.tiflash.GetPlacementRule(ruleName)
 	require.True(t, ok)
 	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
