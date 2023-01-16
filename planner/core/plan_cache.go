@@ -675,17 +675,44 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 	return err
 }
 
-func containTableDual(p Plan) bool {
+// isCacheablePlan checks whether this plan is cacheable and return the reason if it's uncacheable.
+func isCacheablePlan(p Plan) (cacheable bool, uncacheableReason string) {
+	pp, ok := p.(PhysicalPlan)
+	if !ok {
+		return false, "not a PhysicalPlan"
+	}
+
+	if containTableDual(pp) {
+		return false, "contain TableDual"
+	}
+	if accessMVIndex(pp) {
+		return false, "access Multi-Valued Indexes"
+	}
+	return true, ""
+}
+
+func accessMVIndex(p PhysicalPlan) bool {
+	if idxMerge, ok := p.(*PhysicalIndexMergeReader); ok {
+		if idxMerge.AccessMVIndex {
+			return true
+		}
+	}
+
+	for _, c := range p.Children() {
+		if accessMVIndex(c) {
+			return true
+		}
+	}
+	return false
+}
+
+func containTableDual(p PhysicalPlan) bool {
 	_, isTableDual := p.(*PhysicalTableDual)
 	if isTableDual {
 		return true
 	}
-	physicalPlan, ok := p.(PhysicalPlan)
-	if !ok {
-		return false
-	}
 	childContainTableDual := false
-	for _, child := range physicalPlan.Children() {
+	for _, child := range p.Children() {
 		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
 	return childContainTableDual
