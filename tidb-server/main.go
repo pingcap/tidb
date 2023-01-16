@@ -124,6 +124,7 @@ const (
 	nmInitializeInsecure          = "initialize-insecure"
 	nmInitializeSQLFile           = "initialize-sql-file"
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
+	nmKeyspaceName                = "keyspace-name"
 )
 
 var (
@@ -172,6 +173,7 @@ var (
 	initializeInsecure          = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
 	initializeSQLFile           = flag.String(nmInitializeSQLFile, "", "SQL file to execute on first bootstrap")
 	disconnectOnExpiredPassword = flagBoolean(nmDisconnectOnExpiredPassword, true, "the server disconnects the client when the password is expired")
+	keyspaceName                = flag.String(nmKeyspaceName, "", "keyspace name.")
 )
 
 func main() {
@@ -214,8 +216,11 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
+
+	keyspaceName := config.GetGlobalKeyspaceName()
+
 	resourcemanager.GlobalResourceManager.Start()
-	storage, dom := createStoreAndDomain()
+	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
@@ -306,9 +311,14 @@ func registerMetrics() {
 	}
 }
 
-func createStoreAndDomain() (kv.Storage, *domain.Domain) {
+func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
-	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
+	var fullPath string
+	if keyspaceName == "" {
+		fullPath = fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
+	} else {
+		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", cfg.Store, cfg.Path, keyspaceName)
+	}
 	var err error
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
@@ -565,6 +575,10 @@ func overrideConfig(cfg *config.Config) {
 		}
 		cfg.InitializeSQLFile = *initializeSQLFile
 	}
+
+	if actualFlags[nmKeyspaceName] {
+		cfg.KeyspaceName = *keyspaceName
+	}
 }
 
 func setVersions() {
@@ -656,7 +670,7 @@ func setGlobalVars() {
 	} else {
 		kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
 	}
-	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
+	if cfg.Performance.TxnEntrySizeLimit > config.MaxTxnEntrySizeLimit {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
 	}
 	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
