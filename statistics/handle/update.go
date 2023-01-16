@@ -198,7 +198,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	}
 
 	// if table locked, skip
-	if h.IsTableLocked(q.PhysicalID, true) {
+	if h.IsTableLocked(q.PhysicalID) {
 		return nil
 	}
 
@@ -549,8 +549,8 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	startTS := txn.StartTS()
 	updateStatsMeta := func(id int64) error {
 		var err error
-		// This lock is already locked on it so it's isLock is set to false.
-		if h.IsTableLocked(id, false) {
+		// This lock is already locked on it so it use isTableLocked without lock.
+		if h.isTableLocked(id) {
 			if delta.Delta < 0 {
 				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 			} else {
@@ -1111,7 +1111,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		})
 		for _, tbl := range tbls {
 			//if table locked, skip analyze
-			if h.IsTableLocked(tbl.Meta().ID, true) {
+			if h.IsTableLocked(tbl.Meta().ID) {
 				continue
 			}
 			tblInfo := tbl.Meta()
