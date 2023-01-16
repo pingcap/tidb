@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
@@ -248,6 +250,16 @@ func TestLockNewTable(t *testing.T) {
 			args,
 		}
 	}
+	getExecuteInfoWithErr := func(sql string, args []interface{}, err error) executeInfo {
+		require.NoError(t, err)
+		return executeInfo{
+			sql,
+			args,
+		}
+	}
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/set-job-uuid", `return("test-job-id")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/set-job-uuid")
+
 	type sqlExecute struct {
 		executeInfo
 
@@ -267,7 +279,11 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL(1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
+				nil, nil,
+			},
+			{
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -289,7 +305,11 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL(1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
+				nil, nil,
+			},
+			{
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -303,8 +323,12 @@ func TestLockNewTable(t *testing.T) {
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL(1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
 				nil, errors.New("test error message"),
+			},
+			{
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
+				nil, nil,
 			},
 		}, false, true},
 	}
@@ -317,8 +341,8 @@ func TestLockNewTable(t *testing.T) {
 			se := newMockSession(t)
 			se.executeSQL = func(ctx context.Context, sql string, args ...interface{}) (rows []chunk.Row, err error) {
 				assert.Less(t, sqlCounter, len(c.sqls))
-				assert.Equal(t, sql, c.sqls[sqlCounter].sql)
-				assert.Equal(t, args, c.sqls[sqlCounter].args)
+				assert.Equal(t, c.sqls[sqlCounter].sql, sql)
+				assert.Equal(t, c.sqls[sqlCounter].args, args)
 
 				rows = c.sqls[sqlCounter].rows
 				err = c.sqls[sqlCounter].err
@@ -554,7 +578,7 @@ func TestCheckFinishedJob(t *testing.T) {
 	now := se.Now()
 	jobID := m.runningJobs[0].id
 	se.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-		if len(args) > 0 {
+		if len(args) > 1 {
 			meetArg = true
 			expectedSQL, expectedArgs := finishJobSQL(tbl.ID, now, "{\"total_rows\":1,\"success_rows\":1,\"error_rows\":0,\"total_scan_task\":1,\"scheduled_scan_task\":1,\"finished_scan_task\":1}", jobID)
 			assert.Equal(t, expectedSQL, sql)
