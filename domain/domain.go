@@ -1914,9 +1914,9 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	statsHandle := do.StatsHandle()
 	for i, ctx := range ctxList {
 		statsHandle.StatsLoad.SubCtxs[i] = ctx
-		do.wg.Run(func() {
-			statsHandle.SubLoadWorker(statsHandle.StatsLoad.SubCtxs[i], do.exit)
-		}, fmt.Sprintf("subLoadWorker_%v", i))
+		// we may meet race read/write on ctx if we directly use wg.Run here
+		do.wg.Add(1)
+		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
 	}
 }
 
