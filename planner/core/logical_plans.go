@@ -147,6 +147,8 @@ type LogicalJoin struct {
 
 	// hintInfo stores the join algorithm hint information specified by client.
 	hintInfo        *tableHintInfo
+	hintFromLeft    bool
+	hintFromRight   bool
 	preferJoinType  uint
 	preferJoinOrder bool
 

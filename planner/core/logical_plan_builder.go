@@ -594,47 +594,77 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
-	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= preferMergeJoin
+		p.hintFromLeft = true
 	}
-	if hintInfo.ifPreferBroadcastJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferMergeJoin(rhsAlias) {
+		p.preferJoinType |= preferMergeJoin
+		p.hintFromRight = true
+	}
+	if hintInfo.ifPreferBroadcastJoin(lhsAlias) {
 		p.preferJoinType |= preferBCJoin
+		p.hintFromLeft = true
 	}
-	if hintInfo.ifPreferShuffleJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferBroadcastJoin(rhsAlias) {
+		p.preferJoinType |= preferBCJoin
+		p.hintFromRight = true
+	}
+	if hintInfo.ifPreferShuffleJoin(lhsAlias) {
 		p.preferJoinType |= preferShuffleJoin
+		p.hintFromLeft = true
 	}
-	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
+	if hintInfo.ifPreferShuffleJoin(rhsAlias) {
+		p.preferJoinType |= preferShuffleJoin
+		p.hintFromRight = true
+	}
+	if hintInfo.ifPreferHashJoin(lhsAlias) {
 		p.preferJoinType |= preferHashJoin
+		p.hintFromLeft = true
+	}
+	if hintInfo.ifPreferHashJoin(rhsAlias) {
+		p.preferJoinType |= preferHashJoin
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLJInner
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLJInner
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferINLHJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLHJInner
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferINLHJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLHJInner
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferINLMJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLMJInner
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferHJBuild(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJBuild
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferHJBuild(rhsAlias) {
 		p.preferJoinType |= preferRightAsHJBuild
+		p.hintFromRight = true
 	}
 	if hintInfo.ifPreferHJProbe(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHJProbe
+		p.hintFromLeft = true
 	}
 	if hintInfo.ifPreferHJProbe(rhsAlias) {
 		p.preferJoinType |= preferRightAsHJProbe
+		p.hintFromRight = true
 	}
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
