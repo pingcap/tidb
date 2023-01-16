@@ -89,6 +89,7 @@ func checkFileName(s string) bool {
 		"global_bindings.sql",
 		"sql/sql0.sql",
 		"explain/sql0.txt",
+		"statsMem/test.t_dump_single.txt",
 		"sql_meta.toml",
 	}
 	for _, f := range files {
@@ -233,13 +234,16 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
 		"Alter routine Functions,Procedures To alter or drop stored functions/procedures",
+		"Config Server Admin To use SHOW CONFIG and SET CONFIG statements",
 		"Create Databases,Tables,Indexes To create new databases and tables",
 		"Create routine Databases To use CREATE FUNCTION/PROCEDURE",
+		"Create role Server Admin To create new roles",
 		"Create temporary tables Databases To use CREATE TEMPORARY TABLE",
 		"Create view Tables To create new views",
 		"Create user Server Admin To create new users",
 		"Delete Tables To delete existing rows",
 		"Drop Databases,Tables To drop databases, tables, and views",
+		"Drop role Server Admin To drop roles",
 		"Event Server Admin To create, alter, drop and execute events",
 		"Execute Functions,Procedures To execute stored routines",
 		"File File access on server To read and write files on the server",
@@ -1520,6 +1524,21 @@ func TestSetOperation(t *testing.T) {
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
+
+	// from https://github.com/pingcap/tidb/issues/40279
+	tk.MustExec("CREATE TABLE `issue40279` (`a` char(155) NOT NULL DEFAULT 'on1unvbxp5sko6mbetn3ku26tuiyju7w3wc0olzto9ew7gsrx',`b` mediumint(9) NOT NULL DEFAULT '2525518',PRIMARY KEY (`b`,`a`) /*T![clustered_index] CLUSTERED */);")
+	tk.MustExec("insert into `issue40279` values ();")
+	tk.MustQuery("( select    `issue40279`.`b` as r0 , from_base64( `issue40279`.`a` ) as r1 from `issue40279` ) " +
+		"except ( " +
+		"select    `issue40279`.`a` as r0 , elt(2, `issue40279`.`a` , `issue40279`.`a` ) as r1 from `issue40279`);").
+		Check(testkit.Rows("2525518 <nil>"))
+	tk.MustExec("drop table if exists t2")
+
+	tk.MustExec("CREATE TABLE `t2` (   `a` varchar(20) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t2 values(0xCED2)")
+	result := tk.MustQuery("(select elt(2,t2.a,t2.a) from t2) except (select 0xCED2  from t2)")
+	rows := result.Rows()
+	require.Len(t, rows, 0)
 }
 
 func TestSetOperationOnDiffColType(t *testing.T) {
@@ -4363,7 +4382,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
@@ -5645,6 +5664,68 @@ func TestAdmin(t *testing.T) {
 	result = tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
 	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query), fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
 	require.NoError(t, err)
+
+	// check situations when `admin show ddl job 20` happens at the same time with new DDLs being executed
+	var wg sync.WaitGroup
+	wg.Add(2)
+	flag := true
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			tk.MustExec("drop table if exists admin_test9")
+			tk.MustExec("create table admin_test9 (c1 int, c2 int, c3 int default 1, index (c1))")
+		}
+	}()
+	go func() {
+		// check that the result set has no duplication
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			result := tk.MustQuery(`admin show ddl job queries 20`)
+			rows := result.Rows()
+			rowIDs := make(map[string]struct{})
+			for _, row := range rows {
+				rowID := fmt.Sprintf("%v", row[0])
+				if _, ok := rowIDs[rowID]; ok {
+					flag = false
+					return
+				}
+				rowIDs[rowID] = struct{}{}
+			}
+		}
+	}()
+	wg.Wait()
+	require.True(t, flag)
+
+	// check situations when `admin show ddl job queries limit 3 offset 2` happens at the same time with new DDLs being executed
+	var wg2 sync.WaitGroup
+	wg2.Add(2)
+	flag = true
+	go func() {
+		defer wg2.Done()
+		for i := 0; i < 10; i++ {
+			tk.MustExec("drop table if exists admin_test9")
+			tk.MustExec("create table admin_test9 (c1 int, c2 int, c3 int default 1, index (c1))")
+		}
+	}()
+	go func() {
+		// check that the result set has no duplication
+		defer wg2.Done()
+		for i := 0; i < 10; i++ {
+			result := tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
+			rows := result.Rows()
+			rowIDs := make(map[string]struct{})
+			for _, row := range rows {
+				rowID := fmt.Sprintf("%v", row[0])
+				if _, ok := rowIDs[rowID]; ok {
+					flag = false
+					return
+				}
+				rowIDs[rowID] = struct{}{}
+			}
+		}
+	}()
+	wg2.Wait()
+	require.True(t, flag)
 
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")

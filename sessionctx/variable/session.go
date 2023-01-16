@@ -1096,9 +1096,6 @@ type SessionVars struct {
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 
-	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
-	EnableAmendPessimisticTxn bool
-
 	// LastTxnInfo keeps track the info of last committed transaction.
 	LastTxnInfo string
 
@@ -1202,6 +1199,9 @@ type SessionVars struct {
 	EnableNewCostInterface bool
 	// CostModelVersion is a internal switch to indicates the Cost Model Version.
 	CostModelVersion int
+	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
+	IndexJoinDoubleReadPenaltyCostRate float64
+
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcWriteCheckTS indicates whether some special write statements don't get latest tso from PD at RC
@@ -1330,6 +1330,10 @@ type SessionVars struct {
 
 	// ProtectedTSList holds a list of timestamps that should delay GC.
 	ProtectedTSList protectedTSList
+
+	// PessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// is enabled.
+	PessimisticTransactionAggressiveLocking bool
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1678,7 +1682,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
 		EnableParallelApply:           DefTiDBEnableParallelApply,
 		ShardAllocateStep:             DefTiDBShardAllocateStep,
-		EnableAmendPessimisticTxn:     DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                      kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,

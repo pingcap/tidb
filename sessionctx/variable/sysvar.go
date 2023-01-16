@@ -1164,7 +1164,15 @@ var defaultSysVars = []*SysVar{
 		PasswordReuseInterval.Store(TidbOptInt64(val, DefPasswordReuseTime))
 		return nil
 	}},
-
+	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStatsForCapture, Value: BoolToOnOff(DefTiDBEnableHistoricalStatsForCapture), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			EnableHistoricalStatsForCapture.Store(TiDBOptOn(s))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableHistoricalStatsForCapture.Load()), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBHistoricalStatsDuration, Value: DefTiDBHistoricalStatsDuration.String(), Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: uint64(time.Hour * 24 * 365),
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return HistoricalStatsDuration.Load().String(), nil
@@ -1187,7 +1195,7 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(vars.EnablePlanReplayedContinuesCapture), nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(true), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnablePlanReplayerCapture = TiDBOptOn(val)
 			return nil
@@ -1859,14 +1867,6 @@ var defaultSysVars = []*SysVar{
 		s.ShardAllocateStep = TidbOptInt64(val, DefTiDBShardAllocateStep)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAmendPessimisticTxn, Value: BoolToOnOff(DefTiDBEnableAmendPessimisticTxn), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		enableAmend := TiDBOptOn(val)
-		if enableAmend && EnableFastReorg.Load() {
-			return errors.Errorf("amend pessimistic transactions is not compatible with tidb_ddl_enable_fast_reorg")
-		}
-		s.EnableAmendPessimisticTxn = enableAmend
-		return nil
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncCommit, Value: BoolToOnOff(DefTiDBEnableAsyncCommit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAsyncCommit = TiDBOptOn(val)
 		return nil
@@ -2003,6 +2003,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCostModelVersion, Value: strconv.Itoa(DefTiDBCostModelVer), Hidden: false, Type: TypeInt, MinValue: 1, MaxValue: 2,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.CostModelVersion = int(TidbOptInt64(s, 1))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexJoinDoubleReadPenaltyCostRate, Value: strconv.Itoa(0), Hidden: false, Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IndexJoinDoubleReadPenaltyCostRate = tidbOptFloat64(s, 0)
 			return nil
 		},
 	},
@@ -2199,20 +2205,6 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope: ScopeGlobal, Name: TiDBTTLJobRunInterval, Value: DefTiDBTTLJobRunInterval, Type: TypeDuration, MinValue: int64(10 * time.Minute), MaxValue: uint64(8760 * time.Hour), SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			interval, err := time.ParseDuration(s)
-			if err != nil {
-				return err
-			}
-			TTLJobRunInterval.Store(interval)
-			return nil
-		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-			interval := TTLJobRunInterval.Load()
-
-			return interval.String(), nil
-		},
-	},
-	{
 		Scope: ScopeGlobal, Name: TiDBTTLJobScheduleWindowStartTime, Value: DefTiDBTTLJobScheduleWindowStartTime, Type: TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			startTime, err := time.ParseInLocation(FullDayTimeFormat, s, time.UTC)
 			if err != nil {
@@ -2262,6 +2254,16 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableResourceControl, Value: BoolToOnOff(DefTiDBEnableResourceControl), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EnableResourceControl.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableResourceControl.Load()), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionAggressiveLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionAggressiveLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PessimisticTransactionAggressiveLocking = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
