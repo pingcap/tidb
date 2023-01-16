@@ -165,4 +165,14 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+<<<<<<< HEAD
+=======
+	LblIdle        = "idle"
+	LblRunning     = "executing_sql"
+	LblLockWaiting = "waiting_for_lock"
+	LblCommitting  = "committing"
+	LblRollingBack = "rolling_back"
+	LblHasLock     = "has_lock"
+	LblModule      = "module"
+>>>>>>> fd6f5dd79... *: GC-aware memory track for analyze (#35248)
 )
