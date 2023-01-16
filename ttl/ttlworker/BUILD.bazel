@@ -15,6 +15,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//parser/duration",
         "//parser/terror",
         "//sessionctx",
         "//sessionctx/variable",
@@ -30,6 +31,7 @@ go_library(
         "//util/logutil",
         "//util/sqlexec",
         "//util/timeutil",
+        "@com_github_google_uuid//:uuid",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -57,7 +59,6 @@ go_test(
         "//infoschema",
         "//kv",
         "//parser/ast",
-        "//parser/duration",
         "//parser/model",
         "//parser/mysql",
         "//session",

@@ -211,6 +211,15 @@ func EncodeMetaKey(key []byte, field []byte) kv.Key {
 	return ek
 }
 
+// EncodeMetaKeyPrefix encodes the key prefix into meta key
+func EncodeMetaKeyPrefix(key []byte) kv.Key {
+	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8)
+	ek = append(ek, metaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	return ek
+}
+
 // DecodeMetaKey decodes the key and get the meta key and meta field.
 func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
 	var tp uint64
