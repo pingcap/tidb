@@ -76,6 +76,49 @@ func TestPool(t *testing.T) {
 	pool.ReleaseAndWait()
 }
 
+func TestStopPool(t *testing.T) {
+	type ConstArgs struct {
+		a int
+	}
+	myArgs := ConstArgs{a: 10}
+	// init the pool
+	// input type， output type, constArgs type
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestPool", 10, rmutil.UNKNOWN)
+	require.NoError(t, err)
+	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
+		return task + constArgs.a
+	})
+
+	exit := make(chan struct{})
+
+	pfunc := func() (int, error) {
+		select {
+		case <-exit:
+			return 0, gpool.ErrProducerClosed
+		default:
+			return 1, nil
+		}
+	}
+	// add new task
+	resultCh, control := pool.AddProducer(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(4))
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for result := range resultCh {
+			require.Greater(t, result, 10)
+		}
+	}()
+	// Waiting task finishing
+	control.Stop()
+	close(exit)
+	control.Wait()
+	wg.Wait()
+	// close pool
+	pool.ReleaseAndWait()
+}
+
 func TestPoolWithEnoughCapacity(t *testing.T) {
 	const (
 		RunTimes    = 1000

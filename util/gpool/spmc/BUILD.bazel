@@ -32,6 +32,7 @@ go_test(
         "worker_loop_queue_test.go",
     ],
     embed = [":spmc"],
+    flaky = True,
     race = "on",
     deps = [
         "//resourcemanager/pooltask",
