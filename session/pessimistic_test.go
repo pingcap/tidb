@@ -2860,7 +2860,6 @@ func TestIssue40114(t *testing.T) {
 
 	tk.MustExec("set @@innodb_lock_wait_timeout = 1")
 	tk.MustExec("begin pessimistic")
-	tk.MustExec("begin ")
 	tk2.MustExec("begin pessimistic")
 	// tk2 block tk on row 2.
 	tk2.MustExec("update t set v = v + 1 where id = 2")
@@ -2878,7 +2877,7 @@ func TestIssue40114(t *testing.T) {
 
 	// tk is still in transaction.
 	tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("0"))
-	// This will unexpectedly success in issue 40114.
+	// This will unexpectedly succeed in issue 40114.
 	tk.MustGetErrCode("insert into t values (1, 2)", mysql.ErrDupEntry)
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
