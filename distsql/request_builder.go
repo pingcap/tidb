@@ -267,7 +267,8 @@ func (*RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
-// "Concurrency", "IsolationLevel", "NotFillCache", "TaskID", "Priority", "ReplicaRead", "ResourceGroupTagger".
+// "Concurrency", "IsolationLevel", "NotFillCache", "TaskID", "Priority", "ReplicaRead",
+// "ResourceGroupTagger", "ResourceGroupName"
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
 	if builder.Request.Concurrency == 0 {
 		// Concurrency may be set to 1 by SetDAGRequest
@@ -295,6 +296,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
 	builder.StoreBatchSize = sv.StoreBatchSize
+	builder.Request.ResourceGroupName = sv.ResourceGroupName
 	return builder
 }
 
@@ -334,6 +336,12 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 // SetResourceGroupTagger sets the request resource group tagger.
 func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGroupTagger) *RequestBuilder {
 	builder.Request.ResourceGroupTagger = tagger
+	return builder
+}
+
+// SetResourceGroupName sets the request resource group name.
+func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder {
+	builder.Request.ResourceGroupName = name
 	return builder
 }
 
@@ -789,21 +797,6 @@ func EncodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 
 	if !ran.HighExclude {
 		high = kv.Key(high).PrefixNext()
-	}
-
-	var hasNull bool
-	for _, highVal := range ran.HighVal {
-		if highVal.IsNull() {
-			hasNull = true
-			break
-		}
-	}
-
-	// NOTE: this is a hard-code operation to avoid wrong results when accessing unique index with NULL;
-	// Please see https://github.com/pingcap/tidb/issues/29650 for more details
-	if hasNull {
-		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
-		high = kv.Key(high).Next()
 	}
 	return low, high, nil
 }

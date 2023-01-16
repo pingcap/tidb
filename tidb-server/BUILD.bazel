@@ -21,7 +21,7 @@ go_library(
         "//planner/core",
         "//plugin",
         "//privilege/privileges",
-        "//resourcemanager:resourcemanage",
+        "//resourcemanager",
         "//server",
         "//session",
         "//session/txninfo",

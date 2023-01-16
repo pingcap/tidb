@@ -69,6 +69,10 @@ func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	err = session.InitMDLVariable(store)
+	if err != nil {
+		return nil, err
+	}
 	// create stats handler for backup and restore.
 	err = dom.UpdateTableStatsLoop(se)
 	if err != nil {
@@ -132,6 +136,10 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err = session.InitMDLVariable(store); err != nil {
+		return errors.Trace(err)
+	}
+
 	// because domain was created during the whole program exists.
 	// and it will register br info to info syncer.
 	// we'd better close it as soon as possible.

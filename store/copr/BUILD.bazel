@@ -43,7 +43,6 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_stathat_consistent//:consistent",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//metrics",

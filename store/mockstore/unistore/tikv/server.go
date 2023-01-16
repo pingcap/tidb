@@ -223,11 +223,19 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 			WaitChain:       result.DeadlockResp.WaitChain,
 		}
 		resp.Errors, resp.RegionError = convertToPBErrors(deadlockErr)
+		if req.WakeUpMode == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
+			resp.Results = []*kvrpcpb.PessimisticLockKeyResult{
+				{
+					Type: kvrpcpb.PessimisticLockKeyResultType_LockResultFailed,
+				},
+			}
+		}
 		return resp, nil
 	}
 	if result.WakeupSleepTime == lockwaiter.WakeUpThisWaiter {
-		if req.Force {
+		if req.Force || req.WakeUpMode == kvrpcpb.PessimisticLockWakeUpMode_WakeUpModeForceLock {
 			req.WaitTimeout = lockwaiter.LockNoWait
+			resp = &kvrpcpb.PessimisticLockResponse{}
 			_, err := svr.mvccStore.PessimisticLock(reqCtx, req, resp)
 			resp.Errors, resp.RegionError = convertToPBErrors(err)
 			if err == nil {
@@ -623,6 +631,11 @@ func (svr *Server) StoreBatchCoprocessor(ctx context.Context, req *coprocessor.R
 func (svr *Server) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_CoprocessorStreamServer) error {
 	// TODO
 	return nil
+}
+
+// GetLockWaitHistory implements the tikvpb.TikvServer interface.
+func (svr *Server) GetLockWaitHistory(context.Context, *kvrpcpb.GetLockWaitHistoryRequest) (*kvrpcpb.GetLockWaitHistoryResponse, error) {
+	return &kvrpcpb.GetLockWaitHistoryResponse{}, nil
 }
 
 // RegionError represents a region error

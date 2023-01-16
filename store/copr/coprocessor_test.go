@@ -49,7 +49,7 @@ func TestBuildTasksWithoutBuckets(t *testing.T) {
 	}()
 
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
@@ -178,7 +178,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'c'}, {'g'}, {'k'}, {'n'}}, regionIDs[0])
 	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'t'}, {'x'}}, regionIDs[1])
 	cluster.SplitRegionBuckets(regionIDs[2], [][]byte{{'x'}, {}}, regionIDs[2])
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
@@ -373,7 +373,7 @@ func TestSplitRegionRanges(t *testing.T) {
 	}()
 
 	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
@@ -435,7 +435,7 @@ func TestRebuild(t *testing.T) {
 	}()
 
 	storeID, regionIDs, peerIDs := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
@@ -498,7 +498,7 @@ func TestBuildPagingTasks(t *testing.T) {
 	}()
 
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
@@ -677,7 +677,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 		require.NoError(t, err)
 	}()
 	_, _, _ = testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
