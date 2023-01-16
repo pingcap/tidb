@@ -110,7 +110,6 @@ type Domain struct {
 	SchemaValidator         SchemaValidator
 	sysSessionPool          *sessionPool
 	exit                    chan struct{}
-	exited                  *atomicutil.Bool
 	etcdClient              *clientv3.Client
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
@@ -915,8 +914,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsIdsMap: make(map[int64]string),
 		},
 	}
-	do.exited = atomicutil.NewBool(false)
-	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exited)
+	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)

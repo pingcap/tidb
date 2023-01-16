@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -27,42 +26,39 @@ import (
 // if the `exited` signal is true by print them on log.
 type WaitGroupEnhancedWrapper struct {
 	sync.WaitGroup
-	exited          *atomic.Bool
 	source          string
 	registerProcess sync.Map
 }
 
 // NewWaitGroupEnhancedWrapper returns WaitGroupEnhancedWrapper, the empty source indicates the unit test, then
 // the `checkUnExitedProcess` won't be executed.
-func NewWaitGroupEnhancedWrapper(source string, exited *atomic.Bool) *WaitGroupEnhancedWrapper {
+func NewWaitGroupEnhancedWrapper(source string, exit chan struct{}) *WaitGroupEnhancedWrapper {
 	wgew := &WaitGroupEnhancedWrapper{
-		exited:          exited,
 		source:          source,
 		registerProcess: sync.Map{},
 	}
 	if len(source) > 0 {
-		go wgew.checkUnExitedProcess()
+		go wgew.checkUnExitedProcess(exit)
 	}
 	return wgew
 }
 
-func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess() {
+func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess(exit chan struct{}) {
+	<-exit
 	logutil.BgLogger().Info("waitGroupWrapper ready to check unexited process", zap.String("source", w.source))
-	ticker := time.NewTimer(10 * time.Second)
-	defer ticker.Stop()
-	for {
-		<-ticker.C
-		continueCheck := w.check()
-		if !continueCheck {
-			return
+	if w.check() {
+		ticker := time.NewTimer(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			continueCheck := w.check()
+			if !continueCheck {
+				return
+			}
 		}
 	}
 }
 
 func (w *WaitGroupEnhancedWrapper) check() bool {
-	if !w.exited.Load() {
-		return true
-	}
 	unexitedProcess := make([]string, 0)
 	w.registerProcess.Range(func(key, value any) bool {
 		unexitedProcess = append(unexitedProcess, key.(string))
