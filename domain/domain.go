@@ -875,7 +875,6 @@ func (do *Domain) Close() {
 		do.info.RemoveMinStartTS()
 	}
 	close(do.exit)
-	do.exited.Store(true)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
