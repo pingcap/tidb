@@ -361,12 +361,12 @@ func (h *Handle) IsTableLocked(tableID int64) bool {
 	return h.isTableLocked(tableID)
 }
 
-// IsTableLocked check whether table is locked in handle
+// IsTableLocked check whether table is locked in handle with Handle.Mutex
 func (h *Handle) isTableLocked(tableID int64) bool {
 	return isTableLocked(h.tableLocked, tableID)
 }
 
-// isTableLocked check whether table is locked
+// isTableLocked check whether table is locked without Handle.Mutex
 func isTableLocked(tableLocked []int64, tableID int64) bool {
 	return lockTableIndexOf(tableLocked, tableID) > -1
 }
