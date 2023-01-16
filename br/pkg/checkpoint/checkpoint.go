@@ -578,18 +578,20 @@ func (r *CheckpointRunner) checkLockFile(ctx context.Context, now int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if lock.ExpireAt >= now && lock.LockId != r.lockId {
+	if lock.ExpireAt <= now {
+		if lock.LockId > r.lockId {
+			return errors.Errorf("There are another BR(%d) running after but setting lock before this one(%d). "+
+				"Please check whether the BR is running. If not, you can retry.", lock.LockId, r.lockId)
+		}
+		if lock.LockId == r.lockId {
+			log.Warn("The lock has expired.", zap.Int64("expire-at(ms)", lock.ExpireAt), zap.Int64("now(ms)", now))
+		}
+	} else if lock.LockId != r.lockId {
 		return errors.Errorf("The existing lock will expire in %d seconds. "+
 			"There may be another BR(%d) running. If not, you can wait for the lock to expire, or delete the file `%s%s` manually.",
 			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.storage.URI(), "/"), CheckpointLockPath)
 	}
-	if lock.LockId > r.lockId {
-		return errors.Errorf("There are another BR(%d) running after but setting lock before this one(%d). "+
-			"Please check whether the BR is running. If not, you can retry.", lock.LockId, r.lockId)
-	}
-	if lock.LockId == r.lockId {
-		log.Warn("The lock has expired.", zap.Int64("expire-at(ms)", lock.ExpireAt), zap.Int64("now(ms)", now))
-	}
+
 	return nil
 }
 
