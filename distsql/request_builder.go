@@ -262,7 +262,8 @@ func (*RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
-// "Concurrency", "IsolationLevel", "NotFillCache", "TaskID", "Priority", "ReplicaRead", "ResourceGroupTagger".
+// "Concurrency", "IsolationLevel", "NotFillCache", "TaskID", "Priority", "ReplicaRead",
+// "ResourceGroupTagger", "ResourceGroupName"
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
 	if builder.Request.Concurrency == 0 {
 		// Concurrency may be set to 1 by SetDAGRequest
@@ -290,6 +291,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
 	builder.StoreBatchSize = sv.StoreBatchSize
+	builder.Request.ResourceGroupName = sv.ResourceGroupName
 	return builder
 }
 
@@ -329,6 +331,12 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 // SetResourceGroupTagger sets the request resource group tagger.
 func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGroupTagger) *RequestBuilder {
 	builder.Request.ResourceGroupTagger = tagger
+	return builder
+}
+
+// SetResourceGroupName sets the request resource group name.
+func (builder *RequestBuilder) SetResourceGroupName(name string) *RequestBuilder {
+	builder.Request.ResourceGroupName = name
 	return builder
 }
 
