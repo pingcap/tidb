@@ -111,6 +111,7 @@ type Domain struct {
 	sysSessionPool          *sessionPool
 	exit                    chan struct{}
 	etcdClient              *clientv3.Client
+	unprefixedEtcdCli       *clientv3.Client
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
@@ -930,6 +931,27 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
+func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
+	cfg := config.GetGlobalConfig()
+	etcdLogCfg := zap.NewProductionConfig()
+	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	cli, err := clientv3.New(clientv3.Config{
+		LogConfig:        &etcdLogCfg,
+		Endpoints:        addrs,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithBackoffMaxDelay(time.Second * 3),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
+			}),
+		},
+		TLS: ebd.TLSConfig(),
+	})
+	return cli, err
+}
+
 // Init initializes a domain.
 func (do *Domain) Init(
 	ddlLease time.Duration,
@@ -945,25 +967,8 @@ func (do *Domain) Init(
 			return err
 		}
 		if addrs != nil {
-			cfg := config.GetGlobalConfig()
-			// silence etcd warn log, when domain closed, it won't randomly print warn log
-			// see details at the issue https://github.com/pingcap/tidb/issues/15479
-			etcdLogCfg := zap.NewProductionConfig()
-			etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
-			cli, err := clientv3.New(clientv3.Config{
-				LogConfig:        &etcdLogCfg,
-				Endpoints:        addrs,
-				AutoSyncInterval: 30 * time.Second,
-				DialTimeout:      5 * time.Second,
-				DialOptions: []grpc.DialOption{
-					grpc.WithBackoffMaxDelay(time.Second * 3),
-					grpc.WithKeepaliveParams(keepalive.ClientParameters{
-						Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
-						Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
-					}),
-				},
-				TLS: ebd.TLSConfig(),
-			})
+
+			cli, err := newEtcdCli(addrs, ebd)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -971,6 +976,12 @@ func (do *Domain) Init(
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
 
 			do.etcdClient = cli
+
+			noNamespaceCli, err := newEtcdCli(addrs, ebd)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			do.unprefixedEtcdCli = noNamespaceCli
 		}
 	}
 
@@ -1032,7 +1043,7 @@ func (do *Domain) Init(
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, do.unprefixedEtcdCli, skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
