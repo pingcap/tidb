@@ -292,6 +292,8 @@ func (alloc *allocator) Base() int64 {
 
 // End implements autoid.Allocator End interface.
 func (alloc *allocator) End() int64 {
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
 	return alloc.end
 }
 
