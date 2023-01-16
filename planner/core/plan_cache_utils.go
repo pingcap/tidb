@@ -338,11 +338,13 @@ func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan                Plan
-	OutPutNames         []*types.FieldName
-	TblInfo2UnionScan   map[*model.TableInfo]bool
-	ParamTypes          FieldSlice
-	memoryUsage         int64
+	Plan              Plan
+	OutPutNames       []*types.FieldName
+	TblInfo2UnionScan map[*model.TableInfo]bool
+	ParamTypes        FieldSlice
+	memoryUsage       int64
+	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
+	// only used for cache and pick plan with parameters
 	limitOffsetAndCount []uint64
 }
 
@@ -506,7 +508,7 @@ func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
 // ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
 func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, error) {
 	if node == nil {
-		return []uint64{}, nil
+		return nil, nil
 	}
 	checker := limitExtractor{
 		cacheable:      true,
@@ -514,7 +516,7 @@ func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, erro
 	}
 	node.Accept(&checker)
 	if checker.paramTypeErr != nil {
-		return []uint64{}, checker.paramTypeErr
+		return nil, checker.paramTypeErr
 	}
 	if sctx != nil && !checker.cacheable {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))

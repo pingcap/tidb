@@ -165,19 +165,18 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			return plan, names, err
 		}
 	}
-
+	limitCountAndOffset, paramErr := ExtractLimitFromAst(stmt.PreparedAst.Stmt, sctx)
+	if paramErr != nil {
+		return nil, nil, paramErr
+	}
 	if stmtCtx.UseCache { // for non-point plans
-		limitCountAndOffset, paramErr := ExtractLimitFromAst(stmt.PreparedAst.Stmt, sctx)
-		if paramErr != nil {
-			return nil, nil, paramErr
-		}
 		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt,
 			paramTypes, limitCountAndOffset); err != nil || ok {
 			return plan, names, err
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramNum, paramTypes, bindSQL)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramNum, paramTypes, bindSQL, limitCountAndOffset)
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
@@ -269,7 +268,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramNum int,
-	paramTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
+	paramTypes []*types.FieldType, bindSQL string, limitParams []uint64) (Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -300,15 +299,11 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		limitCountAndOffset, paramErr := ExtractLimitFromAst(stmt.PreparedAst.Stmt, nil)
-		if paramErr != nil {
-			return nil, nil, paramErr
-		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes, limitCountAndOffset)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes, limitParams)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, paramTypes, limitCountAndOffset)
+		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, paramTypes, limitParams)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err

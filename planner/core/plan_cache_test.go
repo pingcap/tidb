@@ -462,7 +462,7 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t(a int primary key, b int)")
 
 	testCases := []struct {
 		sql    string
@@ -474,10 +474,12 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		{"prepare stmt from 'insert into t select * from t order by a desc limit ?'", []int{1}},
 		{"prepare stmt from 'insert into t select * from t order by a desc limit ?, ?'", []int{1, 2}},
 		{"prepare stmt from 'update t set a = 1 limit ?'", []int{1}},
-		{" prepare stmt from '(select * from t order by a limit ?) union (select * from t order by a desc limit ?)';", []int{1, 2}},
+		{"prepare stmt from '(select * from t order by a limit ?) union (select * from t order by a desc limit ?)'", []int{1, 2}},
+		{"prepare stmt from 'select * from t where a = ? limit ?, ?'", []int{1, 1, 1}},
+		{"prepare stmt from 'select * from t where a in (?, ?) limit ?, ?'", []int{1, 2, 1, 1}},
 	}
 
-	for _, testCase := range testCases {
+	for idx, testCase := range testCases {
 		tk.MustExec(testCase.sql)
 		var using []string
 		for i, p := range testCase.params {
@@ -489,9 +491,11 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-		tk.MustExec("set @a0 = 6")
-		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		if idx < 6 {
+			tk.MustExec("set @a0 = 6")
+			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		}
 	}
 
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
