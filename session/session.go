@@ -1410,6 +1410,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StatsInfo:         plannercore.GetStatsInfo,
 		MaxExecutionTime:  maxExecutionTime,
 		RedactSQL:         s.sessionVars.EnableRedactLog,
+		ProtectedTSList:   &s.sessionVars.ProtectedTSList,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {

@@ -29,8 +29,17 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// ProtectedTSList holds a list of timestamps that should delay GC.
+type ProtectedTSList interface {
+	// HoldTS holds the timestamp to prevent its data from being GCed.
+	HoldTS(ts uint64) (unhold func())
+	// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
+	GetMinProtectedTS(lowerBound uint64) (ts uint64)
+}
+
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
+	ProtectedTSList
 	ID                uint64
 	User              string
 	Host              string
@@ -118,6 +127,23 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz))
 }
 
+// GetMinStartTS returns the minimum start-ts (used to delay GC) that greater than `lowerBound` (0 if no such one).
+func (pi *ProcessInfo) GetMinStartTS(lowerBound uint64) (ts uint64) {
+	if pi == nil {
+		return
+	}
+	if thisTS := pi.CurTxnStartTS; thisTS > lowerBound && (thisTS < ts || ts == 0) {
+		ts = thisTS
+	}
+	if pi.ProtectedTSList == nil {
+		return
+	}
+	if thisTS := pi.GetMinProtectedTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+		ts = thisTS
+	}
+	return
+}
+
 // ascServerStatus is a slice of all defined server status in ascending order.
 var ascServerStatus = []uint16{
 	mysql.ServerStatusInTrans,
@@ -181,6 +207,8 @@ type SessionManager interface {
 	DeleteInternalSession(se interface{})
 	// Get all startTS of every transactions running in the current internal sessions
 	GetInternalSessionStartTSList() []uint64
+	// GetMinStartTS returns the minimum start-ts (used to delay GC) that greater than `lowerBound` (0 if no such one).
+	GetMinStartTS(lowerBound uint64) uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
