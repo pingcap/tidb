@@ -61,7 +61,7 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 	require.Equal(t, expect, val.Load())
 
 	val.Store(0)
-	wg2 := NewWaitGroupEnhancedWrapper("",, nil)
+	wg2 := NewWaitGroupEnhancedWrapper("", nil)
 	for i := int32(0); i < expect; i++ {
 		wg2.RunWithRecover(func() {
 			panic("test1")
