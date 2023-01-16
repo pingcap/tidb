@@ -494,8 +494,6 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("admin check table t")
 
 	// Test unsupported statements.
-	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
-	tk.MustGetErrMsg("alter table t1 modify column a mediumint", "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
 	tk.MustGetErrMsg("alter table t2 modify column b mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	tk.MustGetErrMsg("alter table t2 modify column c mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
@@ -532,7 +530,7 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("insert into t5 values (1,1),(2,2),(3,3),(4,4),(5,5);")
 	tk.MustExec("alter table t5 modify a int not null;")
 
-	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
+	tk.MustExec("drop table t, t2, t3, t4, t5")
 }
 
 func TestIssue38699(t *testing.T) {

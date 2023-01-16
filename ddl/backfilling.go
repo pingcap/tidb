@@ -624,6 +624,9 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 	batchTasks := make([]*reorgBackfillTask, 0, batch)
 	physicalTableID := reorgInfo.PhysicalTableID
 	var prefix kv.Key
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		t = tbl.GetPartition(physicalTableID)
+	}
 	if reorgInfo.mergingTmpIdx {
 		prefix = t.IndexPrefix()
 	} else {
