@@ -212,6 +212,10 @@ func (sm *mockSessionManager) SetServerID(serverID uint64) {
 	sm.serverID = serverID
 }
 
+func (sm *mockSessionManager) GetMinStartTS(lowerBound uint64) uint64 {
+	return 0
+}
+
 type mockStore struct {
 	helper.Storage
 	host string
