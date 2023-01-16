@@ -158,7 +158,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	paramNum, paramTypes := parseParamTypes(sctx, params)
+	paramTypes := parseParamTypes(sctx, params)
 
 	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // for point query plan
 		if plan, names, ok, err := getCachedPointPlan(stmtAst, sessVars, stmtCtx); ok {
@@ -173,12 +173,11 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramNum, paramTypes, bindSQL)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramTypes, bindSQL)
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
-func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramNum int, paramTypes []*types.FieldType) {
-	paramNum = len(params)
+func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
 	for _, param := range params {
 		if c, ok := param.(*expression.Constant); ok { // from binary protocol
 			paramTypes = append(paramTypes, c.GetType())
@@ -264,7 +263,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
-func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramNum int,
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64,
 	paramTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
@@ -282,10 +281,10 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		return nil, nil, err
 	}
 
-	// We only cache the tableDual plan when the number of parameters are zero.
-	if containTableDual(p) && paramNum > 0 {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a TableDual plan"))
-	}
+	// check whether this plan is cacheable.
+	checkPlanCacheability(sctx, p, len(paramTypes))
+
+	// put this plan into the plan cache.
 	if stmtCtx.UseCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
@@ -304,6 +303,29 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
+}
+
+// checkPlanCacheability checks whether this plan is cacheable and set to skip plan cache if it's uncacheable.
+func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	pp, ok := p.(PhysicalPlan)
+	if !ok {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: not a PhysicalPlan"))
+		return
+	}
+
+	if useTiFlash(pp) {
+		stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: TiFlash plan is un-cacheable"))
+		return
+	}
+
+	// We only cache the tableDual plan when the number of parameters are zero.
+	if containTableDual(pp) && paramNum > 0 {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a TableDual plan"))
+		return
+	}
+
+	// TODO: plans accessing MVIndex are un-cacheable
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
@@ -675,17 +697,13 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 	return err
 }
 
-func containTableDual(p Plan) bool {
+func containTableDual(p PhysicalPlan) bool {
 	_, isTableDual := p.(*PhysicalTableDual)
 	if isTableDual {
 		return true
 	}
-	physicalPlan, ok := p.(PhysicalPlan)
-	if !ok {
-		return false
-	}
 	childContainTableDual := false
-	for _, child := range physicalPlan.Children() {
+	for _, child := range p.Children() {
 		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
 	return childContainTableDual
