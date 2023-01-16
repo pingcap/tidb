@@ -38,7 +38,7 @@ func (pq *PriorityQueue[T]) Swap(i, j int) {
 
 // Push pushes an element into the priority queue.
 func (pq *PriorityQueue[T]) Push(x interface{}) {
-	pq.data = append(pq.data, x)
+	pq.data = append(pq.data, x.(T))
 }
 
 // Pop pops an element from the priority queue.
@@ -56,7 +56,7 @@ func (pq *PriorityQueue[T]) Enqueue(x T) {
 
 // Dequeue dequeues an element from the priority queue.
 func (pq *PriorityQueue[T]) Dequeue() T {
-	return heap.Pop(pq)
+	return heap.Pop(pq).(T)
 }
 
 // Full is used to check if the priority queue is full.

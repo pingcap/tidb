@@ -17,6 +17,7 @@ package taskgroup
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/util/grunning"
@@ -26,8 +27,10 @@ import (
 
 type key int
 
+// Key is the key of TaskContext
 const Key key = 0
 
+// TaskGroup is a group of tasks
 type TaskGroup struct {
 	cpuTime   atomicutil.Duration
 	startTime time.Time
@@ -39,6 +42,7 @@ type TaskGroup struct {
 	}
 }
 
+// TaskContext is the context of a task
 type TaskContext struct {
 	tg *TaskGroup
 	wg sync.WaitGroup
@@ -47,6 +51,7 @@ type TaskContext struct {
 	next      *TaskContext
 }
 
+// NewTaskGroup is to create a new task group
 func NewTaskGroup() *TaskGroup {
 	return &TaskGroup{
 		startTime: time.Now(),
@@ -65,12 +70,14 @@ func fromContext(ctx context.Context) *TaskContext {
 	return ret
 }
 
+// NewContext is to create a new context with task group
 func NewContext(ctx context.Context, tg *TaskGroup) context.Context {
 	return context.WithValue(ctx, Key, &TaskContext{
 		tg: tg,
 	})
 }
 
+// ContextWithSchedInfo is to create a new context with task group
 func ContextWithSchedInfo(ctx context.Context) context.Context {
 	tc := fromContext(ctx)
 	if tc == nil {
@@ -79,6 +86,7 @@ func ContextWithSchedInfo(ctx context.Context) context.Context {
 	return NewContext(ctx, tc.tg)
 }
 
+// CheckPoint is to check point
 func CheckPoint(ctx context.Context) {
 	tc := fromContext(ctx)
 	if tc == nil {
@@ -106,8 +114,13 @@ func CheckPoint(ctx context.Context) {
 }
 
 type sched struct {
-	ch chan *TaskContext
-	pq *queue.PriorityQueue[*TaskGroup]
+	ch     chan *TaskContext
+	pq     *queue.PriorityQueue[*TaskGroup]
+	isStop atomic.Bool
+}
+
+func (s *sched) stop() {
+	s.isStop.Store(true)
 }
 
 var s = sched{
@@ -117,23 +130,27 @@ var s = sched{
 	}),
 }
 
+// StopScheduler is to stop the scheduler
+func StopScheduler() {
+	s.stop()
+}
+
+// Scheduler is to schedule the tasks
 func Scheduler() {
 	lastTime := time.Now()
 	const rate = 10
 	capacity := 200 * time.Millisecond
 	tokens := capacity
 	for {
-		select {
-		case cp := <-s.ch:
-			tg := cp.tg
-			tg.mu.Lock()
-			if tg.mu.tasks == nil {
-				s.pq.Enqueue(tg)
-			}
-			cp.next = tg.mu.tasks
-			tg.mu.tasks = cp
-			tg.mu.Unlock()
+		cp := <-s.ch
+		tg := cp.tg
+		tg.mu.Lock()
+		if tg.mu.tasks == nil {
+			s.pq.Enqueue(tg)
 		}
+		cp.next = tg.mu.tasks
+		tg.mu.tasks = cp
+		tg.mu.Unlock()
 
 		// A token bucket algorithm to limit the total cpu usage.
 		//
@@ -189,6 +206,9 @@ func Scheduler() {
 				tc.wg.Done()
 			}
 			tg.mu.Unlock()
+		}
+		if s.isStop.Load() {
+			break
 		}
 	}
 }
