@@ -789,31 +789,36 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 	// if it's a record key or an index key, decode it
 	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
 		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
-		tableID := tablecodec.DecodeTableID(key)
-		if table, ok := infoSchema.TableByID(tableID); ok {
-			if tablecodec.IsRecordKey(key) {
-				decodeFunc = consistency.DecodeRowMvccData(table.Meta())
-			} else {
-				tableInfo := table.Meta()
-				_, indexID, _, e := tablecodec.DecodeIndexKey(key)
-				if e != nil {
-					logutil.Logger(ctx).Error("assertion failed but cannot decode index key", zap.Error(e))
-					return err
-				}
-				var indexInfo *model.IndexInfo
-				for _, idx := range tableInfo.Indices {
-					if idx.ID == indexID {
-						indexInfo = idx
-						break
-					}
-				}
-				if indexInfo == nil {
-					return err
-				}
-				decodeFunc = consistency.DecodeIndexMvccData(indexInfo)
-			}
+		tableOrPartitionID := tablecodec.DecodeTableID(key)
+		tbl, ok := infoSchema.TableByID(tableOrPartitionID)
+		if !ok {
+			tbl, _, _ = infoSchema.FindTableByPartitionID(tableOrPartitionID)
+		}
+		if tbl == nil {
+			logutil.Logger(ctx).Warn("cannot find table by id", zap.Int64("tableID", tableOrPartitionID), zap.String("key", hex.EncodeToString(key)))
+			return newErr
+		}
+
+		if tablecodec.IsRecordKey(key) {
+			decodeFunc = consistency.DecodeRowMvccData(tbl.Meta())
 		} else {
-			logutil.Logger(ctx).Warn("assertion failed but table not found in infoschema", zap.Int64("tableID", tableID))
+			tableInfo := tbl.Meta()
+			_, indexID, _, e := tablecodec.DecodeIndexKey(key)
+			if e != nil {
+				logutil.Logger(ctx).Error("assertion failed but cannot decode index key", zap.Error(e))
+				return newErr
+			}
+			var indexInfo *model.IndexInfo
+			for _, idx := range tableInfo.Indices {
+				if idx.ID == indexID {
+					indexInfo = idx
+					break
+				}
+			}
+			if indexInfo == nil {
+				return newErr
+			}
+			decodeFunc = consistency.DecodeIndexMvccData(indexInfo)
 		}
 	}
 	if store, ok := s.store.(helper.Storage); ok {
