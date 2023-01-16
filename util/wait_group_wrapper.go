@@ -23,7 +23,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// WaitGroupEnhancedWrapper wrapper wg
+// WaitGroupEnhancedWrapper wrapper wg, it provides the basic ability of WaitGroupWrapper with checking unexited process
+// if the `exited` signal is true by print them on log.
 type WaitGroupEnhancedWrapper struct {
 	sync.WaitGroup
 	exited          *atomic.Bool
@@ -31,7 +32,8 @@ type WaitGroupEnhancedWrapper struct {
 	registerProcess sync.Map
 }
 
-// NewWaitGroupEnhancedWrapper returns WaitGroupEnhancedWrapper
+// NewWaitGroupEnhancedWrapper returns WaitGroupEnhancedWrapper, the empty source indicates the unit test, then
+// the `checkUnExitedProcess` won't be executed.
 func NewWaitGroupEnhancedWrapper(source string, exited *atomic.Bool) *WaitGroupEnhancedWrapper {
 	wgew := &WaitGroupEnhancedWrapper{
 		exited:          exited,
@@ -84,15 +86,15 @@ func (w *WaitGroupEnhancedWrapper) Run(exec func(), label string) {
 	w.Add(1)
 	go func() {
 		defer func() {
-			w.Done()
 			w.onExit(label)
+			w.Done()
 		}()
 		exec()
 	}()
 }
 
 // RunWithRecover wraps goroutine startup call with force recovery, add 1 to WaitGroup
-// and call done when function return. it will dump current goroutine stack into log if catch any recover result.
+// and call done when function return.
 // exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
 // passing `nil` means noop.
 func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r interface{}), label string) {
@@ -101,11 +103,12 @@ func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r 
 	go func() {
 		defer func() {
 			r := recover()
-			if recoverFn != nil {
+			if r != nil && recoverFn != nil {
+				logutil.BgLogger().Info("WaitGroupEnhancedWrapper exec panic recovered", zap.String("label", label))
 				recoverFn(r)
 			}
-			w.Done()
 			w.onExit(label)
+			w.Done()
 		}()
 		exec()
 	}()
