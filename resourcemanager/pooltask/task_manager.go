@@ -111,7 +111,7 @@ func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(taskID uint64, task *TaskBox[T
 // ExitSubTask is to exit a task, and it will decrease the count of running pooltask.
 func (t *TaskManager[T, U, C, CT, TF]) ExitSubTask(taskID uint64) {
 	shardID := getShardID(taskID)
-	t.running.Dec() // total running task
+	t.running.Dec() // total running tasks
 	t.task[shardID].rw.Lock()
 	t.task[shardID].stats[taskID].running-- // running job in this task
 	t.task[shardID].rw.Unlock()
