@@ -58,11 +58,12 @@ func TestGlobalConfigSyncer(t *testing.T) {
 	syncer.Notify(pd.GlobalConfigItem{Name: "a", Value: "b"})
 	err = syncer.StoreGlobalConfig(context.Background(), <-syncer.NotifyCh)
 	require.NoError(t, err)
-	items, err := client.LoadGlobalConfig(context.Background(), []string{"a"})
+	items, revision, err := client.LoadGlobalConfig(context.Background(), "")
 	require.NoError(t, err)
-	require.Equal(t, len(items), 1)
-	require.Equal(t, items[0].Name, "/global/config/a")
-	require.Equal(t, items[0].Value, "b")
+	require.Equal(t, 1, len(items))
+	require.Equal(t, "/global/config/a", items[0].Name)
+	require.Equal(t, int64(0), revision)
+	require.Equal(t, "b", items[0].Value)
 }
 
 func TestStoreGlobalConfig(t *testing.T) {
@@ -95,7 +96,7 @@ func TestStoreGlobalConfig(t *testing.T) {
 		client :=
 			store.(kv.StorageWithPD).GetPDClient()
 		// enable top sql will be translated to enable_resource_metering
-		items, err := client.LoadGlobalConfig(context.Background(), []string{"enable_resource_metering", "source_id"})
+		items, _, err := client.LoadGlobalConfig(context.Background(), "/global/config/")
 		require.NoError(t, err)
 		if len(items) == 2 && items[0].Value == "" {
 			continue
