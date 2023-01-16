@@ -1918,7 +1918,7 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	for i, ctx := range ctxList {
 		statsHandle.StatsLoad.SubCtxs[i] = ctx
 		do.wg.Run(func() {
-			statsHandle.SubLoadWorker(ctx, do.exit)
+			statsHandle.SubLoadWorker(statsHandle.StatsLoad.SubCtxs[i], do.exit)
 		}, fmt.Sprintf("subLoadWorker_%v", i))
 	}
 }
