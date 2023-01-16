@@ -34,14 +34,14 @@ type tContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 
 type meta struct {
 	stats    *list.List
-	createTs time.Time
+	createTS time.Time
 	origin   int32
 	running  int32
 }
 
 func newStats(concurrency int32) *meta {
 	s := &meta{
-		createTs: time.Now(),
+		createTS: time.Now(),
 		stats:    list.New(),
 		origin:   concurrency,
 	}
