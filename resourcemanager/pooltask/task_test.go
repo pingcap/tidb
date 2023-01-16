@@ -34,4 +34,7 @@ func TestTaskManager(t *testing.T) {
 		tm.ExitSubTask(1)
 	}
 	require.Equal(t, int32(0), tm.Running(1))
+	require.True(t, tm.hasTask(1))
+	tm.DeleteTask(1)
+	require.False(t, tm.hasTask(1))
 }

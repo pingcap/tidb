@@ -95,6 +95,15 @@ func (t *TaskManager[T, U, C, CT, TF]) DeleteTask(taskID uint64) {
 	t.task[shardID].rw.Unlock()
 }
 
+// hasTask check if the task is in the manager.
+func (t *TaskManager[T, U, C, CT, TF]) hasTask(taskID uint64) bool {
+	shardID := getShardID(taskID)
+	t.task[shardID].rw.Lock()
+	defer t.task[shardID].rw.Unlock()
+	_, ok := t.task[shardID].stats[taskID]
+	return ok
+}
+
 // AddSubTask AddTask add a task to the manager.
 func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(taskID uint64, task *TaskBox[T, U, C, CT, TF]) {
 	shardID := getShardID(taskID)
