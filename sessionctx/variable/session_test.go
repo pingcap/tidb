@@ -291,3 +291,57 @@ func TestIsolationRead(t *testing.T) {
 	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
 	require.True(t, ok)
 }
+
+func TestPretectedTSList(t *testing.T) {
+	lst := &variable.NewSessionVars().ProtectedTSList
+
+	// empty set
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+	require.Equal(t, 0, lst.Size())
+
+	// hold 1
+	unhold1 := lst.HoldTS(1)
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+
+	// hold 2 twice
+	unhold2a := lst.HoldTS(2)
+	unhold2b := lst.HoldTS(2)
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 2, lst.Size())
+
+	// unhold 2a
+	unhold2a()
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 2, lst.Size())
+	// unhold 2a again
+	unhold2a()
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 2, lst.Size())
+
+	// unhold 1
+	unhold1()
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 1, lst.Size())
+
+	// unhold 2b
+	unhold2b()
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+	require.Equal(t, 0, lst.Size())
+
+	// unhold 2b again
+	unhold2b()
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+	require.Equal(t, 0, lst.Size())
+}
