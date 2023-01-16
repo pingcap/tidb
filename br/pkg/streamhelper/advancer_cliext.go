@@ -185,7 +185,7 @@ func (t AdvancerExt) Begin(ctx context.Context, ch chan<- TaskEvent) error {
 	return nil
 }
 
-func (t AdvancerExt) getGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
+func (t AdvancerExt) GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
 	key := GlobalCheckpointOf(taskName)
 	resp, err := t.KV.Get(ctx, key)
 	if err != nil {
@@ -211,7 +211,7 @@ func (t AdvancerExt) getGlobalCheckpointForTask(ctx context.Context, taskName st
 func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error {
 	key := GlobalCheckpointOf(taskName)
 	value := string(encodeUint64(checkpoint))
-	oldValue, err := t.getGlobalCheckpointForTask(ctx, taskName)
+	oldValue, err := t.GetGlobalCheckpointForTask(ctx, taskName)
 	if err != nil {
 		return err
 	}
