@@ -643,6 +643,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("60"))
 	tk.MustExec("set global tidb_max_auto_analyze_time = -1")
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("0"))
+
+	tk.MustQuery("select @@tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_analyze_snapshot = 1")
+	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_analyze_snapshot = 0")
+	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_enable_analyze_snapshot = 1")
+	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_enable_analyze_snapshot = 0")
+	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
