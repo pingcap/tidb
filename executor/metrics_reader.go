@@ -222,7 +222,7 @@ func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.
 			continue
 		}
 		var sql string
-		if len(def.Quantiles) > 0 {
+		if def.HasQuantile() {
 			var qs []string
 			if len(e.extractor.Quantiles) > 0 {
 				for _, q := range e.extractor.Quantiles {
