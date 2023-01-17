@@ -47,16 +47,16 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
 		// We need to return the hint information to warn
 		joinOrderHintInfo = append(joinOrderHintInfo, join.hintInfo)
-		if join.preferJoinType > uint(0) {
-			if join.hintFromLeft {
-				joinMethodHintInfo[join.children[0].ID()] = &joinMethodHint{join.preferJoinType, join.hintInfo}
-			}
-			if join.hintFromRight {
-				joinMethodHintInfo[join.children[1].ID()] = &joinMethodHint{join.preferJoinType, join.hintInfo}
-			}
+	}
+	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.preferJoinType > uint(0) {
+		if join.hintFromLeft {
+			joinMethodHintInfo[join.children[0].ID()] = &joinMethodHint{join.preferJoinType, join.hintInfo}
+		}
+		if join.hintFromRight {
+			joinMethodHintInfo[join.children[1].ID()] = &joinMethodHint{join.preferJoinType, join.hintInfo}
 		}
 	}
-	if !isJoin || (join.preferJoinType > uint(0) && !join.preferJoinOrder) || join.StraightJoin ||
+	if !isJoin || (join.preferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
 		if joinOrderHintInfo != nil {

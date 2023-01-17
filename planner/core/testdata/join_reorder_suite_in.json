@@ -110,9 +110,10 @@
       "select /*+ leading(t2) hash_join(t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
       "select /*+ leading(t2) hash_join(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
       "select /*+ leading(t2) INL_JOIN(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t) INL_JOIN(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
+      "select /*+ leading(t2) INL_JOIN(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.a=t2.a;",
       "select /*+ leading(t2) merge_join(t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
-      "select /*+ leading(t1) merge_join(t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
-      "select /*+ leading(t2) INL_JOIN(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;"
+      "select /*+ leading(t1) merge_join(t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;"
     ]
   },
   {
