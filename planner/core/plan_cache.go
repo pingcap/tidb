@@ -159,6 +159,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
+<<<<<<< HEAD
 	if stmtCtx.UseCache { // for non-point plans
 		if plan, names, ok, err := getGeneralPlan(sctx, isGeneralPlanCache, cacheKey, bindSQL, is, stmt,
 			paramTypes); err != nil || ok {
@@ -167,6 +168,9 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	return generateNewPlan(ctx, sctx, isGeneralPlanCache, is, stmt, cacheKey, latestSchemaVersion, paramTypes, bindSQL)
+=======
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramTypes, bindSQL, limitCountAndOffset)
+>>>>>>> bdc6f4b541 (planner: refactor to put all plan-cacheability-check functions together (#40625))
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
@@ -256,9 +260,15 @@ func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey k
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
+<<<<<<< HEAD
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema,
 	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramTypes []*types.FieldType,
 	bindSQL string) (Plan, []*types.FieldName, error) {
+=======
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
+	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramTypes []*types.FieldType,
+	bindSQL string, limitParams []uint64) (Plan, []*types.FieldName, error) {
+>>>>>>> bdc6f4b541 (planner: refactor to put all plan-cacheability-check functions together (#40625))
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx

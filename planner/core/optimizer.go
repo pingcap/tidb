@@ -389,7 +389,11 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, err
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
+<<<<<<< HEAD
 	handleFineGrainedShuffle(sctx, plan)
+=======
+	handleFineGrainedShuffle(ctx, sctx, plan)
+>>>>>>> bdc6f4b541 (planner: refactor to put all plan-cacheability-check functions together (#40625))
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
