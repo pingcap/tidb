@@ -1908,6 +1908,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !variable.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
 			}
+
 			// check if specified resource group exists
 			if s.ResourceGroupNameOption.Value != "default" && s.ResourceGroupNameOption.Value != "" {
 				_, exists := e.is.ResourceGroupByName(model.NewCIStr(s.ResourceGroupNameOption.Value))

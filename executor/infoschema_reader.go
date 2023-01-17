@@ -3395,7 +3395,7 @@ func (e *memtableRetriever) setDataFromResourceGroups(sctx sessionctx.Context) e
 	for _, group := range resourceGroups {
 		row := types.MakeDatums(
 			group.ID,
-			group.Name.L,
+			group.Name.O,
 			group.RRURate,
 			group.WRURate,
 		)
