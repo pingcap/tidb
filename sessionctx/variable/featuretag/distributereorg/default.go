@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !featuretag
+//go:build !distributereorg
 
 package distributereorg
 
 // TiDBEnableDistributeReorg is a feature tag
-// TODO: Before merge this PR, change this value to false.
-const TiDBEnableDistributeReorg bool = true
+const TiDBEnableDistributeReorg bool = false
