@@ -53,7 +53,7 @@ func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess(exit chan struct{}) {
 	<-exit
 	logutil.BgLogger().Info("waitGroupWrapper start exit-checking", zap.String("source", w.source))
 	if w.check() {
-		ticker := time.NewTimer(10 * time.Second)
+		ticker := time.NewTimer(2 * time.Second)
 		defer ticker.Stop()
 		for {
 			<-ticker.C
