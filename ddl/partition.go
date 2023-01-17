@@ -2330,6 +2330,14 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			}
 			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 		}
+
+		// Doing the preSplitAndScatter here, since all checks are completed,
+		// and we will soon start writing to the new partitions.
+		if s, ok := d.store.(kv.SplittableStore); ok && s != nil {
+			// partInfo only contains the AddingPartitions
+			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo, true)
+		}
+
 		// TODO: test...
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
