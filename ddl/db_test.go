@@ -731,6 +731,25 @@ func TestComment(t *testing.T) {
 	tk.MustExec("drop table if exists ct, ct1")
 }
 
+func TestTableEncryption(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec(`create table t (id int) encryption = 'Y'`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ENCRYPTION='Y'"))
+	tk.MustQuery(`select create_options from information_schema.tables where table_name = 't' and table_schema = 'test'`).Check(testkit.Rows("ENCRYPTION='Y'"))
+
+	tk.MustExec(`alter table t encryption 'n'`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery(`select create_options from information_schema.tables where table_name = 't' and table_schema = 'test'`).Check(testkit.Rows(""))
+}
+
 func TestRebaseAutoID(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange")) }()
