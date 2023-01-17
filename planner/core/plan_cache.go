@@ -286,7 +286,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 
 	// check whether this plan is cacheable.
-	checkPlanCacheability(sctx, p, len(paramTypes))
+	if stmtCtx.UseCache {
+		checkPlanCacheability(sctx, p, len(paramTypes))
+	}
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache {
