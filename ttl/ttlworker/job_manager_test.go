@@ -16,6 +16,7 @@ package ttlworker
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -582,7 +583,7 @@ func TestCheckFinishedJob(t *testing.T) {
 	now := se.Now()
 	jobID := m.runningJobs[0].id
 	se.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-		if len(args) > 1 {
+		if strings.Contains(sql, "tidb_ttl_table_status") {
 			meetArg = true
 			expectedSQL, expectedArgs := finishJobSQL(tbl.ID, now, "{\"total_rows\":1,\"success_rows\":1,\"error_rows\":0,\"total_scan_task\":1,\"scheduled_scan_task\":1,\"finished_scan_task\":1}", jobID)
 			assert.Equal(t, expectedSQL, sql)
