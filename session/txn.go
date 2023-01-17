@@ -378,6 +378,11 @@ func (txn *LazyTxn) Rollback() error {
 
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
+	return txn.LockKeysFunc(ctx, lockCtx, nil, keys...)
+}
+
+// LockKeysFunc Wrap the inner transaction's `LockKeys` to record the status
+func (txn *LazyTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keys ...kv.Key) error {
 	failpoint.Inject("beforeLockKeys", func() {})
 	t := time.Now()
 
@@ -389,15 +394,18 @@ func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...k
 	txn.mu.TxnInfo.BlockStartTime.Time = t
 	txn.mu.Unlock()
 
-	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
-
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
-	txn.mu.TxnInfo.State = originState
-	txn.mu.TxnInfo.BlockStartTime.Valid = false
-	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
-	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
-	return err
+	lockFunc := func() {
+		if fn != nil {
+			fn()
+		}
+		txn.mu.Lock()
+		defer txn.mu.Unlock()
+		txn.mu.TxnInfo.State = originState
+		txn.mu.TxnInfo.BlockStartTime.Valid = false
+		txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
+		txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
+	}
+	return txn.Transaction.LockKeysFunc(ctx, lockCtx, lockFunc, keys...)
 }
 
 func (txn *LazyTxn) reset() {
