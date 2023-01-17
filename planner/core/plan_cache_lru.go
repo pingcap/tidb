@@ -259,9 +259,13 @@ func PickPlanFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.F
 		if !ok1 {
 			continue
 		}
-		ok2 := checkUint64SliceIfEqual(plan.limitOffsetAndCount, limitParams)
-		if ok2 {
-			return k, true
+		if len(plan.limitOffsetAndCount) > 0 {
+			// todo: && sessionVar after the previos pr
+			// skip this plan if this plan has param limit and tidb_enable_plan_cache_for_param_limit is off
+			ok2 := checkUint64SliceIfEqual(plan.limitOffsetAndCount, limitParams)
+			if ok2 {
+				return k, true
+			}
 		}
 	}
 	return nil, false

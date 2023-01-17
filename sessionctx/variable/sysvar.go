@@ -2264,12 +2264,8 @@ var defaultSysVars = []*SysVar{
 		s.PessimisticTransactionAggressiveLocking = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePrepPlanCacheForParameterizedLimit, Value: BoolToOnOff(DefTiDBEnablePrepPlanCacheForParameterizedLimit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnablePreparedPlanCacheForParameterizedLimit = TiDBOptOn(val)
-		return nil
-	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePrepPlanCacheForSubquery, Value: BoolToOnOff(DefTiDBEnablePrepPlanCacheForSubquery), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnablePreparedPlanCacheForSubquery = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheForParamLimit, Value: BoolToOnOff(DefTiDBEnablePlanCacheForParamLimit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePlanCacheForParamLimit = TiDBOptOn(val)
 		return nil
 	}},
 }

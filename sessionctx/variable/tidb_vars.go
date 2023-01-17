@@ -797,12 +797,8 @@ const (
 	// is enabled.
 	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
 
-	// TiDBEnablePrepPlanCacheForParameterizedLimit controls whether prepare statement with parameterized limit
-	//can be cached
-	TiDBEnablePrepPlanCacheForParameterizedLimit = "tidb_enable_prepared_plan_cache_for_parameterized_limit"
-
-	// TiDBEnablePrepPlanCacheForSubquery controls whether prepare statement with subquery can be cached
-	TiDBEnablePrepPlanCacheForSubquery = "tidb_enable_prepared_plan_cache_for_subquery"
+	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
+	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
 )
 
 // TiDB vars that have only global scope
@@ -1147,35 +1143,34 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold                       float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan                         = true
-	DefTiDBExternalTS                                       = 0
-	DefTiDBEnableExternalTSRead                             = false
-	DefTiDBEnableReusechunk                                 = true
-	DefTiDBUseAlloc                                         = false
-	DefTiDBEnablePlanReplayerCapture                        = false
-	DefTiDBIndexMergeIntersectionConcurrency                = ConcurrencyUnset
-	DefTiDBTTLJobEnable                                     = true
-	DefTiDBTTLScanBatchSize                                 = 500
-	DefTiDBTTLScanBatchMaxSize                              = 10240
-	DefTiDBTTLScanBatchMinSize                              = 1
-	DefTiDBTTLDeleteBatchSize                               = 100
-	DefTiDBTTLDeleteBatchMaxSize                            = 10240
-	DefTiDBTTLDeleteBatchMinSize                            = 1
-	DefTiDBTTLDeleteRateLimit                               = 0
-	DefPasswordReuseHistory                                 = 0
-	DefPasswordReuseTime                                    = 0
-	DefTiDBStoreBatchSize                                   = 0
-	DefTiDBHistoricalStatsDuration                          = 7 * 24 * time.Hour
-	DefTiDBEnableHistoricalStatsForCapture                  = false
-	DefTiDBTTLJobScheduleWindowStartTime                    = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime                      = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount                               = 4
-	DefTiDBTTLDeleteWorkerCount                             = 4
-	DefTiDBEnableResourceControl                            = false
-	DefTiDBPessimisticTransactionAggressiveLocking          = false
-	DefTiDBEnablePrepPlanCacheForParameterizedLimit         = true
-	DefTiDBEnablePrepPlanCacheForSubquery                   = true
+	DefTiDBGOGCTunerThreshold                      float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                        = true
+	DefTiDBExternalTS                                      = 0
+	DefTiDBEnableExternalTSRead                            = false
+	DefTiDBEnableReusechunk                                = true
+	DefTiDBUseAlloc                                        = false
+	DefTiDBEnablePlanReplayerCapture                       = false
+	DefTiDBIndexMergeIntersectionConcurrency               = ConcurrencyUnset
+	DefTiDBTTLJobEnable                                    = true
+	DefTiDBTTLScanBatchSize                                = 500
+	DefTiDBTTLScanBatchMaxSize                             = 10240
+	DefTiDBTTLScanBatchMinSize                             = 1
+	DefTiDBTTLDeleteBatchSize                              = 100
+	DefTiDBTTLDeleteBatchMaxSize                           = 10240
+	DefTiDBTTLDeleteBatchMinSize                           = 1
+	DefTiDBTTLDeleteRateLimit                              = 0
+	DefPasswordReuseHistory                                = 0
+	DefPasswordReuseTime                                   = 0
+	DefTiDBStoreBatchSize                                  = 0
+	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture                 = false
+	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                              = 4
+	DefTiDBTTLDeleteWorkerCount                            = 4
+	DefTiDBEnableResourceControl                           = false
+	DefTiDBPessimisticTransactionAggressiveLocking         = false
+	DefTiDBEnablePlanCacheForParamLimit                    = true
 )
 
 // Process global variables.

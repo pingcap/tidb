@@ -109,14 +109,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-	case *ast.VariableExpr:
-		checker.cacheable = false
-		checker.reason = "query has sub-queries is un-cacheable"
-		return in, true
-	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
-		if checker.sctx.GetSessionVars().EnablePreparedPlanCacheForSubquery {
-			return in, false
-		}
+	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
 		checker.cacheable = false
 		checker.reason = "query has sub-queries is un-cacheable"
 		return in, true
@@ -143,7 +136,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			}
 		}
 	case *ast.Limit:
-		if checker.sctx.GetSessionVars().EnablePreparedPlanCacheForParameterizedLimit {
+		if checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 			return in, false
 		}
 		if node.Count != nil {
