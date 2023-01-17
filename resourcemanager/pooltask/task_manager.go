@@ -36,7 +36,7 @@ type meta struct {
 	stats    *list.List
 	createTS time.Time
 	origin   int32
-	running  int32
+	running  atomic.Int32
 }
 
 func newStats(concurrency int32) *meta {
@@ -113,7 +113,7 @@ func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(taskID uint64, task *TaskBox[T
 	t.running.Inc()
 	t.task[shardID].rw.Lock()
 	t.task[shardID].stats[taskID].stats.PushBack(tc)
-	t.task[shardID].stats[taskID].running++ // running job in this task
+	t.task[shardID].stats[taskID].running.Inc() // running job in this task
 	t.task[shardID].rw.Unlock()
 }
 
@@ -122,7 +122,7 @@ func (t *TaskManager[T, U, C, CT, TF]) ExitSubTask(taskID uint64) {
 	shardID := getShardID(taskID)
 	t.running.Dec() // total running tasks
 	t.task[shardID].rw.Lock()
-	t.task[shardID].stats[taskID].running-- // running job in this task
+	t.task[shardID].stats[taskID].running.Dec() // running job in this task
 	t.task[shardID].rw.Unlock()
 }
 
@@ -131,7 +131,7 @@ func (t *TaskManager[T, U, C, CT, TF]) Running(taskID uint64) int32 {
 	shardID := getShardID(taskID)
 	t.task[shardID].rw.Lock()
 	defer t.task[shardID].rw.Unlock()
-	return t.task[shardID].stats[taskID].running
+	return t.task[shardID].stats[taskID].running.Load()
 }
 
 // StopTask is to stop a task by TaskID.
