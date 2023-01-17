@@ -85,3 +85,8 @@ func (r *ResourceManager) registerPool(name string, pool *util.PoolContainer) er
 func (r *ResourceManager) Unregister(name string) {
 	r.poolMap.Del(name)
 }
+
+// Reset is to Reset resource manager. it is just for test.
+func (r *ResourceManager) Reset() {
+	r.poolMap = util.NewShardPoolMap()
+}
