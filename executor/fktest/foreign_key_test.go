@@ -2792,3 +2792,27 @@ func TestForeignKeyAndGeneratedColumn(t *testing.T) {
 	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("2 2"))
 	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("2 2"))
 }
+
+func TestForeignKeyAndExpressionIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index idx1 (b), index idx2 ((b*2)));")
+	tk.MustExec("create table t2 (a int, b int, index((b*2)), constraint fk foreign key(b) references t1(b));")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("update t1 set b=b+10 where b=1", plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where b=1", plannercore.ErrRowIsReferenced2)
+	tk.MustGetErrMsg("alter table t1 drop index idx1", "[ddl:1553]Cannot drop index 'idx1': needed in a foreign key constraint")
+	tk.MustGetErrMsg("alter table t2 drop index fk", "[ddl:1553]Cannot drop index 'fk': needed in a foreign key constraint")
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete set null on update cascade")
+	tk.MustExec("update t1 set b=b+10 where b=1")
+	tk.MustExec("delete from t1 where b=2")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 11", "2 <nil>"))
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
+}
