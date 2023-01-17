@@ -393,7 +393,6 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(ctx, sctx, plan)
-	checkPlanCacheable(sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	return plan, nil
@@ -963,16 +962,6 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(ctx, sctx, child, &childHelper, streamCountInfo, tiflashServerCountInfo)
 		}
-	}
-}
-
-// checkPlanCacheable used to check whether a plan can be cached. Plans that
-// meet the following characteristics cannot be cached:
-// 1. Use the TiFlash engine.
-// Todo: make more careful check here.
-func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
-	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: TiFlash plan is un-cacheable"))
 	}
 }
 
