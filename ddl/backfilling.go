@@ -329,9 +329,6 @@ func (w *backfillWorker) finishJob(bfJob *BackfillJob) error {
 }
 
 func (w *backfillWorker) String() string {
-	if w.backfiller == nil || w.GetCtx() == nil {
-		return ""
-	}
 	return fmt.Sprintf("backfill-worker %d, tp %s", w.GetCtx().id, w.backfiller.String())
 }
 

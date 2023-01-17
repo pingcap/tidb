@@ -765,19 +765,20 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
 	d.prepareWorkers4ConcurrencyDDL()
-	if err := d.prepareBackfillWorkers(); err != nil {
-		return err
-	}
 
 	if config.TableLockEnabled() {
 		d.wg.Add(1)
 		go d.startCleanDeadTableLock()
 	}
 
-	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
+	// If tidb_enable_ddl is true, we need campaign owner and do DDL jobs. Besides, we also can do backfill jobs.
 	// Otherwise, we needn't do that.
 	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		if err := d.EnableDDL(); err != nil {
+			return err
+		}
+
+		if err := d.prepareBackfillWorkers(); err != nil {
 			return err
 		}
 	}

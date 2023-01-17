@@ -446,7 +446,7 @@ func runBackfillJobs(d *ddl, sess *session, bJob *BackfillJob, jobCtx *JobContex
 
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	// TODO: Different worker using different newBackfillerFunc.
-	workerCtx, err := newAddIndexWorkerContext(d, sess, dbInfo.Name, tbl, workerCnt, bJob, jobCtx)
+	workerCtx, err := newAddIndexWorkerContext(d, dbInfo.Name, tbl, workerCnt, bJob, jobCtx)
 	if err != nil || workerCtx == nil {
 		logutil.BgLogger().Info("[ddl] new adding index worker context failed", zap.Reflect("workerCtx", workerCtx), zap.Error(err))
 		return nil, errors.Trace(err)

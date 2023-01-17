@@ -1383,13 +1383,13 @@ func (w *baseIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
-func newAddIndexWorkerContext(d *ddl, sess *session, schemaName model.CIStr, tbl table.Table, workerCnt int,
+func newAddIndexWorkerContext(d *ddl, schemaName model.CIStr, tbl table.Table, workerCnt int,
 	bfJob *BackfillJob, jobCtx *JobContext) (*backfillWorkerContext, error) {
 	//nolint:forcetypeassert
 	phyTbl := tbl.(table.PhysicalTable)
 	return newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.Meta,
 		func(bfCtx *backfillCtx) (backfiller, error) {
-			decodeColMap, err := makeupDecodeColMap(sess, schemaName, phyTbl)
+			decodeColMap, err := makeupDecodeColMap(bfCtx.sessCtx, schemaName, phyTbl)
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] make up decode column map failed", zap.Error(err))
 				return nil, errors.Trace(err)

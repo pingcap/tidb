@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/resourcemanager"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -73,6 +74,7 @@ func NewCluster() (*Cluster, error) {
 
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
+	util.InTest.Store(true)
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -124,6 +126,7 @@ func (mock *Cluster) Stop() {
 		_ = mock.HttpServer.Close()
 	}
 	view.Stop()
+	util.InTest.Store(true)
 	resourcemanager.GlobalResourceManager.Reset()
 }
 
