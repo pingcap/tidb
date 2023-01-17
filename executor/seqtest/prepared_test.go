@@ -788,6 +788,25 @@ func TestLimitUnsupportedCase(t *testing.T) {
 	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
 }
 
+func TestIssue38323(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, k int);")
+
+	tk.MustExec("prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a, @a")
+	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where id = 1 and k = 1 group by id, k").Rows())
+
+	tk.MustExec("prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
+	tk.MustExec("set @a = 1;")
+	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where 1 = id and 1 = k group by id, k").Rows())
+}
+
 func TestSetPCLimitAndSubquerySwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -840,4 +859,5 @@ func TestPCLimitAndSubquerySwitch(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_subquery = OFF;")
 	tk.MustExec("prepare stmt from 'select * from t t1 where t1.a > (select 1 from t t2 where t2.a < ?)'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+
 }
