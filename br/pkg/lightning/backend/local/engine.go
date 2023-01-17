@@ -101,7 +101,7 @@ type Engine struct {
 	// isImportingAtomic is an atomic variable indicating whether this engine is importing.
 	// This should not be used as a "spin lock" indicator.
 	isImportingAtomic atomic.Uint32
-	// flush and ingest sst hold the rlock, other operation hold the wlock.
+	// flush and doIngest sst hold the rlock, other operation hold the wlock.
 	mutex sync.RWMutex
 
 	ctx            context.Context
@@ -183,7 +183,7 @@ func (e *Engine) isLocked() bool {
 	return isStateLocked(importMutexState(e.isImportingAtomic.Load()))
 }
 
-// rLock locks the local file with shard read state. Only used for flush and ingest SST files.
+// rLock locks the local file with shard read state. Only used for flush and doIngest SST files.
 func (e *Engine) rLock() {
 	e.mutex.RLock()
 	e.isImportingAtomic.Add(uint32(importMutexStateReadLock))
@@ -527,7 +527,7 @@ func (e *Engine) ingestSSTLoop() {
 	seq := atomic.NewInt32(0)
 	finishedSeq := atomic.NewInt32(0)
 	var seqLock sync.Mutex
-	// a flush is finished iff all the compaction&ingest tasks with a lower seq number are finished.
+	// a flush is finished iff all the compaction&doIngest tasks with a lower seq number are finished.
 	flushQueue := make([]flushSeq, 0)
 	// inSyncSeqs is a heap that stores all the finished compaction tasks whose seq is bigger than `finishedSeq + 1`
 	// this mean there are still at lease one compaction task with a lower seq unfinished.
@@ -539,7 +539,7 @@ func (e *Engine) ingestSSTLoop() {
 	}
 
 	concurrency := e.config.CompactConcurrency
-	// when compaction is disabled, ingest is an serial action, so 1 routine is enough
+	// when compaction is disabled, doIngest is an serial action, so 1 routine is enough
 	if !e.config.Compact {
 		concurrency = 1
 	}
@@ -672,7 +672,7 @@ readMetaLoop:
 				break
 			}
 			if m.flushCh != nil {
-				// meet a flush event, we should trigger a ingest task if there are pending metas,
+				// meet a flush event, we should trigger a doIngest task if there are pending metas,
 				// and then waiting for all the running flush tasks to be done.
 				if len(metasTmp) > 0 {
 					addMetas()
