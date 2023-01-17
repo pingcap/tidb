@@ -82,7 +82,6 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
-	domain.DisableEnhancedWaitGroupCheck4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
