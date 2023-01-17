@@ -61,6 +61,7 @@ func (l *logEntry) CheckFieldNotEmpty(t *testing.T, fieldName string) {
 	require.NotEmpty(t, f.String)
 }
 
+// LogHook captures logs, mainly for testing
 type LogHook struct {
 	zapcore.Core
 	Logs          []logEntry
@@ -68,11 +69,13 @@ type LogHook struct {
 	messageFilter string
 }
 
+// Write captures the log and save it
 func (h *LogHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	h.Logs = append(h.Logs, logEntry{entry: entry, fields: fields})
 	return nil
 }
 
+// Check implements the string filter
 func (h *LogHook) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
 	if len(h.messageFilter) > 0 && !strings.Contains(entry.Message, h.messageFilter) {
 		return nil
@@ -88,6 +91,7 @@ func (h *LogHook) encode(entry *logEntry) (string, error) {
 	return buffer.String(), nil
 }
 
+// CheckLogCount is a helper function to assert the number of logs captured
 func (h *LogHook) CheckLogCount(t *testing.T, expected int) {
 	logsStr := make([]string, len(h.Logs))
 	for i, item := range h.Logs {
@@ -99,6 +103,7 @@ func (h *LogHook) CheckLogCount(t *testing.T, expected int) {
 	require.Len(t, logsStr, expected)
 }
 
+// WithLogHook is a helper function to use with LogHook. It returns a context whose logger is replaced with the hook.
 func WithLogHook(ctx context.Context, t *testing.T, msgFilter string) (newCtx context.Context, hook *LogHook) {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
