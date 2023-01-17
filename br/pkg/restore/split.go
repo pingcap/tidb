@@ -601,7 +601,6 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 		case <-ctx.Done():
 			return nil
 		case helper.regionsCh <- newRegions:
-
 		}
 		log.Info("split the region", zap.Uint64("region-id", region.Region.Id), zap.Int("split-point-number", len(splitPoints)))
 		return nil
@@ -661,8 +660,8 @@ func SplitPoint(
 			return true
 		}
 		var (
-			vStartKey []byte = nil
-			vEndKey   []byte = nil
+			vStartKey []byte
+			vEndKey   []byte
 		)
 		// use `vStartKey` and `vEndKey` to compare with region's key
 		vStartKey, vEndKey, err = GetRewriteEncodedKeys(v, rule)
@@ -791,7 +790,6 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 				break
 			}
 		}
-
 	}()
 
 	iter := helper.iterator()

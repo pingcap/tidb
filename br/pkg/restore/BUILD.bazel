@@ -61,6 +61,7 @@ go_library(
         "//util/collate",
         "//util/hack",
         "//util/mathutil",
+        "//util/sqlexec",
         "//util/table-filter",
         "@com_github_emirpasic_gods//maps/treemap",
         "@com_github_go_sql_driver_mysql//:mysql",
