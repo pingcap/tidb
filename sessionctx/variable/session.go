@@ -1305,6 +1305,9 @@ type SessionVars struct {
 	// EnableReuseCheck indicates  request chunk whether use chunk alloc
 	EnableReuseCheck bool
 
+	// EnableAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
+	EnableAdvancedJoinHint bool
+
 	// preuseChunkAlloc indicates whether pre statement use chunk alloc
 	// like select @@last_sql_use_alloc
 	preUseChunkAlloc bool
