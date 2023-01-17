@@ -262,6 +262,9 @@ type planDigester struct {
 
 // NormalizeFlatPlan normalizes a FlatPhysicalPlan and generates plan digest.
 func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parser.Digest) {
+	if flat == nil {
+		return "", parser.NewDigest(nil)
+	}
 	selectPlan, selectPlanOffset := flat.Main.GetSelectPlan()
 	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return "", parser.NewDigest(nil)
