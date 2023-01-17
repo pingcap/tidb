@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/driver"
@@ -93,7 +94,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	var err error
 
 	session.SetSchemaLease(500 * time.Millisecond)
-
+	resourcemanager.GlobalResourceManager.Start()
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
@@ -133,6 +134,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
 		view.Stop()
+		resourcemanager.GlobalResourceManager.Stop()
 	})
 	return store, dom
 }
