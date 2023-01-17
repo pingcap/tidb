@@ -1989,6 +1989,14 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 		if !v.InExecute {
 			return 0, false, true
 		}
+<<<<<<< HEAD
+=======
+		if mustInt64orUint64 {
+			if expected, _ := CheckParamTypeInt64orUint64(v); !expected {
+				return 0, false, false
+			}
+		}
+>>>>>>> 17df596863 (planner: prepared plan cache support cached plan with placeholder in limit clause (#40196))
 		param, err := expression.ParamMarkerExpression(ctx, v, false)
 		if err != nil {
 			return 0, false, false
@@ -2022,6 +2030,24 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 	return 0, false, false
 }
 
+<<<<<<< HEAD
+=======
+// CheckParamTypeInt64orUint64 check param type for plan cache limit, only allow int64 and uint64 now
+// eg: set @a = 1;
+func CheckParamTypeInt64orUint64(param *driver.ParamMarkerExpr) (bool, uint64) {
+	val := param.GetValue()
+	switch v := val.(type) {
+	case int64:
+		if v >= 0 {
+			return true, uint64(v)
+		}
+	case uint64:
+		return true, v
+	}
+	return false, 0
+}
+
+>>>>>>> 17df596863 (planner: prepared plan cache support cached plan with placeholder in limit clause (#40196))
 func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count uint64,
 	offset uint64, err error) {
 	var isExpectedType bool

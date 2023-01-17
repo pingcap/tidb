@@ -87,7 +87,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -96,7 +96,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.DeleteStmt{
@@ -139,7 +139,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -148,7 +148,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.UpdateStmt{
@@ -188,7 +188,7 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -196,7 +196,7 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.SelectStmt{

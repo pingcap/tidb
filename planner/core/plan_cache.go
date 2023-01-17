@@ -158,15 +158,27 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			return plan, names, err
 		}
 	}
-
+	limitCountAndOffset, paramErr := ExtractLimitFromAst(stmt.PreparedAst.Stmt, sctx)
+	if paramErr != nil {
+		return nil, nil, paramErr
+	}
 	if stmtCtx.UseCache { // for non-point plans
+<<<<<<< HEAD
 		if plan, names, ok, err := getGeneralPlan(sctx, isGeneralPlanCache, cacheKey, bindSQL, is, stmt,
 			paramTypes); err != nil || ok {
+=======
+		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt,
+			paramTypes, limitCountAndOffset); err != nil || ok {
+>>>>>>> 17df596863 (planner: prepared plan cache support cached plan with placeholder in limit clause (#40196))
 			return plan, names, err
 		}
 	}
 
+<<<<<<< HEAD
 	return generateNewPlan(ctx, sctx, isGeneralPlanCache, is, stmt, cacheKey, latestSchemaVersion, paramTypes, bindSQL)
+=======
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramNum, paramTypes, bindSQL, limitCountAndOffset)
+>>>>>>> 17df596863 (planner: prepared plan cache support cached plan with placeholder in limit clause (#40196))
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
@@ -212,13 +224,22 @@ func getPointQueryPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmtC
 	return plan, names, true, nil
 }
 
+<<<<<<< HEAD
 func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey kvcache.Key, bindSQL string,
 	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
+=======
+func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
+	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType, limitParams []uint64) (Plan,
+>>>>>>> 17df596863 (planner: prepared plan cache support cached plan with placeholder in limit clause (#40196))
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
+<<<<<<< HEAD
 	candidate, exist := sctx.GetPlanCache(isGeneralPlanCache).Get(cacheKey, paramTypes)
+=======
+	candidate, exist := sctx.GetPlanCache(isNonPrepared).Get(cacheKey, paramTypes, limitParams)
+>>>>>>> 17df596863 (planner: prepared plan cache support cached plan with placeholder in limit clause (#40196))
 	if !exist {
 		return nil, nil, false, nil
 	}
@@ -256,9 +277,14 @@ func getGeneralPlan(sctx sessionctx.Context, isGeneralPlanCache bool, cacheKey k
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
+<<<<<<< HEAD
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema,
 	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramTypes []*types.FieldType,
 	bindSQL string) (Plan, []*types.FieldName, error) {
+=======
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramNum int,
+	paramTypes []*types.FieldType, bindSQL string, limitParams []uint64) (Plan, []*types.FieldName, error) {
+>>>>>>> 17df596863 (planner: prepared plan cache support cached plan with placeholder in limit clause (#40196))
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -289,11 +315,15 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isGeneralPlan
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes, limitParams)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
+<<<<<<< HEAD
 		sctx.GetPlanCache(isGeneralPlanCache).Put(cacheKey, cached, paramTypes)
+=======
+		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, paramTypes, limitParams)
+>>>>>>> 17df596863 (planner: prepared plan cache support cached plan with placeholder in limit clause (#40196))
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err

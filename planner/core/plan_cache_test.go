@@ -294,12 +294,6 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk.MustExec("prepare stmt from 'select /*+ ignore_plan_cache() */ * from t'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by hint"))
 
-	tk.MustExec("prepare stmt from 'select * from t limit ?'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
-
-	tk.MustExec("prepare stmt from 'select * from t limit ?, 1'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?, 10' is un-cacheable"))
-
 	tk.MustExec("prepare stmt from 'select * from t order by ?'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'order by ?' is un-cacheable"))
 
@@ -391,6 +385,7 @@ func TestIssue40679(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '1.1' may be converted to INT"))
 }
 
+<<<<<<< HEAD
 func TestIssue38335(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -434,4 +429,51 @@ func TestIssue41032(t *testing.T) {
 	tk.MustExec(`set @a=8950167, @b=16305982`)
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+=======
+func TestPlanCacheWithLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+
+	testCases := []struct {
+		sql    string
+		params []int
+	}{
+		{"prepare stmt from 'select * from t limit ?'", []int{1}},
+		{"prepare stmt from 'select * from t limit ?, ?'", []int{1, 2}},
+		{"prepare stmt from 'delete from t order by a limit ?'", []int{1}},
+		{"prepare stmt from 'insert into t select * from t order by a desc limit ?'", []int{1}},
+		{"prepare stmt from 'insert into t select * from t order by a desc limit ?, ?'", []int{1, 2}},
+		{"prepare stmt from 'update t set a = 1 limit ?'", []int{1}},
+		{"prepare stmt from '(select * from t order by a limit ?) union (select * from t order by a desc limit ?)'", []int{1, 2}},
+		{"prepare stmt from 'select * from t where a = ? limit ?, ?'", []int{1, 1, 1}},
+		{"prepare stmt from 'select * from t where a in (?, ?) limit ?, ?'", []int{1, 2, 1, 1}},
+	}
+
+	for idx, testCase := range testCases {
+		tk.MustExec(testCase.sql)
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+		if idx < 6 {
+			tk.MustExec("set @a0 = 6")
+			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		}
+	}
+
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	tk.MustExec("set @a = 10001")
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
+>>>>>>> 17df596863 (planner: prepared plan cache support cached plan with placeholder in limit clause (#40196))
 }
