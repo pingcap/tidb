@@ -1393,6 +1393,9 @@ type LimitExec struct {
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
+
+	// Log the close time when opentracing is enabled.
+	span opentracing.Span
 }
 
 // Next implements the Executor Next interface.
@@ -1470,13 +1473,29 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	e.childResult = tryNewCacheChunk(e.children[0])
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		e.span = span
+	}
 	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *LimitExec) Close() error {
+	start := time.Now()
+
 	e.childResult = nil
-	return e.baseExecutor.Close()
+	err := e.baseExecutor.Close()
+
+	elapsed := time.Since(start)
+	if elapsed > time.Millisecond {
+		logutil.BgLogger().Info("limit executor close takes a long time",
+			zap.Duration("elapsed", elapsed))
+		if e.span != nil {
+			span1 := e.span.Tracer().StartSpan("limitExec.Close", opentracing.ChildOf(e.span.Context()), opentracing.StartTime(start))
+			defer span1.Finish()
+		}
+	}
+	return err
 }
 
 func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
