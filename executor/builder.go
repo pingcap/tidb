@@ -778,6 +778,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		Partition:             v.Partition,
 		Column:                v.Column,
 		IndexName:             v.IndexName,
+		ResourceGroupName:     model.NewCIStr(v.ResourceGroupName),
 		Flag:                  v.Flag,
 		Roles:                 v.Roles,
 		User:                  v.User,
@@ -1930,7 +1931,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableMemoryUsage),
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
-			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory):
+			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
+			strings.ToLower(infoschema.TableResourceGroups):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,

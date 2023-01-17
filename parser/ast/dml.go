@@ -2771,6 +2771,7 @@ const (
 	ShowPlacementForPartition
 	ShowPlacementLabels
 	ShowSessionStates
+	ShowCreateResourceGroup
 )
 
 const (
@@ -2791,19 +2792,20 @@ const (
 type ShowStmt struct {
 	dmlNode
 
-	Tp          ShowStmtType // Databases/Tables/Columns/....
-	DBName      string
-	Table       *TableName  // Used for showing columns.
-	Partition   model.CIStr // Used for showing partition.
-	Column      *ColumnName // Used for `desc table column`.
-	IndexName   model.CIStr
-	Flag        int // Some flag parsed from sql, such as FULL.
-	Full        bool
-	User        *auth.UserIdentity   // Used for show grants/create user.
-	Roles       []*auth.RoleIdentity // Used for show grants .. using
-	IfNotExists bool                 // Used for `show create database if not exists`
-	Extended    bool                 // Used for `show extended columns from ...`
-	Limit       *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
+	Tp                ShowStmtType // Databases/Tables/Columns/....
+	DBName            string
+	Table             *TableName  // Used for showing columns.
+	Partition         model.CIStr // Used for showing partition.
+	Column            *ColumnName // Used for `desc table column`.
+	IndexName         model.CIStr
+	ResourceGroupName string // used for showing resource group
+	Flag              int    // Some flag parsed from sql, such as FULL.
+	Full              bool
+	User              *auth.UserIdentity   // Used for show grants/create user.
+	Roles             []*auth.RoleIdentity // Used for show grants .. using
+	IfNotExists       bool                 // Used for `show create database if not exists`
+	Extended          bool                 // Used for `show extended columns from ...`
+	Limit             *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
 
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
@@ -2879,6 +2881,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 	case ShowCreatePlacementPolicy:
 		ctx.WriteKeyWord("CREATE PLACEMENT POLICY ")
 		ctx.WriteName(n.DBName)
+	case ShowCreateResourceGroup:
+		ctx.WriteKeyWord("CREATE RESOURCE GROUP ")
+		ctx.WriteName(n.ResourceGroupName)
 	case ShowCreateUser:
 		ctx.WriteKeyWord("CREATE USER ")
 		if err := n.User.Restore(ctx); err != nil {
