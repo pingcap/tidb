@@ -127,7 +127,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	stmtAst := stmt.PreparedAst
-	stmtCtx.UseCache = stmt.StmtCacheable
+	stmtCtx.UseCache = true
 	if !stmt.StmtCacheable {
 		stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: %s", stmt.UncacheableReason))
 	}
