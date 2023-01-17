@@ -14,7 +14,7 @@
 
 // See grunning.Supported() for an explanation behind this build tag.
 //
-//go:build (darwin && arm64) || freebsd
+//go:build ((darwin && arm64) || freebsd) && !bazel
 
 package grunning
 
