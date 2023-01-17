@@ -445,7 +445,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				return changed, hasFail, v
 			}
 			oldChanged := changed
-			if collate.NewCollationEnabled()&& changed {
+			if collate.NewCollationEnabled() && changed {
 				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
 				changed = false
 				copy(tmpArgForCollCheck, refExprArr.Result())
