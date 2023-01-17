@@ -164,6 +164,10 @@ func (j *ttlJob) Finish(se session.Session, now time.Time) {
 	j.finish(se, now)
 }
 
+func (j *ttlJob) Statistics() *ttlStatistics {
+	return j.statistics
+}
+
 func (j *ttlJob) ID() string {
 	return j.id
 }

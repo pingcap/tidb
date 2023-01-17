@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -112,7 +113,7 @@ func TestFinishJob(t *testing.T) {
 
 	sessionFactory := sessionFactory(t, store)
 
-	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
+	testTable := &cache.PhysicalTable{ID: 2, Schema: model.NewCIStr("db1"), TableInfo: &model.TableInfo{ID: 1, Name: model.NewCIStr("t1"), TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
 
 	tk.MustExec("insert into mysql.tidb_ttl_table_status(table_id) values (2)")
 
@@ -120,13 +121,30 @@ func TestFinishJob(t *testing.T) {
 	m := ttlworker.NewJobManager("test-id", nil, store, nil)
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 	se := sessionFactory()
-	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now(), false)
+	startTime := time.Now()
+	job, err := m.LockNewJob(context.Background(), se, testTable, startTime, false)
 	require.NoError(t, err)
 	job.SetScanErr(errors.New(`"'an error message contains both single and double quote'"`))
-	job.Finish(se, time.Now())
+	job.Statistics().TotalRows.Add(128)
+	job.Statistics().SuccessRows.Add(120)
+	job.Statistics().ErrorRows.Add(8)
+	time.Sleep(time.Second)
+	endTime := time.Now()
+	job.Finish(se, endTime)
 
-	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 {\"total_rows\":0,\"success_rows\":0,\"error_rows\":0,\"total_scan_task\":1,\"scheduled_scan_task\":0,\"finished_scan_task\":0,\"scan_task_err\":\"\\\"'an error message contains both single and double quote'\\\"\"}"))
+	expireTime, err := testTable.EvalExpireTime(context.Background(), se, startTime)
+	require.NoError(t, err)
+
+	timeFormat := "2006-01-02 15:04:05"
+	lastJobSummary := "{\"total_rows\":128,\"success_rows\":120,\"error_rows\":8,\"total_scan_task\":1,\"scheduled_scan_task\":0,\"finished_scan_task\":0,\"scan_task_err\":\"\\\"'an error message contains both single and double quote'\\\"\"}"
+	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 " + lastJobSummary))
 	tk.MustQuery("select * from mysql.tidb_ttl_task").Check(testkit.Rows())
+	expectedRow := []string{
+		job.ID(), "2", "1", "db1", "t1", "<nil>",
+		startTime.Format(timeFormat), endTime.Format(timeFormat), expireTime.Format(timeFormat),
+		lastJobSummary, "128", "120", "8", "finished",
+	}
+	tk.MustQuery("select * from mysql.tidb_ttl_job_history").Check(testkit.Rows(strings.Join(expectedRow, " ")))
 }
 
 func TestTTLAutoAnalyze(t *testing.T) {

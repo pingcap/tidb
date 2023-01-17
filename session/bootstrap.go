@@ -516,6 +516,26 @@ const (
 		created_time timestamp NOT NULL,
 		primary key(job_id, scan_id),
 		key(created_time));`
+
+	// CreateTTLJobHistory is a table that stores ttl job's history
+	CreateTTLJobHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
+		job_id varchar(64) PRIMARY KEY,
+		table_id bigint(64) NOT NULL,
+        parent_table_id bigint(64) NOT NULL,
+    	table_schema varchar(64) NOT NULL,
+		table_name varchar(64) NOT NULL,
+    	partition_name varchar(64) DEFAULT NULL,
+		create_time timestamp NOT NULL,
+		finish_time timestamp NOT NULL,
+		ttl_expire timestamp NOT NULL,
+        summary_text text,
+		expired_rows bigint(64) DEFAULT NULL,
+    	deleted_rows bigint(64) DEFAULT NULL,
+    	error_delete_rows bigint(64) DEFAULT NULL,
+    	status varchar(64) NOT NULL,
+    	key(create_time),
+    	key(finish_time)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -757,7 +777,7 @@ const (
 	version109 = 109
 	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version110 = 110
-	// version111 adds the table tidb_ttl_task
+	// version111 adds the table tidb_ttl_task and tidb_ttl_job_history
 	version111 = 111
 )
 
@@ -2239,6 +2259,7 @@ func upgradeToVer111(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateTTLTask)
+	doReentrantDDL(s, CreateTTLJobHistory)
 }
 
 func writeOOMAction(s Session) {
@@ -2349,6 +2370,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLTableStatus)
 	// Create tidb_ttl_task table
 	mustExecute(s, CreateTTLTask)
+	// Create tidb_ttl_job_history table
+	mustExecute(s, CreateTTLJobHistory)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

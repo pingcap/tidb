@@ -782,7 +782,8 @@ func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *ca
 		ctx:    jobCtx,
 		cancel: cancel,
 
-		createTime: now,
+		createTime:    now,
+		ttlExpireTime: expireTime,
 		// at least, the info schema cache and table status cache are consistent in table id, so it's safe to get table
 		// information from schema cache directly
 		tbl:   table,
