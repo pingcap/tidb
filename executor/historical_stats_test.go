@@ -174,6 +174,7 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
 	// drop the table and gc stats
 	tk.MustExec("drop table t")
+	is = dom.InfoSchema()
 	h.GCStats(is, 0)
 
 	// assert stats_history tables delete the record of dropped table
