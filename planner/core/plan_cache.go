@@ -308,9 +308,21 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 // checkPlanCacheability checks whether this plan is cacheable and set to skip plan cache if it's uncacheable.
 func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
-	pp, ok := p.(PhysicalPlan)
-	if !ok {
+	var pp PhysicalPlan
+	switch x := p.(type) {
+	case *Insert:
+		pp = x.SelectPlan
+	case *Update:
+		pp = x.SelectPlan
+	case *Delete:
+		pp = x.SelectPlan
+	case PhysicalPlan:
+		pp = x
+	default:
 		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: not a PhysicalPlan"))
+		return
+	}
+	if pp == nil { // simple DML statements
 		return
 	}
 
