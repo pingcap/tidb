@@ -343,6 +343,9 @@ type PlanCacheValue struct {
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	ParamTypes        FieldSlice
 	memoryUsage       int64
+	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
+	// only used for cache and pick plan with parameters
+	limitOffsetAndCount []uint64
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
@@ -390,7 +393,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	paramTypes []*types.FieldType) *PlanCacheValue {
+	paramTypes []*types.FieldType, limitParams []uint64) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -400,10 +403,11 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		userParamTypes[i] = tp.Clone()
 	}
 	return &PlanCacheValue{
-		Plan:              plan,
-		OutPutNames:       names,
-		TblInfo2UnionScan: dstMap,
-		ParamTypes:        userParamTypes,
+		Plan:                plan,
+		OutPutNames:         names,
+		TblInfo2UnionScan:   dstMap,
+		ParamTypes:          userParamTypes,
+		limitOffsetAndCount: limitParams,
 	}
 }
 
@@ -452,4 +456,70 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
+}
+
+type limitExtractor struct {
+	cacheable         bool // For safety considerations, check if limit count less than 10000
+	offsetAndCount    []uint64
+	unCacheableReason string
+	paramTypeErr      error
+}
+
+// Enter implements Visitor interface.
+func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.Limit:
+		if node.Count != nil {
+			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(count)
+				if typeExpected {
+					if val > 10000 {
+						checker.cacheable = false
+						checker.unCacheableReason = "limit count more than 10000"
+						return in, true
+					}
+					checker.offsetAndCount = append(checker.offsetAndCount, val)
+				} else {
+					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
+					return in, true
+				}
+			}
+		}
+		if node.Offset != nil {
+			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(offset)
+				if typeExpected {
+					checker.offsetAndCount = append(checker.offsetAndCount, val)
+				} else {
+					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
+					return in, true
+				}
+			}
+		}
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.cacheable
+}
+
+// ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
+func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, error) {
+	if node == nil {
+		return nil, nil
+	}
+	checker := limitExtractor{
+		cacheable:      true,
+		offsetAndCount: []uint64{},
+	}
+	node.Accept(&checker)
+	if checker.paramTypeErr != nil {
+		return nil, checker.paramTypeErr
+	}
+	if sctx != nil && !checker.cacheable {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
+	}
+	return checker.offsetAndCount, nil
 }
