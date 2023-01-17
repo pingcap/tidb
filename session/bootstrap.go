@@ -533,6 +533,7 @@ const (
     	deleted_rows bigint(64) DEFAULT NULL,
     	error_delete_rows bigint(64) DEFAULT NULL,
     	status varchar(64) NOT NULL,
+    	key(table_schema, table_name, create_time),
     	key(parent_table_id, create_time),
     	key(create_time)
 	);`
