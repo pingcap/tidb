@@ -2816,3 +2816,26 @@ func TestForeignKeyAndExpressionIndex(t *testing.T) {
 	tk.MustExec("admin check table t1")
 	tk.MustExec("admin check table t2")
 }
+
+func TestForeignKeyAndMultiValuedIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, a json, b int generated always as (a->'$.id') stored, index idx1(b), index idx2((cast(a ->'$.data' as signed array))))")
+	tk.MustExec("create table t2 (id int, b int, constraint fk foreign key(b) references t1(b));")
+	tk.MustExec(`insert into t1 (id, a) values (1, '{"id": "1", "data": [1,11,111]}')`)
+	tk.MustExec(`insert into t1 (id, a) values (2, '{"id": "2", "data": [2,22,222]}')`)
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError(`update t1 set a='{"id": "10", "data": [1,11,111]}' where id=1`, plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError(`delete from t1 where id=1`, plannercore.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete set null on update cascade")
+	tk.MustExec(`update t1 set a='{"id": "10", "data": [1,11,111]}' where id=1`)
+	tk.MustExec(`delete from t1 where id=2`)
+	tk.MustQuery("select id,b from t1 order by id").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select id,b from t2 order by id").Check(testkit.Rows("1 10", "2 <nil>"))
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
+}
