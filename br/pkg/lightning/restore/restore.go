@@ -2339,7 +2339,11 @@ func (cr *chunkRestore) deliverLoop(
 	var startRealOffset, currRealOffset int64 // save to 0 at first
 
 	for hasMoreKVs {
-		var dataChecksum, indexChecksum verify.KVChecksum
+		var (
+			c             = t.kvStore.GetCodec()
+			dataChecksum  = verify.NewKVChecksumWithKeyspace(c)
+			indexChecksum = verify.NewKVChecksumWithKeyspace(c)
+		)
 		var columns []string
 		var kvPacket []deliveredKVs
 		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
@@ -2366,7 +2370,7 @@ func (cr *chunkRestore) deliverLoop(
 						hasMoreKVs = false
 						break populate
 					}
-					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
+					p.kvs.ClassifyAndAppend(&dataKVs, dataChecksum, &indexKVs, indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
 					currRealOffset = p.realOffset
@@ -2433,8 +2437,8 @@ func (cr *chunkRestore) deliverLoop(
 		// No need to apply a lock since this is the only thread updating `cr.chunk.**`.
 		// In local mode, we should write these checkpoints after engine flushed.
 		lastOffset := cr.chunk.Chunk.Offset
-		cr.chunk.Checksum.Add(&dataChecksum)
-		cr.chunk.Checksum.Add(&indexChecksum)
+		cr.chunk.Checksum.Add(dataChecksum)
+		cr.chunk.Checksum.Add(indexChecksum)
 		cr.chunk.Chunk.Offset = currOffset
 		cr.chunk.Chunk.RealOffset = currRealOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
