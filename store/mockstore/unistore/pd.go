@@ -56,14 +56,14 @@ func (c *pdClient) LoadGlobalConfig(ctx context.Context, configPath string) ([]p
 	return ret, 0, nil
 }
 
-func (c *pdClient) StoreGlobalConfig(ctx context.Context, items []pd.GlobalConfigItem) error {
+func (c *pdClient) StoreGlobalConfig(ctx context.Context, configPath string, items []pd.GlobalConfigItem) error {
 	for _, item := range items {
 		c.globalConfig["/global/config/"+item.Name] = item.Value
 	}
 	return nil
 }
 
-func (c *pdClient) WatchGlobalConfig(ctx context.Context) (chan []pd.GlobalConfigItem, error) {
+func (c *pdClient) WatchGlobalConfig(ctx context.Context, configPath string, revision int64) (chan []pd.GlobalConfigItem, error) {
 	globalConfigWatcherCh := make(chan []pd.GlobalConfigItem, 16)
 	go func() {
 		defer func() {
