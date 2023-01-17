@@ -93,6 +93,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	var err error
 
 	session.SetSchemaLease(500 * time.Millisecond)
+	domain.DisableEnhancedWaitGroupCheck4Test()
 
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
