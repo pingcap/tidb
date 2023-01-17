@@ -292,8 +292,6 @@ type Config struct {
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
 	TiDBMaxReuseColumn uint32 `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
-	// TiDBEnableExitChecking indicates whether checking background process in domain during exiting
-	TiDBEnableExitChecking bool `toml:"tidb-enable-exit-checking" json:"tidb-enable-exit-checking"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
