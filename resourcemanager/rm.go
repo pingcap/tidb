@@ -17,6 +17,7 @@ package resourcemanager
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/tidb/resourcemanager/scheduler"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -25,6 +26,11 @@ import (
 
 // GlobalResourceManager is a global resource manager
 var GlobalResourceManager = NewResourceManger()
+
+// RandomName is to get a random name for register pool. It is just for test.
+func RandomName() string {
+	return uuid.New().String()
+}
 
 // ResourceManager is a resource manager
 type ResourceManager struct {
@@ -84,4 +90,9 @@ func (r *ResourceManager) registerPool(name string, pool *util.PoolContainer) er
 // Unregister is to unregister pool into resource manager.
 func (r *ResourceManager) Unregister(name string) {
 	r.poolMap.Del(name)
+}
+
+// Reset is to Reset resource manager. it is just for test.
+func (r *ResourceManager) Reset() {
+	r.poolMap = util.NewShardPoolMap()
 }

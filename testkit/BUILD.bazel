@@ -21,6 +21,7 @@ go_library(
         "//parser/ast",
         "//parser/terror",
         "//planner/core",
+        "//resourcemanager",
         "//session",
         "//session/txninfo",
         "//sessionctx/variable",
