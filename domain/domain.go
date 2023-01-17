@@ -1341,10 +1341,8 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		duration = 10 * time.Minute
 	}
 
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("loadPrivilegeInLoop exited.")
 			util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 		}()
@@ -1374,7 +1372,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
 			}
 		}
-	}()
+	}, "loadPrivilegeInLoop")
 	return nil
 }
 
@@ -1391,10 +1389,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
 	}
-	do.wg.Add(1)
-	go func() {
+
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("LoadSysVarCacheLoop exited.")
 			util.Recover(metrics.LabelDomain, "LoadSysVarCacheLoop", nil, false)
 		}()
@@ -1437,7 +1434,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
 			}
 		}
-	}()
+	}, "LoadSysVarCacheLoop")
 	return nil
 }
 
@@ -1450,11 +1447,9 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeNodeKey)
 	}
-	do.wg.Add(1)
 	duration := 10 * time.Second
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("WatchTiFlashComputeNodeChange exit")
 			util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
 		}()
@@ -1495,7 +1490,7 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 				return
 			}
 		}
-	}()
+	}, "WatchTiFlashComputeNodeChange")
 	return nil
 }
 
@@ -1530,10 +1525,8 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 }
 
 func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
 			util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
 		}()
@@ -1570,14 +1563,12 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				}
 			}
 		}
-	}()
+	}, "globalBindHandleWorkerLoop")
 }
 
 func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.Manager) {
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
 			util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
 		}()
@@ -1595,7 +1586,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 				}
 			}
 		}
-	}()
+	}, "handleEvolvePlanTasksLoop")
 }
 
 // TelemetryReportLoop create a goroutine that reports usage data in a loop, it should be called only once
@@ -1607,10 +1598,8 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
 	}
 
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("TelemetryReportLoop exited.")
 			util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
 		}()
@@ -1631,16 +1620,14 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 				}
 			}
 		}
-	}()
+	}, "TelemetryReportLoop")
 }
 
 // TelemetryRotateSubWindowLoop create a goroutine that rotates the telemetry window regularly.
 func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("TelemetryRotateSubWindowLoop exited.")
 			util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
 		}()
@@ -1652,7 +1639,7 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 				telemetry.RotateSubWindow()
 			}
 		}
-	}()
+	}, "TelemetryRotateSubWindowLoop")
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
@@ -2249,10 +2236,8 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 	sessionstates.SetCertPath(signingCert)
 	sessionstates.SetKeyPath(signingKey)
 
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
 			util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
 		}()
@@ -2264,7 +2249,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 				return
 			}
 		}
-	}()
+	}, "loadSigningCertLoop")
 }
 
 // ServerID gets serverID.
