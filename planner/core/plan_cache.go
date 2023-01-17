@@ -158,27 +158,29 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	paramNum, paramTypes := parseParamTypes(sctx, params)
+	paramTypes := parseParamTypes(sctx, params)
 
 	if stmtCtx.UseCache && stmtAst.CachedPlan != nil { // for point query plan
 		if plan, names, ok, err := getCachedPointPlan(stmtAst, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
 	}
-
+	limitCountAndOffset, paramErr := ExtractLimitFromAst(stmt.PreparedAst.Stmt, sctx)
+	if paramErr != nil {
+		return nil, nil, paramErr
+	}
 	if stmtCtx.UseCache { // for non-point plans
 		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt,
-			paramTypes); err != nil || ok {
+			paramTypes, limitCountAndOffset); err != nil || ok {
 			return plan, names, err
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramNum, paramTypes, bindSQL)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, latestSchemaVersion, paramTypes, bindSQL, limitCountAndOffset)
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
-func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramNum int, paramTypes []*types.FieldType) {
-	paramNum = len(params)
+func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
 	for _, param := range params {
 		if c, ok := param.(*expression.Constant); ok { // from binary protocol
 			paramTypes = append(paramTypes, c.GetType())
@@ -221,12 +223,12 @@ func getCachedPointPlan(stmt *ast.Prepared, sessVars *variable.SessionVars, stmt
 }
 
 func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType) (Plan,
+	is infoschema.InfoSchema, stmt *PlanCacheStmt, paramTypes []*types.FieldType, limitParams []uint64) (Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 
-	candidate, exist := sctx.GetPlanCache(isNonPrepared).Get(cacheKey, paramTypes)
+	candidate, exist := sctx.GetPlanCache(isNonPrepared).Get(cacheKey, paramTypes, limitParams)
 	if !exist {
 		return nil, nil, false, nil
 	}
@@ -264,8 +266,9 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
-func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramNum int,
-	paramTypes []*types.FieldType, bindSQL string) (Plan, []*types.FieldName, error) {
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
+	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, paramTypes []*types.FieldType,
+	bindSQL string, limitParams []uint64) (Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -282,10 +285,10 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		return nil, nil, err
 	}
 
-	// We only cache the tableDual plan when the number of parameters are zero.
-	if containTableDual(p) && paramNum > 0 {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a TableDual plan"))
-	}
+	// check whether this plan is cacheable.
+	checkPlanCacheability(sctx, p, len(paramTypes))
+
+	// put this plan into the plan cache.
 	if stmtCtx.UseCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
@@ -296,14 +299,49 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, paramTypes, limitParams)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, paramTypes)
+		sctx.GetPlanCache(isNonPrepared).Put(cacheKey, cached, paramTypes, limitParams)
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
+}
+
+// checkPlanCacheability checks whether this plan is cacheable and set to skip plan cache if it's uncacheable.
+func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	var pp PhysicalPlan
+	switch x := p.(type) {
+	case *Insert:
+		pp = x.SelectPlan
+	case *Update:
+		pp = x.SelectPlan
+	case *Delete:
+		pp = x.SelectPlan
+	case PhysicalPlan:
+		pp = x
+	default:
+		stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: unexpected un-cacheable plan %v", p.ExplainID().String()))
+		return
+	}
+	if pp == nil { // simple DML statements
+		return
+	}
+
+	if useTiFlash(pp) {
+		stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: TiFlash plan is un-cacheable"))
+		return
+	}
+
+	// We only cache the tableDual plan when the number of parameters are zero.
+	if containTableDual(pp) && paramNum > 0 {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a TableDual plan"))
+		return
+	}
+
+	// TODO: plans accessing MVIndex are un-cacheable
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
@@ -673,37 +711,6 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	}
 	return err
-}
-
-// isCacheablePlan checks whether this plan is cacheable and return the reason if it's uncacheable.
-func isCacheablePlan(p Plan) (cacheable bool, uncacheableReason string) {
-	pp, ok := p.(PhysicalPlan)
-	if !ok {
-		return false, "not a PhysicalPlan"
-	}
-
-	if containTableDual(pp) {
-		return false, "contain TableDual"
-	}
-	if accessMVIndex(pp) {
-		return false, "access Multi-Valued Indexes"
-	}
-	return true, ""
-}
-
-func accessMVIndex(p PhysicalPlan) bool {
-	if idxMerge, ok := p.(*PhysicalIndexMergeReader); ok {
-		if idxMerge.AccessMVIndex {
-			return true
-		}
-	}
-
-	for _, c := range p.Children() {
-		if accessMVIndex(c) {
-			return true
-		}
-	}
-	return false
 }
 
 func containTableDual(p PhysicalPlan) bool {
