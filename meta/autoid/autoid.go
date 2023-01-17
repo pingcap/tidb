@@ -285,11 +285,15 @@ func SetStep(s int64) {
 
 // Base implements autoid.Allocator Base interface.
 func (alloc *allocator) Base() int64 {
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
 	return alloc.base
 }
 
 // End implements autoid.Allocator End interface.
 func (alloc *allocator) End() int64 {
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
 	return alloc.end
 }
 

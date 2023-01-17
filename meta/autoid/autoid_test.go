@@ -20,6 +20,7 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -593,4 +594,58 @@ func TestAllocComputationIssue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(7), min)
 	require.Equal(t, int64(13), max)
+}
+
+func TestIssue40584(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
+		require.NoError(t, err)
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		require.NoError(t, err)
+		return nil
+	})
+	require.NoError(t, err)
+
+	alloc := autoid.NewAllocator(store, 1, 1, false, autoid.RowIDAllocType)
+	require.NotNil(t, alloc)
+
+	finishAlloc := make(chan bool)
+	finishBase := make(chan bool)
+	var done int32 = 0
+
+	// call allocator.Alloc and allocator.Base in parallel for 3 seconds to detect data race
+	go func() {
+		for {
+			alloc.Alloc(ctx, 1, 1, 1)
+			if atomic.LoadInt32(&done) > 0 {
+				break
+			}
+		}
+		finishAlloc <- true
+	}()
+
+	go func() {
+		for {
+			alloc.Base()
+			if atomic.LoadInt32(&done) > 0 {
+				break
+			}
+		}
+		finishBase <- true
+	}()
+
+	runTime := time.NewTimer(time.Second * 3)
+	<-runTime.C
+	atomic.AddInt32(&done, 1)
+	<-finishAlloc
+	<-finishBase
 }
