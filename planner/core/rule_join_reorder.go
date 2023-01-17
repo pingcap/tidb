@@ -41,9 +41,7 @@ type joinMethodHint struct {
 func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
 	otherConds []expression.Expression, joinTypes []*joinTypeWithExtMsg, joinOrderHintInfo []*tableHintInfo, joinMethodHintInfo map[int]*joinMethodHint, hasOuterJoin bool) {
 	join, isJoin := p.(*LogicalJoin)
-	if joinMethodHintInfo == nil {
-		joinMethodHintInfo = make(map[int]*joinMethodHint)
-	}
+	joinMethodHintInfo = make(map[int]*joinMethodHint)
 	if isJoin && join.preferJoinOrder {
 		// When there is a leading hint, the hint may not take effect for other reasons.
 		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
@@ -548,7 +546,6 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 		newJoin.preferJoinType = preferredJoinMethodHint
 		newJoin.hintInfo = joinMethodHintInfo
 	}
-	return
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
