@@ -33,6 +33,7 @@ go_test(
         "//testkit",
         "//testkit/testmain",
         "//testkit/testsetup",
+        "//testkit/testutil",
         "//types",
         "//util",
         "//util/memory",
