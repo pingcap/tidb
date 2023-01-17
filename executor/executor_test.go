@@ -5557,6 +5557,8 @@ func TestAdmin(t *testing.T) {
 	}))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
@@ -5681,7 +5683,7 @@ func TestAdmin(t *testing.T) {
 		// check that the result set has no duplication
 		defer wg.Done()
 		for i := 0; i < 10; i++ {
-			result := tk.MustQuery(`admin show ddl job queries 20`)
+			result := tk2.MustQuery(`admin show ddl job queries 20`)
 			rows := result.Rows()
 			rowIDs := make(map[string]struct{})
 			for _, row := range rows {
@@ -5712,7 +5714,7 @@ func TestAdmin(t *testing.T) {
 		// check that the result set has no duplication
 		defer wg2.Done()
 		for i := 0; i < 10; i++ {
-			result := tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
+			result := tk2.MustQuery(`admin show ddl job queries limit 3 offset 2`)
 			rows := result.Rows()
 			rowIDs := make(map[string]struct{})
 			for _, row := range rows {
