@@ -15,7 +15,9 @@
 package util
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -32,6 +34,17 @@ func TestWaitGroupWrapperRun(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, expect, val.Load())
+
+	val.Store(0)
+	exited := atomic.NewBool(false)
+	wg2 := NewWaitGroupEnhancedWrapper("", exited)
+	for i := int32(0); i < expect; i++ {
+		wg2.Run(func() {
+			val.Inc()
+		}, fmt.Sprintf("test_%v", i))
+	}
+	wg2.Wait()
+	require.Equal(t, expect, val.Load())
 }
 
 func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
@@ -47,4 +60,38 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, expect, val.Load())
+
+	val.Store(0)
+	exited := atomic.NewBool(false)
+	wg2 := NewWaitGroupEnhancedWrapper("", exited)
+	for i := int32(0); i < expect; i++ {
+		wg2.RunWithRecover(func() {
+			panic("test1")
+		}, func(r interface{}) {
+			val.Inc()
+		}, fmt.Sprintf("test_%v", i))
+	}
+	wg2.Wait()
+	require.Equal(t, expect, val.Load())
+}
+
+func TestWaitGroupWrapperCheck(t *testing.T) {
+	exited := atomic.NewBool(false)
+	wg := NewWaitGroupEnhancedWrapper("", exited)
+	quit := make(chan struct{})
+	wg.Run(func() {
+		<-quit
+	}, "test")
+
+	// directly skip check if exited is false
+	require.True(t, wg.check())
+
+	// need continue check as existed unexited process
+	exited.Store(true)
+	require.True(t, wg.check())
+
+	// no need to continue check as all process exited
+	quit <- struct{}{}
+	time.Sleep(1 * time.Second)
+	require.False(t, wg.check())
 }
