@@ -288,9 +288,13 @@ type Config struct {
 	Plugin                       Plugin     `toml:"plugin" json:"plugin"`
 	MaxServerConnections         uint32     `toml:"max-server-connections" json:"max-server-connections"`
 	RunDDL                       bool       `toml:"run-ddl" json:"run-ddl"`
-	DisaggregatedTiFlash         bool       `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
-	TiFlashComputeAutoScalerType string     `toml:"autoscaler-type" json:"autoscaler-type"`
-	TiFlashComputeAutoScalerAddr string     `toml:"autoscaler-addr" json:"autoscaler-addr"`
+
+	// These config is related to disaggregated-tiflash mode.
+	DisaggregatedTiFlash         bool   `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
+	TiFlashComputeAutoScalerType string `toml:"autoscaler-type" json:"autoscaler-type"`
+	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
+	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
+
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
@@ -1001,6 +1005,9 @@ var defaultConf = Config{
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
 	DisaggregatedTiFlash:                 false,
+	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
+	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
+	IsTiFlashComputeFixedPool:            false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 }

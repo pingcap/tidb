@@ -119,10 +119,13 @@ disaggregated-tiflash = false
 
 # autoscaler-type indicates which type of AutoScaler will be used. Possible values are: mock, aws, gcp.
 # Only meaningful when disaggregated-tiflash is true
-# autoscaler-type = "mock"
+# autoscaler-type = "aws"
 
 # autoscaler-addr is the host of AutoScaler, Only meaningful when disaggregated-tiflash is true.
-# autoscaler-addr = ""
+# autoscaler-addr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081"
+
+# is-tiflashcompute-fixed-pool controls whether autoscaler use fixed shared pool(free user) or not.
+# is-tiflashcompute-fixed-pool: false
 
 [log]
 # Log level: debug, info, warn, error, fatal.
