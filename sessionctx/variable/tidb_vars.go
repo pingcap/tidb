@@ -647,6 +647,11 @@ const (
 	// When set to false, a non-transactional DML returns when it meets the first error.
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
+
+	// TiDBEnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When set to false, ANALYZE reads the latest data.
+	// When set to true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	TiDBEnableAnalyzeSnapshot = "tidb_enable_analyze_snapshot"
 )
 
 // TiDB vars that have only global scope
@@ -892,6 +897,7 @@ const (
 	DefTiDBEnablePrepPlanCache                   = true
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
+	DefTiDBEnableAnalyzeSnapshot                 = false
 )
 
 // Process global variables.
