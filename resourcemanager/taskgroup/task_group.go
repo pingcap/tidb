@@ -137,6 +137,8 @@ func StopScheduler() {
 
 // Scheduler is to schedule the tasks
 func Scheduler() {
+	tg := NewTaskGroup()
+	ctx = NewContext(context.Background(), tg)
 	lastTime := time.Now()
 	const rate = 10
 	capacity := 200 * time.Millisecond
@@ -211,4 +213,10 @@ func Scheduler() {
 			break
 		}
 	}
+}
+
+var ctx context.Context
+
+func GetContext() context.Context {
+	return ctx
 }
