@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/resourcemanager"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,6 +38,7 @@ type testRestoreSchemaSuite struct {
 }
 
 func createRestoreSchemaSuite(t *testing.T) *testRestoreSchemaSuite {
+	util.InTest.Store(true)
 	var err error
 	s := new(testRestoreSchemaSuite)
 	s.mockGlue = &gluetidb.MockGlue{}
@@ -47,6 +50,8 @@ func createRestoreSchemaSuite(t *testing.T) *testRestoreSchemaSuite {
 	require.NoError(t, s.mock.Start())
 	t.Cleanup(func() {
 		s.mock.Stop()
+		resourcemanager.GlobalResourceManager.Reset()
+		util.InTest.Store(false)
 	})
 	return s
 }

@@ -145,6 +145,8 @@ go_test(
         "//parser/model",
         "//parser/mysql",
         "//parser/types",
+        "//resourcemanager",
+        "//resourcemanager/util",
         "//sessionctx/stmtctx",
         "//store/pdtypes",
         "//tablecodec",

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -2104,6 +2105,7 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 					"test t  b 0 0 2 1 3 4 0",
 					"test t  b 0 1 3 1 6 6 0"))
 			tk.MustQuery(fmt.Sprintf("select hist_id from mysql.stats_histograms where version = (select version from mysql.stats_meta where table_id = %d)", tblID)).Check(testkit.Rows("2"))
+			resourcemanager.GlobalResourceManager.Reset()
 		}(val)
 	}
 }

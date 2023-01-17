@@ -20,6 +20,7 @@ go_test(
         "//parser/mysql",
         "//parser/terror",
         "//planner/core",
+        "//resourcemanager",
         "//session",
         "//sessionctx",
         "//sessionctx/variable",

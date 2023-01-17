@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/resourcemanager"
+	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -82,6 +83,7 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
+	util.InTest.Store(true)
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
@@ -92,6 +94,7 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 		err := store.Close()
 		require.NoError(t, err)
 		view.Stop()
+		util.InTest.Store(false)
 		resourcemanager.GlobalResourceManager.Reset()
 	})
 	return dom
