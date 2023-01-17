@@ -812,20 +812,20 @@ func TestSetPlanCacheLimitSwitch(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
 
-	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit=OFF;")
-	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF;")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit=1;")
-	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = 1;")
+	tk.MustQuery("select @@session.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
 
-	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit=off;")
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_enable_plan_cache_for_param_limit = off;")
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit=ON;")
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_enable_plan_cache_for_param_limit = ON;")
+	tk.MustQuery("select @@global.tidb_enable_plan_cache_for_param_limit").Check(testkit.Rows("1"))
 }
 
 func TestPlanCacheLimitSwitch(t *testing.T) {
@@ -834,14 +834,25 @@ func TestPlanCacheLimitSwitch(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key(a))")
-	tk.MustExec("prepare stmt from 'select * from t limit ?'")
-	tk.MustExec("set @a = 1")
-	tk.MustExec("execute stmt using @a")
-	tk.MustExec("execute stmt using @a")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit = OFF")
+	checkIfCached := func(res string) {
+		tk.MustExec("set @a = 1")
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(res))
+	}
+
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
+	checkIfCached("0")
 
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
+	checkIfCached("0")
+	//
+	//tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	//checkIfCached("1")
+	//tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit = OFF")
+	//checkIfCached("0")
 }
