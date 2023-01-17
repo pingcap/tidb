@@ -144,9 +144,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	// also in DroppingDefinitions (since session running on schema version -1)
 	// should also see the changes
 	if pi.DDLState == model.StateDeleteReorganization {
-		// use the 'StateWriteReorganization' here, since StateDeleteReorganization
-		// would skip index writes.
-		origIdx := setIndexesState(ret, model.StateWriteReorganization)
+		origIdx := setIndexesState(ret, pi.DDLState)
 		defer unsetIndexesState(ret, origIdx)
 		ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DroppingDefinitions)
 		if err != nil {
@@ -200,7 +198,18 @@ func setIndexesState(t *partitionedTable, state model.SchemaState) []*model.Inde
 	t.meta.Indices = make([]*model.IndexInfo, 0, len(orig))
 	for i := range orig {
 		t.meta.Indices = append(t.meta.Indices, orig[i].Clone())
-		t.meta.Indices[i].State = state
+		if t.meta.Indices[i].State == model.StatePublic {
+			switch state {
+			case model.StateDeleteOnly, model.StateNone:
+				t.meta.Indices[i].State = model.StateDeleteOnly
+			case model.StatePublic:
+				// Keep as is
+			default:
+				// use the 'StateWriteReorganization' here, since StateDeleteReorganization
+				// would skip index writes.
+				t.meta.Indices[i].State = model.StateWriteReorganization
+			}
+		}
 	}
 	return orig
 }
