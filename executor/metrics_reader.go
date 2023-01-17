@@ -72,10 +72,10 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	totalRows := make([][]types.Datum, 0)
 	quantiles := e.extractor.Quantiles
 	if len(quantiles) == 0 {
-		if len(tblDef.Quantiles) == 0 {
-			quantiles = []float64{0}
-		} else {
+		if tblDef.HasQuantile() {
 			quantiles = tblDef.Quantiles
+		} else {
+			quantiles = []float64{0}
 		}
 	}
 	for _, quantile := range quantiles {
