@@ -102,7 +102,6 @@ func checkTempIndexKey(txn kv.Transaction, tmpRec *temporaryIndexRecord, originI
 		// Don't delete the index key if the row exists.
 		tmpRec.skip = true
 		return nil
-
 	}
 	return nil
 }
