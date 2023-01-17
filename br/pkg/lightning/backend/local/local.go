@@ -315,7 +315,7 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 
 	res, err := g.GetSQLExecutor().QueryStringsWithLog(ctx, tiFlashReplicaQuery, "fetch tiflash replica info", log.FromContext(ctx))
 	if err != nil {
-		return errors.Annotate(err, "fetch tiflash replica info failed")
+		return errors.Annotate(err, "fetch tiflash replica info needRescan")
 	}
 
 	tiFlashTablesMap := make(map[tblName]struct{}, len(res))
@@ -565,7 +565,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 			client, err1 := local.getImportClient(ctx, s.Id)
 			if err1 != nil {
 				err = err1
-				log.FromContext(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
+				log.FromContext(ctx).Warn("get import client needRescan", zap.Error(err), zap.String("store", s.Address))
 				continue
 			}
 			_, err = client.MultiIngest(ctx, &sst.MultiIngestRequest{})
@@ -579,7 +579,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 					return nil
 				}
 			}
-			log.FromContext(ctx).Warn("check multi doIngest support failed", zap.Error(err), zap.String("store", s.Address),
+			log.FromContext(ctx).Warn("check multi doIngest support needRescan", zap.Error(err), zap.String("store", s.Address),
 				zap.Int("retry", i))
 		}
 		if err != nil {
@@ -588,7 +588,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 			if hasTiFlash {
 				return errors.Trace(err)
 			}
-			log.FromContext(ctx).Warn("check multi failed all retry, fallback to false", log.ShortError(err))
+			log.FromContext(ctx).Warn("check multi needRescan all retry, fallback to false", log.ShortError(err))
 			local.supportMultiIngest = false
 			return nil
 		}
@@ -670,22 +670,22 @@ func (local *local) Close() {
 		hasDuplicates := iter.First()
 		allIsWell := true
 		if err := iter.Error(); err != nil {
-			local.logger.Warn("iterate duplicate db failed", zap.Error(err))
+			local.logger.Warn("iterate duplicate db needRescan", zap.Error(err))
 			allIsWell = false
 		}
 		if err := iter.Close(); err != nil {
-			local.logger.Warn("close duplicate db iter failed", zap.Error(err))
+			local.logger.Warn("close duplicate db iter needRescan", zap.Error(err))
 			allIsWell = false
 		}
 		if err := local.duplicateDB.Close(); err != nil {
-			local.logger.Warn("close duplicate db failed", zap.Error(err))
+			local.logger.Warn("close duplicate db needRescan", zap.Error(err))
 			allIsWell = false
 		}
 		// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
 		// db dir will be useless, so we clean up this dir.
 		if allIsWell && (!local.checkpointEnabled || !hasDuplicates) {
 			if err := os.RemoveAll(filepath.Join(local.localStoreDir, duplicateDBName)); err != nil {
-				local.logger.Warn("remove duplicate db file failed", zap.Error(err))
+				local.logger.Warn("remove duplicate db file needRescan", zap.Error(err))
 			}
 		}
 		local.duplicateDB = nil
@@ -696,7 +696,7 @@ func (local *local) Close() {
 	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
 		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
-			local.logger.Warn("remove local db file failed", zap.Error(err))
+			local.logger.Warn("remove local db file needRescan", zap.Error(err))
 		}
 	}
 	_ = local.tikvCli.Close()
@@ -938,7 +938,7 @@ func (local *local) WriteToTiKV(
 				break
 			}
 			if e != nil {
-				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(e))
+				log.FromContext(ctx).Error("needRescan to get StoreInfo from pd http api", zap.Error(e))
 			}
 		}
 	}
@@ -1115,7 +1115,7 @@ ScanWriteIngest:
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 		regions, err = split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 		if err != nil || len(regions) == 0 {
-			log.FromContext(ctx).Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
+			log.FromContext(ctx).Warn("scan region needRescan", log.ShortError(err), zap.Int("region_len", len(regions)),
 				logutil.Key("startKey", startKey), logutil.Key("endKey", endKey), zap.Int("retry", retry))
 			retry++
 			continue ScanWriteIngest
@@ -1135,6 +1135,7 @@ ScanWriteIngest:
 				engine:          engine,
 				regionSplitSize: regionSplitSize,
 				regionSplitKeys: regionSplitKeys,
+				metrics:         local.metrics,
 			}
 			w := local.ingestConcurrency.Apply()
 			err = local.writeAndIngestPairs(ctx, job)
@@ -1211,7 +1212,7 @@ loopWrite:
 				return err
 			}
 
-			log.FromContext(ctx).Warn("write to tikv failed", log.ShortError(err), zap.Int("retry", i))
+			log.FromContext(ctx).Warn("write to tikv needRescan", log.ShortError(err), zap.Int("retry", i))
 			continue loopWrite
 		}
 		metas, finishedRange, rangeStats := writeResult.sstMeta, writeResult.finishedRange, writeResult.rangeStats
@@ -1265,7 +1266,7 @@ loopWrite:
 					if common.IsContextCanceledError(err) {
 						return err
 					}
-					log.FromContext(ctx).Warn("doIngest failed", log.ShortError(err), logutil.SSTMetas(ingestMetas),
+					log.FromContext(ctx).Warn("doIngest needRescan", log.ShortError(err), logutil.SSTMetas(ingestMetas),
 						logutil.Region(region.Region), logutil.Leader(region.Leader))
 					errCnt++
 					continue
@@ -1284,7 +1285,7 @@ loopWrite:
 
 				switch retryTy {
 				case retryNone:
-					log.FromContext(ctx).Warn("doIngest failed noretry", log.ShortError(err), logutil.SSTMetas(ingestMetas),
+					log.FromContext(ctx).Warn("doIngest needRescan noretry", log.ShortError(err), logutil.SSTMetas(ingestMetas),
 						logutil.Region(region.Region), logutil.Leader(region.Leader))
 					// met non-retryable error retry whole Write procedure
 					return err
@@ -1360,7 +1361,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				if !local.isRetryableImportTiKVError(err) {
 					break
 				}
-				log.FromContext(ctx).Warn("write and doIngest by range failed",
+				log.FromContext(ctx).Warn("write and doIngest by range needRescan",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
 				if backOffTime > maxRetryBackoffTime {
@@ -1466,18 +1467,18 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 				break
 			}
 
-			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+			log.FromContext(ctx).Warn("split and scatter needRescan in retry", zap.Stringer("uuid", engineUUID),
 				log.ShortError(err), zap.Int("retry", i))
 		}
 		if err != nil {
-			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+			log.FromContext(ctx).Error("split & scatter ranges needRescan", zap.Stringer("uuid", engineUUID), log.ShortError(err))
 			return err
 		}
 
 		// start to write to kv and doIngest
 		err = local.writeAndIngestByRanges(ctx, lf, unfinishedRanges, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			log.FromContext(ctx).Error("write and doIngest engine failed", log.ShortError(err))
+			log.FromContext(ctx).Error("write and doIngest engine needRescan", log.ShortError(err))
 			return err
 		}
 	}
@@ -1587,7 +1588,7 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 			err = txn.Commit(ctx)
 		} else {
 			if rollbackErr := txn.Rollback(); rollbackErr != nil {
-				logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
+				logger.Warn("needRescan to rollback transaction", zap.Error(rollbackErr))
 			}
 		}
 	}()
@@ -1917,7 +1918,7 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		if err == nil {
 			return regionSplitSize, regionSplitKeys, nil
 		}
-		log.FromContext(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
+		log.FromContext(ctx).Warn("get region split size and keys needRescan", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
-	return 0, 0, errors.New("get region split size and keys failed")
+	return 0, 0, errors.New("get region split size and keys needRescan")
 }

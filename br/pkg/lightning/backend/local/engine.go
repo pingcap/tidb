@@ -406,7 +406,7 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 		if !bytes.Equal(key, engineMetaKey) {
 			userKey, err := keyAdapter.Decode(nil, key)
 			if err != nil {
-				return nil, errors.Annotate(err, "failed to decode key with keyAdapter")
+				return nil, errors.Annotate(err, "needRescan to decode key with keyAdapter")
 			}
 			r = append(r, rangeProperty{Key: userKey, rangeOffsets: rangeOffsets{Size: size, Keys: keys}})
 		}
@@ -418,7 +418,7 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) (*sizeProperties, error) {
 	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {
-		logger.Warn("get sst table properties failed", log.ShortError(err))
+		logger.Warn("get sst table properties needRescan", log.ShortError(err))
 		return nil, errors.Trace(err)
 	}
 
@@ -429,7 +429,7 @@ func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) 
 				data := hack.Slice(prop)
 				rangeProps, err := decodeRangeProperties(data, keyAdapter)
 				if err != nil {
-					logger.Warn("decodeRangeProperties failed",
+					logger.Warn("decodeRangeProperties needRescan",
 						zap.Stringer("fileNum", info.FileNum), log.ShortError(err))
 					return nil, errors.Trace(err)
 				}
@@ -894,7 +894,7 @@ func (e *Engine) loadEngineMeta() error {
 	defer closer.Close()
 
 	if err = json.Unmarshal(jsonBytes, &e.engineMeta); err != nil {
-		e.logger.Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.UUID), zap.ByteString("content", jsonBytes), zap.Error(err))
+		e.logger.Warn("local db needRescan to deserialize meta", zap.Stringer("uuid", e.UUID), zap.ByteString("content", jsonBytes), zap.Error(err))
 		return err
 	}
 	e.logger.Debug("load engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
@@ -996,7 +996,7 @@ func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
 	if iter.Error() != nil {
-		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
+		return nil, nil, errors.Annotate(iter.Error(), "needRescan to read the first key")
 	}
 	if !hasKey {
 		return nil, nil, nil
@@ -1004,7 +1004,7 @@ func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	firstKey := append([]byte{}, iter.Key()...)
 	iter.Last()
 	if iter.Error() != nil {
-		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+		return nil, nil, errors.Annotate(iter.Error(), "needRescan to seek to the last key")
 	}
 	lastKey := append([]byte{}, iter.Key()...)
 	return firstKey, lastKey, nil
@@ -1504,7 +1504,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 		for _, m := range metas {
 			totalSize += m.fileSize
 			if err := os.Remove(m.path); err != nil {
-				i.e.logger.Warn("async cleanup sst file failed", zap.Error(err))
+				i.e.logger.Warn("async cleanup sst file needRescan", zap.Error(err))
 			}
 		}
 		// decrease the pending size after clean up

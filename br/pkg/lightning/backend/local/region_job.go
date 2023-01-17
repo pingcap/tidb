@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -42,6 +43,7 @@ const (
 	regionScanned = iota
 	wrote
 	ingested
+	needRescan // needRescan job will not be used, the engine's unfinishedRange will generate new job for the range
 )
 
 // regionJob is dedicated to import the data in [keyRange.start, keyRange.end) to a region.
@@ -54,6 +56,7 @@ type regionJob struct {
 	engine          *Engine
 	regionSplitSize int64
 	regionSplitKeys int64
+	metrics         *metric.Metrics
 	// below fields are available after wrote stage
 	writeResult *tikvWriteResult
 }
@@ -61,7 +64,13 @@ type regionJob struct {
 func (j *regionJob) convertStageTo(stage int) {
 	j.stage = stage
 	if stage == ingested {
+		j.engine.importedKVSize.Add(j.writeResult.rangeStats.totalBytes)
+		j.engine.importedKVCount.Add(j.writeResult.rangeStats.count)
 		j.engine.finishedRanges.add(j.keyRange)
+		if j.metrics != nil {
+			j.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).
+				Add(float64(j.writeResult.rangeStats.totalBytes))
+		}
 	}
 }
 
@@ -306,6 +315,7 @@ func (j *regionJob) checkWriteStall(
 func (j *regionJob) ingest(
 	ctx context.Context,
 	clientFactory ImportClientFactory,
+	splitCli split.SplitClient,
 	supportMultiIngest bool,
 	checkWriteStall bool,
 ) error {
@@ -317,64 +327,148 @@ func (j *regionJob) ingest(
 		panic("wrong job stage, should not happen")
 	}
 
-	resp, err := j.doIngest(ctx, clientFactory, supportMultiIngest, checkWriteStall)
-
-	if err != nil {
+	for retry := 0; retry < maxRetryTimes; retry++ {
+		resp, err := j.doIngest(ctx, clientFactory, supportMultiIngest, checkWriteStall)
+		if err == nil && resp.GetError() == nil {
+			j.convertStageTo(ingested)
+			return nil
+		}
+		if err != nil {
+			if common.IsContextCanceledError(err) {
+				return err
+			}
+			log.FromContext(ctx).Warn("doIngest needRescan",
+				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
+				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
+			continue
+		}
+		canContinue, err := j.fixIngestError(ctx, resp, splitCli)
 		if common.IsContextCanceledError(err) {
 			return err
 		}
-		log.FromContext(ctx).Warn("doIngest failed",
-			log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
-			logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
-		continue
+		if !canContinue {
+			log.FromContext(ctx).Warn("meet error and handle the job later",
+				zap.Stringer("job stage", j.stage),
+				logutil.Region(j.region.Region), logutil.Key("start", j.keyRange.start),
+				logutil.Key("end", j.keyRange.end))
+			return nil
+		}
+		log.FromContext(ctx).Warn("meet error and will doIngest region, again",
+			logutil.Region(j.region.Region), logutil.Key("start", j.keyRange.start),
+			logutil.Key("end", j.keyRange.end))
+	}
+	return nil
+}
+
+// fixIngestError will try to fix the error contained in ingest response.
+// Return (_, error) when another error occurred.
+// Return (true, nil) when the job can retry ingesting immediately.
+// Return (false, nil) when the job should be put back to queue.
+func (j *regionJob) fixIngestError(
+	ctx context.Context,
+	resp *sst.IngestResponse,
+	splitCli split.SplitClient,
+) (bool, error) {
+	if resp.GetError() == nil {
+		return true, nil
 	}
 
-	var retryTy retryType
+	getRegion := func() (*split.RegionInfo, error) {
+		for i := 0; ; i++ {
+			newRegion, err := splitCli.GetRegion(ctx, j.region.Region.GetStartKey())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if newRegion != nil {
+				return newRegion, nil
+			}
+			log.FromContext(ctx).Warn("get region by key return nil, will retry",
+				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),
+				zap.Int("retry", i))
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
+			}
+		}
+	}
+
 	var newRegion *split.RegionInfo
-	retryTy, newRegion, err = local.isIngestRetryable(ctx, resp, region, ingestMetas)
-	if common.IsContextCanceledError(err) {
-		return err
+	var err error
+	switch errPb := resp.GetError(); {
+	case errPb.NotLeader != nil:
+		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
+			newRegion = &split.RegionInfo{
+				Leader: newLeader,
+				Region: j.region.Region,
+			}
+		} else {
+			newRegion, err = getRegion()
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+		}
+		j.region = newRegion
+		return true, nil
+	case errPb.EpochNotMatch != nil:
+		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
+			var currentRegion *metapb.Region
+			for _, r := range currentRegions {
+				if insideRegion(r, j.writeResult.sstMeta) {
+					currentRegion = r
+					break
+				}
+			}
+			if currentRegion != nil {
+				var newLeader *metapb.Peer
+				for _, p := range currentRegion.Peers {
+					if p.GetStoreId() == j.region.Leader.GetStoreId() {
+						newLeader = p
+						break
+					}
+				}
+				if newLeader != nil {
+					newRegion = &split.RegionInfo{
+						Leader: newLeader,
+						Region: currentRegion,
+					}
+				}
+			}
+		}
+		if newRegion != nil {
+			j.region = newRegion
+			j.convertStageTo(regionScanned)
+			return false, nil
+		}
+		j.convertStageTo(needRescan)
+		return false, nil
+	case strings.Contains(errPb.Message, "raft: proposal dropped"):
+		newRegion, err = getRegion()
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		j.region = newRegion
+		j.convertStageTo(regionScanned)
+		return false, nil
+	case errPb.ServerIsBusy != nil:
+		return false, nil
+	case errPb.RegionNotFound != nil:
+		return false, nil
+	case errPb.ReadIndexNotReady != nil:
+		// this error happens when this region is splitting, the error might be:
+		//   read index not ready, reason can not read index due to split, region 64037
+		// we have paused schedule, but it's temporary,
+		// if next request takes a long time, there's chance schedule is enabled again
+		// or on key range border, another engine sharing this region tries to split this
+		// region may cause this error too.
+		j.convertStageTo(needRescan)
+		return false, nil
+	case errPb.DiskFull != nil:
+		return false, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 	}
-	if err == nil {
-		// doIngest next meta
-		break
-	}
-
-	switch retryTy {
-	case retryNone:
-		log.FromContext(ctx).Warn("doIngest failed noretry", log.ShortError(err), logutil.SSTMetas(ingestMetas),
-			logutil.Region(region.Region), logutil.Leader(region.Leader))
-		// met non-retryable error retry whole Write procedure
-		return err
-	case retryWrite:
-		region = newRegion
-		continue loopWrite
-	case retryIngest:
-		region = newRegion
-		continue
-	case retryBusyIngest:
-		log.FromContext(ctx).Warn("meet tikv busy when doIngest", log.ShortError(err), logutil.SSTMetas(ingestMetas),
-			logutil.Region(region.Region))
-		// ImportEngine will continue on this unfinished range
-		return nil
-	}
-}
-}
-
-if err == nil {
-engine.importedKVSize.Add(rangeStats.totalBytes)
-engine.importedKVCount.Add(rangeStats.count)
-engine.finishedRanges.add(finishedRange)
-if local.metrics != nil {
-local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
-}
-return nil
-}
-
-log.FromContext(ctx).Warn("write and doIngest region, will retry import full range", log.ShortError(err),
-logutil.Region(region.Region), logutil.Key("start", start),
-logutil.Key("end", end))
-return errors.Trace(err)
+	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
+	j.convertStageTo(regionScanned)
+	return false, nil
 }
 
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
@@ -462,9 +556,8 @@ func (j *regionJob) doIngest(
 			}
 			resp, err = cli.Ingest(ctx, req)
 		}
-		if resp.Error != nil || err != nil {
+		if resp.GetError() != nil || err != nil {
 			// remove finished sstMetas
-			// TODO: it's very dangerous to send same ingest twice, carefully check it.
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
 			return resp, errors.Trace(err)
 		}

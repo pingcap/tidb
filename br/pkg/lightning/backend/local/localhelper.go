@@ -133,7 +133,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 		log.FromContext(ctx).Info("paginate scan regions", zap.Int("count", len(regions)),
 			logutil.Key("start", minKey), logutil.Key("end", maxKey))
 		if err != nil {
-			log.FromContext(ctx).Warn("paginate scan region failed", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
+			log.FromContext(ctx).Warn("paginate scan region needRescan", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
 				log.ShortError(err), zap.Int("retry", i))
 			continue
 		}
@@ -175,7 +175,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 		if tableInfo != nil {
 			tableRegionStats, err = fetchTableRegionSizeStats(ctx, db, tableInfo.ID)
 			if err != nil {
-				log.FromContext(ctx).Warn("fetch table region size statistics failed",
+				log.FromContext(ctx).Warn("fetch table region size statistics needRescan",
 					zap.String("table", tableInfo.Name), zap.Error(err))
 				tableRegionStats, err = make(map[uint64]int64), nil
 			}
@@ -195,7 +195,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 					logutil.Key("firstKey", firstKeyEnc), logutil.Key("lastKey", lastKeyEnc),
 					logutil.Key("firstRegionStart", regions[0].Region.StartKey),
 					logutil.Key("lastRegionEnd", regions[len(regions)-1].Region.EndKey))
-				return errors.New("check split keys failed")
+				return errors.New("check split keys needRescan")
 			}
 			splitKeyMap = getSplitKeys(retryKeys, regions, log.FromContext(ctx))
 			retryKeys = retryKeys[:0]
@@ -382,7 +382,7 @@ func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (
 func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {
 	region, newRegions, err := local.splitCli.BatchSplitRegionsWithOrigin(ctx, region, keys)
 	if err != nil {
-		return nil, nil, errors.Annotatef(err, "batch split regions failed")
+		return nil, nil, errors.Annotatef(err, "batch split regions needRescan")
 	}
 	var failedErr error
 	retryRegions := make([]*split.RegionInfo, 0)
@@ -402,7 +402,7 @@ func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionI
 		}
 		// the scatter operation likely fails because region replicate not finish yet
 		// pack them to one log to avoid printing a lot warn logs.
-		log.FromContext(ctx).Warn("scatter region failed", zap.Int("regionCount", len(newRegions)),
+		log.FromContext(ctx).Warn("scatter region needRescan", zap.Int("regionCount", len(newRegions)),
 			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr), zap.Int("retry", i))
 		scatterRegions = retryRegions
 		retryRegions = make([]*split.RegionInfo, 0)
@@ -429,7 +429,7 @@ func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
 	for i := 0; i < split.SplitCheckMaxRetryTimes; i++ {
 		ok, err := local.hasRegion(ctx, regionID)
 		if err != nil {
-			log.FromContext(ctx).Info("wait for split failed", log.ShortError(err))
+			log.FromContext(ctx).Info("wait for split needRescan", log.ShortError(err))
 			return
 		}
 		if ok {
@@ -485,7 +485,7 @@ func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionI
 			return true, nil
 		}
 		return false, errors.Errorf(
-			"failed to get region operator, error type: %s, error message: %s",
+			"needRescan to get region operator, error type: %s, error message: %s",
 			respErr.GetType().String(), respErr.GetMessage())
 	}
 	// If the current operator of the region is not 'scatter-region', we could assume

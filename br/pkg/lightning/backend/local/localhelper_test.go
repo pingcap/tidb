@@ -572,7 +572,7 @@ func (h *splitRegionEpochNotMatchHook) BeforeSplitRegion(ctx context.Context, re
 }
 
 func TestBatchSplitByRangesEpochNotMatch(t *testing.T) {
-	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionEpochNotMatchHook{}, "batch split regions failed: epoch not match", defaultHook{})
+	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionEpochNotMatchHook{}, "batch split regions needRescan: epoch not match", defaultHook{})
 }
 
 // return epoch not match error in every other call
