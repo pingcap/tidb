@@ -2260,10 +2260,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Re-check that the dropped/added partitions are compatible with current definition
 		firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNamesCIStr, tblInfo.Partition)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, err
 		}
 		sctx := w.sess.Context
 		if err = checkReorgPartitionDefs(sctx, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+			job.State = model.JobStateCancelled
 			return ver, err
 		}
 
