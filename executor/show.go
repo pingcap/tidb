@@ -1455,8 +1455,8 @@ func ConstructResultOfShowCreatePlacementPolicy(policyInfo *model.PolicyInfo) st
 	return fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", policyInfo.Name.O, policyInfo.PlacementSettings.String())
 }
 
-// ConstructResultOfShowCreateResourceGroup constructs the result for show create resource group.
-func ConstructResultOfShowCreateResourceGroup(resourceGroup *model.ResourceGroupInfo) string {
+// constructResultOfShowCreateResourceGroup constructs the result for show create resource group.
+func constructResultOfShowCreateResourceGroup(resourceGroup *model.ResourceGroupInfo) string {
 	return fmt.Sprintf("CREATE RESOURCE GROUP `%s` %s", resourceGroup.Name.O, resourceGroup.ResourceGroupSettings.String())
 }
 
@@ -1499,7 +1499,7 @@ func (e *ShowExec) fetchShowCreateResourceGroup() error {
 	if !found {
 		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(e.ResourceGroupName.O)
 	}
-	showCreate := ConstructResultOfShowCreateResourceGroup(group)
+	showCreate := constructResultOfShowCreateResourceGroup(group)
 	e.appendRow([]interface{}{e.ResourceGroupName.O, showCreate})
 	return nil
 }
