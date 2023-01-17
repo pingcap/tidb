@@ -807,7 +807,7 @@ func TestIssue38323(t *testing.T) {
 	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where 1 = id and 1 = k group by id, k").Rows())
 }
 
-func TestSetPCLimitAndSubquerySwitch(t *testing.T) {
+func TestSetPlanCacheLimitSwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -826,38 +826,22 @@ func TestSetPCLimitAndSubquerySwitch(t *testing.T) {
 
 	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit=ON;")
 	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_parameterized_limit").Check(testkit.Rows("1"))
-	//
-	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_subquery=OFF;")
-	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_subquery=1;")
-	tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_for_subquery=off;")
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@global.tidb_enable_prepared_plan_cache_for_subquery=ON;")
-	tk.MustQuery("select @@global.tidb_enable_prepared_plan_cache_for_subquery").Check(testkit.Rows("1"))
 }
 
-func TestPCLimitAndSubquerySwitch(t *testing.T) {
+func TestPlanCacheLimitSwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key(a))")
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+	tk.MustExec("set @a = 1")
+	tk.MustExec("execute stmt using @a")
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	// todo: after feature pr merged, supply cases
-	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit = OFF;")
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_parameterized_limit = OFF")
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
-
-	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache_for_subquery = OFF;")
-	tk.MustExec("prepare stmt from 'select * from t t1 where t1.a > (select 1 from t t2 where t2.a < ?)'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
 
 }
