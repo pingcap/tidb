@@ -1098,6 +1098,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
 			resourceGroupName = s.ResourceGroupNameOption.Value
 		}
+
+		// check if specified resource group exists
+		if resourceGroupName != "default" && resourceGroupName != "" {
+			_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+			if !exists {
+				return infoschema.ErrResourceGroupNotExists
+			}
+		}
 	}
 	userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
 	// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
@@ -1900,6 +1908,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !variable.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
 			}
+			// check if specified resource group exists
+			if s.ResourceGroupNameOption.Value != "default" && s.ResourceGroupNameOption.Value != "" {
+				_, exists := e.is.ResourceGroupByName(model.NewCIStr(s.ResourceGroupNameOption.Value))
+				if !exists {
+					return infoschema.ErrResourceGroupNotExists
+				}
+			}
+
 			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, s.ResourceGroupNameOption.Value))
 		}
 		if passwordLockingStr != "" {
