@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -493,6 +494,8 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("admin check table t")
 
 	// Test unsupported statements.
+	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
+	tk.MustGetErrMsg("alter table t1 modify column a mediumint", "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
 	tk.MustGetErrMsg("alter table t2 modify column b mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	tk.MustGetErrMsg("alter table t2 modify column c mediumint", "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
@@ -529,7 +532,35 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("insert into t5 values (1,1),(2,2),(3,3),(4,4),(5,5);")
 	tk.MustExec("alter table t5 modify a int not null;")
 
-	tk.MustExec("drop table t, t2, t3, t4, t5")
+	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
+}
+
+func TestIssue38699(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	//Test multi records
+	tk.MustExec("USE test")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (a int)")
+	tk.MustExec("insert into t values (1000000000), (2000000)")
+	tk.MustExec("alter table t modify a tinyint")
+	result := tk.MustQuery("show warnings")
+	require.Len(t, result.Rows(), 1)
+	result.CheckWithFunc(testkit.Rows("Warning 1690 2 warnings with this error code"), func(actual []string, expected []interface{}) bool {
+		//Check if it starts with x warning(s)
+		return strings.EqualFold(actual[0], expected[0].(string)) && strings.EqualFold(actual[1], expected[1].(string)) && strings.HasPrefix(actual[2], expected[2].(string))
+	})
+
+	//Test single record
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (a int)")
+	tk.MustExec("insert into t values (1000000000)")
+	tk.MustExec("alter table t modify a tinyint")
+	result = tk.MustQuery("show warnings")
+	require.Len(t, result.Rows(), 1)
+	result.Check(testkit.Rows("Warning 1690 constant 1000000000 overflows tinyint"))
 }
 
 func TestPartitionAddPanic(t *testing.T) {

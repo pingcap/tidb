@@ -262,7 +262,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 	// If MDL is enabled, updatedMap is used to check if all the servers report the least version.
 	// updatedMap is initialed to record all the server in every loop. We delete a server from the map if it gets the metadata lock(the key version equal the given version.
 	// updatedMap should be empty if all the servers get the metadata lock.
-	updatedMap := make(map[string]struct{})
+	updatedMap := make(map[string]string)
 	for {
 		if util.IsContextDone(ctx) {
 			// ctx is canceled or timeout.
@@ -278,9 +278,23 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			if err != nil {
 				return err
 			}
-			updatedMap = make(map[string]struct{})
+			updatedMap = make(map[string]string)
+			instance2id := make(map[string]string)
+
+			// Set updatedMap according to the serverInfos, and remove some invalid serverInfos.
 			for _, info := range serverInfos {
-				updatedMap[info.ID] = struct{}{}
+				instance := fmt.Sprintf("%s:%d", info.IP, info.Port)
+				if id, ok := instance2id[instance]; ok {
+					if info.StartTimestamp > serverInfos[id].StartTimestamp {
+						// Replace it.
+						delete(updatedMap, id)
+						updatedMap[info.ID] = fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
+						instance2id[instance] = info.ID
+					}
+				} else {
+					updatedMap[info.ID] = fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
+					instance2id[instance] = info.ID
+				}
 			}
 		}
 
@@ -315,6 +329,9 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			}
 			if len(updatedMap) > 0 {
 				succ = false
+				for _, info := range updatedMap {
+					logutil.BgLogger().Info("[ddl] syncer check all versions, someone is not synced", zap.String("info", info), zap.Any("ddl id", jobID), zap.Any("ver", latestVer))
+				}
 			}
 		} else {
 			for _, kv := range resp.Kvs {
@@ -337,17 +354,11 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 					notMatchVerCnt++
 					break
 				}
-				updatedMap[string(kv.Key)] = struct{}{}
+				updatedMap[string(kv.Key)] = ""
 			}
 		}
 
 		if succ {
-			if variable.EnableMDL.Load() {
-				_, err = s.etcdCli.Delete(ctx, path, clientv3.WithPrefix())
-				if err != nil {
-					logutil.BgLogger().Warn("[ddl] syncer delete versions failed", zap.Any("job id", jobID), zap.Error(err))
-				}
-			}
 			return nil
 		}
 		time.Sleep(checkVersInterval)

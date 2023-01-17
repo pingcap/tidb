@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -53,7 +54,9 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	tableIDs := map[int64]struct{}{}
 	for tableID := range globalStatsTableIDs {
+		tableIDs[tableID] = struct{}{}
 		tableAllPartitionStats := make(map[int64]*statistics.Table)
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
@@ -73,28 +76,43 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 					globalStatsID.tableID, info.isIndex, info.histIDs,
 					tableAllPartitionStats)
 				if err != nil {
+					logutil.BgLogger().Error("merge global stats failed",
+						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 					if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 						// When we find some partition-level stats are missing, we need to report warning.
 						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						return nil
 					}
 					return err
 				}
 				for i := 0; i < globalStats.Num; i++ {
 					hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
 					// fms for global stats doesn't need to dump to kv.
-					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, info.statsVersion, 1, true)
+					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID,
+						globalStats.Count,
+						globalStats.ModifyCount,
+						info.isIndex,
+						hg,
+						cms,
+						topN,
+						info.statsVersion,
+						1,
+						true,
+						handle.StatsMetaHistorySourceAnalyze,
+					)
 					if err != nil {
-						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
-					}
-					// Dump stats to historical storage.
-					if err := recordHistoricalStats(e.ctx, globalStatsID.tableID); err != nil {
-						logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo),
+							zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", tableID))
 					}
 				}
-				return nil
+				return err
 			}()
 			FinishAnalyzeMergeJob(e.ctx, job, mergeStatsErr)
+		}
+	}
+	for tableID := range tableIDs {
+		// Dump stats to historical storage.
+		if err := recordHistoricalStats(e.ctx, tableID); err != nil {
+			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
 	return nil

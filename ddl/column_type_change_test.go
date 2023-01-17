@@ -1812,8 +1812,7 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 	tk.MustExec("use test")
 
 	prepare := func() {
-		tk.MustExec("drop table if exists users")
-		tk.MustExec("drop table if exists orders")
+		tk.MustExec("drop table if exists users, orders")
 		tk.MustExec("CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);")
 		tk.MustExec("CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES users(id));")
 	}
@@ -1946,7 +1945,7 @@ func TestChangeIntToBitWillPanicInBackfillIndexes(t *testing.T) {
 		"  KEY `idx3` (`a`,`b`),\n" +
 		"  KEY `idx4` (`a`,`b`,`c`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("\x11 2 2.00", "\x13 1 1.00"))
 }
 
 // Close issue #24584
@@ -2421,4 +2420,19 @@ func TestColumnTypeChangeTimestampToInt(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 20160313033000"))
 	tk.MustExec("alter table t add index idx1(id, c1);")
 	tk.MustExec("admin check table t")
+}
+
+func TestFixDDLTxnWillConflictWithReorgTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = OFF")
+	tk.MustExec("alter table t add index(a)")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("insert into t values(128),(129)")
+	tk.MustExec("alter table t modify column a tinyint")
+
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 2 warnings with this error code, first warning: constant 128 overflows tinyint"))
 }

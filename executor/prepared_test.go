@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -228,6 +230,7 @@ func TestIssue28064(t *testing.T) {
 func TestPreparePlanCache4Blacklist(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -260,7 +263,7 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	require.Contains(t, res.Rows()[1][0], "TopN")
 
 	res = tk.MustQuery("explain format = 'brief' select min(a) from t")
-	require.Contains(t, res.Rows()[0][0], "StreamAgg")
+	require.Contains(t, res.Rows()[0][0], "HashAgg")
 
 	// test the blacklist of Expression Pushdown
 	tk.MustExec("drop table if exists t;")
@@ -420,6 +423,7 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -849,6 +853,7 @@ func TestIssue28782(t *testing.T) {
 func TestIssue29101(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec(`use test`)
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
@@ -1251,4 +1256,19 @@ func TestIssue31141(t *testing.T) {
 
 	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
 	tk.MustExec("prepare stmt1 from 'do 1'")
+}
+
+func TestMaxPreparedStmtCount(t *testing.T) {
+	oldVal := atomic.LoadInt64(&variable.PreparedStmtCount)
+	atomic.StoreInt64(&variable.PreparedStmtCount, 0)
+	defer func() {
+		atomic.StoreInt64(&variable.PreparedStmtCount, oldVal)
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
+	tk.MustExec("prepare stmt1 from 'select ? as num from dual'")
+	tk.MustExec("prepare stmt2 from 'select ? as num from dual'")
+	err := tk.ExecToErr("prepare stmt3 from 'select ? as num from dual'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached))
 }

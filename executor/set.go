@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/temptable"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sem"
 	"go.uber.org/zap"
 )
 
@@ -109,6 +112,22 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
+
+	if sysVar.RequireDynamicPrivileges != nil {
+		semEnabled := sem.IsEnabled()
+		pm := privilege.GetPrivilegeManager(e.ctx)
+		privs := sysVar.RequireDynamicPrivileges(v.IsGlobal, semEnabled)
+		for _, priv := range privs {
+			if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, priv, false) {
+				msg := priv
+				if !semEnabled {
+					msg = "SUPER or " + msg
+				}
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
+			}
+		}
+	}
+
 	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
 		// The variable is a noop. For compatibility we allow it to still
 		// be changed, but we append a warning since users might be expecting

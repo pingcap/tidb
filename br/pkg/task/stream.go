@@ -57,7 +57,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -68,8 +67,6 @@ const (
 	flagStreamStartTS    = "start-ts"
 	flagStreamEndTS      = "end-ts"
 	flagGCSafePointTTS   = "gc-ttl"
-
-	notDeletedBecameFatalThreshold = 128
 )
 
 var (
@@ -310,10 +307,7 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		mgr: mgr,
 	}
 	if isStreamStart {
-		client, err := backup.NewBackupClient(ctx, mgr)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		client := backup.NewBackupClient(ctx, mgr)
 
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
@@ -430,7 +424,7 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	}
 
 	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
-	err = schemas.BackupSchemas(ctx, metaWriter, s.mgr.GetStorage(), nil,
+	err = schemas.BackupSchemas(ctx, metaWriter, nil, s.mgr.GetStorage(), nil,
 		s.cfg.StartTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -462,6 +456,39 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	}
 
 	return nil
+}
+
+type RestoreFunc func() error
+
+// KeepGcDisabled keeps GC disabled and return a function that used to gc enabled.
+// gc.ratio-threshold = "-1.0", which represents disable gc in TiKV.
+func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	oldRatio, err := utils.GetGcRatio(execCtx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	newRatio := "-1.0"
+	err = utils.SetGcRatio(execCtx, newRatio)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// If the oldRatio is negative, which is not normal status.
+	// It should set default value "1.1" after PiTR finished.
+	if strings.HasPrefix(oldRatio, "-") {
+		oldRatio = "1.1"
+	}
+
+	return func() error {
+		return utils.SetGcRatio(execCtx, oldRatio)
+	}, nil
 }
 
 // RunStreamCommand run all kinds of `stream task`
@@ -937,31 +964,24 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
 		Helper: stream.NewMetadataHelper(),
-		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
-			log.Info("Updating metadata.", zap.String("file", path),
-				zap.Int("data-file-before", len(last.GetFileGroups())),
-				zap.Int("data-file-after", len(current.GetFileGroups())))
-			return cfg.DryRun
-		},
+		DryRun: cfg.DryRun,
 	}
-	if err := metas.LoadUntil(ctx, storage, cfg.Until); err != nil {
+	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, storage, cfg.Until)
+	if err != nil {
 		return err
 	}
 	readMetaDone()
 
 	var (
-		fileCount    uint64 = 0
-		kvCount      int64  = 0
-		totalSize    uint64 = 0
-		shiftUntilTS        = metas.CalculateShiftTS(cfg.Until)
+		fileCount int    = 0
+		kvCount   int64  = 0
+		totalSize uint64 = 0
 	)
 
-	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
+	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *restore.FileGroupInfo) (shouldBreak bool) {
 		fileCount++
 		totalSize += d.Length
-		for _, f := range d.DataFilesInfo {
-			kvCount += f.NumberOfEntries
-		}
+		kvCount += d.KVCount
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
@@ -979,83 +999,39 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-	removed := metas.RemoveDataBefore(shiftUntilTS)
-
-	// remove log
+	// begin to remove
 	p := console.StartProgressBar(
-		"Clearing Data Files", len(removed),
+		"Clearing Data Files and Metadata", fileCount,
 		glue.WithTimeCost(),
 		glue.WithConstExtraField("kv-count", kvCount),
 		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
 	)
 	defer p.Close()
-	worker := utils.NewWorkerPool(128, "delete files")
-	eg, cx := errgroup.WithContext(ctx)
-	const keepFirstNFailure = 16
-	var notDeleted struct {
-		item []string
-		sync.Mutex
+
+	notDeleted, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, storage, p.IncBy)
+	if err != nil {
+		return err
 	}
-	for _, f := range removed {
-		f := f
-		worker.ApplyOnErrorGroup(eg, func() error {
-			if cx.Err() != nil {
-				p.Close()
-				return cx.Err()
-			}
-			defer p.Inc()
-			log.Debug("Deleting file", zap.String("path", f.Path))
-			if cfg.DryRun {
-				return nil
-			}
-			if err := storage.DeleteFile(ctx, f.Path); err != nil {
-				log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-				notDeleted.Lock()
-				defer notDeleted.Unlock()
-				notDeleted.item = append(notDeleted.item, f.Path)
-				if len(notDeleted.item) > notDeletedBecameFatalThreshold {
-					return errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "too many failure when truncating")
-				}
-			}
-			return nil
-		})
-	}
+
 	if err := p.Wait(ctx); err != nil {
 		return err
 	}
-	if err := eg.Wait(); err != nil {
-		return err
-	}
 
-	notDeleted.Lock()
-	if len(notDeleted.item) > 0 {
+	if len(notDeleted) > 0 {
+		const keepFirstNFailure = 16
 		console.Println("Files below are not deleted due to error, you may clear it manually, check log for detail error:")
-		console.Println("- Total", em(len(notDeleted.item)), "items.")
-		if len(notDeleted.item) > keepFirstNFailure {
-			console.Println("-", em(len(notDeleted.item)-keepFirstNFailure), "items omitted.")
+		console.Println("- Total", em(len(notDeleted)), "items.")
+		if len(notDeleted) > keepFirstNFailure {
+			console.Println("-", em(len(notDeleted)-keepFirstNFailure), "items omitted.")
 			// TODO: maybe don't add them at the very first.
-			notDeleted.item = notDeleted.item[:keepFirstNFailure]
+			notDeleted = notDeleted[:keepFirstNFailure]
 		}
-		for _, f := range notDeleted.item {
+		for _, f := range notDeleted {
 			console.Println(f)
 		}
 	}
-	notDeleted.Unlock()
 
-	// remove metadata
-	pw := console.StartProgressBar("Removing Metadata", metas.PendingMeta(), glue.WithTimeCost(), glue.WithConstExtraField("metas", metas.PendingMeta()))
-	defer pw.Close()
-	metas.BeforeDoWriteBack = func(path string, last, current *backuppb.Metadata) (skip bool) {
-		log.Info("Updating metadata.", zap.String("file", path),
-			zap.Int("data-file-before", len(last.GetFiles())),
-			zap.Int("data-file-after", len(current.GetFiles())))
-		pw.Inc()
-		return cfg.DryRun
-	}
-	if err := metas.DoWriteBack(ctx, storage); err != nil {
-		return err
-	}
-	return pw.Wait(ctx)
+	return nil
 }
 
 // RunStreamRestore restores stream log.
@@ -1186,7 +1162,7 @@ func restoreStream(
 	}
 	defer client.Close()
 
-	currentTS, err := client.GetTS(ctx)
+	currentTS, err := client.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1199,6 +1175,18 @@ func restoreStream(
 	// Always run the post-work even on error, so we don't stuck in the import
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
+
+	// It need disable GC in TiKV when PiTR.
+	// because the process of PITR is concurrent and kv events isn't sorted by tso.
+	restoreGc, err := KeepGcDisabled(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err := restoreGc(); err != nil {
+			log.Error("failed to set gc enabled", zap.Error(err))
+		}
+	}()
 
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
@@ -1254,10 +1242,10 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	dmlFiles, err := client.LoadDMLFiles(ctx)
+	logFilesIter, err := client.LoadDMLFiles(ctx)
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.Inc)
+		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIter, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
@@ -1603,7 +1591,7 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 			zap.Stringer("database", t.DB.Name),
 			zap.Int("old-id", int(t.Info.ID)),
 			zap.Array("rewrite-rules", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
-				for _, r := range rules {
+				for _, r := range tableRules {
 					for _, rule := range r.Data {
 						if err := ae.AppendObject(logutil.RewriteRuleObject(rule)); err != nil {
 							return err

@@ -5,15 +5,19 @@ package streamhelper
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
 type EventType int
@@ -181,11 +185,43 @@ func (t AdvancerExt) Begin(ctx context.Context, ch chan<- TaskEvent) error {
 	return nil
 }
 
+func (t AdvancerExt) GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
+	key := GlobalCheckpointOf(taskName)
+	resp, err := t.KV.Get(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(resp.Kvs) == 0 {
+		return 0, nil
+	}
+
+	firstKV := resp.Kvs[0]
+	value := firstKV.Value
+	if len(value) != 8 {
+		return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+			"the global checkpoint isn't 64bits (it is %d bytes, value = %s)",
+			len(value),
+			redact.Key(value))
+	}
+
+	return binary.BigEndian.Uint64(value), nil
+}
+
 func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error {
 	key := GlobalCheckpointOf(taskName)
 	value := string(encodeUint64(checkpoint))
-	_, err := t.KV.Put(ctx, key, value)
+	oldValue, err := t.GetGlobalCheckpointForTask(ctx, taskName)
+	if err != nil {
+		return err
+	}
 
+	if checkpoint < oldValue {
+		log.Warn("[log backup advancer] skipping upload global checkpoint", zap.Uint64("old", oldValue), zap.Uint64("new", checkpoint))
+		return nil
+	}
+
+	_, err = t.KV.Put(ctx, key, value)
 	if err != nil {
 		return err
 	}

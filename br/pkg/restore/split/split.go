@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	ScanRegionAttemptTimes = 60
+	ScanRegionAttemptTimes = 128
 )
 
 // Constants for split retry machinery.

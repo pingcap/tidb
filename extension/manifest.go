@@ -19,6 +19,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -51,6 +52,16 @@ func WithCustomDynPrivs(privs []string) Option {
 func WithCustomFunctions(funcs []*FunctionDef) Option {
 	return func(m *Manifest) {
 		m.funcs = funcs
+	}
+}
+
+// AccessCheckFunc is a function that returns a dynamic privilege list for db/tbl/column access
+type AccessCheckFunc func(db, tbl, column string, priv mysql.PrivilegeType, sem bool) []string
+
+// WithCustomAccessCheck specifies the custom db/tbl/column dynamic privilege check
+func WithCustomAccessCheck(fn AccessCheckFunc) Option {
+	return func(m *Manifest) {
+		m.accessCheckFunc = fn
 	}
 }
 
@@ -106,6 +117,7 @@ type Manifest struct {
 	dynPrivs              []string
 	bootstrap             func(BootstrapContext) error
 	funcs                 []*FunctionDef
+	accessCheckFunc       AccessCheckFunc
 	sessionHandlerFactory func() *SessionHandler
 	close                 func()
 }

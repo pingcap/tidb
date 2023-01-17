@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -109,6 +110,14 @@ func TestNormalizedPlan(t *testing.T) {
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t3 (a int key,b int) partition by hash(a) partitions 2;")
 	tk.MustExec("create table t4 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));")
+	tk.MustExec("create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), " +
+		"foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE CASCADE, " +
+		"foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, " +
+		"foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);")
+	tk.MustExec("insert into t5 values (1,1,1), (2,2,2)")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -130,6 +139,8 @@ func TestNormalizedPlan(t *testing.T) {
 		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
 		require.Equal(t, normalized, newNormalized)
 		require.Equal(t, digest, newDigest)
+		// Test for GenHintsFromFlatPlan won't panic.
+		core.GenHintsFromFlatPlan(flat)
 
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
@@ -787,6 +798,7 @@ func TestCopPaging(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set session tidb_enable_paging = 1")
 	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
@@ -1098,4 +1110,35 @@ func TestOuterJoinOnNull(t *testing.T) {
 	tk.MustExec("INSERT INTO t3 VALUES (1);")
 	tk.MustQuery("SELECT ((NOT ('i'))AND(t2.c0)) IS NULL FROM  t2 RIGHT JOIN t3 ON t3.c0;").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2 RIGHT JOIN t3 ON t2.c0 WHERE ((NOT ('i'))AND(t2.c0)) IS NULL;").Check(testkit.Rows("<nil> 1"))
+}
+
+func TestJSONPlanInExplain(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int, key(id))")
+	tk.MustExec("create table t2(id int, key(id))")
+
+	var input []string
+	var output []struct {
+		SQL      string
+		JSONPlan []*core.ExplainInfoForEncode
+	}
+	planSuiteData := core.GetJSONPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, test := range input {
+		resJSON := tk.MustQuery(test).Rows()
+		var res []*core.ExplainInfoForEncode
+		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), &res))
+		for j, expect := range output[i].JSONPlan {
+			require.Equal(t, expect.ID, res[j].ID)
+			require.Equal(t, expect.EstRows, res[j].EstRows)
+			require.Equal(t, expect.ActRows, res[j].ActRows)
+			require.Equal(t, expect.TaskType, res[j].TaskType)
+			require.Equal(t, expect.AccessObject, res[j].AccessObject)
+			require.Equal(t, expect.OperatorInfo, res[j].OperatorInfo)
+		}
+	}
 }

@@ -722,9 +722,7 @@ func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	err = tk.ExecToErr("batch limit 1 insert into t select 1, 1")
 	require.EqualError(t, err, "table reference is nil")
 	err = tk.ExecToErr("batch limit 1 insert into t select * from (select 1, 2) tmp")
-	require.EqualError(t, err, "Non-transaction insert must have s source table")
-	err = tk.ExecToErr("batch limit 1 insert into t select * from t")
-	require.EqualError(t, err, "Non-transactional insert doesn't support self-insert")
+	require.EqualError(t, err, "Non-transactional DML, table name not found in join")
 }
 
 func TestNonTransactionalWithOptimizerHints(t *testing.T) {
@@ -878,4 +876,139 @@ func TestNonTransactionalWithShardOnUnsupportedTypes(t *testing.T) {
 	err = tk.ExecToErr("batch on a limit 1 delete from t2")
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("1"))
+}
+
+func TestNonTransactionalWithJoin(t *testing.T) {
+	// insert
+	// BATCH ON t2.id LIMIT 10000 insert into t1 select id, name from t2 inner join t3 on t2.id = t3.id;
+	// insert into t1 select id, name from t2 inner join t3 on t2.id = t3.id where t2.id between 1 and 10000
+
+	// replace
+	// BATCH ON t1.id LIMIT 10000 replace into t3
+	// 	select * from t1 left join t2 on t1.id = t2.id;
+
+	// update
+	// BATCH ON t1.id LIMIT 10000 update t1 join t2 on t1.a=t2.a set t1.a=t1.a*1000;
+	// update t1 join t2 on t1.a=t2.a set t1.a=t1.a*1000 where t1.id between 1 and 10000;
+
+	// delete
+	// BATCH ON pa.id LIMIT 10000 DELETE pa
+	// 	FROM pets_activities pa JOIN pets p ON pa.id = p.pet_id
+	// 	WHERE p.order > :order AND p.pet_id = :pet_id
+	// delete pa
+	// 	from pets_activities pa join pets p on pa.id = p.pet_id
+	// 	WHERE p.order > :order AND p.pet_id = :pet_id and pa.id between 1 and 10000;
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, v1 int, v2 int, unique key (id))")
+	tk.MustExec("create table t2(id int, v int, key i1(id))")
+	tk.MustExec("create table t3(id int, v int, key i1(id))")
+	tk.MustExec("insert into t2 values (1, 2), (2, 3), (3, 4)")
+	tk.MustExec("insert into t3 values (1, 4), (2, 5), (4, 6)")
+
+	tk.MustExec("batch on test.t2.id limit 1 insert into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2 4", "2 3 5"))
+
+	tk.MustContainErrMsg(
+		"batch on id limit 1 insert into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id",
+		"Non-transactional DML, shard column must be fully specified",
+	)
+	tk.MustContainErrMsg(
+		"batch on test.t1.id limit 1 insert into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id",
+		"shard column test.t1.id is not in the tables involved in the join",
+	)
+
+	tk.MustExec("batch on test.t2.id limit 1 update t2 join t3 on t2.id=t3.id set t2.v=t2.v*100, t3.v=t3.v*200")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 200", "2 300", "3 4"))
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1 800", "2 1000", "4 6"))
+
+	tk.MustExec("batch limit 1 delete t2 from t2 join t3 on t2.id=t3.id")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("3 4"))
+
+	tk.MustExec("insert into t2 values (1, 11), (2, 22)")
+	tk.MustExec("batch limit 1 replace into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 11 800", "2 22 1000"))
+}
+
+func TestAnomalousNontransactionalDML(t *testing.T) {
+	// some weird and error-prone behavior
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, v int)")
+
+	// self-insert, this is allowed but can be dangerous
+	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("batch limit 1 insert into t select * from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "1 1"))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(id int, v int, key(id))")
+	tk.MustExec("create table t2(id int, v int, key(id))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (4, 4)")
+
+	tk.MustExec("batch on test.t.id limit 1 update t join t2 on t.id=t2.id set t2.id = t2.id+1")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("4 1", "4 2", "4 4"))
+}
+
+func TestAlias(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, v1 int, v2 int, unique key (id))")
+	tk.MustExec("create table t2(id int, v int, key (id))")
+	tk.MustExec("create table t3(id int, v int, key (id))")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 20), (4, 40)")
+	tk.MustExec("insert into t3 values (2, 21), (4, 41), (5, 50)")
+	tk.MustExec("update t as t1 set v1 = test.t1.id + 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2 1", "2 3 2", "3 4 3"))
+
+	tk.MustExec("batch on test.tt2.id limit 1 replace into t select tt2.id, tt2.v, t3.v from t2 as tt2 join t3 on tt2.id=t3.id")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 2 1", "2 20 21", "3 4 3", "4 40 41"))
+}
+
+func TestUpdatingShardColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, v int, unique key(id))")
+	tk.MustExec("create table t2(id int, v int, unique key(id))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (4, 4)")
+
+	// update stmt
+	tk.MustContainErrMsg("batch on id limit 1 update t set id=id+1", "Non-transactional DML, shard column cannot be updated")
+	// insert on dup update
+	tk.MustContainErrMsg("batch on id limit 1 insert into t select * from t on duplicate key update t.id=t.id+10", "Non-transactional DML, shard column cannot be updated")
+	// update with table alias
+	tk.MustContainErrMsg("batch on id limit 1 update t as t1 set t1.id=t1.id+1", "Non-transactional DML, shard column cannot be updated")
+	// insert on dup update with table alias
+	tk.MustContainErrMsg("batch on id limit 1 insert into t select * from t as t1 on duplicate key update t1.id=t1.id+10", "Non-transactional DML, shard column cannot be updated")
+	// update stmt, multiple table
+	tk.MustContainErrMsg("batch on test.t.id limit 1 update t join t2 on t.id=t2.id set t.id=t.id+1", "Non-transactional DML, shard column cannot be updated")
+	// update stmt, multiple table, alias
+	tk.MustContainErrMsg("batch on test.tt.id limit 1 update t as tt join t2 as tt2 on tt.id=tt2.id set tt.id=tt.id+10", "Non-transactional DML, shard column cannot be updated")
+}
+
+func TestNameAmbiguity(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, v1 int, v2 int, unique key (id))")
+	tk.MustExec("create table t2(id int, v int, key (id))")
+	tk.MustExec("create table t3(id int, v int, key (id))")
+
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("create table t(id int, v1 int, v2 int, unique key (id))")
+	tk.MustExec("create table t2(id int, v int, key (id))")
+	tk.MustExec("create table t3(id int, v int, key (id))")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2)")
+
+	tk.MustExec("use test")
+	tk.MustExec("batch on id limit 1 insert into t select * from test2.t")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1", "2 2 2"))
 }

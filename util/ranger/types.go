@@ -75,6 +75,9 @@ func (ran *Range) Width() int {
 
 // Clone clones a Range.
 func (ran *Range) Clone() *Range {
+	if ran == nil {
+		return nil
+	}
 	newRange := &Range{
 		LowVal:      make([]types.Datum, 0, len(ran.LowVal)),
 		HighVal:     make([]types.Datum, 0, len(ran.HighVal)),

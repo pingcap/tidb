@@ -27,6 +27,7 @@ import (
 	stderrs "errors"
 	"flag"
 	"fmt"
+	"math"
 	"math/rand"
 	"runtime/pprof"
 	"runtime/trace"
@@ -85,7 +86,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -94,9 +95,11 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
@@ -129,6 +132,7 @@ var (
 	telemetryCTEUsageNonRecurCTE    = metrics.TelemetrySQLCTECnt.WithLabelValues("nonRecurCTE")
 	telemetryCTEUsageNotCTE         = metrics.TelemetrySQLCTECnt.WithLabelValues("notCTE")
 	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
+	telemetryFlashbackClusterUsage  = metrics.TelemetryFlashbackClusterCnt
 
 	telemetryTablePartitionUsage                = metrics.TelemetryTablePartitionCnt
 	telemetryTablePartitionListUsage            = metrics.TelemetryTablePartitionListCnt
@@ -144,10 +148,13 @@ var (
 	telemetryTablePartitionAddIntervalUsage     = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
 	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
 	telemetryExchangePartitionUsage             = metrics.TelemetryExchangePartitionCnt
+	telemetryTableCompactPartitionUsage         = metrics.TelemetryCompactPartitionCnt
 
 	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
 	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
+
+	telemetryIndexMerge = metrics.TelemetryIndexMergeUsage
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -170,8 +177,6 @@ type Session interface {
 	RollbackTxn(context.Context)
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
-	// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
-	CacheGeneralStmt(sql string) (interface{}, error)
 	// ExecutePreparedStmt executes a prepared statement.
 	// Deprecated: please use ExecuteStmt, this function is left for testing only.
 	// TODO: remove ExecutePreparedStmt.
@@ -249,8 +254,8 @@ type session struct {
 
 	store kv.Storage
 
-	preparedPlanCache sessionctx.PlanCache
-	generalPlanCache  sessionctx.PlanCache
+	preparedPlanCache    sessionctx.PlanCache
+	nonPreparedPlanCache sessionctx.PlanCache
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
@@ -270,7 +275,7 @@ type session struct {
 	idxUsageCollector *handle.SessionIndexUsageCollector
 
 	functionUsageMu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	}
 	// allowed when tikv disk full happened.
@@ -290,6 +295,8 @@ type session struct {
 	advisoryLocks map[string]*advisoryLock
 
 	extensions *extension.SessionExtensions
+
+	sandBoxMode bool
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -451,17 +458,17 @@ func (s *session) SetCollation(coID int) error {
 	return s.sessionVars.SetSystemVarWithoutValidation(variable.CollationConnection, co)
 }
 
-func (s *session) GetPlanCache(isGeneralPlanCache bool) sessionctx.PlanCache {
-	if isGeneralPlanCache { // use the general plan cache
-		if !s.GetSessionVars().EnableGeneralPlanCache {
+func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
+	if isNonPrepared { // use the non-prepared plan cache
+		if !s.GetSessionVars().EnableNonPreparedPlanCache {
 			return nil
 		}
-		if s.generalPlanCache == nil { // lazy construction
-			s.generalPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().GeneralPlanCacheSize),
+		if s.nonPreparedPlanCache == nil { // lazy construction
+			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
 				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
 				plannercore.PickPlanFromBucket, s)
 		}
-		return s.generalPlanCache
+		return s.nonPreparedPlanCache
 	}
 
 	// use the prepared plan cache
@@ -569,6 +576,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
+// TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -675,16 +683,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
-	if sessVars.EnableAmendPessimisticTxn {
-		if !variable.EnableFastReorg.Load() {
-			s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
-		} else {
-			logutil.BgLogger().Warn("@@tidb_enable_amend_pessimistic_txn takes no effect when @@tidb_ddl_enable_fast_reorg is true")
-		}
-	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	s.txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
@@ -702,6 +704,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
+	s.txn.SetOption(kv.TxnSource, sessVars.CDCWriteSource)
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
 		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
@@ -1266,10 +1269,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 			s.txn.onStmtEnd()
 			if err != nil {
-				s.StmtRollback()
+				s.StmtRollback(ctx, false)
 				break
 			}
-			s.StmtCommit()
+			s.StmtCommit(ctx)
 		}
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
@@ -1351,6 +1354,10 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		err = se.sessionVars.SetSystemVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.On)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
 		// Internal session uses default format to prevent memory leak problem.
@@ -1374,6 +1381,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 			return nil, errors.Trace(err)
 		}
 		err = se.sessionVars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = se.sessionVars.SetSystemVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.On)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1425,13 +1436,13 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 
 // replaceGlobalVariablesTableValue executes restricted sql updates the variable value
 // It will then notify the etcd channel that the value has changed.
-func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string) error {
+func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string, updateLocal bool) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnSysVar)
 	_, _, err := s.ExecRestrictedSQL(ctx, nil, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
 	if err != nil {
 		return err
 	}
-	domain.GetDomain(s).NotifyUpdateSysVarCache()
+	domain.GetDomain(s).NotifyUpdateSysVarCache(updateLocal)
 	return err
 }
 
@@ -1493,12 +1504,13 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 	if sv.GlobalConfigName != "" {
 		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
 	}
-	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
+	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value, true)
 }
 
 // SetGlobalSysVarOnly updates the sysvar, but does not call the validation function or update aliases.
 // This is helpful to prevent duplicate warnings being appended from aliases, or recursion.
-func (s *session) SetGlobalSysVarOnly(ctx context.Context, name string, value string) (err error) {
+// updateLocal indicates whether to rebuild the local SysVar Cache. This is helpful to prevent recursion.
+func (s *session) SetGlobalSysVarOnly(ctx context.Context, name string, value string, updateLocal bool) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -1509,7 +1521,7 @@ func (s *session) SetGlobalSysVarOnly(ctx context.Context, name string, value st
 	if sv.HasInstanceScope() { // skip for INSTANCE scope
 		return nil
 	}
-	return s.replaceGlobalVariablesTableValue(ctx, sv.Name, value)
+	return s.replaceGlobalVariablesTableValue(ctx, sv.Name, value, updateLocal)
 }
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
@@ -1564,10 +1576,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
 		p = explain.TargetPlan
 	}
-	canExplainAnalyze := false
-	if _, ok := p.(plannercore.PhysicalPlan); ok {
-		canExplainAnalyze = true
-	}
 	pi := util.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
@@ -1575,20 +1583,20 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:               command,
 		Plan:                  p,
 		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
-		CurrentAnalyzeRows:    s.getCurrentAnalyzePlan,
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
 		Info:                  sql,
 		CurTxnStartTS:         curTxnStartTS,
 		StmtCtx:               s.sessionVars.StmtCtx,
+		RefCountOfStmtCtx:     &s.sessionVars.RefCountOfStmtCtx,
 		MemTracker:            s.sessionVars.MemTracker,
 		DiskTracker:           s.sessionVars.DiskTracker,
 		StatsInfo:             plannercore.GetStatsInfo,
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
-		CanExplainAnalyze:     canExplainAnalyze,
+		ProtectedTSList:       &s.sessionVars.ProtectedTSList,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1598,7 +1606,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 			pi.Plan = oldPi.Plan
 			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
-			_, pi.CanExplainAnalyze = pi.Plan.(plannercore.PhysicalPlan)
 		}
 	}
 	// We set process info before building plan, so we extended execution time.
@@ -1625,17 +1632,6 @@ func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
 	}
-}
-
-func (s *session) getCurrentAnalyzePlan(p interface{}, runtimeStatsColl *execdetails.RuntimeStatsColl) [][]string {
-	explain := &plannercore.Explain{
-		TargetPlan:       p.(plannercore.Plan),
-		Format:           types.ExplainFormatROW,
-		Analyze:          false,
-		RuntimeStatsColl: runtimeStatsColl,
-	}
-	explain.SetSCtx(s)
-	return plannercore.GetExplainAnalyzeRowsForPlan(explain)
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
@@ -1874,6 +1870,21 @@ func (s *session) SetExtensions(extensions *extension.SessionExtensions) {
 	s.extensions = extensions
 }
 
+// InSandBoxMode indicates that this session is in sandbox mode
+func (s *session) InSandBoxMode() bool {
+	return s.sandBoxMode
+}
+
+// EnableSandBoxMode enable the sandbox mode.
+func (s *session) EnableSandBoxMode() {
+	s.sandBoxMode = true
+}
+
+// DisableSandBoxMode enable the sandbox mode.
+func (s *session) DisableSandBoxMode() {
+	s.sandBoxMode = false
+}
+
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
 func ParseWithParams4Test(ctx context.Context, s Session,
 	sql string, args ...interface{}) (ast.StmtNode, error) {
@@ -1974,6 +1985,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
+		s.sessionVars.MemTracker.Detach()
 	}, nil
 }
 
@@ -2035,6 +2047,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
 		se.sessionVars.InspectionTableCache = nil
+		se.sessionVars.MemTracker.Detach()
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
@@ -2075,7 +2088,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		metrics.SessionRestrictedSQLCounter.Inc()
 		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 		ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
-		rs, err := se.ExecuteStmt(ctx, stmt)
+		rs, err := se.ExecuteInternalStmt(ctx, stmt)
 		if err != nil {
 			se.sessionVars.StmtCtx.AppendError(err)
 		}
@@ -2095,6 +2108,18 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
 		return rows, rs.Fields(), err
 	})
+}
+
+// ExecuteInternalStmt execute internal stmt
+func (s *session) ExecuteInternalStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	origin := s.sessionVars.InRestrictedSQL
+	s.sessionVars.InRestrictedSQL = true
+	defer func() {
+		s.sessionVars.InRestrictedSQL = origin
+		// Restore the goroutine label by using the original ctx after execution is finished.
+		pprof.SetGoroutineLabels(ctx)
+	}()
+	return s.ExecuteStmt(ctx, stmtNode)
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
@@ -2152,10 +2177,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	if err == nil {
-		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
-	}
-
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -2227,7 +2248,7 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
-	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead {
+	if !vars.TxnCtx.IsStaleness && vars.TxnReadTS.PeakTxnReadTS() == 0 && !vars.EnableExternalTSRead || vars.InRestrictedSQL {
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"
@@ -2335,7 +2356,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if rs != nil {
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
-				se.StmtCommit()
+				se.StmtCommit(ctx)
 				if err := se.CommitTxn(ctx); err != nil {
 					return nil, err
 				}
@@ -2428,22 +2449,6 @@ func (s *session) rollbackOnError(ctx context.Context) {
 	}
 }
 
-// CacheGeneralStmt parses the sql, generates the corresponding PlanCacheStmt and cache it.
-// The sql have to be parameterized, e.g. select * from t where a>?.
-func (s *session) CacheGeneralStmt(sql string) (interface{}, error) {
-	if stmt := s.sessionVars.GetGeneralPlanCacheStmt(sql); stmt != nil {
-		// skip this step if there is already a PlanCacheStmt for this ql
-		return stmt, nil
-	}
-
-	prepareExec := executor.NewPrepareExec(s, sql)
-	prepareExec.IsGeneralStmt = true
-	if err := prepareExec.Next(context.Background(), nil); err != nil {
-		return nil, err
-	}
-	return prepareExec.Stmt, nil
-}
-
 // PrepareStmt is used for executing prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
@@ -2456,7 +2461,6 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 
 	ctx := context.Background()
-	inTxn := s.GetSessionVars().InTxn()
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	if err = s.PrepareTxnCtx(ctx); err != nil {
@@ -2473,12 +2477,11 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
+	// Rollback even if err is nil.
+	s.rollbackOnError(ctx)
+
 	if err != nil {
 		return
-	}
-	if !inTxn {
-		// We could start a transaction to build the prepare executor before, we should rollback it here.
-		s.RollbackTxn(ctx)
 	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
@@ -2516,6 +2519,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		return &s.txn, nil
 	}
 	_, err := sessiontxn.GetTxnManager(s).ActivateTxn()
+	s.SetMemoryFootprintChangeHook()
 	return &s.txn, err
 }
 
@@ -2571,9 +2575,6 @@ func (s *session) Close() {
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
-		if s.sessionVars.MemTracker != nil {
-			s.sessionVars.MemTracker.Detach()
-		}
 	}
 	if s.stmtStats != nil {
 		s.stmtStats.SetFinished()
@@ -2591,7 +2592,7 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	pm := privilege.GetPrivilegeManager(s)
-	authplugin, err := pm.GetAuthPlugin(user.Username, user.Hostname)
+	authplugin, err := pm.GetAuthPluginForConnection(user.Username, user.Hostname)
 	if err != nil {
 		return "", err
 	}
@@ -2611,14 +2612,322 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
-	if err = pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState); err != nil {
+	// Check whether continuous login failure is enabled to lock the account.
+	// If enabled, determine whether to unlock the account and notify TiDB to update the cache.
+	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
+	if enableAutoLock {
+		err = failedLoginTrackingBegin(s)
+		if err != nil {
+			return err
+		}
+		lockStatusChanged, err := verifyAccountAutoLock(s, authUser.Username, authUser.Hostname)
+		if err != nil {
+			rollbackErr := failedLoginTrackingRollback(s)
+			if rollbackErr != nil {
+				return rollbackErr
+			}
+			return err
+		}
+		err = failedLoginTrackingCommit(s)
+		if err != nil {
+			rollbackErr := failedLoginTrackingRollback(s)
+			if rollbackErr != nil {
+				return rollbackErr
+			}
+			return err
+		}
+		if lockStatusChanged {
+			// Notification auto unlock.
+			err = domain.GetDomain(s).NotifyUpdatePrivilege()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	info, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars)
+	if err != nil {
+		if info.FailedDueToWrongPassword {
+			// when user enables the account locking function for consecutive login failures,
+			// the system updates the login failure count and determines whether to lock the account when authentication fails.
+			if enableAutoLock {
+				err := failedLoginTrackingBegin(s)
+				if err != nil {
+					return err
+				}
+				lockStatusChanged, passwordLocking, trackingErr := authFailedTracking(s, authUser.Username, authUser.Hostname)
+				if trackingErr != nil {
+					if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+						return rollBackErr
+					}
+					return trackingErr
+				}
+				if err := failedLoginTrackingCommit(s); err != nil {
+					if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+						return rollBackErr
+					}
+					return err
+				}
+				if lockStatusChanged {
+					// Notification auto lock.
+					err := autolockAction(s, passwordLocking, authUser.Username, authUser.Hostname)
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
 		return err
 	}
+
+	// If tidb_resource_control_enable is disabled, set resource group to empty
+	if variable.EnableResourceControl.Load() {
+		s.sessionVars.ResourceGroupName = strings.ToLower(info.ResourceGroupName)
+	} else {
+		s.sessionVars.ResourceGroupName = ""
+	}
+	if info.InSandBoxMode {
+		// Enter sandbox mode, only execute statement for resetting password.
+		s.EnableSandBoxMode()
+	}
+	if enableAutoLock {
+		err := failedLoginTrackingBegin(s)
+		if err != nil {
+			return err
+		}
+		// The password is correct. If the account is not locked, the number of login failure statistics will be cleared.
+		err = authSuccessClearCount(s, authUser.Username, authUser.Hostname)
+		if err != nil {
+			if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+				return rollBackErr
+			}
+			return err
+		}
+		err = failedLoginTrackingCommit(s)
+		if err != nil {
+			if rollBackErr := failedLoginTrackingRollback(s); rollBackErr != nil {
+				return rollBackErr
+			}
+			return err
+		}
+	}
+	pm.AuthSuccess(authUser.Username, authUser.Hostname)
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname
 	s.sessionVars.User = user
 	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 	return nil
+}
+
+func authSuccessClearCount(s *session, user string, host string) error {
+	// Obtain accurate lock status and failure count information.
+	passwordLocking, err := getFailedLoginUserAttributes(s, user, host)
+	if err != nil {
+		return err
+	}
+	// If the account is locked, it may be caused by the untimely update of the cache,
+	// directly report the account lock.
+	if passwordLocking.AutoAccountLocked {
+		if passwordLocking.PasswordLockTimeDays == -1 {
+			return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
+				"unlimited", "unlimited")
+		}
+
+		lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
+	}
+	if passwordLocking.FailedLoginCount != 0 {
+		// If the number of account login failures is not zero, it will be updated to 0.
+		passwordLockingJSON := privileges.BuildSuccessPasswordLockingJSON(passwordLocking.FailedLoginAttempts,
+			passwordLocking.PasswordLockTimeDays)
+		if passwordLockingJSON != "" {
+			if err := s.passwordLocking(user, host, passwordLockingJSON); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
+	pm := privilege.GetPrivilegeManager(s)
+	// Use the cache to determine whether to unlock the account.
+	// If the account needs to be unlocked, read the database information to determine whether
+	// the account needs to be unlocked. Otherwise, an error message is displayed.
+	lockStatusInMemory, err := pm.VerifyAccountAutoLockInMemory(user, host)
+	if err != nil {
+		return false, err
+	}
+	// If the lock status in the cache is Unlock, the automatic unlock is skipped.
+	// If memory synchronization is slow and there is a lock in the database, it will be processed upon successful login.
+	if !lockStatusInMemory {
+		return false, nil
+	}
+	lockStatusChanged := false
+	var plJSON string
+	// After checking the cache, obtain the latest data from the database and determine
+	// whether to automatically unlock the database to prevent repeated unlock errors.
+	pl, err := getFailedLoginUserAttributes(s, user, host)
+	if err != nil {
+		return false, err
+	}
+	if pl.AutoAccountLocked {
+		// If it is locked, need to check whether it can be automatically unlocked.
+		lockTimeDay := pl.PasswordLockTimeDays
+		if lockTimeDay == -1 {
+			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, "unlimited", "unlimited")
+		}
+		lastChanged := pl.AutoLockedLastChanged
+		d := time.Now().Unix() - lastChanged
+		if d > lockTimeDay*24*60*60 {
+			// Generate unlock json string.
+			plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
+				pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+		} else {
+			lds := strconv.FormatInt(lockTimeDay, 10)
+			rds := strconv.FormatInt(int64(math.Ceil(float64(lockTimeDay)-float64(d)/(24*60*60))), 10)
+			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, rds)
+		}
+	}
+	if plJSON != "" {
+		lockStatusChanged = true
+		if err = s.passwordLocking(user, host, plJSON); err != nil {
+			return false, err
+		}
+	}
+	return lockStatusChanged, nil
+}
+
+func authFailedTracking(s *session, user string, host string) (bool, *privileges.PasswordLocking, error) {
+	// Obtain the number of consecutive password login failures.
+	passwordLocking, err := getFailedLoginUserAttributes(s, user, host)
+	if err != nil {
+		return false, nil, err
+	}
+	// Consecutive wrong password login failure times +1,
+	// If the lock condition is satisfied, the lock status is updated and the update cache is notified.
+	lockStatusChanged, err := userAutoAccountLocked(s, user, host, passwordLocking)
+	if err != nil {
+		return false, nil, err
+	}
+	return lockStatusChanged, passwordLocking, nil
+}
+
+func autolockAction(s *session, passwordLocking *privileges.PasswordLocking, user, host string) error {
+	// Don't want to update the cache frequently, and only trigger the update cache when the lock status is updated.
+	err := domain.GetDomain(s).NotifyUpdatePrivilege()
+	if err != nil {
+		return err
+	}
+	// The number of failed login attempts reaches FAILED_LOGIN_ATTEMPTS.
+	// An error message is displayed indicating permission denial and account lock.
+	if passwordLocking.PasswordLockTimeDays == -1 {
+		return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host,
+			"unlimited", "unlimited")
+	}
+	lds := strconv.FormatInt(passwordLocking.PasswordLockTimeDays, 10)
+	return privileges.GenerateAccountAutoLockErr(passwordLocking.FailedLoginAttempts, user, host, lds, lds)
+}
+
+func (s *session) passwordLocking(user string, host string, newAttributesStr string) error {
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
+	sqlexec.MustFormatSQL(sql, "user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr)
+	sqlexec.MustFormatSQL(sql, " WHERE Host=%? and User=%?;", host, user)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, sql.String())
+	return err
+}
+
+func failedLoginTrackingBegin(s *session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	return err
+}
+
+func failedLoginTrackingCommit(s *session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "COMMIT")
+	if err != nil {
+		_, rollBackErr := s.ExecuteInternal(ctx, "ROLLBACK")
+		if rollBackErr != nil {
+			return rollBackErr
+		}
+	}
+	return err
+}
+
+func failedLoginTrackingRollback(s *session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, "ROLLBACK")
+	return err
+}
+
+// getFailedLoginUserAttributes queries the exact number of consecutive password login failures (concurrency is not allowed).
+func getFailedLoginUserAttributes(s *session, user string, host string) (*privileges.PasswordLocking, error) {
+	passwordLocking := &privileges.PasswordLocking{}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	rs, err := s.ExecuteInternal(ctx, `SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = %? for update`, user, host)
+	if err != nil {
+		return passwordLocking, err
+	}
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	req := rs.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	err = rs.Next(ctx, req)
+	if err != nil {
+		return passwordLocking, err
+	}
+	if req.NumRows() == 0 {
+		return passwordLocking, fmt.Errorf("user_attributes by `%s`@`%s` not found", user, host)
+	}
+	row := iter.Begin()
+	if !row.IsNull(0) {
+		passwordLockingJSON := row.GetJSON(0)
+		return passwordLocking, passwordLocking.ParseJSON(passwordLockingJSON)
+	}
+	return passwordLocking, fmt.Errorf("user_attributes by `%s`@`%s` not found", user, host)
+}
+
+func userAutoAccountLocked(s *session, user string, host string, pl *privileges.PasswordLocking) (bool, error) {
+	// Indicates whether the user needs to update the lock status change.
+	lockStatusChanged := false
+	// The number of consecutive login failures is stored in the database.
+	// If the current login fails, one is added to the number of consecutive login failures
+	// stored in the database to determine whether the user needs to be locked and the number of update failures.
+	failedLoginCount := pl.FailedLoginCount + 1
+	// If the cache is not updated, but it is already locked, it will report that the account is locked.
+	if pl.AutoAccountLocked {
+		if pl.PasswordLockTimeDays == -1 {
+			return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host,
+				"unlimited", "unlimited")
+		}
+		lds := strconv.FormatInt(pl.PasswordLockTimeDays, 10)
+		return false, privileges.GenerateAccountAutoLockErr(pl.FailedLoginAttempts, user, host, lds, lds)
+	}
+
+	autoAccountLocked := "N"
+	autoLockedLastChanged := ""
+	if pl.FailedLoginAttempts == 0 || pl.PasswordLockTimeDays == 0 {
+		return false, nil
+	}
+
+	if failedLoginCount >= pl.FailedLoginAttempts {
+		autoLockedLastChanged = time.Now().Format(time.UnixDate)
+		autoAccountLocked = "Y"
+		lockStatusChanged = true
+	}
+
+	newAttributesStr := privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
+		pl.PasswordLockTimeDays, autoAccountLocked, failedLoginCount, autoLockedLastChanged)
+	if newAttributesStr != "" {
+		return lockStatusChanged, s.passwordLocking(user, host, newAttributesStr)
+	}
+	return lockStatusChanged, nil
 }
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
@@ -2724,9 +3033,11 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	pm := &privileges.UserPrivileges{
-		Handle: do.PrivilegeHandle(),
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		return nil, err
 	}
+	pm := privileges.NewUserPrivileges(do.PrivilegeHandle(), extensions)
 	privilege.BindPrivilegeManager(s, pm)
 
 	// Add stats collector, and it will be freed by background stats worker
@@ -2758,16 +3069,23 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	return false, nil
 }
 
+type tableBasicInfo struct {
+	SQL string
+	id  int64
+}
+
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
-	DDLJobTables = []struct {
-		SQL string
-		id  int64
-	}{
+	DDLJobTables = []tableBasicInfo{
 		{ddl.JobTableSQL, ddl.JobTableID},
 		{ddl.ReorgTableSQL, ddl.ReorgTableID},
 		{ddl.HistoryTableSQL, ddl.HistoryTableID},
+	}
+	// BackfillTables is a list of tables definitions used in dist reorg DDL.
+	BackfillTables = []tableBasicInfo{
+		{ddl.BackfillTableSQL, ddl.BackfillTableID},
+		{ddl.BackfillHistoryTableSQL, ddl.BackfillHistoryTableID},
 	}
 	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
 )
@@ -2786,43 +3104,66 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg, tidb_ddl_history, tidb_ddl_backfill and tidb_ddl_backfill_history.
 func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		exists, err := t.CheckDDLTableExists()
-		if err != nil || exists {
+		if err != nil {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
 		}
-		tableIDs := make([]int64, 0, len(DDLJobTables))
-		for _, tbl := range DDLJobTables {
-			tableIDs = append(tableIDs, tbl.id)
+		if exists {
+			return initBackfillJobTables(store, t, dbID)
 		}
-		splitAndScatterTable(store, tableIDs)
-		p := parser.New()
-		for _, tbl := range DDLJobTables {
-			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
-			if err != nil {
-				return errors.Trace(err)
-			}
-			tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			tblInfo.State = model.StatePublic
-			tblInfo.ID = tbl.id
-			tblInfo.UpdateTS = t.StartTS
-			err = t.CreateTableOrView(dbID, tblInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
+
+		if err = createAndSplitTables(store, t, dbID, DDLJobTables); err != nil {
+			return err
+		}
+		if err = initBackfillJobTables(store, t, dbID); err != nil {
+			return err
 		}
 		return t.SetDDLTables()
 	})
+}
+
+// initBackfillJobTables is to create tidb_ddl_backfill and tidb_ddl_backfill_history.
+func initBackfillJobTables(store kv.Storage, t *meta.Meta, dbID int64) error {
+	tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
+	if err != nil || tblExist {
+		return errors.Trace(err)
+	}
+	return createAndSplitTables(store, t, dbID, BackfillTables)
+}
+
+func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []tableBasicInfo) error {
+	tableIDs := make([]int64, 0, len(tables))
+	for _, tbl := range tables {
+		tableIDs = append(tableIDs, tbl.id)
+	}
+	splitAndScatterTable(store, tableIDs)
+	p := parser.New()
+	for _, tbl := range tables {
+		stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tblInfo.State = model.StatePublic
+		tblInfo.ID = tbl.id
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableOrView(dbID, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
@@ -2859,6 +3200,66 @@ func InitMDLTable(store kv.Storage) error {
 	})
 }
 
+// InitMDLVariableForBootstrap initializes the metadata lock variable.
+func InitMDLVariableForBootstrap(store kv.Storage) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return t.SetMetadataLock(true)
+	})
+	if err != nil {
+		return err
+	}
+	variable.EnableMDL.Store(true)
+	return nil
+}
+
+// InitMDLVariableForUpgrade initializes the metadata lock variable.
+func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if isNull || !enable {
+		variable.EnableMDL.Store(false)
+	} else {
+		variable.EnableMDL.Store(true)
+	}
+	return isNull, err
+}
+
+// InitMDLVariable initializes the metadata lock variable.
+func InitMDLVariable(store kv.Storage) error {
+	isNull := false
+	enable := false
+	var err error
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		enable, isNull, err = t.GetMetadataLock()
+		if err != nil {
+			return err
+		}
+		if isNull {
+			// Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
+			enable = true
+			logutil.BgLogger().Warn("metadata lock is null")
+			err = t.SetMetadataLock(true)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	variable.EnableMDL.Store(enable)
+	return err
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -2885,11 +3286,16 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, upgrade)
+	} else {
+		err = InitMDLVariable(store)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 7+concurrency+analyzeConcurrencyQuota)
+	ses, err := createSessions(store, 10)
 	if err != nil {
 		return nil, err
 	}
@@ -2934,6 +3340,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		// Invalid client-go tiflash_compute store cache if necessary.
+		err = dom.WatchTiFlashComputeNodeChange()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if err = extensionimpl.Bootstrap(context.Background(), dom); err != nil {
 		return nil, err
 	}
@@ -2957,27 +3371,84 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if dom.GetEtcdClient() != nil {
 		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
 		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
-		go func() {
-			dom.TelemetryReportLoop(ses[5])
-			dom.TelemetryRotateSubWindowLoop(ses[5])
-		}()
+		if config.GetGlobalConfig().EnableTelemetry {
+			// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
+			// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
+			go func() {
+				dom.TelemetryReportLoop(ses[5])
+				dom.TelemetryRotateSubWindowLoop(ses[5])
+			}()
+		}
 	}
 
+	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
+	planReplayerWorkersSctx := make([]sessionctx.Context, planReplayerWorkerCnt)
+	pworkerSes, err := createSessions(store, int(planReplayerWorkerCnt))
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < int(planReplayerWorkerCnt); i++ {
+		planReplayerWorkersSctx[i] = pworkerSes[i]
+	}
+	// setup plan replayer handle
+	dom.SetupPlanReplayerHandle(ses[6], planReplayerWorkersSctx)
+	dom.StartPlanReplayerHandle()
+	// setup dumpFileGcChecker
+	dom.SetupDumpFileGCChecker(ses[7])
+	dom.DumpFileGcCheckerLoop()
+	// setup historical stats worker
+	dom.SetupHistoricalStatsWorker(ses[8])
+	dom.StartHistoricalStatsWorker()
+	if runBootstrapSQLFile {
+		pm := &privileges.UserPrivileges{
+			Handle: dom.PrivilegeHandle(),
+		}
+		privilege.BindPrivilegeManager(ses[9], pm)
+		doBootstrapSQLFile(ses[9])
+	}
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
 	cnt := 1 + concurrency
+	syncStatsCtxs, err := createSessions(store, cnt)
+	if err != nil {
+		return nil, err
+	}
 	subCtxs := make([]sessionctx.Context, cnt)
 	for i := 0; i < cnt; i++ {
-		subCtxs[i] = sessionctx.Context(ses[6+i])
+		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
 	}
-	if err = dom.LoadAndUpdateStatsLoop(subCtxs); err != nil {
+	initStatsCtx, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	if err = dom.LoadAndUpdateStatsLoop(subCtxs, initStatsCtx); err != nil {
+		return nil, err
+	}
+
+	// start TTL job manager after setup stats collector
+	// because TTL could modify a lot of columns, and need to trigger auto analyze
+	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+		if s, ok := s.(*session); ok {
+			return attachStatsCollector(s, dom)
+		}
+		return s
+	}
+	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+		if s, ok := s.(*session); ok {
+			return detachStatsCollector(s)
+		}
+		return s
+	}
+	dom.StartTTLJobManager()
+
+	analyzeCtxs, err := createSessions(store, analyzeConcurrencyQuota)
+	if err != nil {
 		return nil, err
 	}
 	subCtxs2 := make([]sessionctx.Context, analyzeConcurrencyQuota)
 	for i := 0; i < analyzeConcurrencyQuota; i++ {
-		subCtxs2[i] = ses[7+concurrency+i]
+		subCtxs2[i] = analyzeCtxs[i]
 	}
 	dom.SetupAnalyzeExec(subCtxs2)
-	dom.DumpFileGcCheckerLoop()
 	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
@@ -3068,10 +3539,30 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 
-	sessionBindHandle := bindinfo.NewSessionBindHandle(parser.New())
+	sessionBindHandle := bindinfo.NewSessionBindHandle()
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	s.SetSessionStatesHandler(sessionstates.StateBinding, sessionBindHandle)
 	return s, nil
+}
+
+// attachStatsCollector attaches the stats collector in the dom for the session
+func attachStatsCollector(s *session, dom *domain.Domain) *session {
+	if dom.StatsHandle() != nil && dom.StatsUpdating() {
+		s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
+		if GetIndexUsageSyncLease() > 0 {
+			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
+		}
+	}
+
+	return s
+}
+
+// detachStatsCollector removes the stats collector in the session
+func detachStatsCollector(s *session) *session {
+	s.statsCollector = nil
+	s.idxUsageCollector = nil
+
+	return s
 }
 
 // CreateSessionWithDomain creates a new Session and binds it with a Domain.
@@ -3514,8 +4005,16 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryCTEUsageNotCTE.Inc()
 	}
 
+	if ti.UseIndexMerge {
+		telemetryIndexMerge.Inc()
+	}
+
 	if ti.UseMultiSchemaChange {
 		telemetryMultiSchemaChangeUsage.Inc()
+	}
+
+	if ti.UseFlashbackToCluster {
+		telemetryFlashbackClusterUsage.Inc()
 	}
 
 	if ti.UesExchangePartition {
@@ -3560,6 +4059,9 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		if ti.PartitionTelemetry.UseDropIntervalPartition {
 			telemetryTablePartitionDropIntervalUsage.Inc()
 		}
+		if ti.PartitionTelemetry.UseCompactTablePartition {
+			telemetryTableCompactPartitionUsage.Inc()
+		}
 	}
 
 	if ti.AccountLockTelemetry != nil {
@@ -3589,6 +4091,25 @@ func (s *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
 
 func (s *session) GetStmtStats() *stmtstats.StatementStats {
 	return s.stmtStats
+}
+
+// SetMemoryFootprintChangeHook sets the hook that is called when the memdb changes its size.
+// Call this after s.txn becomes valid, since TxnInfo is initialized when the txn becomes valid.
+func (s *session) SetMemoryFootprintChangeHook() {
+	if config.GetGlobalConfig().Performance.TxnTotalSizeLimit != config.DefTxnTotalSizeLimit {
+		// if the user manually specifies the config, don't involve the new memory tracker mechanism, let the old config
+		// work as before.
+		return
+	}
+	hook := func(mem uint64) {
+		if s.sessionVars.MemDBFootprint == nil {
+			tracker := memory.NewTracker(memory.LabelForMemDB, -1)
+			tracker.AttachTo(s.sessionVars.MemTracker)
+			s.sessionVars.MemDBFootprint = tracker
+		}
+		s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
+	}
+	s.txn.SetMemoryFootprintChangeHook(hook)
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
@@ -3682,22 +4203,25 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 		} else {
 			s.sessionVars.RequestSourceType = stmtLabel
 		}
-	} else {
-		if source := ctx.Value(kv.RequestSourceKey); source != nil {
-			s.sessionVars.RequestSourceType = source.(kv.RequestSource).RequestSourceType
-		} else {
-			// panic in test mode in case there are requests without source in the future.
-			// log warnings in production mode.
-			if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-				panic("unexpected no source type context, if you see this error, " +
-					"the `RequestSourceTypeKey` is missing in your context")
-			} else {
-				logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
-					"the `RequestSourceTypeKey` is missing in the context",
-					zap.Bool("internal", s.isInternal()),
-					zap.String("sql", stmtNode.Text()))
-			}
+		return
+	}
+	if source := ctx.Value(kv.RequestSourceKey); source != nil {
+		requestSource := source.(kv.RequestSource)
+		if requestSource.RequestSourceType != "" {
+			s.sessionVars.RequestSourceType = requestSource.RequestSourceType
+			return
 		}
+	}
+	// panic in test mode in case there are requests without source in the future.
+	// log warnings in production mode.
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		panic("unexpected no source type context, if you see this error, " +
+			"the `RequestSourceTypeKey` is missing in your context")
+	} else {
+		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, "+
+			"the `RequestSourceTypeKey` is missing in the context",
+			zap.Bool("internal", s.isInternal()),
+			zap.String("sql", stmtNode.Text()))
 	}
 }
 

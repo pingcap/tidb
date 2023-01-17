@@ -82,19 +82,89 @@ const (
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	var tasks []*analyzeTask
+	tids := make([]int64, 0)
+	skipedTables := make([]string, 0)
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	for _, task := range e.tasks {
+		var tableID statistics.AnalyzeTableID
+		switch task.taskType {
+		case colTask:
+			tableID = task.colExec.tableID
+		case idxTask:
+			tableID = task.idxExec.tableID
+		case fastTask:
+			tableID = task.fastExec.tableID
+		case pkIncrementalTask:
+			tableID = task.colIncrementalExec.tableID
+		case idxIncrementalTask:
+			tableID = task.idxIncrementalExec.tableID
+		}
+		// skip locked tables
+		if !statsHandle.IsTableLocked(tableID.TableID) {
+			tasks = append(tasks, task)
+		}
+		// generate warning message
+		dup := false
+		for _, id := range tids {
+			if id == tableID.TableID {
+				dup = true
+				break
+			}
+		}
+		//avoid generate duplicate tables
+		if !dup {
+			if statsHandle.IsTableLocked(tableID.TableID) {
+				tbl, ok := is.TableByID(tableID.TableID)
+				if !ok {
+					return nil
+				}
+				skipedTables = append(skipedTables, tbl.Meta().Name.L)
+			}
+			tids = append(tids, tableID.TableID)
+		}
+	}
+
+	if len(skipedTables) > 0 {
+		tables := skipedTables[0]
+		for i, table := range skipedTables {
+			if i == 0 {
+				continue
+			}
+			tables += ", " + table
+		}
+		var msg string
+		if len(tids) > 1 {
+			if len(tids) > len(skipedTables) {
+				msg = "skip analyze locked tables: " + tables + ", other tables will be analyzed"
+			} else {
+				msg = "skip analyze locked tables: " + tables
+			}
+		} else {
+			msg = "skip analyze locked table: " + tables
+		}
+
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+	}
+
+	if len(tasks) == 0 {
+		return nil
+	}
+
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return err
 	}
-	taskCh := make(chan *analyzeTask, len(e.tasks))
-	resultsCh := make(chan *statistics.AnalyzeResults, len(e.tasks))
-	if len(e.tasks) < concurrency {
-		concurrency = len(e.tasks)
+	taskCh := make(chan *analyzeTask, len(tasks))
+	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
+	if len(tasks) < concurrency {
+		concurrency = len(tasks)
 	}
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
-	for _, task := range e.tasks {
+	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.ctx, task.job)
 	}
@@ -102,7 +172,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom := domain.GetDomain(e.ctx)
 		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 	})
-	for _, task := range e.tasks {
+	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
@@ -113,7 +183,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
 	err = e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
-	for _, task := range e.tasks {
+	for _, task := range tasks {
 		if task.colExec != nil && task.colExec.memTracker != nil {
 			task.colExec.memTracker.Detach()
 		}
@@ -135,7 +205,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	if e.ctx.GetSessionVars().InRestrictedSQL {
 		return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 	}
@@ -198,20 +267,8 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 	if !historicalStatsEnabled {
 		return nil
 	}
-
-	is := domain.GetDomain(sctx).InfoSchema()
-	tbl, existed := is.TableByID(tableID)
-	if !existed {
-		return errors.Errorf("cannot get table by id %d", tableID)
-	}
-	tblInfo := tbl.Meta()
-	dbInfo, existed := is.SchemaByTable(tblInfo)
-	if !existed {
-		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
-	}
-	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
-		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
-	}
+	historicalStatsWorker := domain.GetDomain(sctx).GetHistoricalStatsWorker()
+	historicalStatsWorker.SendTblToDumpHistoricalStats(tableID)
 	return nil
 }
 
@@ -234,6 +291,8 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		}
 	}
 
+	tableIDs := map[int64]struct{}{}
+
 	// save analyze results in single-thread.
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
@@ -254,17 +313,15 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 
-		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot, handle.StatsMetaHistorySourceAnalyze); err1 != nil {
+			tableID := results.TableID.TableID
 			err = err1
-			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err), zap.Int64("tableID", tableID))
 			finishJobWithLog(e.ctx, results.Job, err)
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)
-			// Dump stats to historical storage.
-			if err := recordHistoricalStats(e.ctx, results.TableID.TableID); err != nil {
-				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
-			}
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
@@ -272,6 +329,13 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			return errors.Trace(ErrQueryInterrupted)
 		}
 	}
+	// Dump stats to historical storage.
+	for tableID := range tableIDs {
+		if err := recordHistoricalStats(e.ctx, tableID); err != nil {
+			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+		}
+	}
+
 	return err
 }
 
@@ -290,6 +354,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			worker.run(ctx1, e.ctx.GetSessionVars().EnableAnalyzeSnapshot)
 		})
 	}
+	tableIDs := map[int64]struct{}{}
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
@@ -312,6 +377,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		saveResultsCh <- results
 	}
 	close(saveResultsCh)
@@ -323,6 +389,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			errMsg = append(errMsg, err1.Error())
 		}
 		err = errors.New(strings.Join(errMsg, ","))
+	}
+	for tableID := range tableIDs {
+		// Dump stats to historical storage.
+		if err := recordHistoricalStats(e.ctx, tableID); err != nil {
+			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+		}
 	}
 	return err
 }

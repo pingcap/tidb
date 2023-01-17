@@ -68,11 +68,22 @@ var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
 	GetObject:     getObject,
 }
 
-// S3Storage info for s3 storage.
+// S3Storage defines some standard operations for BR/Lightning on the S3 storage.
+// It implements the `ExternalStorage` interface.
 type S3Storage struct {
 	session *session.Session
 	svc     s3iface.S3API
 	options *backuppb.S3
+}
+
+// GetS3APIHandle gets the handle to the S3 API.
+func (rs *S3Storage) GetS3APIHandle() s3iface.S3API {
+	return rs.svc
+}
+
+// GetOptions gets the external storage operations for the S3.
+func (rs *S3Storage) GetOptions() *backuppb.S3 {
+	return rs.options
 }
 
 // S3Uploader does multi-part upload to s3.
@@ -248,19 +259,6 @@ func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
 	}
 }
 
-// NewS3Storage initialize a new s3 storage for metadata.
-//
-// Deprecated: Create the storage via `New()` instead of using this.
-func NewS3Storage( // revive:disable-line:flag-parameter
-	backend *backuppb.S3,
-	sendCredential bool,
-) (*S3Storage, error) {
-	return newS3Storage(backend, &ExternalStorageOptions{
-		SendCredentials:  sendCredential,
-		CheckPermissions: []Permission{AccessBuckets},
-	})
-}
-
 // auto access without ak / sk.
 func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
@@ -288,7 +286,8 @@ func createOssRAMCred() (*credentials.Credentials, error) {
 	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
 }
 
-func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
+// NewS3Storage initialize a new s3 storage for metadata.
+func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
@@ -355,12 +354,17 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		)
 	}
 	c := s3.New(ses, s3CliConfigs...)
-	// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
-	// we need reassign credential to be compatible with minio authentication.
 	confCred := ses.Config.Credentials
 	setCredOpt := func(req *request.Request) {
+		// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+		// we need reassign credential to be compatible with minio authentication.
 		if confCred != nil {
 			req.Config.Credentials = confCred
+		}
+		// s3manager.GetBucketRegionWithClient use path style addressing default.
+		// we need set S3ForcePathStyle by our config if we set endpoint.
+		if qs.Endpoint != "" {
+			req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
 		}
 	}
 	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
@@ -400,7 +404,7 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		options: &qs,
 	}
 	if opts.CheckS3ObjectLockOptions {
-		backend.ObjectLockEnabled = s3Storage.isObjectLockEnabled()
+		backend.ObjectLockEnabled = s3Storage.IsObjectLockEnabled()
 	}
 	return s3Storage, nil
 }
@@ -447,7 +451,7 @@ func getObject(svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
-func (rs *S3Storage) isObjectLockEnabled() bool {
+func (rs *S3Storage) IsObjectLockEnabled() bool {
 	input := &s3.GetObjectLockConfigurationInput{
 		Bucket: aws.String(rs.options.Bucket),
 	}
@@ -456,8 +460,8 @@ func (rs *S3Storage) isObjectLockEnabled() bool {
 		log.Warn("failed to check object lock for bucket", zap.String("bucket", rs.options.Bucket), zap.Error(err))
 		return false
 	}
-	if resp.ObjectLockConfiguration != nil {
-		if s3.ObjectLockEnabledEnabled == *resp.ObjectLockConfiguration.ObjectLockEnabled {
+	if resp != nil && resp.ObjectLockConfiguration != nil {
+		if s3.ObjectLockEnabledEnabled == aws.StringValue(resp.ObjectLockConfiguration.ObjectLockEnabled) {
 			return true
 		}
 	}

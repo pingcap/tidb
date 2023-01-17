@@ -1117,6 +1117,11 @@ func TestRunGCJob(t *testing.T) {
 	pdSafePoint := s.mustGetSafePointFromPd(t)
 	require.Equal(t, safePoint, pdSafePoint)
 
+	require.NoError(t, s.gcWorker.saveTime(gcSafePointKey, oracle.GetTimeFromTS(safePoint)))
+	tikvSafePoint, err := s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	require.Equal(t, *tikvSafePoint, oracle.GetTimeFromTS(safePoint))
+
 	etcdSafePoint := s.loadEtcdSafePoint(t)
 	require.Equal(t, safePoint, etcdSafePoint)
 

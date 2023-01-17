@@ -21,12 +21,17 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -545,7 +550,7 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 
 			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update id=11")
-			tk.MustGetDBError("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update a=a+10, b=b+20", plannercore.ErrRowIsReferenced2)
+			tk.MustGetDBError("insert into t1 (id, a, b) values (11, 11, 21) on duplicate key update a=a+10, b=b+20", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1112 2222", "3 1013 2023", "4 14 24", "11 11 21"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 		}
@@ -567,6 +572,15 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 	tk.MustGetDBError("insert into t1 (id, a, b) values (1, 0, 0) on duplicate key update id=100+id", plannercore.ErrRowIsReferenced2)
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 111 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
+
+	// Case-10: Test insert into parent table failed cause by foreign key check, see https://github.com/pingcap/tidb/issues/39200.
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int, foreign key fk(id) references t1(id));")
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("insert into t1 values (1) on duplicate key update id=2")
 }
 
 func TestForeignKey(t *testing.T) {
@@ -1957,6 +1971,7 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	tk.MustExec("set @@global.tidb_enable_foreign_key=0")
 	tk.MustExec("create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) ON DELETE CASCADE ON UPDATE SET NULL);")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) NOT NULL,\n" +
@@ -1964,7 +1979,7 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 		"  `leader2` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `leader` (`leader`),\n  KEY `leader2` (`leader2`),\n" +
-		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /*T![FOREIGN KEY] INVALID */\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("alter table t1 add constraint fk2 foreign key (leader2) references t1 (id)")
@@ -1974,9 +1989,11 @@ func TestShowCreateTableWithForeignKey(t *testing.T) {
 		"  `leader2` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `leader` (`leader`),\n  KEY `leader2` (`leader2`),\n" +
-		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /*T![FOREIGN KEY] INVALID */,\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `test`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */,\n" +
 		"  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `test`.`t1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) /* FOREIGN KEY INVALID */);")
 }
 
 func TestDMLExplainAnalyzeFKInfo(t *testing.T) {
@@ -1995,18 +2012,19 @@ func TestDMLExplainAnalyzeFKInfo(t *testing.T) {
 	tk.MustExec("insert into t1 values (1), (2)")
 	tk.MustExec("insert into t2 values (1)")
 	res := tk.MustQuery("explain analyze insert ignore into t3 values (1, 1, 1), (2, 1, 1), (3, 2, 1), (4, 1, 1), (5, 2, 1), (6, 2, 1)")
-	getExplainResultFn := func(res *testkit.Result) string {
-		resBuff := bytes.NewBufferString("")
-		for _, row := range res.Rows() {
-			_, _ = fmt.Fprintf(resBuff, "%s\t", row)
-		}
-		return resBuff.String()
-	}
-	explain := getExplainResultFn(res)
-	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.* fk_num: 3.*", explain, "")
+	explain := getExplainResult(res)
+	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.*", explain, "")
 	res = tk.MustQuery("explain analyze insert ignore into t3 values (7, null, null), (8, null, null)")
-	explain = getExplainResultFn(res)
-	require.NotContains(t, explain, "fk_check", explain, "")
+	explain = getExplainResult(res)
+	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.*", explain, "")
+}
+
+func getExplainResult(res *testkit.Result) string {
+	resBuff := bytes.NewBufferString("")
+	for _, row := range res.Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\t", row)
+	}
+	return resBuff.String()
 }
 
 func TestForeignKeyCascadeOnDiffColumnType(t *testing.T) {
@@ -2069,4 +2087,755 @@ func TestForeignKeyOnInsertOnDuplicateUpdate(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t3").Check(testkit.Rows("1"))
+}
+
+func TestForeignKeyIssue39419(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, a int, b int, " +
+		"foreign key fk_1 (a) references t1(id) ON DELETE SET NULL ON UPDATE SET NULL, " +
+		"foreign key fk_2 (b) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1), (2), (3);")
+	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
+	tk.MustExec("update t1 set id=id+10 where id in (1, 3);")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("2", "11", "13"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 <nil> 11", "2 2 2", "3 <nil> 13"))
+	tk.MustExec("delete from t1 where id = 2;")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("11", "13"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 <nil> 11", "3 <nil> 13"))
+
+	tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (id int, b int, index(id), foreign key fk_2 (b) references t1(id) ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3);")
+	tk.MustExec("update t1 set id=id+10 where id > 1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("1 1", "12 12", "13 13"))
+}
+
+func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE);")
+	tk.MustExec("create table t3 (id int, unique index idx(id));")
+	tk.MustExec("create table t4 (id int, index idx_id(id),foreign key fk(id) references t3(id));")
+	tk.MustExec("create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));")
+	tk.MustExec("create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), " +
+		"foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE SET NULL, " +
+		"foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, " +
+		"foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);")
+	tk.MustExec("create table t7(id int primary key, pid int, index(pid), foreign key(pid) references t7(id) on delete cascade);")
+
+	cases := []struct {
+		prepare []string
+		sql     string
+		plan    string
+	}{
+		// Test foreign key use primary key.
+		{
+			prepare: []string{
+				"insert into t1 values (1),(2),(3),(4),(5)",
+			},
+			sql: "explain analyze insert into t2 values (1),(2),(3);",
+			plan: "Insert_. N/A 0 root  time:.*, loops:1, prepare:.*, insert:.*" +
+				"└─Foreign_Key_Check_. 0.00 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze insert ignore into t2 values (10),(11),(12);",
+			plan: "Insert_.* fk_check.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t1 total:0s, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze update t2 set id=id+2 where id >1",
+			plan: "Update_.* 0 root  time:.*, loops:1.*" +
+				"├─TableReader_.*" +
+				"│ └─TableRangeScan.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze delete from t1 where id>1",
+			plan: "Delete_.*" +
+				"├─TableReader_.*" +
+				"│ └─TableRangeScan_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:4 foreign_key:fk, on_delete:CASCADE N/A N/A.*" +
+				"  └─Delete_.*" +
+				"    └─Batch_Point_Get_.*",
+		},
+		{
+			sql: "explain analyze update t1 set id=id+1 where id = 1",
+			plan: "Update_.*" +
+				"├─Point_Get_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─Point_Get_.*" +
+				"    └─Foreign_Key_Check_.*",
+		},
+		{
+			sql: "explain analyze insert into t1 values (1) on duplicate key update id = 100",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:0s foreign_key:fk, on_update:CASCADE N/A N/A",
+		},
+		{
+			sql: "explain analyze insert into t1 values (2) on duplicate key update id = 100",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:1 foreign_key:fk, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─Point_Get_.*" +
+				"    └─Foreign_Key_Check_.* 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk, check_exist N/A N/A",
+		},
+		// Test foreign key use index.
+		{
+			prepare: []string{
+				"insert into t3 values (1),(2),(3),(4),(5)",
+			},
+			sql: "explain analyze insert into t4 values (1),(2),(3);",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze update t4 set id=id+2 where id >1",
+			plan: "Update_.*" +
+				"├─IndexReader_.*" +
+				"│ └─IndexRangeScan_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze delete from t3 where id in (2,3)",
+			plan: "Delete_.*" +
+				"├─Batch_Point_Get_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:2 foreign_key:fk, check_not_exist N/A N/A",
+		},
+		{
+			prepare: []string{
+				"insert into t3 values (2)",
+			},
+			sql: "explain analyze update t3 set id=id+1 where id = 2",
+			plan: "Update_.*" +
+				"├─Point_Get_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist N/A N/A",
+		},
+
+		{
+			sql: "explain analyze insert into t3 values (2) on duplicate key update id = 100",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:0s foreign_key:fk, check_not_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze insert into t3 values (3) on duplicate key update id = 100",
+			plan: "Insert_.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist N/A N/A",
+		},
+		// Test multi-foreign keys in on table.
+		{
+			prepare: []string{
+				"insert into t5 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)",
+			},
+			sql: "explain analyze insert into t6 values (1,1,1)",
+			plan: "Insert_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze insert ignore into t6 values (1,1,10)",
+			plan: "Insert_.* root  time:.* loops:.* prepare:.* check_insert.* fk_check:.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5 total:0s, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5, index:idx2 total:0s, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Check.* 0 root table:t5, index:idx3 total:0s, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze update t6 set id=id+1, id3=id2+1 where id = 1",
+			plan: "Update_.*" +
+				"├─IndexLookUp_.*" +
+				"│ ├─IndexRangeScan_.*" +
+				"│ └─TableRowIDScan_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Check_.* 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze delete from t5 where id in (4,5)",
+			plan: "Delete_.*" +
+				"├─Batch_Point_Get_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t6, index:idx_id2 total:.*, check:.*, foreign_keys:2 foreign_key:fk_2, check_not_exist N/A N/A.*" +
+				"├─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id total:.*, foreign_keys:2 foreign_key:fk_1, on_delete:SET NULL N/A N/A.*" +
+				"│ └─Update_.*" +
+				"│   │ ├─IndexRangeScan_.*" +
+				"│   │ └─TableRowIDScan_.*" +
+				"│   └─Foreign_Key_Check_.* 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t6, index:fk_3 total:.*, foreign_keys:2 foreign_key:fk_3, on_delete:CASCADE N/A N/A.*" +
+				"  └─Delete_.*" +
+				"    └─IndexLookUp_.*" +
+				"      ├─IndexRangeScan_.*" +
+				"      └─TableRowIDScan_.*",
+		},
+		{
+			sql: "explain analyze update t5 set id=id+1, id2=id2+1 where id = 3",
+			plan: "Update_.*" +
+				"├─Point_Get_.*" +
+				"├─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE N/A N/A.*" +
+				"│ └─Update_.*" +
+				"│   ├─IndexLookUp_.*" +
+				"│   │ ├─IndexRangeScan_.*" +
+				"│   │ └─TableRowIDScan_.*" +
+				"│   └─Foreign_Key_Check_.* 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id2 total:.*, foreign_keys:1 foreign_key:fk_2, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─IndexLookUp_.*" +
+				"    │ ├─IndexRangeScan_.*" +
+				"    │ └─TableRowIDScan_.*" +
+				"    └─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:0s foreign_key:fk_2, check_exist N/A N/A",
+		},
+		{
+			prepare: []string{
+				"insert into t5 values (10,10,10)",
+			},
+			sql: "explain analyze update t5 set id=id+1, id2=id2+1, id3=id3+1 where id = 10",
+			plan: "Update_.*" +
+				"├─Point_Get_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:.*, check_not_exist N/A N/A.*" +
+				"├─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE N/A N/A.*" +
+				"│ └─Update_.*" +
+				"│   ├─IndexLookUp_.*" +
+				"│   │ ├─IndexRangeScan_.*" +
+				"│   │ └─TableRowIDScan_.*" +
+				"│   └─Foreign_Key_Check_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id2 total:.*, foreign_keys:1 foreign_key:fk_2, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─IndexLookUp_.*" +
+				"    │ ├─IndexRangeScan_.*" +
+				"    │ └─TableRowIDScan_.*" +
+				"    └─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:0s foreign_key:fk_2, check_exist N/A N/A",
+		},
+		{
+			sql: "explain analyze insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100",
+			plan: "Insert_.*" +
+				"├─Foreign_Key_Check_.* 0 root table:t6, index:fk_3 total:.*, check:.*, foreign_keys:1 foreign_key:fk_3, check_not_exist N/A N/A.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t6, index:idx_id total:.*, foreign_keys:1 foreign_key:fk_1, on_update:CASCADE N/A N/A.*" +
+				"  └─Update_.*" +
+				"    ├─IndexLookUp_.*" +
+				"    │ ├─IndexRangeScan_.*" +
+				"    │ └─TableRowIDScan_.*" +
+				"    └─Foreign_Key_Check_.* 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A",
+		},
+		{
+			prepare: []string{
+				"insert into t7 values(0,0),(1,0),(2,1),(3,2),(4,3),(5,4),(6,5),(7,6),(8,7),(9,8),(10,9),(11,10),(12,11),(13,12),(14,13);",
+			},
+			sql: "explain analyze delete from t7 where id = 0;",
+			plan: "Delete_.*" +
+				"├─Point_Get_.*" +
+				"└─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.* foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"  └─Delete_.*" +
+				"    ├─UnionScan_.*" +
+				"    │ └─IndexReader_.*" +
+				"    │   └─IndexRangeScan_.*" +
+				"    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.* foreign_keys:2 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"      └─Delete_.*" +
+				"        ├─UnionScan_.*" +
+				"        │ └─IndexReader_.*" +
+				"        │   └─IndexRangeScan_.*" +
+				"        └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"          └─Delete_.*" +
+				"            ├─UnionScan_.*" +
+				"            │ └─IndexReader_.*" +
+				"            │   └─IndexRangeScan_.*" +
+				"            └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"              └─Delete_.*" +
+				"                ├─UnionScan_.*" +
+				"                │ └─IndexReader_.*" +
+				"                │   └─IndexRangeScan_.*" +
+				"                └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                  └─Delete_.*" +
+				"                    ├─UnionScan_.*" +
+				"                    │ └─IndexReader_.*" +
+				"                    │   └─IndexRangeScan_.*" +
+				"                    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                      └─Delete_.*" +
+				"                        ├─UnionScan_.*" +
+				"                        │ └─IndexReader_.*" +
+				"                        │   └─IndexRangeScan_.*" +
+				"                        └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                          └─Delete_.*" +
+				"                            ├─UnionScan_.*" +
+				"                            │ └─IndexReader_.*" +
+				"                            │   └─IndexRangeScan_.*" +
+				"                            └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                              └─Delete_.*" +
+				"                                ├─UnionScan_.*" +
+				"                                │ └─IndexReader_.*" +
+				"                                │   └─IndexRangeScan_.*" +
+				"                                └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                  └─Delete_.*" +
+				"                                    ├─UnionScan_.*" +
+				"                                    │ └─IndexReader_.*" +
+				"                                    │   └─IndexRangeScan_.*" +
+				"                                    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                      └─Delete_.*" +
+				"                                        ├─UnionScan_.*" +
+				"                                        │ └─IndexReader_.*" +
+				"                                        │   └─IndexRangeScan_.*" +
+				"                                        └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                          └─Delete_.*" +
+				"                                            ├─UnionScan_.*" +
+				"                                            │ └─IndexReader_.*" +
+				"                                            │   └─IndexRangeScan_.*" +
+				"                                            └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                              └─Delete_.*" +
+				"                                                ├─UnionScan_.*" +
+				"                                                │ └─IndexReader_.*" +
+				"                                                │   └─IndexRangeScan_.*" +
+				"                                                └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                                  └─Delete_.*" +
+				"                                                    ├─UnionScan_.*" +
+				"                                                    │ └─IndexReader_.*" +
+				"                                                    │   └─IndexRangeScan_.*" +
+				"                                                    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                                      └─Delete_.*" +
+				"                                                        ├─UnionScan_.*" +
+				"                                                        │ └─IndexReader_.*" +
+				"                                                        │   └─IndexRangeScan_.*" +
+				"                                                        └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.*, foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"                                                          └─Delete_.*" +
+				"                                                            ├─UnionScan_.*" +
+				"                                                            │ └─IndexReader_.*" +
+				"                                                            │   └─IndexRangeScan_.*" +
+				"                                                            └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:0s foreign_key:fk_1, on_delete:CASCADE.*",
+		},
+	}
+	for _, ca := range cases {
+		for _, sql := range ca.prepare {
+			tk.MustExec(sql)
+		}
+		res := tk.MustQuery(ca.sql)
+		explain := getExplainResult(res)
+		require.Regexp(t, ca.plan, explain)
+	}
+}
+
+func TestForeignKeyRuntimeStats(t *testing.T) {
+	checkStats := executor.FKCheckRuntimeStats{
+		Total: time.Second * 3,
+		Check: time.Second * 2,
+		Lock:  time.Second,
+		Keys:  10,
+	}
+	require.Equal(t, "total:3s, check:2s, lock:1s, foreign_keys:10", checkStats.String())
+	checkStats.Merge(checkStats.Clone())
+	require.Equal(t, "total:6s, check:4s, lock:2s, foreign_keys:20", checkStats.String())
+	cascadeStats := executor.FKCascadeRuntimeStats{
+		Total: time.Second,
+		Keys:  10,
+	}
+	require.Equal(t, "total:1s, foreign_keys:10", cascadeStats.String())
+	cascadeStats.Merge(cascadeStats.Clone())
+	require.Equal(t, "total:2s, foreign_keys:20", cascadeStats.String())
+}
+
+func TestPrivilegeCheckInForeignKeyCascade(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1), (2), (3);")
+	cases := []struct {
+		prepares []string
+		sql      string
+		err      error
+		t1Rows   []string
+		t2Rows   []string
+	}{
+		{
+			prepares: []string{"grant insert on test.t2 to 'u1'@'%';"},
+			sql:      "insert into t2 values (1), (2), (3);",
+			t1Rows:   []string{"1", "2", "3"},
+			t2Rows:   []string{"1", "2", "3"},
+		},
+		{
+			prepares: []string{"grant select, delete on test.t1 to 'u1'@'%';"},
+			sql:      "delete from t1 where id=1;",
+			t1Rows:   []string{"2", "3"},
+			t2Rows:   []string{"2", "3"},
+		},
+		{
+			prepares: []string{"grant select, update on test.t1 to 'u1'@'%';"},
+			sql:      "update t1 set id=id+10 where id=2;",
+			t1Rows:   []string{"3", "12"},
+			t2Rows:   []string{"3", "12"},
+		},
+	}
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@foreign_key_checks=1")
+	for _, ca := range cases {
+		tk.MustExec("drop user if exists 'u1'@'%'")
+		tk.MustExec("create user 'u1'@'%' identified by '';")
+		for _, sql := range ca.prepares {
+			tk.MustExec(sql)
+		}
+		err := tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+		require.NoError(t, err)
+		if ca.err == nil {
+			tk2.MustExec(ca.sql)
+		} else {
+			err = tk2.ExecToErr(ca.sql)
+			require.Error(t, err)
+		}
+		tk.MustQuery("select * from t1 order by id").Check(testkit.Rows(ca.t1Rows...))
+		tk.MustQuery("select * from t2 order by id").Check(testkit.Rows(ca.t2Rows...))
+	}
+}
+
+func TestTableLockInForeignKeyCascade(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@foreign_key_checks=1")
+	// enable table lock
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableTableLock = false
+		})
+	}()
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1), (2), (3);")
+	tk.MustExec("insert into t2 values (1), (2), (3);")
+	tk.MustExec("lock table t2 read;")
+	tk2.MustGetDBError("delete from t1 where id = 1", infoschema.ErrTableLocked)
+	tk.MustExec("unlock tables;")
+	tk2.MustExec("delete from t1 where id = 1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("2", "3"))
+}
+
+func TestForeignKeyIssue39732(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create user 'u1'@'%' identified by '';")
+	tk.MustExec("GRANT ALL PRIVILEGES ON *.* TO 'u1'@'%'")
+	err := tk.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	require.NoError(t, err)
+	tk.MustExec("create table t1 (id int key, leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("insert into t1 values (1, null), (10, 1), (11, 1), (20, 10)")
+	tk.MustExec(`prepare stmt1 from 'delete from t1 where id = ?';`)
+	tk.MustExec(`set @a = 1;`)
+	tk.MustExec("execute stmt1 using @a;")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows())
+}
+
+func TestForeignKeyOnReplaceIntoChildTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t_data (id int, a int, b int)")
+	tk.MustExec("insert into t_data (id, a, b) values (1, 1, 1), (2, 2, 2);")
+	for _, ca := range foreignKeyTestCase1 {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("replace into t1 (id, a, b) values (1, 1, 1);")
+		tk.MustExec("replace into t2 (id, a, b) values (1, 1, 1)")
+		tk.MustGetDBError("replace into t1 (id, a, b) values (1, 2, 3);", plannercore.ErrRowIsReferenced2)
+		if !ca.notNull {
+			tk.MustExec("replace into t2 (id, a, b) values (2, null, 1)")
+			tk.MustExec("replace into t2 (id, a, b) values (3, 1, null)")
+			tk.MustExec("replace into t2 (id, a, b) values (4, null, null)")
+		}
+		tk.MustGetDBError("replace into t2 (id, a, b) values (5, 1, 0);", plannercore.ErrNoReferencedRow2)
+		tk.MustGetDBError("replace into t2 (id, a, b) values (6, 0, 1);", plannercore.ErrNoReferencedRow2)
+		tk.MustGetDBError("replace into t2 (id, a, b) values (7, 2, 2);", plannercore.ErrNoReferencedRow2)
+		// Test replace into from select.
+		tk.MustExec("delete from t2")
+		tk.MustExec("replace into t2 (id, a, b) select id, a, b from t_data where t_data.id=1")
+		tk.MustGetDBError("replace into t2 (id, a, b) select id, a, b from t_data where t_data.id=2", plannercore.ErrNoReferencedRow2)
+
+		// Test in txn
+		tk.MustExec("delete from t2")
+		tk.MustExec("begin")
+		tk.MustExec("delete from t1 where a=1")
+		tk.MustGetDBError("replace into t2 (id, a, b) values (1, 1, 1)", plannercore.ErrNoReferencedRow2)
+		tk.MustExec("replace into t1 (id, a, b) values (2, 2, 2)")
+		tk.MustExec("replace into t2 (id, a, b) values (2, 2, 2)")
+		tk.MustGetDBError("replace into t1 (id, a, b) values (2, 2, 3);", plannercore.ErrRowIsReferenced2)
+		tk.MustExec("rollback")
+		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
+		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows())
+	}
+
+	// Case-10: test primary key is handle and contain foreign key column, and foreign key column has default value.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.MustExec("create table t1 (id int,a int, primary key(id));")
+	tk.MustExec("create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id));")
+	tk.MustExec("replace into t1 values (1, 1);")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustGetDBError("replace into t2 (id) values (10);", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("replace into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
+
+	// Case-11: test primary key is handle and contain foreign key column, and foreign key column doesn't have default value.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (id int key,a int, index (a), foreign key fk(a) references t1(id));")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustExec("replace into t2 (id) values (10);")
+	tk.MustGetDBError("replace into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
+}
+
+func TestForeignKeyOnReplaceInto(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, a int, index (a));")
+	tk.MustExec("create table t2 (id int key, a int, index (a), constraint fk_1 foreign key (a) references t1(a));")
+	tk.MustExec("replace into t1 values (1, 1);")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustExec("replace into t2 (id) values (2);")
+	tk.MustGetDBError("replace into t2 values (1, 2);", plannercore.ErrNoReferencedRow2)
+	// Test fk check on replace into parent table.
+	tk.MustGetDBError("replace into t1 values (1, 2);", plannercore.ErrRowIsReferenced2)
+	// Test fk cascade delete on replace into parent table.
+	tk.MustExec("alter table t2 drop foreign key fk_1")
+	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete cascade")
+	tk.MustExec("replace into t1 values (1, 2);")
+	tk.MustQuery("select id, a from t1").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 <nil>"))
+	// Test fk cascade delete on replace into parent table.
+	tk.MustExec("alter table t2 drop foreign key fk_1")
+	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete set null")
+	tk.MustExec("delete from t2")
+	tk.MustExec("delete from t1")
+	tk.MustExec("replace into t1 values (1, 1);")
+	tk.MustExec("replace into t2 values (1, 1);")
+	tk.MustExec("replace into t1 values (1, 2);")
+	tk.MustQuery("select id, a from t1").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select id, a from t2").Check(testkit.Rows("1 <nil>"))
+
+	// Test cascade delete in self table by replace into statement.
+	tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (id int key, name varchar(10), leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);")
+	tk.MustExec("replace into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
+	tk.MustExec("replace into t1 values (100, 'l2_a1', 10), (101, 'l2_a2', 10), (102, 'l2_a3', 10)")
+	tk.MustExec("replace into t1 values (110, 'l2_b1', 11), (111, 'l2_b2', 11), (112, 'l2_b3', 11)")
+	tk.MustExec("replace into t1 values (120, 'l2_c1', 12), (121, 'l2_c2', 12), (122, 'l2_c3', 12)")
+	tk.MustExec("replace into t1 values (1000,'l3_a1', 100)")
+	tk.MustExec("replace into t1 values (1, 'new-boss', null)")
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows("1"))
+}
+
+func TestForeignKeyLargeTxnErr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
+	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890');")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t1 (name) select name from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
+	tk.MustExec("update t1 set pid=1 where id>1")
+	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
+	originLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
+	defer func() {
+		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
+	}()
+	// Set the limitation to a small value, make it easier to reach the limitation.
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 10240)
+	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
+	// foreign key cascade behaviour will cause ErrTxnTooLarge.
+	tk.MustGetDBError("update t1 set id=id+100000 where id=1", kv.ErrTxnTooLarge)
+	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
+	tk.MustGetDBError("update t1 set id=id+100000 where id=1", kv.ErrTxnTooLarge)
+	tk.MustQuery("select id,pid from t1 where id<3 order by id").Check(testkit.Rows("1 <nil>", "2 1"))
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("update t1 set id=id+100000 where id=1")
+	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
+}
+
+func TestForeignKeyAndLockView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key)")
+	tk.MustExec("create table t2 (id int key, foreign key (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE)")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("update t2 set id=2")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@foreign_key_checks=1")
+	tk2.MustExec("use test")
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("update t1 set id=2 where id=1")
+		tk2.MustExec("commit")
+	}()
+	time.Sleep(time.Millisecond * 200)
+	_, digest := parser.NormalizeDigest("update t1 set id=2 where id=1")
+	tk.MustQuery("select CURRENT_SQL_DIGEST from information_schema.tidb_trx where state='LockWaiting' and db='test'").Check(testkit.Rows(digest.String()))
+	tk.MustGetErrMsg("update t1 set id=2", "[executor:1213]Deadlock found when trying to get lock; try restarting transaction")
+	wg.Wait()
+}
+
+func TestForeignKeyAndMemoryTracker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
+	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz');")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t1 (name) select name from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
+	tk.MustExec("update t1 set pid=1 where id>1")
+	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
+	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("set @@tidb_mem_quota_query=40960;")
+	// foreign key cascade behaviour will exceed memory quota.
+	err := tk.ExecToErr("update t1 set id=id+100000 where id=1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+	tk.MustQuery("select id,pid from t1 where id = 1").Check(testkit.Rows("1 <nil>"))
+	tk.MustExec("set @@foreign_key_checks=0")
+	// After disable foreign_key_checks, following DML will execute successful.
+	tk.MustExec("update t1 set id=id+100000 where id=1")
+	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
+}
+
+func TestForeignKeyMetaInKeyColumnUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index(a, b));")
+	tk.MustExec("create table t2 (a int, b int, index(a, b), constraint fk foreign key(a, b) references t1(a, b));")
+	tk.MustQuery("select CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME from " +
+		"INFORMATION_SCHEMA.KEY_COLUMN_USAGE where CONSTRAINT_SCHEMA='test' and TABLE_NAME='t2' and REFERENCED_TABLE_SCHEMA is not null and REFERENCED_COLUMN_NAME is not null;").
+		Check(testkit.Rows("fk test t2 a test t1 a", "fk test t2 b test t1 b"))
+}
+
+func TestForeignKeyAndGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	// Test foreign key with parent column is virtual generated column.
+	tk.MustExec("create table t1 (a int, b int as (a+1) virtual, index(b));")
+	tk.MustGetErrMsg("create table t2 (a int, b int, constraint fk foreign key(b) references t1(b));", "[schema:3733]Foreign key 'fk' uses virtual column 'b' which is not supported.")
+	// Test foreign key with child column is virtual generated column.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int key);")
+	tk.MustGetErrMsg("create table t2 (a int, c int as (a+1) virtual, constraint fk foreign key(c) references t1(a));", "[schema:3733]Foreign key 'fk' uses virtual column 'c' which is not supported.")
+	// Test foreign key with parent column is stored generated column.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int, b int as (a) stored, index(b));")
+	tk.MustExec("create table t2 (a int, b int, constraint fk foreign key(b) references t1(b) on delete cascade on update cascade);")
+	tk.MustExec("insert into t1 (a) values (1),(2)")
+	tk.MustExec("insert into t2 (a) values (1),(2)")
+	tk.MustExec("update t2 set b=a")
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+	tk.MustExec("update t1 set a=a+10 where a=1")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("2 2", "11 11"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 11", "1 11", "2 2", "2 2"))
+	tk.MustExec("delete from t1 where a=2")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("11 11"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 11", "1 11"))
+	// Test foreign key with parent and child column is stored generated column.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int, b int as (a) stored, index(b));")
+	tk.MustGetErrMsg("create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b) on update cascade);", "[ddl:3104]Cannot define foreign key with ON UPDATE CASCADE clause on a generated column.")
+	tk.MustGetErrMsg("create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b) on delete set null);", "[ddl:3104]Cannot define foreign key with ON DELETE SET NULL clause on a generated column.")
+	tk.MustExec("create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b));")
+	tk.MustExec("insert into t1 (a) values (1),(2)")
+	tk.MustExec("insert into t2 (a) values (1),(2)")
+	tk.MustGetDBError("insert into t2 (a) values (3)", plannercore.ErrNoReferencedRow2)
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustGetDBError("delete from t1 where b=1", plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError("update t1 set a=a+10 where a=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete cascade")
+	tk.MustExec("delete from t1 where a=1")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("2 2"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("2 2"))
+}
+
+func TestForeignKeyAndExpressionIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index idx1 (b), index idx2 ((b*2)));")
+	tk.MustExec("create table t2 (a int, b int, index((b*2)), constraint fk foreign key(b) references t1(b));")
+	tk.MustExec("insert into t1 values (1,1),(2,2)")
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("update t1 set b=b+10 where b=1", plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where b=1", plannercore.ErrRowIsReferenced2)
+	tk.MustGetErrMsg("alter table t1 drop index idx1", "[ddl:1553]Cannot drop index 'idx1': needed in a foreign key constraint")
+	tk.MustGetErrMsg("alter table t2 drop index fk", "[ddl:1553]Cannot drop index 'fk': needed in a foreign key constraint")
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete set null on update cascade")
+	tk.MustExec("update t1 set b=b+10 where b=1")
+	tk.MustExec("delete from t1 where b=2")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("1 11"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 11", "2 <nil>"))
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
+}
+
+func TestForeignKeyAndMultiValuedIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, a json, b int generated always as (a->'$.id') stored, index idx1(b), index idx2((cast(a ->'$.data' as signed array))))")
+	tk.MustExec("create table t2 (id int, b int, constraint fk foreign key(b) references t1(b));")
+	tk.MustExec(`insert into t1 (id, a) values (1, '{"id": "1", "data": [1,11,111]}')`)
+	tk.MustExec(`insert into t1 (id, a) values (2, '{"id": "2", "data": [2,22,222]}')`)
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError(`update t1 set a='{"id": "10", "data": [1,11,111]}' where id=1`, plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError(`delete from t1 where id=1`, plannercore.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete set null on update cascade")
+	tk.MustExec(`update t1 set a='{"id": "10", "data": [1,11,111]}' where id=1`)
+	tk.MustExec(`delete from t1 where id=2`)
+	tk.MustQuery("select id,b from t1 order by id").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select id,b from t2 order by id").Check(testkit.Rows("1 10", "2 <nil>"))
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
 }

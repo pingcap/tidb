@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
@@ -111,6 +110,7 @@ var (
 	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
 	errNotSupportedAuthMode    = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
 	errNetPacketTooLarge       = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
+	errMustChangePassword      = dbterror.ClassServer.NewStd(errno.ErrMustChangePassword)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -667,32 +667,6 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	return connInfo
 }
 
-func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
-	if cc.extensions == nil {
-		return
-	}
-
-	var connInfo *variable.ConnectionInfo
-	var activeRoles []*auth.RoleIdentity
-	if ctx := cc.getCtx(); ctx != nil {
-		sessVars := ctx.GetSessionVars()
-		connInfo = sessVars.ConnectionInfo
-		activeRoles = sessVars.ActiveRoles
-	}
-
-	if connInfo == nil {
-		connInfo = cc.connectInfo()
-	}
-
-	info := &extension.ConnEventInfo{
-		ConnectionInfo: connInfo,
-		ActiveRoles:    activeRoles,
-		Error:          err,
-	}
-
-	cc.extensions.OnConnectionEvent(tp, info)
-}
-
 func (s *Server) checkConnectionCount() error {
 	// When the value of Instance.MaxConnections is 0, the number of connections is unlimited.
 	if int(s.cfg.Instance.MaxConnections) == 0 {
@@ -759,6 +733,11 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
 	if !ok {
+		if s.dom != nil {
+			if pinfo, ok2 := s.dom.SysProcTracker().GetSysProcessList()[id]; ok2 {
+				return pinfo, true
+			}
+		}
 		return &util.ProcessInfo{}, false
 	}
 	return conn.ctx.ShowProcess(), ok
@@ -811,6 +790,17 @@ func killConn(conn *clientConn) {
 	}
 }
 
+// KillSysProcesses kill sys processes such as auto analyze.
+func (s *Server) KillSysProcesses() {
+	if s.dom == nil {
+		return
+	}
+	sysProcTracker := s.dom.SysProcTracker()
+	for connID := range sysProcTracker.GetSysProcessList() {
+		sysProcTracker.KillSysProcess(connID)
+	}
+}
+
 // KillAllConnections kills all connections when server is not gracefully shutdown.
 func (s *Server) KillAllConnections() {
 	logutil.BgLogger().Info("[server] kill all connections.")
@@ -825,12 +815,7 @@ func (s *Server) KillAllConnections() {
 		killConn(conn)
 	}
 
-	if s.dom != nil {
-		sysProcTracker := s.dom.SysProcTracker()
-		for connID := range sysProcTracker.GetSysProcessList() {
-			sysProcTracker.KillSysProcess(connID)
-		}
-	}
+	s.KillSysProcesses()
 }
 
 var gracefulCloseConnectionsTimeout = 15 * time.Second
@@ -995,4 +980,38 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	for _, id := range connIDs {
 		s.Kill(id, false)
 	}
+}
+
+// GetMinStartTS implements SessionManager interface.
+func (s *Server) GetMinStartTS(lowerBound uint64) (ts uint64) {
+	// sys processes
+	if s.dom != nil {
+		for _, pi := range s.dom.SysProcTracker().GetSysProcessList() {
+			if thisTS := pi.GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
+			}
+		}
+	}
+	// user sessions
+	func() {
+		s.rwlock.RLock()
+		defer s.rwlock.RUnlock()
+		for _, client := range s.clients {
+			if thisTS := client.ctx.ShowProcess().GetMinStartTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
+			}
+		}
+	}()
+	// internal sessions
+	func() {
+		s.sessionMapMutex.Lock()
+		defer s.sessionMapMutex.Unlock()
+		analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
+		for se := range s.internalSessions {
+			if thisTS, processInfoID := session.GetStartTSFromSession(se); processInfoID != analyzeProcID && thisTS > lowerBound && (thisTS < ts || ts == 0) {
+				ts = thisTS
+			}
+		}
+	}()
+	return
 }

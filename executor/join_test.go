@@ -1357,7 +1357,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustExec("analyze table s;")
 
 	tk.MustQuery("desc format = 'brief' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"HashAgg 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexJoin 64.00 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
@@ -1370,7 +1370,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 
 	tk.MustQuery("desc format = 'brief' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"HashAgg 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexMergeJoin 64.00 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
@@ -1384,7 +1384,7 @@ func TestIndexLookupJoin(t *testing.T) {
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 
 	tk.MustQuery("desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+		"HashAgg 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexHashJoin 64.00 root  inner join, inner:IndexReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader(Build) 64.00 root  data:Selection",
 		"  │ └─Selection 64.00 cop[tikv]  not(isnull(test.t.b))",
@@ -1412,6 +1412,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
@@ -2306,16 +2307,14 @@ func TestIssue18070(t *testing.T) {
 	tk.MustExec("insert into t1 values(1),(2)")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
 	tk.MustExec("set @@tidb_mem_quota_query=1000")
-	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	tk.MustContainErrMsg("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 
 	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
+	tk.MustContainErrMsg("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;", "Out Of Memory Quota!")
 }
 
 func TestIssue18564(t *testing.T) {
@@ -2841,12 +2840,11 @@ func TestIssue37932(t *testing.T) {
 	tk1.MustExec("delete from tbl_3 where tbl_3.col_11 in ( 'Alice' ,'Bob' ,'Alice' ) ;")
 	tk2.MustExec("insert  into tbl_3 set col_11 = 'Bob', col_12 = 5701982550256146475, col_13 = 'Hhl)yCsQ2K3cfc^', col_14 = 'Alice', col_15 = -3718868 on duplicate key update col_15 = 7210750, col_12 = 6133680876296985245, col_14 = 'Alice', col_11 = 'David', col_13 = 'F+RMGE!_2^Cfr3Fw';")
 	tk2.MustExec("insert ignore into tbl_5 set col_21 = 2439343116426563397, col_22 = 'Charlie', col_23 = '~Spa2YzRFFom16XD', col_24 = 5571575017340582365, col_25 = '13:24:38.00' ;")
-	// FIXME: https://github.com/pingcap/tidb/issues/38577
 	err := tk1.ExecToErr("update tbl_4 set tbl_4.col_20 = '2006-01-24' where tbl_4.col_18 in ( select col_11 from tbl_3 where IsNull( tbl_4.col_16 ) or not( tbl_4.col_19 in ( select col_3 from tbl_1 where tbl_4.col_16 between 'Alice' and 'David' and tbl_4.col_19 <= '%XgRou0#iKtn*' ) ) ) ;")
 	if err != nil {
 		print(err.Error())
 		if strings.Contains(err.Error(), "Truncated incorrect DOUBLE value") {
-			t.Log("Bug of truncated incorrect DOUBLE value has not been fixed, skipping")
+			t.Log("Truncated incorrect DOUBLE value is within expectations, skipping")
 			return
 		}
 	}

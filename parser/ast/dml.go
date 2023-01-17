@@ -288,15 +288,17 @@ func (*TableName) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableName) restoreName(ctx *format.RestoreCtx) {
-	// restore db name
-	if n.Schema.String() != "" {
-		ctx.WriteName(n.Schema.String())
-		ctx.WritePlain(".")
-	} else if ctx.DefaultDB != "" {
-		// Try CTE, for a CTE table name, we shouldn't write the database name.
-		if !ctx.IsCTETableName(n.Name.L) {
-			ctx.WriteName(ctx.DefaultDB)
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		// restore db name
+		if n.Schema.String() != "" {
+			ctx.WriteName(n.Schema.String())
 			ctx.WritePlain(".")
+		} else if ctx.DefaultDB != "" {
+			// Try CTE, for a CTE table name, we shouldn't write the database name.
+			if !ctx.IsCTETableName(n.Name.L) {
+				ctx.WriteName(ctx.DefaultDB)
+				ctx.WritePlain(".")
+			}
 		}
 	}
 	// restore table name
@@ -356,6 +358,8 @@ const (
 	HintUse IndexHintType = iota + 1
 	HintIgnore
 	HintForce
+	HintKeepOrder
+	HintNoKeepOrder
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.
@@ -386,6 +390,10 @@ func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 		indexHintType = "IGNORE INDEX"
 	case HintForce:
 		indexHintType = "FORCE INDEX"
+	case HintKeepOrder:
+		indexHintType = "KEEP ORDER"
+	case HintNoKeepOrder:
+		indexHintType = "NO KEEP ORDER"
 	default: // Prevent accidents
 		return errors.New("IndexHintType has an error while matching")
 	}
@@ -2221,8 +2229,8 @@ func (n *InsertStmt) SetWhereExpr(e ExprNode) {
 	s.Where = e
 }
 
-// TableSource implements ShardableDMLStmt interface.
-func (n *InsertStmt) TableSource() (*TableSource, bool) {
+// TableRefsJoin implements ShardableDMLStmt interface.
+func (n *InsertStmt) TableRefsJoin() (*Join, bool) {
 	if n.Select == nil {
 		return nil, false
 	}
@@ -2230,8 +2238,7 @@ func (n *InsertStmt) TableSource() (*TableSource, bool) {
 	if !ok {
 		return nil, false
 	}
-	table, ok := s.From.TableRefs.Left.(*TableSource)
-	return table, ok
+	return s.From.TableRefs, true
 }
 
 // DeleteStmt is a statement to delete rows from table.
@@ -2410,10 +2417,9 @@ func (n *DeleteStmt) SetWhereExpr(e ExprNode) {
 	n.Where = e
 }
 
-// TableSource implements ShardableDMLStmt interface.
-func (n *DeleteStmt) TableSource() (*TableSource, bool) {
-	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
-	return table, ok
+// TableRefsJoin implements ShardableDMLStmt interface.
+func (n *DeleteStmt) TableRefsJoin() (*Join, bool) {
+	return n.TableRefs.TableRefs, true
 }
 
 const (
@@ -2426,8 +2432,8 @@ type ShardableDMLStmt = interface {
 	StmtNode
 	WhereExpr() ExprNode
 	SetWhereExpr(ExprNode)
-	// TableSource returns the *only* target table source in the statement.
-	TableSource() (table *TableSource, ok bool)
+	// TableRefsJoin returns the table refs in the statement.
+	TableRefsJoin() (refs *Join, ok bool)
 }
 
 var _ ShardableDMLStmt = &DeleteStmt{}
@@ -2649,10 +2655,9 @@ func (n *UpdateStmt) SetWhereExpr(e ExprNode) {
 	n.Where = e
 }
 
-// TableSource implements ShardableDMLStmt interface.
-func (n *UpdateStmt) TableSource() (*TableSource, bool) {
-	table, ok := n.TableRefs.TableRefs.Left.(*TableSource)
-	return table, ok
+// TableRefsJoin implements ShardableDMLStmt interface.
+func (n *UpdateStmt) TableRefsJoin() (*Join, bool) {
+	return n.TableRefs.TableRefs, true
 }
 
 // Limit is the limit clause.
@@ -2738,6 +2743,7 @@ const (
 	ShowStatsTopN
 	ShowStatsBuckets
 	ShowStatsHealthy
+	ShowStatsLocked
 	ShowHistogramsInFlight
 	ShowColumnStatsUsage
 	ShowPlugins
@@ -2909,6 +2915,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case ShowStatsMeta:
 		ctx.WriteKeyWord("STATS_META")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowStatsLocked:
+		ctx.WriteKeyWord("STATS_LOCKED")
 		if err := restoreShowLikeOrWhereOpt(); err != nil {
 			return err
 		}

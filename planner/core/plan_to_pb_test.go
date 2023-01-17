@@ -35,16 +35,16 @@ func TestColumnToProto(t *testing.T) {
 	col := &model.ColumnInfo{
 		FieldType: *tp,
 	}
-	pc := util.ColumnToProto(col)
+	pc := util.ColumnToProto(col, false)
 	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: 11, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
 	require.Equal(t, expect, pc)
 
 	cols := []*model.ColumnInfo{col, col}
-	pcs := util.ColumnsToProto(cols, false)
+	pcs := util.ColumnsToProto(cols, false, false)
 	for _, v := range pcs {
 		require.Equal(t, int32(10), v.GetFlag())
 	}
-	pcs = util.ColumnsToProto(cols, true)
+	pcs = util.ColumnsToProto(cols, true, false)
 	for _, v := range pcs {
 		require.Equal(t, int32(10), v.GetFlag())
 	}
@@ -56,19 +56,19 @@ func TestColumnToProto(t *testing.T) {
 	col1 := &model.ColumnInfo{
 		FieldType: *tp,
 	}
-	pc = util.ColumnToProto(col1)
+	pc = util.ColumnToProto(col1, false)
 	require.Equal(t, int32(8), pc.Collation)
 
 	collate.SetNewCollationEnabledForTest(true)
 
-	pc = util.ColumnToProto(col)
+	pc = util.ColumnToProto(col, false)
 	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: -83, ColumnLen: 11, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
 	require.Equal(t, expect, pc)
-	pcs = util.ColumnsToProto(cols, true)
+	pcs = util.ColumnsToProto(cols, true, false)
 	for _, v := range pcs {
 		require.Equal(t, int32(-83), v.Collation)
 	}
-	pc = util.ColumnToProto(col1)
+	pc = util.ColumnToProto(col1, false)
 	require.Equal(t, int32(-8), pc.Collation)
 
 	tp = types.NewFieldType(mysql.TypeEnum)
@@ -77,6 +77,6 @@ func TestColumnToProto(t *testing.T) {
 	col2 := &model.ColumnInfo{
 		FieldType: *tp,
 	}
-	pc = util.ColumnToProto(col2)
+	pc = util.ColumnToProto(col2, false)
 	require.Len(t, pc.Elems, 2)
 }

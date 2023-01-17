@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"runtime/trace"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,66 +46,84 @@ var (
 	_ Executor = &NestedLoopApplyExec{}
 )
 
-// HashJoinExec implements the hash join algorithm.
-type HashJoinExec struct {
-	baseExecutor
-
-	probeSideExec     Executor
-	buildSideExec     Executor
-	buildSideEstCount float64
-	outerFilter       expression.CNFExprs
-	probeKeys         []*expression.Column
-	probeNAKeys       []*expression.Column
-	buildKeys         []*expression.Column
-	buildNAKeys       []*expression.Column
-	isNullEQ          []bool
-	probeTypes        []*types.FieldType
-	buildTypes        []*types.FieldType
-
+type hashJoinCtx struct {
+	sessCtx   sessionctx.Context
+	allocPool chunk.Allocator
 	// concurrency is the number of partition, build and join workers.
-	concurrency   uint
-	rowContainer  *hashRowContainer
-	buildFinished chan error
-
+	concurrency  uint
+	joinResultCh chan *hashjoinWorkerResult
 	// closeCh add a lock for closing executor.
-	closeCh      chan struct{}
-	joinType     plannercore.JoinType
-	requiredRows int64
+	closeCh            chan struct{}
+	finished           atomic.Bool
+	useOuterToBuild    bool
+	isOuterJoin        bool
+	isNullEQ           []bool
+	buildFinished      chan error
+	rowContainer       *hashRowContainer
+	joinType           plannercore.JoinType
+	outerMatchedStatus []*bitmap.ConcurrentBitmap
+	stats              *hashJoinRuntimeStats
+	probeTypes         []*types.FieldType
+	buildTypes         []*types.FieldType
+	outerFilter        expression.CNFExprs
+	isNullAware        bool
+	memTracker         *memory.Tracker // track memory usage.
+	diskTracker        *disk.Tracker   // track disk usage.
+}
+
+// probeSideTupleFetcher reads tuples from probeSideExec and send them to probeWorkers.
+type probeSideTupleFetcher struct {
+	*hashJoinCtx
+
+	probeSideExec      Executor
+	probeChkResourceCh chan *probeChkResource
+	probeResultChs     []chan *chunk.Chunk
+	requiredRows       int64
+}
+
+type probeWorker struct {
+	hashJoinCtx *hashJoinCtx
+	workerID    uint
+
+	probeKeyColIdx   []int
+	probeNAKeyColIdx []int
+	// We pre-alloc and reuse the Rows and RowPtrs for each probe goroutine, to avoid allocation frequently
+	buildSideRows    []chunk.Row
+	buildSideRowPtrs []chunk.RowPtr
 
 	// We build individual joiner for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
-	joiners []joiner
-
-	probeChkResourceCh   chan *probeChkResource
-	probeResultChs       []chan *chunk.Chunk
-	joinChkResourceCh    []chan *chunk.Chunk
-	joinResultCh         chan *hashjoinWorkerResult
-	rowContainerForProbe []*hashRowContainer
-
-	memTracker  *memory.Tracker // track memory usage.
-	diskTracker *disk.Tracker   // track disk usage.
-
-	outerMatchedStatus []*bitmap.ConcurrentBitmap
-	useOuterToBuild    bool
-
-	prepared    bool
-	isOuterJoin bool
-
-	// joinWorkerWaitGroup is for sync multiple join workers.
-	joinWorkerWaitGroup sync.WaitGroup
-	finished            atomic.Value
-
-	stats *hashJoinRuntimeStats
-
-	// We pre-alloc and reuse the Rows and RowPtrs for each probe goroutine, to avoid allocation frequently
-	buildSideRows    [][]chunk.Row
-	buildSideRowPtrs [][]chunk.RowPtr
-
+	joiner               joiner
+	rowIters             *chunk.Iterator4Slice
+	rowContainerForProbe *hashRowContainer
 	// for every naaj probe worker,  pre-allocate the int slice for store the join column index to check.
-	needCheckBuildRowPos [][]int
-	needCheckProbeRowPos [][]int
+	needCheckBuildRowPos []int
+	needCheckProbeRowPos []int
+	probeChkResourceCh   chan *probeChkResource
+	joinChkResourceCh    chan *chunk.Chunk
+	probeResultCh        chan *chunk.Chunk
+}
 
-	rowIters []*chunk.Iterator4Slice
+type buildWorker struct {
+	hashJoinCtx      *hashJoinCtx
+	buildSideExec    Executor
+	buildKeyColIdx   []int
+	buildNAKeyColIdx []int
+}
+
+// HashJoinExec implements the hash join algorithm.
+type HashJoinExec struct {
+	baseExecutor
+	*hashJoinCtx
+
+	probeSideTupleFetcher *probeSideTupleFetcher
+	probeWorkers          []*probeWorker
+	buildWorker           *buildWorker
+
+	workerWg util.WaitGroupWrapper
+	waiterWg util.WaitGroupWrapper
+
+	prepared bool
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -140,28 +157,35 @@ func (e *HashJoinExec) Close() error {
 		if e.joinResultCh != nil {
 			channel.Clear(e.joinResultCh)
 		}
-		if e.probeChkResourceCh != nil {
-			close(e.probeChkResourceCh)
-			channel.Clear(e.probeChkResourceCh)
+		if e.probeSideTupleFetcher.probeChkResourceCh != nil {
+			close(e.probeSideTupleFetcher.probeChkResourceCh)
+			channel.Clear(e.probeSideTupleFetcher.probeChkResourceCh)
 		}
-		for i := range e.probeResultChs {
-			channel.Clear(e.probeResultChs[i])
+		for i := range e.probeSideTupleFetcher.probeResultChs {
+			channel.Clear(e.probeSideTupleFetcher.probeResultChs[i])
 		}
-		for i := range e.joinChkResourceCh {
-			close(e.joinChkResourceCh[i])
-			channel.Clear(e.joinChkResourceCh[i])
+		for i := range e.probeWorkers {
+			close(e.probeWorkers[i].joinChkResourceCh)
+			channel.Clear(e.probeWorkers[i].joinChkResourceCh)
 		}
-		e.probeChkResourceCh = nil
-		e.joinChkResourceCh = nil
+		e.probeSideTupleFetcher.probeChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
+		e.waiterWg.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
-	e.buildSideRows = nil
-	e.buildSideRowPtrs = nil
-	e.needCheckBuildRowPos = nil
-	e.needCheckProbeRowPos = nil
+	for _, w := range e.probeWorkers {
+		w.buildSideRows = nil
+		w.buildSideRowPtrs = nil
+		w.needCheckBuildRowPos = nil
+		w.needCheckProbeRowPos = nil
+		w.joinChkResourceCh = nil
+	}
+
 	if e.stats != nil && e.rowContainer != nil {
 		e.stats.hashStat = *e.rowContainer.stat
+	}
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	err := e.baseExecutor.Close()
 	return err
@@ -175,59 +199,53 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.hashJoinCtx.memTracker = memory.NewTracker(e.id, -1)
+	e.hashJoinCtx.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.diskTracker = disk.NewTracker(e.id, -1)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
+	e.workerWg = util.WaitGroupWrapper{}
+	e.waiterWg = util.WaitGroupWrapper{}
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
-	e.joinWorkerWaitGroup = sync.WaitGroup{}
 
-	if e.probeTypes == nil {
-		e.probeTypes = retTypes(e.probeSideExec)
-	}
-	if e.buildTypes == nil {
-		e.buildTypes = retTypes(e.buildSideExec)
-	}
 	if e.runtimeStats != nil {
 		e.stats = &hashJoinRuntimeStats{
-			concurrent: cap(e.joiners),
+			concurrent: int(e.concurrency),
 		}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	return nil
 }
 
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
-func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
+func (fetcher *probeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, maxChunkSize int) {
 	hasWaitedForBuild := false
 	for {
-		if e.finished.Load().(bool) {
+		if fetcher.finished.Load() {
 			return
 		}
 
 		var probeSideResource *probeChkResource
 		var ok bool
 		select {
-		case <-e.closeCh:
+		case <-fetcher.closeCh:
 			return
-		case probeSideResource, ok = <-e.probeChkResourceCh:
+		case probeSideResource, ok = <-fetcher.probeChkResourceCh:
 			if !ok {
 				return
 			}
 		}
 		probeSideResult := probeSideResource.chk
-		if e.isOuterJoin {
-			required := int(atomic.LoadInt64(&e.requiredRows))
-			probeSideResult.SetRequiredRows(required, e.maxChunkSize)
+		if fetcher.isOuterJoin {
+			required := int(atomic.LoadInt64(&fetcher.requiredRows))
+			probeSideResult.SetRequiredRows(required, maxChunkSize)
 		}
-		err := Next(ctx, e.probeSideExec, probeSideResult)
+		err := Next(ctx, fetcher.probeSideExec, probeSideResult)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
-			e.joinResultCh <- &hashjoinWorkerResult{
+			fetcher.joinResultCh <- &hashjoinWorkerResult{
 				err: err,
 			}
 			return
@@ -238,22 +256,17 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 					probeSideResult.Reset()
 				}
 			})
-			if probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
-				e.finished.Store(true)
+			if probeSideResult.NumRows() == 0 && !fetcher.useOuterToBuild {
+				fetcher.finished.Store(true)
 			}
-			emptyBuild, buildErr := e.wait4BuildSide()
+			emptyBuild, buildErr := fetcher.wait4BuildSide()
 			if buildErr != nil {
-				e.joinResultCh <- &hashjoinWorkerResult{
+				fetcher.joinResultCh <- &hashjoinWorkerResult{
 					err: buildErr,
 				}
 				return
 			} else if emptyBuild {
 				return
-			}
-			// after building is finished. the hash null bucket slice is allocated and determined.
-			// copy it for multi probe worker.
-			for i := range e.rowContainerForProbe {
-				e.rowContainerForProbe[i].hashNANullBucket = e.rowContainer.hashNANullBucket
 			}
 			hasWaitedForBuild = true
 		}
@@ -266,16 +279,16 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 	}
 }
 
-func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
+func (fetcher *probeSideTupleFetcher) wait4BuildSide() (emptyBuild bool, err error) {
 	select {
-	case <-e.closeCh:
+	case <-fetcher.closeCh:
 		return true, nil
-	case err := <-e.buildFinished:
+	case err := <-fetcher.buildFinished:
 		if err != nil {
 			return false, err
 		}
 	}
-	if e.rowContainer.Len() == uint64(0) && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
+	if fetcher.rowContainer.Len() == uint64(0) && (fetcher.joinType == plannercore.InnerJoin || fetcher.joinType == plannercore.SemiJoin) {
 		return true, nil
 	}
 	return false, nil
@@ -283,24 +296,25 @@ func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
-func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh <-chan struct{}) {
+func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	var err error
 	failpoint.Inject("issue30289", func(val failpoint.Value) {
 		if val.(bool) {
 			err = errors.Errorf("issue30289 build return error")
-			e.buildFinished <- errors.Trace(err)
+			errCh <- errors.Trace(err)
 			return
 		}
 	})
+	sessVars := w.hashJoinCtx.sessCtx.GetSessionVars()
 	for {
-		if e.finished.Load().(bool) {
+		if w.hashJoinCtx.finished.Load() {
 			return
 		}
-		chk := e.ctx.GetSessionVars().GetNewChunk(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
-		err = Next(ctx, e.buildSideExec, chk)
+		chk := sessVars.GetNewChunkWithCapacity(w.buildSideExec.base().retFieldTypes, sessVars.MaxChunkSize, sessVars.MaxChunkSize, w.hashJoinCtx.allocPool)
+		err = Next(ctx, w.buildSideExec, chk)
 		if err != nil {
-			e.buildFinished <- errors.Trace(err)
+			errCh <- errors.Trace(err)
 			return
 		}
 		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
@@ -311,7 +325,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 		select {
 		case <-doneCh:
 			return
-		case <-e.closeCh:
+		case <-w.hashJoinCtx.closeCh:
 			return
 		case chkCh <- chk:
 		}
@@ -319,109 +333,99 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 }
 
 func (e *HashJoinExec) initializeForProbe() {
-	// e.probeResultChs is for transmitting the chunks which store the data of
-	// probeSideExec, it'll be written by probe side worker goroutine, and read by join
-	// workers.
-	e.probeResultChs = make([]chan *chunk.Chunk, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
-		e.probeResultChs[i] = make(chan *chunk.Chunk, 1)
-	}
-
-	// e.probeChkResourceCh is for transmitting the used probeSideExec chunks from
-	// join workers to probeSideExec worker.
-	e.probeChkResourceCh = make(chan *probeChkResource, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
-		e.probeChkResourceCh <- &probeChkResource{
-			chk:  newFirstChunk(e.probeSideExec),
-			dest: e.probeResultChs[i],
-		}
-	}
-
-	// e.joinChkResourceCh is for transmitting the reused join result chunks
-	// from the main thread to join worker goroutines.
-	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
-		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
-		e.joinChkResourceCh[i] <- newFirstChunk(e)
-	}
-
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
 
-	e.buildSideRows = make([][]chunk.Row, e.concurrency)
-	e.buildSideRowPtrs = make([][]chunk.RowPtr, e.concurrency)
-	e.needCheckBuildRowPos = make([][]int, e.concurrency)
-	e.needCheckProbeRowPos = make([][]int, e.concurrency)
+	e.probeSideTupleFetcher.hashJoinCtx = e.hashJoinCtx
+	// e.probeSideTupleFetcher.probeResultChs is for transmitting the chunks which store the data of
+	// probeSideExec, it'll be written by probe side worker goroutine, and read by join
+	// workers.
+	e.probeSideTupleFetcher.probeResultChs = make([]chan *chunk.Chunk, e.concurrency)
+	for i := uint(0); i < e.concurrency; i++ {
+		e.probeSideTupleFetcher.probeResultChs[i] = make(chan *chunk.Chunk, 1)
+		e.probeWorkers[i].probeResultCh = e.probeSideTupleFetcher.probeResultChs[i]
+	}
+
+	// e.probeChkResourceCh is for transmitting the used probeSideExec chunks from
+	// join workers to probeSideExec worker.
+	e.probeSideTupleFetcher.probeChkResourceCh = make(chan *probeChkResource, e.concurrency)
+	for i := uint(0); i < e.concurrency; i++ {
+		e.probeSideTupleFetcher.probeChkResourceCh <- &probeChkResource{
+			chk:  newFirstChunk(e.probeSideTupleFetcher.probeSideExec),
+			dest: e.probeSideTupleFetcher.probeResultChs[i],
+		}
+	}
+
+	// e.probeWorker.joinChkResourceCh is for transmitting the reused join result chunks
+	// from the main thread to probe worker goroutines.
+	for i := uint(0); i < e.concurrency; i++ {
+		e.probeWorkers[i].joinChkResourceCh = make(chan *chunk.Chunk, 1)
+		e.probeWorkers[i].joinChkResourceCh <- newFirstChunk(e)
+		e.probeWorkers[i].probeChkResourceCh = e.probeSideTupleFetcher.probeChkResourceCh
+	}
 }
 
 func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
-	e.joinWorkerWaitGroup.Add(1)
-	go util.WithRecovery(func() {
+	e.workerWg.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		e.fetchProbeSideChunks(ctx)
-	}, e.handleProbeSideFetcherPanic)
-
-	probeKeyColIdx := make([]int, len(e.probeKeys))
-	probeNAKeColIdx := make([]int, len(e.probeNAKeys))
-	for i := range e.probeKeys {
-		probeKeyColIdx[i] = e.probeKeys[i].Index
-	}
-	for i := range e.probeNAKeys {
-		probeNAKeColIdx[i] = e.probeNAKeys[i].Index
-	}
+		e.probeSideTupleFetcher.fetchProbeSideChunks(ctx, e.maxChunkSize)
+	}, e.probeSideTupleFetcher.handleProbeSideFetcherPanic)
 
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joinWorkerWaitGroup.Add(1)
-		workID := i
-		go util.WithRecovery(func() {
+		workerID := i
+		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
-			e.runJoinWorker(workID, probeKeyColIdx, probeNAKeColIdx)
-		}, e.handleJoinWorkerPanic)
+			e.probeWorkers[workerID].runJoinWorker()
+		}, e.probeWorkers[workerID].handleProbeWorkerPanic)
 	}
-	go util.WithRecovery(e.waitJoinWorkersAndCloseResultChan, nil)
+	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndCloseResultChan, nil)
 }
 
-func (e *HashJoinExec) handleProbeSideFetcherPanic(r interface{}) {
-	for i := range e.probeResultChs {
-		close(e.probeResultChs[i])
+func (fetcher *probeSideTupleFetcher) handleProbeSideFetcherPanic(r interface{}) {
+	for i := range fetcher.probeResultChs {
+		close(fetcher.probeResultChs[i])
 	}
 	if r != nil {
-		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
+		fetcher.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
-	e.joinWorkerWaitGroup.Done()
+}
+
+func (w *probeWorker) handleProbeWorkerPanic(r interface{}) {
+	if r != nil {
+		w.hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("probeWorker[%d] meets error: %v", w.workerID, r)}
+	}
 }
 
 func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
-	e.joinWorkerWaitGroup.Done()
 }
 
 // Concurrently handling unmatched rows from the hash table
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
-	ok, joinResult := e.getNewJoinResult(workerID)
+func (w *probeWorker) handleUnmatchedRowsFromHashTable() {
+	ok, joinResult := w.getNewJoinResult()
 	if !ok {
 		return
 	}
-	numChks := e.rowContainer.NumChunks()
-	for i := int(workerID); i < numChks; i += int(e.concurrency) {
-		chk, err := e.rowContainer.GetChunk(i)
+	numChks := w.rowContainerForProbe.NumChunks()
+	for i := int(w.workerID); i < numChks; i += int(w.hashJoinCtx.concurrency) {
+		chk, err := w.rowContainerForProbe.GetChunk(i)
 		if err != nil {
 			// Catching the error and send it
 			joinResult.err = err
-			e.joinResultCh <- joinResult
+			w.hashJoinCtx.joinResultCh <- joinResult
 			return
 		}
 		for j := 0; j < chk.NumRows(); j++ {
-			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
-				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
+			if !w.hashJoinCtx.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
+				w.joiner.onMissMatch(false, chk.GetRow(j), joinResult.chk)
 			}
 			if joinResult.chk.IsFull() {
-				e.joinResultCh <- joinResult
-				ok, joinResult = e.getNewJoinResult(workerID)
+				w.hashJoinCtx.joinResultCh <- joinResult
+				ok, joinResult = w.getNewJoinResult()
 				if !ok {
 					return
 				}
@@ -432,33 +436,32 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
 	if joinResult == nil {
 		return
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		e.joinResultCh <- joinResult
+		w.hashJoinCtx.joinResultCh <- joinResult
 	}
 }
 
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
-	e.joinWorkerWaitGroup.Wait()
+	e.workerWg.Wait()
 	if e.useOuterToBuild {
 		// Concurrently handling unmatched rows from the hash table at the tail
 		for i := uint(0); i < e.concurrency; i++ {
 			var workerID = i
-			e.joinWorkerWaitGroup.Add(1)
-			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
+			e.workerWg.RunWithRecover(func() { e.probeWorkers[workerID].handleUnmatchedRowsFromHashTable() }, e.handleJoinWorkerPanic)
 		}
-		e.joinWorkerWaitGroup.Wait()
+		e.workerWg.Wait()
 	}
 	close(e.joinResultCh)
 }
 
-func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx, probeNAKeyColIdx []int) {
+func (w *probeWorker) runJoinWorker() {
 	probeTime := int64(0)
-	if e.stats != nil {
+	if w.hashJoinCtx.stats != nil {
 		start := time.Now()
 		defer func() {
 			t := time.Since(start)
-			atomic.AddInt64(&e.stats.probe, probeTime)
-			atomic.AddInt64(&e.stats.fetchAndProbe, int64(t))
-			e.stats.setMaxFetchAndProbeTime(int64(t))
+			atomic.AddInt64(&w.hashJoinCtx.stats.probe, probeTime)
+			atomic.AddInt64(&w.hashJoinCtx.stats.fetchAndProbe, int64(t))
+			w.hashJoinCtx.stats.setMaxFetchAndProbeTime(int64(t))
 		}()
 	}
 
@@ -466,38 +469,38 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx, probeNAKeyCo
 		probeSideResult *chunk.Chunk
 		selected        = make([]bool, 0, chunk.InitialCapacity)
 	)
-	ok, joinResult := e.getNewJoinResult(workerID)
+	ok, joinResult := w.getNewJoinResult()
 	if !ok {
 		return
 	}
 
 	// Read and filter probeSideResult, and join the probeSideResult with the build side rows.
 	emptyProbeSideResult := &probeChkResource{
-		dest: e.probeResultChs[workerID],
+		dest: w.probeResultCh,
 	}
 	hCtx := &hashContext{
-		allTypes:    e.probeTypes,
-		keyColIdx:   probeKeyColIdx,
-		naKeyColIdx: probeNAKeyColIdx,
+		allTypes:    w.hashJoinCtx.probeTypes,
+		keyColIdx:   w.probeKeyColIdx,
+		naKeyColIdx: w.probeNAKeyColIdx,
 	}
 	for ok := true; ok; {
-		if e.finished.Load().(bool) {
+		if w.hashJoinCtx.finished.Load() {
 			break
 		}
 		select {
-		case <-e.closeCh:
+		case <-w.hashJoinCtx.closeCh:
 			return
-		case probeSideResult, ok = <-e.probeResultChs[workerID]:
+		case probeSideResult, ok = <-w.probeResultCh:
 		}
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if !ok {
 			break
 		}
 		start := time.Now()
-		if e.useOuterToBuild {
-			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, probeSideResult, hCtx, e.rowContainerForProbe[workerID], joinResult)
+		if w.hashJoinCtx.useOuterToBuild {
+			ok, joinResult = w.join2ChunkForOuterHashJoin(probeSideResult, hCtx, joinResult)
 		} else {
-			ok, joinResult = e.join2Chunk(workerID, probeSideResult, hCtx, e.rowContainerForProbe[workerID], joinResult, selected)
+			ok, joinResult = w.join2Chunk(probeSideResult, hCtx, joinResult, selected)
 		}
 		probeTime += int64(time.Since(start))
 		if !ok {
@@ -505,22 +508,22 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx, probeNAKeyCo
 		}
 		probeSideResult.Reset()
 		emptyProbeSideResult.chk = probeSideResult
-		e.probeChkResourceCh <- emptyProbeSideResult
+		w.probeChkResourceCh <- emptyProbeSideResult
 	}
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		e.joinResultCh <- joinResult
+		w.hashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
-		e.joinChkResourceCh[workerID] <- joinResult.chk
+		w.joinChkResourceCh <- joinResult.chk
 	}
 }
 
-func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext, rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+func (w *probeWorker) joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var err error
-	e.buildSideRows[workerID], e.buildSideRowPtrs[workerID], err = rowContainer.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID], e.buildSideRowPtrs[workerID], true)
-	buildSideRows, rowsPtrs := e.buildSideRows[workerID], e.buildSideRowPtrs[workerID]
+	w.buildSideRows, w.buildSideRowPtrs, err = w.rowContainerForProbe.GetMatchedRowsAndPtrs(probeKey, probeSideRow, hCtx, w.buildSideRows, w.buildSideRowPtrs, true)
+	buildSideRows, rowsPtrs := w.buildSideRows, w.buildSideRowPtrs
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -529,25 +532,25 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		return true, joinResult
 	}
 
-	iter := e.rowIters[workerID]
+	iter := w.rowIters
 	iter.Reset(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
 	rowIdx, ok := 0, false
 	for iter.Begin(); iter.Current() != iter.End(); {
-		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
+		outerMatchStatus, err = w.joiner.tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
 		}
 		for i := range outerMatchStatus {
 			if outerMatchStatus[i] == outerRowMatched {
-				e.outerMatchedStatus[rowsPtrs[rowIdx+i].ChkIdx].Set(int(rowsPtrs[rowIdx+i].RowIdx))
+				w.hashJoinCtx.outerMatchedStatus[rowsPtrs[rowIdx+i].ChkIdx].Set(int(rowsPtrs[rowIdx+i].RowIdx))
 			}
 		}
 		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
-			e.joinResultCh <- joinResult
-			ok, joinResult = e.getNewJoinResult(workerID)
+			w.hashJoinCtx.joinResultCh <- joinResult
+			ok, joinResult = w.getNewJoinResult()
 			if !ok {
 				return false, joinResult
 			}
@@ -557,8 +560,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 }
 
 // joinNAALOSJMatchProbeSideRow2Chunk implement the matching logic for NA-AntiLeftOuterSemiJoin
-func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *hashContext,
-	rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+func (w *probeWorker) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *hashContext, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var (
 		err error
 		ok  bool
@@ -568,17 +570,17 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		// because AntiLeftOuterSemiJoin cares about the scalar value. If we both have a match from null
 		// bucket and same key bucket, we should return the result as <rhs-row, 0> from same-key bucket
 		// rather than <rhs-row, null> from null bucket.
-		e.buildSideRows[workerID], err = rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID])
-		buildSideRows := e.buildSideRows[workerID]
+		w.buildSideRows, err = w.rowContainerForProbe.GetMatchedRows(probeKey, probeSideRow, hCtx, w.buildSideRows)
+		buildSideRows := w.buildSideRows
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
 		}
 		if len(buildSideRows) != 0 {
-			iter1 := e.rowIters[workerID]
+			iter1 := w.rowIters
 			iter1.Reset(buildSideRows)
 			for iter1.Begin(); iter1.Current() != iter1.End(); {
-				matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk, LeftNotNullRightNotNull)
+				matched, _, err := w.joiner.tryToMatchInners(probeSideRow, iter1, joinResult.chk, LeftNotNullRightNotNull)
 				if err != nil {
 					joinResult.err = err
 					return false, joinResult
@@ -589,8 +591,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 					return true, joinResult
 				}
 				if joinResult.chk.IsFull() {
-					e.joinResultCh <- joinResult
-					ok, joinResult = e.getNewJoinResult(workerID)
+					w.hashJoinCtx.joinResultCh <- joinResult
+					ok, joinResult = w.getNewJoinResult()
 					if !ok {
 						return false, joinResult
 					}
@@ -598,8 +600,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 			}
 		}
 		// step2: match the null bucket secondly.
-		e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-		buildSideRows = e.buildSideRows[workerID]
+		w.buildSideRows, err = w.rowContainerForProbe.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, w.buildSideRows, w.needCheckBuildRowPos, w.needCheckProbeRowPos)
+		buildSideRows = w.buildSideRows
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -607,13 +609,13 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		if len(buildSideRows) == 0 {
 			// when reach here, it means we couldn't find a valid same key match from same-key bucket yet
 			// and the null bucket is empty. so the result should be <rhs, 1>.
-			e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+			w.joiner.onMissMatch(false, probeSideRow, joinResult.chk)
 			return true, joinResult
 		}
-		iter2 := e.rowIters[workerID]
+		iter2 := w.rowIters
 		iter2.Reset(buildSideRows)
 		for iter2.Begin(); iter2.Current() != iter2.End(); {
-			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk, LeftNotNullRightHasNull)
+			matched, _, err := w.joiner.tryToMatchInners(probeSideRow, iter2, joinResult.chk, LeftNotNullRightHasNull)
 			if err != nil {
 				joinResult.err = err
 				return false, joinResult
@@ -624,8 +626,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 				return true, joinResult
 			}
 			if joinResult.chk.IsFull() {
-				e.joinResultCh <- joinResult
-				ok, joinResult = e.getNewJoinResult(workerID)
+				w.hashJoinCtx.joinResultCh <- joinResult
+				ok, joinResult = w.getNewJoinResult()
 				if !ok {
 					return false, joinResult
 				}
@@ -635,7 +637,7 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		// case1: x NOT IN (empty set): if other key bucket don't have the valid rows yet.
 		// case2: x NOT IN (l,m,n...): if other key bucket do have the valid rows.
 		// both cases mean the result should be <rhs, 1>
-		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+		w.joiner.onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
 	// when left side has null values, all we want is to find a valid build side rows (past other condition)
@@ -643,17 +645,17 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 	// case1: <?, null> NOT IN (empty set):             ----------------------> result is <rhs, 1>.
 	// case2: <?, null> NOT IN (at least a valid inner row) ------------------> result is <rhs, null>.
 	// Step1: match null bucket (assumption that null bucket is quite smaller than all hash table bucket rows)
-	e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-	buildSideRows := e.buildSideRows[workerID]
+	w.buildSideRows, err = w.rowContainerForProbe.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, w.buildSideRows, w.needCheckBuildRowPos, w.needCheckProbeRowPos)
+	buildSideRows := w.buildSideRows
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
 	if len(buildSideRows) != 0 {
-		iter1 := e.rowIters[workerID]
+		iter1 := w.rowIters
 		iter1.Reset(buildSideRows)
 		for iter1.Begin(); iter1.Current() != iter1.End(); {
-			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk, LeftHasNullRightHasNull)
+			matched, _, err := w.joiner.tryToMatchInners(probeSideRow, iter1, joinResult.chk, LeftHasNullRightHasNull)
 			if err != nil {
 				joinResult.err = err
 				return false, joinResult
@@ -664,8 +666,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 				return true, joinResult
 			}
 			if joinResult.chk.IsFull() {
-				e.joinResultCh <- joinResult
-				ok, joinResult = e.getNewJoinResult(workerID)
+				w.hashJoinCtx.joinResultCh <- joinResult
+				ok, joinResult = w.getNewJoinResult()
 				if !ok {
 					return false, joinResult
 				}
@@ -673,8 +675,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 		}
 	}
 	// Step2: match all hash table bucket build rows (use probeKeyNullBits to filter if any).
-	e.buildSideRows[workerID], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-	buildSideRows = e.buildSideRows[workerID]
+	w.buildSideRows, err = w.rowContainerForProbe.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, w.buildSideRows, w.needCheckBuildRowPos, w.needCheckProbeRowPos)
+	buildSideRows = w.buildSideRows
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -682,13 +684,13 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 	if len(buildSideRows) == 0 {
 		// when reach here, it means we couldn't return it quickly in null bucket, and same-bucket is empty,
 		// which means x NOT IN (empty set) or x NOT IN (l,m,n), the result should be <rhs, 1>
-		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+		w.joiner.onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	iter2 := e.rowIters[workerID]
+	iter2 := w.rowIters
 	iter2.Reset(buildSideRows)
 	for iter2.Begin(); iter2.Current() != iter2.End(); {
-		matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk, LeftHasNullRightNotNull)
+		matched, _, err := w.joiner.tryToMatchInners(probeSideRow, iter2, joinResult.chk, LeftHasNullRightNotNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -699,8 +701,8 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 			return true, joinResult
 		}
 		if joinResult.chk.IsFull() {
-			e.joinResultCh <- joinResult
-			ok, joinResult = e.getNewJoinResult(workerID)
+			w.hashJoinCtx.joinResultCh <- joinResult
+			ok, joinResult = w.getNewJoinResult()
 			if !ok {
 				return false, joinResult
 			}
@@ -709,13 +711,12 @@ func (e *HashJoinExec) joinNAALOSJMatchProbeSideRow2Chunk(workerID uint, probeKe
 	// step3: if we couldn't return it quickly in null bucket and all hash bucket, here means only one cases:
 	// case1: <?, null> NOT IN (empty set):
 	// empty set comes from no rows from all bucket can pass other condition. the result should be <rhs, 1>
-	e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+	w.joiner.onMissMatch(false, probeSideRow, joinResult.chk)
 	return true, joinResult
 }
 
 // joinNAASJMatchProbeSideRow2Chunk implement the matching logic for NA-AntiSemiJoin
-func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *hashContext,
-	rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+func (w *probeWorker) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *hashContext, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var (
 		err error
 		ok  bool
@@ -723,17 +724,17 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 	if probeKeyNullBits == nil {
 		// step1: match null bucket first.
 		// need fetch the "valid" rows every time. (nullBits map check is necessary)
-		e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-		buildSideRows := e.buildSideRows[workerID]
+		w.buildSideRows, err = w.rowContainerForProbe.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, w.buildSideRows, w.needCheckBuildRowPos, w.needCheckProbeRowPos)
+		buildSideRows := w.buildSideRows
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
 		}
 		if len(buildSideRows) != 0 {
-			iter1 := e.rowIters[workerID]
+			iter1 := w.rowIters
 			iter1.Reset(buildSideRows)
 			for iter1.Begin(); iter1.Current() != iter1.End(); {
-				matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk)
+				matched, _, err := w.joiner.tryToMatchInners(probeSideRow, iter1, joinResult.chk)
 				if err != nil {
 					joinResult.err = err
 					return false, joinResult
@@ -744,8 +745,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 					return true, joinResult
 				}
 				if joinResult.chk.IsFull() {
-					e.joinResultCh <- joinResult
-					ok, joinResult = e.getNewJoinResult(workerID)
+					w.hashJoinCtx.joinResultCh <- joinResult
+					ok, joinResult = w.getNewJoinResult()
 					if !ok {
 						return false, joinResult
 					}
@@ -753,8 +754,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 			}
 		}
 		// step2: then same key bucket.
-		e.buildSideRows[workerID], err = rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID])
-		buildSideRows = e.buildSideRows[workerID]
+		w.buildSideRows, err = w.rowContainerForProbe.GetMatchedRows(probeKey, probeSideRow, hCtx, w.buildSideRows)
+		buildSideRows = w.buildSideRows
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -762,13 +763,13 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 		if len(buildSideRows) == 0 {
 			// when reach here, it means we couldn't return it quickly in null bucket, and same-bucket is empty,
 			// which means x NOT IN (empty set), accept the rhs row.
-			e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+			w.joiner.onMissMatch(false, probeSideRow, joinResult.chk)
 			return true, joinResult
 		}
-		iter2 := e.rowIters[workerID]
+		iter2 := w.rowIters
 		iter2.Reset(buildSideRows)
 		for iter2.Begin(); iter2.Current() != iter2.End(); {
-			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk)
+			matched, _, err := w.joiner.tryToMatchInners(probeSideRow, iter2, joinResult.chk)
 			if err != nil {
 				joinResult.err = err
 				return false, joinResult
@@ -779,8 +780,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 				return true, joinResult
 			}
 			if joinResult.chk.IsFull() {
-				e.joinResultCh <- joinResult
-				ok, joinResult = e.getNewJoinResult(workerID)
+				w.hashJoinCtx.joinResultCh <- joinResult
+				ok, joinResult = w.getNewJoinResult()
 				if !ok {
 					return false, joinResult
 				}
@@ -790,7 +791,7 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 		// case1: x NOT IN (empty set): if other key bucket don't have the valid rows yet.
 		// case2: x NOT IN (l,m,n...): if other key bucket do have the valid rows.
 		// both cases should accept the rhs row.
-		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+		w.joiner.onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
 	// when left side has null values, all we want is to find a valid build side rows (passed from other condition)
@@ -798,17 +799,17 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 	// case1: <?, null> NOT IN (empty set):             ----------------------> accept rhs row.
 	// case2: <?, null> NOT IN (at least a valid inner row) ------------------> unknown result, refuse rhs row.
 	// Step1: match null bucket (assumption that null bucket is quite smaller than all hash table bucket rows)
-	e.buildSideRows[workerID], err = rowContainer.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-	buildSideRows := e.buildSideRows[workerID]
+	w.buildSideRows, err = w.rowContainerForProbe.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, w.buildSideRows, w.needCheckBuildRowPos, w.needCheckProbeRowPos)
+	buildSideRows := w.buildSideRows
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
 	if len(buildSideRows) != 0 {
-		iter1 := e.rowIters[workerID]
+		iter1 := w.rowIters
 		iter1.Reset(buildSideRows)
 		for iter1.Begin(); iter1.Current() != iter1.End(); {
-			matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter1, joinResult.chk)
+			matched, _, err := w.joiner.tryToMatchInners(probeSideRow, iter1, joinResult.chk)
 			if err != nil {
 				joinResult.err = err
 				return false, joinResult
@@ -819,8 +820,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 				return true, joinResult
 			}
 			if joinResult.chk.IsFull() {
-				e.joinResultCh <- joinResult
-				ok, joinResult = e.getNewJoinResult(workerID)
+				w.hashJoinCtx.joinResultCh <- joinResult
+				ok, joinResult = w.getNewJoinResult()
 				if !ok {
 					return false, joinResult
 				}
@@ -828,8 +829,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 		}
 	}
 	// Step2: match all hash table bucket build rows.
-	e.buildSideRows[workerID], err = rowContainer.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, e.buildSideRows[workerID], e.needCheckBuildRowPos[workerID], e.needCheckProbeRowPos[workerID])
-	buildSideRows = e.buildSideRows[workerID]
+	w.buildSideRows, err = w.rowContainerForProbe.GetAllMatchedRows(hCtx, probeSideRow, probeKeyNullBits, w.buildSideRows, w.needCheckBuildRowPos, w.needCheckProbeRowPos)
+	buildSideRows = w.buildSideRows
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -837,13 +838,13 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 	if len(buildSideRows) == 0 {
 		// when reach here, it means we couldn't return it quickly in null bucket, and same-bucket is empty,
 		// which means <?,null> NOT IN (empty set) or <?,null> NOT IN (no valid rows) accept the rhs row.
-		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+		w.joiner.onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	iter2 := e.rowIters[workerID]
+	iter2 := w.rowIters
 	iter2.Reset(buildSideRows)
 	for iter2.Begin(); iter2.Current() != iter2.End(); {
-		matched, _, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter2, joinResult.chk)
+		matched, _, err := w.joiner.tryToMatchInners(probeSideRow, iter2, joinResult.chk)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -854,8 +855,8 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 			return true, joinResult
 		}
 		if joinResult.chk.IsFull() {
-			e.joinResultCh <- joinResult
-			ok, joinResult = e.getNewJoinResult(workerID)
+			w.hashJoinCtx.joinResultCh <- joinResult
+			ok, joinResult = w.getNewJoinResult()
 			if !ok {
 				return false, joinResult
 			}
@@ -864,7 +865,7 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 	// step3: if we couldn't return it quickly in null bucket and all hash bucket, here means only one cases:
 	// case1: <?, null> NOT IN (empty set):
 	// empty set comes from no rows from all bucket can pass other condition. we should accept the rhs row.
-	e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+	w.joiner.onMissMatch(false, probeSideRow, joinResult.chk)
 	return true, joinResult
 }
 
@@ -887,38 +888,37 @@ func (e *HashJoinExec) joinNAASJMatchProbeSideRow2Chunk(workerID uint, probeKey 
 //
 //	       For NA-AntiLeftOuterSemiJoin, we couldn't match null-bucket first, because once y set has a same key x and null
 //	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
-func (e *HashJoinExec) joinNAAJMatchProbeSideRow2Chunk(workerID uint, probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *hashContext,
-	rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
-	NAAntiSemiJoin := e.joinType == plannercore.AntiSemiJoin && len(e.buildNAKeys) > 0
-	NAAntiLeftOuterSemiJoin := e.joinType == plannercore.AntiLeftOuterSemiJoin && len(e.buildNAKeys) > 0
+func (w *probeWorker) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *hashContext, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+	NAAntiSemiJoin := w.hashJoinCtx.joinType == plannercore.AntiSemiJoin && w.hashJoinCtx.isNullAware
+	NAAntiLeftOuterSemiJoin := w.hashJoinCtx.joinType == plannercore.AntiLeftOuterSemiJoin && w.hashJoinCtx.isNullAware
 	if NAAntiSemiJoin {
-		return e.joinNAASJMatchProbeSideRow2Chunk(workerID, probeKey, probeKeyNullBits, probeSideRow, hCtx, rowContainer, joinResult)
+		return w.joinNAASJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
 	}
 	if NAAntiLeftOuterSemiJoin {
-		return e.joinNAALOSJMatchProbeSideRow2Chunk(workerID, probeKey, probeKeyNullBits, probeSideRow, hCtx, rowContainer, joinResult)
+		return w.joinNAALOSJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
 	}
 	// shouldn't be here, not a valid NAAJ.
 	return false, joinResult
 }
 
-func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
-	rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+func (w *probeWorker) joinMatchedProbeSideRow2Chunk(probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
+	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var err error
-	e.buildSideRows[workerID], err = rowContainer.GetMatchedRows(probeKey, probeSideRow, hCtx, e.buildSideRows[workerID])
-	buildSideRows := e.buildSideRows[workerID]
+	w.buildSideRows, err = w.rowContainerForProbe.GetMatchedRows(probeKey, probeSideRow, hCtx, w.buildSideRows)
+	buildSideRows := w.buildSideRows
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
 	}
 	if len(buildSideRows) == 0 {
-		e.joiners[workerID].onMissMatch(false, probeSideRow, joinResult.chk)
+		w.joiner.onMissMatch(false, probeSideRow, joinResult.chk)
 		return true, joinResult
 	}
-	iter := e.rowIters[workerID]
+	iter := w.rowIters
 	iter.Reset(buildSideRows)
 	hasMatch, hasNull, ok := false, false, false
 	for iter.Begin(); iter.Current() != iter.End(); {
-		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter, joinResult.chk)
+		matched, isNull, err := w.joiner.tryToMatchInners(probeSideRow, iter, joinResult.chk)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -927,36 +927,36 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 		hasNull = hasNull || isNull
 
 		if joinResult.chk.IsFull() {
-			e.joinResultCh <- joinResult
-			ok, joinResult = e.getNewJoinResult(workerID)
+			w.hashJoinCtx.joinResultCh <- joinResult
+			ok, joinResult = w.getNewJoinResult()
 			if !ok {
 				return false, joinResult
 			}
 		}
 	}
 	if !hasMatch {
-		e.joiners[workerID].onMissMatch(hasNull, probeSideRow, joinResult.chk)
+		w.joiner.onMissMatch(hasNull, probeSideRow, joinResult.chk)
 	}
 	return true, joinResult
 }
 
-func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerResult) {
+func (w *probeWorker) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 	joinResult := &hashjoinWorkerResult{
-		src: e.joinChkResourceCh[workerID],
+		src: w.joinChkResourceCh,
 	}
 	ok := true
 	select {
-	case <-e.closeCh:
+	case <-w.hashJoinCtx.closeCh:
 		ok = false
-	case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
+	case joinResult.chk, ok = <-w.joinChkResourceCh:
 	}
 	return ok, joinResult
 }
 
-func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult,
+func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult,
 	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
-	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(probeSideChk), selected)
+	selected, err = expression.VectorizedFilter(w.hashJoinCtx.sessCtx, w.hashJoinCtx.outerFilter, chunk.NewIterator4Chunk(probeSideChk), selected)
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult
@@ -967,8 +967,8 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	// By now, path 1 and 2 won't be conducted at the same time.
 	// 1: write the row data of join key to hashVals. (normal EQ key should ignore the null values.) null-EQ for Except statement is an exception.
 	for keyIdx, i := range hCtx.keyColIdx {
-		ignoreNull := len(e.isNullEQ) > keyIdx && e.isNullEQ[keyIdx]
-		err = codec.HashChunkSelected(rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+		ignoreNull := len(w.hashJoinCtx.isNullEQ) > keyIdx && w.hashJoinCtx.isNullEQ[keyIdx]
+		err = codec.HashChunkSelected(w.rowContainerForProbe.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -978,7 +978,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	isNAAJ := len(hCtx.naKeyColIdx) > 0
 	for keyIdx, i := range hCtx.naKeyColIdx {
 		// NAAJ won't ignore any null values, but collect them up to probe.
-		err = codec.HashChunkSelected(rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, false)
+		err = codec.HashChunkSelected(w.rowContainerForProbe.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, false)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -996,7 +996,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	}
 
 	for i := range selected {
-		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
+		killed := atomic.LoadUint32(&w.hashJoinCtx.sessCtx.GetSessionVars().Killed) == 1
 		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
 			if val.(bool) {
 				killed = true
@@ -1009,13 +1009,13 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 		if isNAAJ {
 			if !selected[i] {
 				// since this is the case of using inner to build, so for an outer row unselected, we should fill the result when it's outer join.
-				e.joiners[workerID].onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
+				w.joiner.onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
 			}
 			if hCtx.naHasNull[i] {
 				// here means the probe join connecting column has null value in it and this is special for matching all the hash buckets
 				// for it. (probeKey is not necessary here)
 				probeRow := probeSideChk.GetRow(i)
-				ok, joinResult = e.joinNAAJMatchProbeSideRow2Chunk(workerID, 0, hCtx.naColNullBitMap[i].Clone(), probeRow, hCtx, rowContainer, joinResult)
+				ok, joinResult = w.joinNAAJMatchProbeSideRow2Chunk(0, hCtx.naColNullBitMap[i].Clone(), probeRow, hCtx, joinResult)
 				if !ok {
 					return false, joinResult
 				}
@@ -1023,7 +1023,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 				// here means the probe join connecting column without null values, where we should match same key bucket and null bucket for it at its order.
 				// step1: process same key matched probe side rows
 				probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
-				ok, joinResult = e.joinNAAJMatchProbeSideRow2Chunk(workerID, probeKey, nil, probeRow, hCtx, rowContainer, joinResult)
+				ok, joinResult = w.joinNAAJMatchProbeSideRow2Chunk(probeKey, nil, probeRow, hCtx, joinResult)
 				if !ok {
 					return false, joinResult
 				}
@@ -1031,18 +1031,18 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 		} else {
 			// since this is the case of using inner to build, so for an outer row unselected, we should fill the result when it's outer join.
 			if !selected[i] || hCtx.hasNull[i] { // process unmatched probe side rows
-				e.joiners[workerID].onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
+				w.joiner.onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
 			} else { // process matched probe side rows
 				probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
-				ok, joinResult = e.joinMatchedProbeSideRow2Chunk(workerID, probeKey, probeRow, hCtx, rowContainer, joinResult)
+				ok, joinResult = w.joinMatchedProbeSideRow2Chunk(probeKey, probeRow, hCtx, joinResult)
 				if !ok {
 					return false, joinResult
 				}
 			}
 		}
 		if joinResult.chk.IsFull() {
-			e.joinResultCh <- joinResult
-			ok, joinResult = e.getNewJoinResult(workerID)
+			w.hashJoinCtx.joinResultCh <- joinResult
+			ok, joinResult = w.getNewJoinResult()
 			if !ok {
 				return false, joinResult
 			}
@@ -1052,17 +1052,17 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 }
 
 // join2ChunkForOuterHashJoin joins chunks when using the outer to build a hash table (refer to outer hash join)
-func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, rowContainer *hashRowContainer, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
+func (w *probeWorker) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
 	hCtx.initHash(probeSideChk.NumRows())
 	for keyIdx, i := range hCtx.keyColIdx {
-		err := codec.HashChunkColumns(rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull)
+		err := codec.HashChunkColumns(w.rowContainerForProbe.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
 		}
 	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
-		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
+		killed := atomic.LoadUint32(&w.hashJoinCtx.sessCtx.GetSessionVars().Killed) == 1
 		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
 			if val.(bool) {
 				killed = true
@@ -1073,13 +1073,13 @@ func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *c
 			return false, joinResult
 		}
 		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
-		ok, joinResult = e.joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID, probeKey, probeRow, hCtx, rowContainer, joinResult)
+		ok, joinResult = w.joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey, probeRow, hCtx, joinResult)
 		if !ok {
 			return false, joinResult
 		}
 		if joinResult.chk.IsFull() {
-			e.joinResultCh <- joinResult
-			ok, joinResult = e.getNewJoinResult(workerID)
+			w.hashJoinCtx.joinResultCh <- joinResult
+			ok, joinResult = w.getNewJoinResult()
 			if !ok {
 				return false, joinResult
 			}
@@ -1095,33 +1095,24 @@ func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *c
 func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.prepared {
 		e.buildFinished = make(chan error, 1)
-		buildKeyColIdx := make([]int, len(e.buildKeys))
-		for i := range e.buildKeys {
-			buildKeyColIdx[i] = e.buildKeys[i].Index
-		}
-		buildNAKeyColIdx := make([]int, len(e.buildNAKeys))
-		for i := range e.buildNAKeys {
-			buildNAKeyColIdx[i] = e.buildNAKeys[i].Index
-		}
 		hCtx := &hashContext{
 			allTypes:    e.buildTypes,
-			keyColIdx:   buildKeyColIdx,
-			naKeyColIdx: buildNAKeyColIdx,
+			keyColIdx:   e.buildWorker.buildKeyColIdx,
+			naKeyColIdx: e.buildWorker.buildNAKeyColIdx,
 		}
-		e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx, retTypes(e.buildSideExec))
+		e.rowContainer = newHashRowContainer(e.ctx, hCtx, retTypes(e.buildWorker.buildSideExec))
 		// we shallow copies rowContainer for each probe worker to avoid lock contention
-		e.rowContainerForProbe = make([]*hashRowContainer, e.concurrency)
 		for i := uint(0); i < e.concurrency; i++ {
 			if i == 0 {
-				e.rowContainerForProbe[i] = e.rowContainer
+				e.probeWorkers[i].rowContainerForProbe = e.rowContainer
 			} else {
-				e.rowContainerForProbe[i] = e.rowContainer.ShallowCopy()
+				e.probeWorkers[i].rowContainerForProbe = e.rowContainer.ShallowCopy()
 			}
 		}
 		for i := uint(0); i < e.concurrency; i++ {
-			e.rowIters = append(e.rowIters, chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice))
+			e.probeWorkers[i].rowIters = chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice)
 		}
-		go util.WithRecovery(func() {
+		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
 			e.fetchAndBuildHashTable(ctx)
 		}, e.handleFetchAndBuildHashTablePanic)
@@ -1129,7 +1120,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		e.prepared = true
 	}
 	if e.isOuterJoin {
-		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
+		atomic.StoreInt64(&e.probeSideTupleFetcher.requiredRows, int64(req.RequiredRows()))
 	}
 	req.Reset()
 
@@ -1164,10 +1155,10 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	buildSideResultCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
 	fetchBuildSideRowsOk := make(chan error, 1)
-	go util.WithRecovery(
+	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			e.fetchBuildSideRows(ctx, buildSideResultCh, doneCh)
+			e.buildWorker.fetchBuildSideRows(ctx, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
 		func(r interface{}) {
 			if r != nil {
@@ -1178,7 +1169,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	)
 
 	// TODO: Parallel build hash table. Currently not support because `unsafeHashTable` is not thread-safe.
-	err := e.buildHashTableForList(buildSideResultCh)
+	err := e.buildWorker.buildHashTableForList(buildSideResultCh)
 	if err != nil {
 		e.buildFinished <- errors.Trace(err)
 		close(doneCh)
@@ -1196,41 +1187,42 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 }
 
 // buildHashTableForList builds hash table from `list`.
-func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chunk) error {
+func (w *buildWorker) buildHashTableForList(buildSideResultCh <-chan *chunk.Chunk) error {
 	var err error
 	var selected []bool
-	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
-	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
-	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
-	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
+	rowContainer := w.hashJoinCtx.rowContainer
+	rowContainer.GetMemTracker().AttachTo(w.hashJoinCtx.memTracker)
+	rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
+	rowContainer.GetDiskTracker().AttachTo(w.hashJoinCtx.diskTracker)
+	rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	if variable.EnableTmpStorageOnOOM.Load() {
-		actionSpill := e.rowContainer.ActionSpill()
+		actionSpill := rowContainer.ActionSpill()
 		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
 			if val.(bool) {
-				actionSpill = e.rowContainer.rowContainer.ActionSpillForTest()
+				actionSpill = rowContainer.rowContainer.ActionSpillForTest()
 				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
 			}
 		})
-		e.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
+		w.hashJoinCtx.sessCtx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {
-		if e.finished.Load().(bool) {
+		if w.hashJoinCtx.finished.Load() {
 			return nil
 		}
-		if !e.useOuterToBuild {
-			err = e.rowContainer.PutChunk(chk, e.isNullEQ)
+		if !w.hashJoinCtx.useOuterToBuild {
+			err = rowContainer.PutChunk(chk, w.hashJoinCtx.isNullEQ)
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
-			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
-			e.memTracker.Consume(bitMap.BytesConsumed())
-			if len(e.outerFilter) == 0 {
-				err = e.rowContainer.PutChunk(chk, e.isNullEQ)
+			w.hashJoinCtx.outerMatchedStatus = append(w.hashJoinCtx.outerMatchedStatus, bitMap)
+			w.hashJoinCtx.memTracker.Consume(bitMap.BytesConsumed())
+			if len(w.hashJoinCtx.outerFilter) == 0 {
+				err = w.hashJoinCtx.rowContainer.PutChunk(chk, w.hashJoinCtx.isNullEQ)
 			} else {
-				selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), selected)
+				selected, err = expression.VectorizedFilter(w.hashJoinCtx.sessCtx, w.hashJoinCtx.outerFilter, chunk.NewIterator4Chunk(chk), selected)
 				if err != nil {
 					return err
 				}
-				err = e.rowContainer.PutChunkSelected(chk, selected, e.isNullEQ)
+				err = rowContainer.PutChunkSelected(chk, selected, w.hashJoinCtx.isNullEQ)
 			}
 		}
 		failpoint.Inject("ConsumeRandomPanic", nil)
@@ -1284,7 +1276,6 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats()
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.canUseCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
@@ -1295,6 +1286,7 @@ func (e *NestedLoopApplyExec) Close() error {
 			runtimeStats.setCacheInfo(false, 0)
 		}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return e.outerExec.Close()
 }
@@ -1550,6 +1542,17 @@ func (e *joinRuntimeStats) String() string {
 // Tp implements the RuntimeStats interface.
 func (e *joinRuntimeStats) Tp() int {
 	return execdetails.TpJoinRuntimeStats
+}
+
+func (e *joinRuntimeStats) Clone() execdetails.RuntimeStats {
+	newJRS := &joinRuntimeStats{
+		RuntimeStatsWithConcurrencyInfo: e.RuntimeStatsWithConcurrencyInfo,
+		applyCache:                      e.applyCache,
+		cache:                           e.cache,
+		hasHashStat:                     e.hasHashStat,
+		hashStat:                        e.hashStat,
+	}
+	return newJRS
 }
 
 type hashJoinRuntimeStats struct {

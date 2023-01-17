@@ -292,3 +292,21 @@ func TestRouteWithPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, res)
 }
+
+func TestRouteWithCompressedParquet(t *testing.T) {
+	fileName := "myschema.my_table.000.parquet.gz"
+	rule := &config.FileRouteRule{
+		Pattern:     `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)(?:\.(\w+))?$`,
+		Schema:      "$1",
+		Table:       "$2",
+		Type:        "$4",
+		Key:         "$3",
+		Compression: "$5",
+		Unescape:    true,
+	}
+	r := *rule
+	router, err := NewFileRouter([]*config.FileRouteRule{&r}, log.L())
+	require.NoError(t, err)
+	_, err = router.Route(fileName)
+	require.Error(t, err)
+}

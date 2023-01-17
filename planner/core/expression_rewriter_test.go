@@ -71,7 +71,8 @@ func TestDefaultFunction(t *testing.T) {
 		c int default '10',
 		d double default '3.14',
 		e datetime default '20180101',
-		f datetime default current_timestamp);`)
+		f datetime default current_timestamp,
+		g date default current_date);`)
 	tk.MustExec("insert into t1(a, b, c, d) values ('1', '1', 1, 1)")
 	tk.MustExec("set @@timestamp = 1321009871")
 	defer tk.MustExec("set @@timestamp = DEFAULT")
@@ -83,8 +84,9 @@ func TestDefaultFunction(t *testing.T) {
 		default(c) as defc,
 		default(d) as defd,
 		default(e) as defe,
-		default(f) as deff
-		from t1`).Check(testkit.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11"))
+		default(f) as deff,
+		default(g) as defg
+		from t1`).Check(testkit.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11|2011-11-11"))
 	require.EqualError(t, tk.ExecToErr("select default(x) from t1"), "[planner:1054]Unknown column 'x' in 'field list'")
 
 	tk.MustQuery("select default(a0) from (select a as a0 from t1) as t0").Check(testkit.Rows("def"))
@@ -381,6 +383,7 @@ func TestMultiColInExpression(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("insert into t1 values(1,1),(2,null),(null,3),(4,4)")
@@ -416,6 +419,7 @@ func TestBitFuncsReturnType(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table t (a timestamp, b varbinary(32))")
 	tk.MustExec("insert into t values ('2006-08-27 21:57:57', 0x373037343631313230)")
 	tk.MustExec("analyze table t")
@@ -427,6 +431,9 @@ func TestBitFuncsReturnType(t *testing.T) {
 	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
 	expressionRewriterSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+		})
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

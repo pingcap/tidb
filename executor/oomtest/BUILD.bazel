@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = ["oom_test.go"],
     flaky = True,
+    race = "on",
     deps = [
         "//testkit",
         "//testkit/testsetup",

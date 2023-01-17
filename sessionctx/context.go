@@ -52,10 +52,10 @@ type SessionStatesHandler interface {
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 }
 
-// PlanCache is an interface for prepare and general plan cache
+// PlanCache is an interface for prepare and non-prepared plan cache
 type PlanCache interface {
-	Get(key kvcache.Key, paramTypes []*types.FieldType) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType)
+	Get(key kvcache.Key, paramTypes []*types.FieldType, limitParams []uint64) (value kvcache.Value, ok bool)
+	Put(key kvcache.Key, value kvcache.Value, paramTypes []*types.FieldType, limitParams []uint64)
 	Delete(key kvcache.Key)
 	DeleteAll()
 	Size() int
@@ -120,8 +120,8 @@ type Context interface {
 	GetStore() kv.Storage
 
 	// GetPlanCache returns the cache of the physical plan.
-	// generalPlanCache indicates to return the general plan cache or the prepared plan cache.
-	GetPlanCache(isGeneralPlanCache bool) PlanCache
+	// isNonPrepared indicates to return the non-prepared plan cache or the prepared plan cache.
+	GetPlanCache(isNonPrepared bool) PlanCache
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
@@ -134,9 +134,10 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit()
-	// StmtRollback provides statement level rollback.
-	StmtRollback()
+	StmtCommit(ctx context.Context)
+	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
+	// for auto-retrying execution of DMLs in pessimistic transactions.
+	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
@@ -182,6 +183,13 @@ type Context interface {
 	ReleaseAllAdvisoryLocks() int
 	// GetExtensions returns the `*extension.SessionExtensions` object
 	GetExtensions() *extension.SessionExtensions
+	// InSandBoxMode indicates that this Session is in sandbox mode
+	// Ref about sandbox mode: https://dev.mysql.com/doc/refman/8.0/en/expired-password-handling.html
+	InSandBoxMode() bool
+	// EnableSandBoxMode enable the sandbox mode of this Session
+	EnableSandBoxMode()
+	// DisableSandBoxMode enable the sandbox mode of this Session
+	DisableSandBoxMode()
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

@@ -436,16 +436,20 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		if sv.HasSessionScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeSession)
-			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
+			require.Equal(t, val, sv.Value)
 		}
 
 		if sv.HasGlobalScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
-			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
+			require.Equal(t, val, sv.Value)
 		}
 	}
+}
+
+func TestLimitBetweenVariable(t *testing.T) {
+	require.Less(t, DefTiDBGOGCTunerThreshold+0.05, DefTiDBServerMemoryLimitGCTrigger)
 }
 
 // TestSysVarNameIsLowerCase tests that no new sysvars are added with uppercase characters.
@@ -664,4 +668,22 @@ func TestSkipSysvarCache(t *testing.T) {
 	require.True(t, GetSysVar(TiDBGCConcurrency).SkipSysvarCache())
 	require.True(t, GetSysVar(TiDBGCScanLockMode).SkipSysvarCache())
 	require.False(t, GetSysVar(TiDBEnableAsyncCommit).SkipSysvarCache())
+}
+
+func TestTimeValidationWithTimezone(t *testing.T) {
+	sv := SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: "23:59 +0000", Type: TypeTime}
+	vars := NewSessionVars(nil)
+
+	// In timezone UTC
+	vars.TimeZone = time.UTC
+	val, err := sv.Validate(vars, "23:59", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0000", val)
+
+	// In timezone Asia/Shanghai
+	vars.TimeZone, err = time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	val, err = sv.Validate(vars, "23:59", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "23:59 +0800", val)
 }

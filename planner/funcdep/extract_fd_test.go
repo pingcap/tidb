@@ -210,6 +210,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 
 	ctx := context.TODO()
 	is := testGetIS(t, tk.Session())
+	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
@@ -308,6 +309,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 
 	ctx := context.TODO()
 	is := testGetIS(t, tk.Session())
+	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	for i, tt := range tests {
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))

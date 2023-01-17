@@ -46,7 +46,7 @@ check_sync_diff $cur/conf/diff_config.toml
 
 # test dumpling with both rows and filesize
 rm -rf "$DUMPLING_OUTPUT_DIR"
-run_dumpling --rows 10 --filesize 100B --loglevel debug
+run_dumpling --rows 10 --filesize 140B --loglevel debug
 # the dumping result is expected to be:
 # 50 files for insertion
 file_num=$(find "$DUMPLING_OUTPUT_DIR" -maxdepth 1 -iname "$DB_NAME.$TABLE_NAME.*.sql" | wc -l)

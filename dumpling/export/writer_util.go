@@ -591,6 +591,10 @@ func compressFileSuffix(compressType storage.CompressType) string {
 		return ""
 	case storage.Gzip:
 		return ".gz"
+	case storage.Snappy:
+		return ".snappy"
+	case storage.Zstd:
+		return ".zst"
 	default:
 		return ""
 	}

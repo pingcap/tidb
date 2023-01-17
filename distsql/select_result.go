@@ -311,7 +311,7 @@ func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) er
 func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if r.respChunkDecoder == nil {
 		r.respChunkDecoder = chunk.NewDecoder(
-			r.ctx.GetSessionVars().GetNewChunk(r.fieldTypes, 0),
+			chunk.NewChunkWithCapacity(r.fieldTypes, 0),
 			r.fieldTypes,
 		)
 	}
@@ -359,13 +359,11 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 
 	if r.stats == nil {
-		id := r.rootPlanID
 		r.stats = &selectResultRuntimeStats{
 			backoffSleep:       make(map[string]time.Duration),
 			rpcStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
@@ -455,6 +453,9 @@ func (r *selectResult) Close() error {
 	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
 	if respSize > 0 {
 		r.memConsume(-respSize)
+	}
+	if r.stats != nil {
+		defer r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 	}
 	return r.resp.Close()
 }

@@ -298,16 +298,21 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
 		p.stmtTp = TypeCreate
-		EraseLastSemicolon(node.OriginNode)
-		EraseLastSemicolon(node.HintedNode)
-		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+		if node.OriginNode != nil {
+			// if node.PlanDigest is not empty, this binding will be created from history, the node.OriginNode and node.HintedNode should be nil
+			EraseLastSemicolon(node.OriginNode)
+			EraseLastSemicolon(node.HintedNode)
+			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+		}
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
-		EraseLastSemicolon(node.OriginNode)
-		if node.HintedNode != nil {
-			EraseLastSemicolon(node.HintedNode)
-			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+		if node.OriginNode != nil {
+			EraseLastSemicolon(node.OriginNode)
+			if node.HintedNode != nil {
+				EraseLastSemicolon(node.HintedNode)
+				p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+			}
 		}
 		return in, true
 	case *ast.RecoverTableStmt:
@@ -675,6 +680,10 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 
 func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
 	for _, c := range constraints {
+		// ignore constraint check
+		if c.Tp == ast.ConstraintCheck {
+			continue
+		}
 		if c.Keys[0].Expr != nil {
 			continue
 		}
@@ -1727,6 +1736,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 		p.LastSnapshotTS = p.staleReadProcessor.GetStalenessReadTS()
 		p.SnapshotTSEvaluator = p.staleReadProcessor.GetStalenessTSEvaluatorForPrepare()
 		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
+		p.InfoSchema = &infoschema.SessionExtendedInfoSchema{InfoSchema: p.InfoSchema}
 		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 		// in stmtCtx
@@ -1820,14 +1830,13 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 		}
 		domainSchema := domain.GetDomain(sctx).InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		if !skipLock {
-			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, domainSchemaVer)
-		}
-
 		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
+		}
+		if !skipLock {
+			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
 		}
 		// Check the table change, if adding new public index or modify a column, we need to handle them.
 		if !sctx.GetSessionVars().IsPessimisticReadConsistency() {
@@ -1870,7 +1879,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 					}
 				}
 				if found {
-					return nil, ErrSchemaChanged.GenWithStack("public column %s has changed", col.Name)
+					return nil, domain.ErrInfoSchemaChanged.GenWithStack("public column %s has changed", col.Name)
 				}
 			}
 		}

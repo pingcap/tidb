@@ -21,13 +21,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
-	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestKillStmt(t *testing.T) {
@@ -86,7 +86,7 @@ func TestKillStmt(t *testing.T) {
 func TestUserAttributes(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	rootTK := testkit.NewTestKit(t, store)
-	ctx := context.WithValue(context.Background(), tikvutil.RequestSourceKey, tikvutil.RequestSource{RequestSourceInternal: true})
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 
 	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html#create-user-comments-attributes
 	rootTK.MustExec(`CREATE USER testuser COMMENT '1234'`)
@@ -94,9 +94,9 @@ func TestUserAttributes(t *testing.T) {
 	_, err := rootTK.Exec(`CREATE USER testuser2 ATTRIBUTE '{"name": "Tom", age: 19}'`)
 	rootTK.MustExec(`CREATE USER testuser2`)
 	require.Error(t, err)
-	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser'`).Check(testkit.Rows(`{"metadata": {"comment": "1234"}}`))
-	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser1'`).Check(testkit.Rows(`{"metadata": {"age": 19, "name": "Tom"}}`))
-	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser2'`).Check(testkit.Rows(`<nil>`))
+	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser'`).Check(testkit.Rows(`{"metadata": {"comment": "1234"}, "resource_group": "default"}`))
+	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser1'`).Check(testkit.Rows(`{"metadata": {"age": 19, "name": "Tom"}, "resource_group": "default"}`))
+	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser2'`).Check(testkit.Rows(`{"resource_group": "default"}`))
 	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser'`).Check(testkit.Rows(`{"comment": "1234"}`))
 	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 19, "name": "Tom"}`))
 	rootTK.MustQueryWithContext(ctx, `SELECT attribute->>"$.age" AS age, attribute->>"$.name" AS name FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`19 Tom`))
@@ -105,7 +105,9 @@ func TestUserAttributes(t *testing.T) {
 	// https://dev.mysql.com/doc/refman/8.0/en/alter-user.html#alter-user-comments-attributes
 	rootTK.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"age": 20, "sex": "male"}'`)
 	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "name": "Tom", "sex": "male"}`))
-	rootTK.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"sex": null}'`)
+	rootTK.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"hobby": "soccer"}'`)
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "hobby": "soccer", "name": "Tom", "sex": "male"}`))
+	rootTK.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"sex": null, "hobby": null}'`)
 	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "name": "Tom"}`))
 	rootTK.MustExec(`ALTER USER testuser1 COMMENT '5678'`)
 	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "comment": "5678", "name": "Tom"}`))
@@ -121,4 +123,12 @@ func TestUserAttributes(t *testing.T) {
 	tk.MustQueryWithContext(ctx, `SELECT user, host, attribute FROM information_schema.user_attributes ORDER BY user`).Check(
 		testkit.Rows("root % <nil>", "testuser % {\"comment\": \"1234\"}", "testuser1 % {\"age\": 20, \"name\": \"Tom\"}", "testuser2 % <nil>"))
 	tk.MustGetErrCode(`SELECT user, host, user_attributes FROM mysql.user ORDER BY user`, mysql.ErrTableaccessDenied)
+
+	// https://github.com/pingcap/tidb/issues/39207
+	rootTK.MustExec("create user usr1@'%' identified by 'passord'")
+	rootTK.MustExec("alter user usr1 comment 'comment1'")
+	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "default"}`))
+	rootTK.MustExec("set global tidb_enable_resource_control = 'on'")
+	rootTK.MustExec("alter user usr1 resource group rg1")
+	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}`))
 }

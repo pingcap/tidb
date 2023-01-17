@@ -339,19 +339,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if ds.schema.Len() == 0 {
 		var handleCol *expression.Column
 		var handleColInfo *model.ColumnInfo
-		if ds.table.Type().IsClusterTable() && len(originColumns) > 0 {
-			// use the first line.
-			handleCol = originSchemaColumns[0]
-			handleColInfo = originColumns[0]
-		} else {
-			if ds.handleCols != nil {
-				handleCol = ds.handleCols.GetCol(0)
-				handleColInfo = handleCol.ToInfo()
-			} else {
-				handleCol = ds.newExtraHandleSchemaCol()
-				handleColInfo = model.NewExtraHandleColInfo()
-			}
-		}
+		handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
 	}
@@ -657,4 +645,24 @@ func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []fm
 		return ""
 	}
 	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
+}
+
+func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expression.Column,
+	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
+	var resultColumnInfo *model.ColumnInfo
+	var resultColumn *expression.Column
+	if dataSource.table.Type().IsClusterTable() && len(originColumns) > 0 {
+		// use the first column.
+		resultColumnInfo = originSchemaColumns[0]
+		resultColumn = originColumns[0]
+	} else {
+		if dataSource.handleCols != nil {
+			resultColumn = dataSource.handleCols.GetCol(0)
+			resultColumnInfo = resultColumn.ToInfo()
+		} else {
+			resultColumn = dataSource.newExtraHandleSchemaCol()
+			resultColumnInfo = model.NewExtraHandleColInfo()
+		}
+	}
+	return resultColumn, resultColumnInfo
 }

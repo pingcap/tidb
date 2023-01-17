@@ -28,6 +28,7 @@ go_library(
         "//util/dbterror",
         "//util/hack",
         "//util/logutil",
+        "//util/mathutil",
         "//util/sem",
         "//util/sqlexec",
         "//util/stringutil",

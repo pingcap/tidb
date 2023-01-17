@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"database/sql"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,7 +68,7 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 		require.NoError(t, resp0.Body.Close())
 	}()
 
-	body, err := ioutil.ReadAll(resp0.Body)
+	body, err := io.ReadAll(resp0.Body)
 	require.NoError(t, err)
 
 	path := "/tmp/plan_replayer.zip"

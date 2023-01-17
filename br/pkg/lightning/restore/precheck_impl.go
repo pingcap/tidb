@@ -14,6 +14,7 @@
 package restore
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/pdtypes"
@@ -40,9 +43,12 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 type clusterResourceCheckItem struct {
@@ -428,7 +434,7 @@ func (ci *largeFileCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		for _, db := range ci.dbMetas {
 			for _, t := range db.Tables {
 				for _, f := range t.DataFiles {
-					if f.FileMeta.FileSize > defaultCSVSize {
+					if f.FileMeta.RealSize > defaultCSVSize {
 						theResult.Message = fmt.Sprintf("large csv: %s file exists and it will slow down import performance", f.FileMeta.Path)
 						theResult.Passed = false
 					}
@@ -478,12 +484,14 @@ func (ci *localDiskPlacementCheckItem) Check(ctx context.Context) (*CheckResult,
 type localTempKVDirCheckItem struct {
 	cfg           *config.Config
 	preInfoGetter PreRestoreInfoGetter
+	dbMetas       []*mydump.MDDatabaseMeta
 }
 
-func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter) PrecheckItem {
+func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &localTempKVDirCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
+		dbMetas:       dbMetas,
 	}
 }
 
@@ -491,10 +499,28 @@ func (ci *localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLocalTempKVDir
 }
 
+func (ci *localTempKVDirCheckItem) hasCompressedFiles() bool {
+	for _, dbMeta := range ci.dbMetas {
+		for _, tbMeta := range dbMeta.Tables {
+			for _, file := range tbMeta.DataFiles {
+				if file.FileMeta.Compression != mydump.CompressionNone {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+	severity := Critical
+	// for cases that have compressed files, the estimated size may not be accurate, set severity to Warn to avoid failure
+	if ci.hasCompressedFiles() {
+		severity = Warn
+	}
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: severity,
 	}
 	storageSize, err := common.GetStorageSize(ci.cfg.TikvImporter.SortedKVDir)
 	if err != nil {
@@ -670,6 +696,154 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 		}
 	}
 	return msgs, nil
+}
+
+// CDCPITRCheckItem check downstream has enabled CDC or PiTR. It's exposed to let
+// caller override the Instruction message.
+type CDCPITRCheckItem struct {
+	cfg         *config.Config
+	Instruction string
+	// used in test
+	etcdCli *clientv3.Client
+}
+
+// NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
+func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
+	return &CDCPITRCheckItem{
+		cfg:         cfg,
+		Instruction: "local backend is not compatible with them. Please switch to tidb backend then try again.",
+	}
+}
+
+// GetCheckItemID implements PrecheckItem interface.
+func (ci *CDCPITRCheckItem) GetCheckItemID() CheckItemID {
+	return CheckTargetUsingCDCPITR
+}
+
+func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client, error) {
+	cfg2, err := cfg.ToTLS()
+	if err != nil {
+		return nil, err
+	}
+	tlsConfig := cfg2.TLSConfig()
+
+	return clientv3.New(clientv3.Config{
+		TLS:              tlsConfig,
+		Endpoints:        []string{cfg.TiDB.PdAddr},
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                10 * time.Second,
+				Timeout:             3 * time.Second,
+				PermitWithoutStream: false,
+			}),
+			grpc.WithBlock(),
+			grpc.WithReturnConnectionError(),
+		},
+		Context: ctx,
+	})
+}
+
+// Check implements PrecheckItem interface.
+func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+	theResult := &CheckResult{
+		Item:     ci.GetCheckItemID(),
+		Severity: Critical,
+	}
+
+	if ci.cfg.TikvImporter.Backend != config.BackendLocal {
+		theResult.Passed = true
+		theResult.Message = "TiDB Lightning is not using local backend, skip this check"
+		return theResult, nil
+	}
+
+	if ci.etcdCli == nil {
+		var err error
+		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		//nolint: errcheck
+		defer ci.etcdCli.Close()
+	}
+
+	errorMsg := make([]string, 0, 2)
+
+	pitrCli := streamhelper.NewMetaDataClient(ci.etcdCli)
+	tasks, err := pitrCli.GetAllTasks(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(tasks) > 0 {
+		names := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			names = append(names, task.Info.GetName())
+		}
+		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
+	}
+
+	// check etcd KV of CDC >= v6.2
+	cdcPrefix := "/tidb/cdc/"
+	capturePath := []byte("/__cdc_meta__/capture/")
+	nameSet := make(map[string][]string, 1)
+	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, kv := range resp.Kvs {
+		// example: /tidb/cdc/<clusterID>/__cdc_meta__/capture/<captureID>
+		k := kv.Key[len(cdcPrefix):]
+		clusterID, captureID, found := bytes.Cut(k, capturePath)
+		if found {
+			nameSet[string(clusterID)] = append(nameSet[string(clusterID)], string(captureID))
+		}
+	}
+	if len(nameSet) == 0 {
+		// check etcd KV of CDC <= v6.1
+		cdcPrefixV61 := "/tidb/cdc/capture/"
+		resp, err = ci.etcdCli.Get(ctx, cdcPrefixV61, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, kv := range resp.Kvs {
+			// example: /tidb/cdc/capture/<captureID>
+			k := kv.Key[len(cdcPrefixV61):]
+			if len(k) == 0 {
+				continue
+			}
+			nameSet["<nil>"] = append(nameSet["<nil>"], string(k))
+		}
+	}
+
+	if len(nameSet) > 0 {
+		var captureMsgBuf strings.Builder
+		captureMsgBuf.WriteString("found CDC capture(s): ")
+		isFirst := true
+		for clusterID, captureIDs := range nameSet {
+			if !isFirst {
+				captureMsgBuf.WriteString(", ")
+			}
+			isFirst = false
+			captureMsgBuf.WriteString("clusterID: ")
+			captureMsgBuf.WriteString(clusterID)
+			captureMsgBuf.WriteString(" captureID(s): ")
+			captureMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
+		}
+		captureMsgBuf.WriteString(",")
+		errorMsg = append(errorMsg, captureMsgBuf.String())
+	}
+
+	if len(errorMsg) > 0 {
+		errorMsg = append(errorMsg, ci.Instruction)
+		theResult.Passed = false
+		theResult.Message = strings.Join(errorMsg, "\n")
+	} else {
+		theResult.Passed = true
+		theResult.Message = "no CDC or PiTR task found"
+	}
+
+	return theResult, nil
 }
 
 type schemaCheckItem struct {

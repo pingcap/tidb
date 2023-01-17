@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -79,10 +80,8 @@ func TestInTxnExecDDLFail(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (1);")
-	_, err := tk.Exec("truncate table t;")
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
-	result := tk.MustQuery("select count(*) from t")
-	result.Check(testkit.Rows("1"))
+	tk.MustGetErrMsg("truncate table t;", "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 }
 
 func TestInTxnExecDDLInvalid(t *testing.T) {
@@ -212,11 +211,9 @@ func TestCreateView(t *testing.T) {
 	// test create a exist view
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
 	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
-	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
-	require.EqualError(t, err, "[schema:1050]Table 'test.view_t' already exists")
+	tk.MustGetErrMsg("CREATE VIEW view_t AS select id , name from source_table", "[schema:1050]Table 'test.view_t' already exists")
 	// create view on nonexistent table
-	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
-	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
+	tk.MustGetErrMsg("create view v1 (c,d) as select a,b from t1", "[schema:1146]Table 'test.t1' doesn't exist")
 	// simple view
 	tk.MustExec("create table t1 (a int ,b int)")
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
@@ -231,26 +228,22 @@ func TestCreateView(t *testing.T) {
 	// view with select wild card
 	tk.MustExec("create view v5 as select * from t1")
 	tk.MustExec("create view v6 (c,d) as select * from t1")
-	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
-	require.Equal(t, dbterror.ErrViewWrongList.Error(), err.Error())
+	tk.MustGetErrCode("create view v7 (c,d,e) as select * from t1", errno.ErrViewWrongList)
 	// drop multiple views in a statement
 	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
 	// view with variable
 	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
-	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
-	require.EqualError(t, err, "[schema:1050]Table 'test.v1' already exists")
+	tk.MustGetErrMsg("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections", "[schema:1050]Table 'test.v1' already exists")
 	tk.MustExec("drop view v1")
 	// view with different col counts
-	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
-	require.Equal(t, dbterror.ErrViewWrongList.Error(), err.Error())
-	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
-	require.Equal(t, dbterror.ErrViewWrongList.Error(), err.Error())
+	tk.MustGetErrCode("create view v1 (c,d,e) as select a,b from t1 ", errno.ErrViewWrongList)
+	tk.MustGetErrCode("create view v1 (c) as select a,b from t1 ", errno.ErrViewWrongList)
 	// view with or_replace flag
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create view v1 (c,d) as select a,b from t1")
 	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
 	tk.MustExec("create table if not exists t1 (a int ,b int)")
-	_, err = tk.Exec("create or replace view t1 as select * from t1")
+	err := tk.ExecToErr("create or replace view t1 as select * from t1")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error(), err.Error())
 	// create view using prepare
 	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
@@ -259,8 +252,7 @@ func TestCreateView(t *testing.T) {
 	// create view on union
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("drop view if exists v")
-	_, err = tk.Exec("create view v as select * from t1 union select * from t2")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	tk.MustGetDBError("create view v as select * from t1 union select * from t2", infoschema.ErrTableNotExists)
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
 	tk.MustExec("insert into t1 values(1,2), (1,1), (1,2)")
@@ -268,14 +260,12 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view v as select * from t1 union select * from t2")
 	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 2", "1 3"))
 	tk.MustExec("alter table t1 drop column a")
-	_, err = tk.Exec("select * from v")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrViewInvalid))
+	tk.MustGetDBError("select * from v", plannercore.ErrViewInvalid)
 	tk.MustExec("alter table t1 add column a int")
 	tk.MustQuery("select * from v").Sort().Check(testkit.Rows("1 1", "1 3", "<nil> 1", "<nil> 2"))
 	tk.MustExec("alter table t1 drop column a")
 	tk.MustExec("alter table t2 drop column b")
-	_, err = tk.Exec("select * from v")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrViewInvalid))
+	tk.MustGetDBError("select * from v", plannercore.ErrViewInvalid)
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create view v as (select * from t1)")
@@ -294,8 +284,7 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("create table test_v_nested(a int)")
 	tk.MustExec("create definer='root'@'localhost' view v_nested as select * from test_v_nested")
 	tk.MustExec("create definer='root'@'localhost' view v_nested2 as select * from v_nested")
-	_, err = tk.Exec("create or replace definer='root'@'localhost' view v_nested as select * from v_nested2")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrNoSuchTable))
+	tk.MustGetDBError("create or replace definer='root'@'localhost' view v_nested as select * from v_nested2", plannercore.ErrNoSuchTable)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
 
@@ -322,8 +311,7 @@ func TestViewRecursion(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view recursive_view2 as select * from recursive_view1")
 	tk.MustExec("drop table t")
 	tk.MustExec("rename table recursive_view2 to t")
-	_, err := tk.Exec("select * from recursive_view1")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrViewRecursive))
+	tk.MustGetDBError("select * from recursive_view1", plannercore.ErrViewRecursive)
 	tk.MustExec("drop view recursive_view1, t")
 }
 
@@ -333,8 +321,8 @@ func TestIssue16250(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists t(a int)")
 	tk.MustExec("create view view_issue16250 as select * from t")
-	_, err := tk.Exec("truncate table view_issue16250")
-	require.EqualError(t, err, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
+	tk.MustGetErrMsg("truncate table view_issue16250",
+		"[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
 func TestIssue24771(t *testing.T) {
@@ -564,12 +552,23 @@ func TestAlterTableAddColumn(t *testing.T) {
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
-	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
+	err = tk.ExecToErr("alter table alter_view add column c4 varchar(50)")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
-	_, err = tk.Exec("alter table alter_seq add column c int")
+	err = tk.ExecToErr("alter table alter_seq add column c int")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	tk.MustExec("alter table alter_test add column c4 date default current_date")
+	now = time.Now().Format(types.DateFormat)
+	r, err = tk.Exec("select c4 from alter_test")
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(context.Background(), req)
+	require.NoError(t, err)
+	row = req.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.GreaterOrEqual(t, now, row.GetTime(0).String())
+	require.Nil(t, r.Close())
 	tk.MustExec("drop sequence alter_seq")
 }
 
@@ -591,11 +590,11 @@ func TestAlterTableAddColumns(t *testing.T) {
 	require.Nil(t, r.Close())
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
-	_, err = tk.Exec("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
+	err = tk.ExecToErr("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
-	_, err = tk.Exec("alter table alter_seq add column (c1 int, c2 varchar(10))")
+	err = tk.ExecToErr("alter table alter_seq add column (c1 int, c2 varchar(10))")
 	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop sequence alter_seq")
 }
@@ -662,8 +661,7 @@ func TestAlterTableModifyColumn(t *testing.T) {
 
 	tk.MustExec("drop table if exists modify_column_multiple_collate;")
 	tk.MustExec("create table modify_column_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
-	_, err = tk.Exec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
-	require.NoError(t, err)
+	tk.MustExec("alter table modify_column_multiple_collate modify column a char(1) charset utf8mb4 collate utf8mb4_bin;")
 	tt, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("modify_column_multiple_collate"))
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4", tt.Cols()[0].GetCharset())
@@ -919,10 +917,8 @@ func TestShardRowIDBits(t *testing.T) {
 	tk.MustExec("insert into t1 values(1)")
 
 	// continue inserting will fail.
-	_, err = tk.Exec("insert into t1 values(2)")
-	require.Truef(t, autoid.ErrAutoincReadFailed.Equal(err), "err:%v", err)
-	_, err = tk.Exec("insert into t1 values(3)")
-	require.Truef(t, autoid.ErrAutoincReadFailed.Equal(err), "err:%v", err)
+	tk.MustGetDBError("insert into t1 values(2)", autoid.ErrAutoincReadFailed)
+	tk.MustGetDBError("insert into t1 values(3)", autoid.ErrAutoincReadFailed)
 }
 
 func TestAutoRandomBitsData(t *testing.T) {
@@ -1131,65 +1127,6 @@ func TestAutoRandomClusteredPrimaryKey(t *testing.T) {
 	tk.MustQuery("select a from t;").Check(testkit.Rows("1"))
 }
 
-// Test filter different kind of allocators.
-// In special ddl type, for example:
-// 1: ActionRenameTable             : it will abandon all the old allocators.
-// 2: ActionRebaseAutoID            : it will drop row-id-type allocator.
-// 3: ActionModifyTableAutoIdCache  : it will drop row-id-type allocator.
-// 3: ActionRebaseAutoRandomBase    : it will drop auto-rand-type allocator.
-func TestFilterDifferentAllocators(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-
-	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
-	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles := testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(1), orderedHandles[0])
-	tk.MustExec("delete from t")
-
-	// Test rebase auto_increment.
-	tk.MustExec("alter table t auto_increment 3000000")
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select b from t").Check(testkit.Rows("3000000"))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(2), orderedHandles[0])
-	tk.MustExec("delete from t")
-
-	// Test rebase auto_random.
-	tk.MustExec("alter table t auto_random_base 3000000")
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select b from t").Check(testkit.Rows("3000001"))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Equal(t, int64(3000000), orderedHandles[0])
-	tk.MustExec("delete from t")
-
-	// Test rename table.
-	tk.MustExec("rename table t to t1")
-	tk.MustExec("insert into t1 values()")
-	res := tk.MustQuery("select b from t1")
-	strInt64, err := strconv.ParseInt(res.Rows()[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	require.Greater(t, strInt64, int64(3000002))
-	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Session(), "test", "t1")
-	require.NoError(t, err)
-	require.Equal(t, 1, len(allHandles))
-	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-	require.Greater(t, orderedHandles[0], int64(3000001))
-}
-
 func TestMaxHandleAddIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1223,8 +1160,7 @@ func TestSetDDLReorgWorkerCnt(t *testing.T) {
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int32(100), variable.GetDDLReorgWorkerCounter())
-	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val")
-	require.Truef(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetDBError("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
@@ -1266,8 +1202,7 @@ func TestSetDDLReorgBatchSize(t *testing.T) {
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, variable.MaxDDLReorgBatchSize, variable.GetDDLReorgBatchSize())
-	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
-	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetDBError("set @@global.tidb_ddl_reorg_batch_size = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
@@ -1374,14 +1309,27 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 	err = ddlutil.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(math.MaxInt64), variable.GetDDLErrorCountLimit())
-	_, err = tk.Exec("set @@global.tidb_ddl_error_count_limit = invalid_val")
-	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetDBError("set @@global.tidb_ddl_error_count_limit = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
 	err = ddlutil.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(100), variable.GetDDLErrorCountLimit())
 	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
 	res.Check(testkit.Rows("100"))
+}
+
+func TestLoadDDLDistributeVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.Equal(t, variable.DefTiDBDDLEnableDistributeReorg, distributereorg.TiDBEnableDistributeReorg)
+
+	tk.MustGetDBError("set @@global.tidb_ddl_distribute_reorg = invalid_val", variable.ErrWrongValueForVar)
+	require.Equal(t, distributereorg.TiDBEnableDistributeReorg, variable.DDLEnableDistributeReorg.Load())
+	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = 'on'")
+	require.Equal(t, true, variable.DDLEnableDistributeReorg.Load())
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_distribute_reorg = %v", distributereorg.TiDBEnableDistributeReorg))
+	require.Equal(t, distributereorg.TiDBEnableDistributeReorg, variable.DDLEnableDistributeReorg.Load())
 }
 
 // Test issue #9205, fix the precision problem for time type default values
@@ -1432,39 +1380,21 @@ func TestCheckDefaultFsp(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
 
-	_, err := tk.Exec("create table t (  tt timestamp default now(1));")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
-
-	_, err = tk.Exec("create table t (  tt timestamp(1) default current_timestamp);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
-
-	_, err = tk.Exec("create table t (  tt timestamp(1) default now(2));")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("create table t (  tt timestamp default now(1));", "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("create table t (  tt timestamp(1) default current_timestamp);", "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("create table t (  tt timestamp(1) default now(2));", "[ddl:1067]Invalid default value for 'tt'")
 
 	tk.MustExec("create table t (  tt timestamp(1) default now(1));")
 	tk.MustExec("create table t2 (  tt timestamp default current_timestamp());")
 	tk.MustExec("create table t3 (  tt timestamp default current_timestamp(0));")
 
-	_, err = tk.Exec("alter table t add column ttt timestamp default now(2);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
-
-	_, err = tk.Exec("alter table t add column ttt timestamp(5) default current_timestamp;")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
-
-	_, err = tk.Exec("alter table t add column ttt timestamp(5) default now(2);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'ttt'")
-
-	_, err = tk.Exec("alter table t modify column tt timestamp(1) default now();")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
-
-	_, err = tk.Exec("alter table t modify column tt timestamp(4) default now(5);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tt'")
-
-	_, err = tk.Exec("alter table t change column tt tttt timestamp(4) default now(5);")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tttt'")
-
-	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
-	require.EqualError(t, err, "[ddl:1067]Invalid default value for 'tttt'")
+	tk.MustGetErrMsg("alter table t add column ttt timestamp default now(2);", "[ddl:1067]Invalid default value for 'ttt'")
+	tk.MustGetErrMsg("alter table t add column ttt timestamp(5) default current_timestamp;", "[ddl:1067]Invalid default value for 'ttt'")
+	tk.MustGetErrMsg("alter table t add column ttt timestamp(5) default now(2);", "[ddl:1067]Invalid default value for 'ttt'")
+	tk.MustGetErrMsg("alter table t modify column tt timestamp(1) default now();", "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("alter table t modify column tt timestamp(4) default now(5);", "[ddl:1067]Invalid default value for 'tt'")
+	tk.MustGetErrMsg("alter table t change column tt tttt timestamp(4) default now(5);", "[ddl:1067]Invalid default value for 'tttt'")
+	tk.MustGetErrMsg("alter table t change column tt tttt timestamp(1) default now();", "[ddl:1067]Invalid default value for 'tttt'")
 }
 
 func TestTimestampMinDefaultValue(t *testing.T) {
@@ -1617,4 +1547,139 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
+}
+
+func TestCreateTableWithTTL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 5 DAY */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustExec("DROP TABLE t")
+
+	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL = `id` + INTERVAL 5 DAY", "[ddl:8148]Field 'id' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
+
+	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL_ENABLE = 'ON'", "[ddl:8150]Cannot set TTL_ENABLE on a table without TTL config")
+
+	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL_JOB_INTERVAL = '1h'", "[ddl:8150]Cannot set TTL_JOB_INTERVAL on a table without TTL config")
+
+	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1d'")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
+	tk.MustExec("DROP TABLE t")
+
+	// when multiple ttl and ttl_enable configs are submitted, only the last one will be handled
+	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL = `created_at` + INTERVAL 2 DAY TTL = `created_at` + INTERVAL 3 DAY TTL_ENABLE = 'OFF'")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustExec("DROP TABLE t")
+}
+
+func TestAlterTTLInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t (created_at datetime, updated_at datetime, wrong_type int) TTL = `created_at` + INTERVAL 5 DAY")
+	tk.MustExec("ALTER TABLE t TTL = `updated_at` + INTERVAL 2 YEAR")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	tk.MustExec("ALTER TABLE t TTL_ENABLE = 'OFF'")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	tk.MustExec("ALTER TABLE t TTL_JOB_INTERVAL = '1d'")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR", "[ddl:1054]Unknown column 'not_exist' in 'TTL config'")
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL = `wrong_type` + INTERVAL 2 YEAR", "[ddl:8148]Field 'wrong_type' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
+
+	tk.MustGetErrMsg("ALTER TABLE t DROP COLUMN updated_at", "[ddl:8149]Cannot drop column 'updated_at': needed in TTL config")
+	tk.MustGetErrMsg("ALTER TABLE t CHANGE updated_at updated_at_new INT", "[ddl:8148]Field 'updated_at_new' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP")
+
+	tk.MustExec("ALTER TABLE t RENAME COLUMN `updated_at` TO `updated_at_2`")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_2` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_2` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
+
+	tk.MustExec("ALTER TABLE t CHANGE `updated_at_2` `updated_at_3` date")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
+
+	tk.MustExec("ALTER TABLE t TTL = `updated_at_3` + INTERVAL 3 YEAR")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 3 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL_ENABLE = 'OFF' REMOVE TTL", "[ddl:8200]Unsupported multi schema change for alter table ttl")
+
+	tk.MustExec("ALTER TABLE t REMOVE TTL")
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at_3` date DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL_ENABLE = 'OFF'", "[ddl:8150]Cannot set TTL_ENABLE on a table without TTL config")
+
+	tk.MustGetErrMsg("ALTER TABLE t TTL_JOB_INTERVAL = '1h'", "[ddl:8150]Cannot set TTL_JOB_INTERVAL on a table without TTL config")
+}
+
+func TestDisableTTLForTempTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustGetDBError("CREATE TEMPORARY TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY", dbterror.ErrTempTableNotAllowedWithTTL)
+}
+
+func TestDisableTTLForFKParentTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// alter ttl for a FK parent table is not allowed
+	tk.MustExec("set global tidb_enable_foreign_key='ON'")
+	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime)")
+	tk.MustExec("CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id))")
+	tk.MustGetDBError("ALTER TABLE t TTL = created_at + INTERVAL 5 YEAR", dbterror.ErrUnsupportedTTLReferencedByFK)
+	tk.MustExec("drop table t,t_1")
+
+	// refuse to reference TTL key when create table
+	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR")
+	tk.MustGetDBError("CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id))", dbterror.ErrUnsupportedTTLReferencedByFK)
+	tk.MustExec("drop table t")
+
+	// refuse to add foreign key reference TTL table
+	tk.MustExec("CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR")
+	tk.MustExec("CREATE TABLE t_1 (t_id int)")
+	tk.MustGetDBError("ALTER TABLE t_1 ADD FOREIGN KEY fk_t_id(t_id) references t(id)", dbterror.ErrUnsupportedTTLReferencedByFK)
+	tk.MustExec("drop table t,t_1")
+}
+
+func TestCheckPrimaryKeyForTTLTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// create table should fail when pk contains double/float
+	tk.MustGetDBError("create table t1(id float primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id double primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id1 int, id2 float, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id1 int, id2 double, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+
+	// alter table should fail when pk contains double/float
+	tk.MustExec("create table t1(id float primary key, t timestamp)")
+	tk.MustExec("create table t2(id double primary key, t timestamp)")
+	tk.MustExec("create table t3(id1 int, id2 float, primary key(id1, id2), t timestamp)")
+	tk.MustExec("create table t4(id1 int, id2 double, primary key(id1, id2), t timestamp)")
+	tk.MustGetDBError("alter table t1 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("alter table t2 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("alter table t3 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("alter table t4 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+
+	// create table should not fail when the pk is not clustered
+	tk.MustExec("create table t11(id float primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("create table t12(id double primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("create table t13(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered) TTL=`t`+INTERVAL 1 DAY")
+
+	// alter table should not fail when the pk is not clustered
+	tk.MustExec("create table t21(id float primary key nonclustered, t timestamp)")
+	tk.MustExec("create table t22(id double primary key nonclustered, t timestamp)")
+	tk.MustExec("create table t23(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered)")
+	tk.MustExec("alter table t21 TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("alter table t22 TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("alter table t23 TTL=`t`+INTERVAL 1 DAY")
 }

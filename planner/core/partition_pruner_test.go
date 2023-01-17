@@ -68,6 +68,7 @@ func TestHashPartitionPruner(t *testing.T) {
 func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop database if exists test_range_col_in")
 	tk.MustExec("create database test_range_col_in")
 	tk.MustExec("use test_range_col_in")
@@ -260,6 +261,7 @@ func TestListPartitionPruner(t *testing.T) {
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
@@ -310,15 +312,15 @@ func TestListPartitionPruner(t *testing.T) {
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-		result := tk.MustQuery(tt)
+		result := tk.MustQuery(tt).Sort()
 		result.Check(testkit.Rows(output[i].Result...))
 		// If the query doesn't specified the partition, compare the result with normal table
 		if !strings.Contains(tt, "partition(") {
-			result.Check(tk2.MustQuery(tt).Rows())
+			result.Check(tk.MustQuery(tt).Sort().Rows())
 			valid = true
 		}
 		require.True(t, valid)
@@ -330,6 +332,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
@@ -342,6 +345,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 
 	// tk1 use to test partition table with index.
 	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("set tidb_cost_model_version=2")
 	tk1.MustExec("drop database if exists test_partition_1;")
 	tk1.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk1.MustExec("create database test_partition_1")
@@ -354,6 +358,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 
 	// tk2 use to compare the result with normal table.
 	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set tidb_cost_model_version=2")
 	tk2.MustExec("drop database if exists test_partition_2;")
 	tk2.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk2.MustExec("create database test_partition_2")
@@ -388,7 +393,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		indexPlanTree := testdata.ConvertRowsToStrings(indexPlan.Rows())
 		testdata.OnRecord(func() {
 			output[i].SQL = tt.SQL
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Sort().Rows())
 			// Test for table without index.
 			output[i].Plan = planTree
 			// Test for table with index.
@@ -403,14 +408,14 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		checkPrunePartitionInfo(t, tt.SQL, tt.Pruner, indexPlanTree)
 
 		// compare the result.
-		result := tk.MustQuery(tt.SQL)
+		result := tk.MustQuery(tt.SQL).Sort()
 		idxResult := tk1.MustQuery(tt.SQL)
-		result.Check(idxResult.Rows())
+		result.Check(idxResult.Sort().Rows())
 		result.Check(testkit.Rows(output[i].Result...))
 
 		// If the query doesn't specified the partition, compare the result with normal table
 		if !strings.Contains(tt.SQL, "partition(") {
-			result.Check(tk2.MustQuery(tt.SQL).Rows())
+			result.Check(tk2.MustQuery(tt.SQL).Sort().Rows())
 			valid = true
 		}
 	}

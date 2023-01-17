@@ -13,6 +13,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -54,9 +55,11 @@ func newPushDown(mgr ClientMgr, capacity int) *pushDown {
 func (push *pushDown) pushBackup(
 	ctx context.Context,
 	req backuppb.BackupRequest,
+	pr *rtree.ProgressRange,
 	stores []*metapb.Store,
+	checkpointRunner *checkpoint.CheckpointRunner,
 	progressCallBack func(ProgressUnit),
-) (rtree.RangeTree, error) {
+) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("pushDown.pushBackup", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -64,10 +67,9 @@ func (push *pushDown) pushBackup(
 	}
 
 	// Push down backup tasks to all tikv instances.
-	res := rtree.NewRangeTree()
 	failpoint.Inject("noop-backup", func(_ failpoint.Value) {
 		logutil.CL(ctx).Warn("skipping normal backup, jump to fine-grained backup, meow :3", logutil.Key("start-key", req.StartKey), logutil.Key("end-key", req.EndKey))
-		failpoint.Return(res, nil)
+		failpoint.Return(nil)
 	})
 
 	wg := new(sync.WaitGroup)
@@ -84,7 +86,7 @@ func (push *pushDown) pushBackup(
 			// BR should be able to backup even some of stores disconnected.
 			// The regions managed by this store can be retried at fine-grained backup then.
 			logutil.CL(lctx).Warn("fail to connect store, skipping", zap.Error(err))
-			return res, nil
+			return nil
 		}
 		wg.Add(1)
 		go func() {
@@ -124,7 +126,7 @@ func (push *pushDown) pushBackup(
 			store := respAndStore.GetStore()
 			if !ok {
 				// Finished.
-				return res, nil
+				return nil
 			}
 			failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
 				msg := val.(string)
@@ -161,7 +163,19 @@ func (push *pushDown) pushBackup(
 			})
 			if resp.GetError() == nil {
 				// None error means range has been backuped successfully.
-				res.Put(
+				if checkpointRunner != nil {
+					if err := checkpointRunner.Append(
+						ctx,
+						pr.GroupKey,
+						resp.StartKey,
+						resp.EndKey,
+						resp.Files,
+					); err != nil {
+						// the error is only from flush operator
+						return errors.Annotate(err, "failed to flush checkpoint")
+					}
+				}
+				pr.Res.Put(
 					resp.GetStartKey(), resp.GetEndKey(), resp.GetFiles())
 
 				// Update progress
@@ -177,7 +191,7 @@ func (push *pushDown) pushBackup(
 
 				case *backuppb.Error_ClusterIdError:
 					logutil.CL(ctx).Error("backup occur cluster ID error", zap.Reflect("error", v))
-					return res, errors.Annotatef(berrors.ErrKVClusterIDMismatch, "%v", errPb)
+					return errors.Annotatef(berrors.ErrKVClusterIDMismatch, "%v", errPb)
 				default:
 					if utils.MessageIsRetryableStorageError(errPb.GetMsg()) {
 						logutil.CL(ctx).Warn("backup occur storage error", zap.String("error", errPb.GetMsg()))
@@ -200,7 +214,7 @@ func (push *pushDown) pushBackup(
 					if len(errMsg) <= 0 {
 						errMsg = errPb.Msg
 					}
-					return res, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s %s",
+					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s %s",
 						store.GetId(),
 						redact.String(store.GetAddress()),
 						req.StorageBackend.String(),
@@ -210,10 +224,10 @@ func (push *pushDown) pushBackup(
 			}
 		case err := <-push.errCh:
 			if !berrors.Is(err, berrors.ErrFailedToConnect) {
-				return res, errors.Annotatef(err, "failed to backup range [%s, %s)", redact.Key(req.StartKey), redact.Key(req.EndKey))
+				return errors.Annotatef(err, "failed to backup range [%s, %s)", redact.Key(req.StartKey), redact.Key(req.EndKey))
 			}
 			logutil.CL(ctx).Warn("skipping disconnected stores", logutil.ShortError(err))
-			return res, nil
+			return nil
 		}
 	}
 }

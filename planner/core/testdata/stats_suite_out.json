@@ -219,22 +219,22 @@
         "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b",
         "Plan": [
           "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(1)->Column#7",
-          "└─HashJoin 12.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  ├─TableReader(Build) 4.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
-          "  └─TableReader(Probe) 9.00 root  data:TableFullScan",
-          "    └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false"
+          "└─MergeJoin 12.00 root  left outer join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─IndexReader(Build) 9.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9.00 cop[tikv] table:t2, index:a(a, b) keep order:true",
+          "  └─IndexReader(Probe) 4.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
         ]
       },
       {
         "SQL": "select count(1) from t1 right join t2 on t1.a = t2.a group by t2.a, t2.b",
         "Plan": [
           "HashAgg 9.00 root  group by:test.t2.a, test.t2.b, funcs:count(1)->Column#7",
-          "└─HashJoin 12.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  ├─TableReader(Build) 4.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
-          "  └─TableReader(Probe) 9.00 root  data:TableFullScan",
-          "    └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false"
+          "└─MergeJoin 12.00 root  right outer join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
+          "  └─IndexReader(Probe) 9.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 9.00 cop[tikv] table:t2, index:a(a, b) keep order:true"
         ]
       },
       {
@@ -242,10 +242,10 @@
         "Plan": [
           "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
           "└─HashJoin 4.00 root  left outer semi join, equal:[eq(test.t1.b, test.t2.b)], other cond:gt(test.t2.a, test.t1.a)",
-          "  ├─TableReader(Build) 9.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false",
-          "  └─TableReader(Probe) 4.00 root  data:TableFullScan",
-          "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+          "  ├─IndexReader(Build) 9.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9.00 cop[tikv] table:t2, index:a(a, b) keep order:false",
+          "  └─IndexReader(Probe) 4.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:false"
         ]
       },
       {
@@ -253,10 +253,10 @@
         "Plan": [
           "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
           "└─HashJoin 4.00 root  anti left outer semi join, equal:[eq(test.t1.b, test.t2.b)], other cond:gt(test.t2.a, test.t1.a)",
-          "  ├─TableReader(Build) 9.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 9.00 cop[tikv] table:t2 keep order:false",
-          "  └─TableReader(Probe) 4.00 root  data:TableFullScan",
-          "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+          "  ├─IndexReader(Build) 9.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9.00 cop[tikv] table:t2, index:a(a, b) keep order:false",
+          "  └─IndexReader(Probe) 4.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:false"
         ]
       },
       {
@@ -276,8 +276,8 @@
         "Plan": [
           "HashAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#5)->Column#6",
           "└─Window 4.00 root  sum(cast(test.t1.a, decimal(10,0) BINARY))->Column#5 over()",
-          "  └─TableReader 4.00 root  data:TableFullScan",
-          "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+          "  └─IndexReader 4.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:false"
         ]
       }
     ]

@@ -34,6 +34,11 @@ const (
 	tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
 	// the increment ratio of large CSV file size threshold by `region-split-size`
 	largeCSVLowerThresholdRation = 10
+	// TableFileSizeINF for compressed size, for lightning 10TB is a relatively big value and will strongly affect efficiency
+	// It's used to make sure compressed files can be read until EOF. Because we can't get the exact decompressed size of the compressed files.
+	TableFileSizeINF = 10 * 1024 * tableRegionSizeWarningThreshold
+	// CompressSizeFactor is used to adjust compressed data size
+	CompressSizeFactor = 5
 )
 
 // TableRegion contains information for a table region during import.
@@ -292,25 +297,41 @@ func MakeSourceFileRegion(
 		return regions, subFileSizes, err
 	}
 
+	fileSize := fi.FileMeta.FileSize
+	rowIDMax := fileSize / divisor
+	// for compressed files, suggest the compress ratio is 1% to calculate the rowIDMax.
+	// set fileSize to INF to make sure compressed files can be read until EOF. Because we can't get the exact size of the compressed files.
+	if fi.FileMeta.Compression != CompressionNone {
+		// RealSize the estimated file size. There are some cases that the first few bytes of this compressed file
+		// has smaller compress ratio than the whole compressed file. So we still need to multiply this factor to
+		// make sure the rowIDMax computation is correct.
+		rowIDMax = fi.FileMeta.RealSize * CompressSizeFactor / divisor
+		fileSize = TableFileSizeINF
+	}
 	tableRegion := &TableRegion{
 		DB:       meta.DB,
 		Table:    meta.Name,
 		FileMeta: fi.FileMeta,
 		Chunk: Chunk{
 			Offset:       0,
-			EndOffset:    fi.FileMeta.FileSize,
+			EndOffset:    fileSize,
+			RealOffset:   0,
 			PrevRowIDMax: 0,
-			RowIDMax:     fi.FileMeta.FileSize / divisor,
+			RowIDMax:     rowIDMax,
 		},
 	}
 
-	if tableRegion.Size() > tableRegionSizeWarningThreshold {
+	regionSize := tableRegion.Size()
+	if fi.FileMeta.Compression != CompressionNone {
+		regionSize = fi.FileMeta.RealSize
+	}
+	if regionSize > tableRegionSizeWarningThreshold {
 		log.FromContext(ctx).Warn(
 			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
 			zap.String("file", fi.FileMeta.Path),
-			zap.Int64("size", dataFileSize))
+			zap.Int64("size", regionSize))
 	}
-	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.FileSize)}, nil
+	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.RealSize)}, nil
 }
 
 // because parquet files can't seek efficiently, there is no benefit in split.

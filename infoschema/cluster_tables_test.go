@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -40,16 +41,20 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"google.golang.org/grpc"
 )
 
@@ -811,10 +816,6 @@ func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 }
 
 func TestMDLView(t *testing.T) {
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skipf("test requires concurrent ddl")
-	}
-
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
@@ -851,4 +852,393 @@ func TestMDLView(t *testing.T) {
 	tk.MustExec("commit")
 
 	wg.Wait()
+}
+
+func TestCreateBindingFromHistory(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(id int primary key, a int, b int, key(a))")
+	tk.MustExec("create table t2(id int primary key, a int, b int, key(a))")
+
+	var testCases = []struct {
+		sqls []string
+		hint string
+	}{
+		{
+			sqls: []string{
+				"select %s * from t1, t2 where t1.id = t2.id",
+				"select %s * from test.t1, t2 where t1.id = t2.id",
+				"select %s * from test.t1, test.t2 where t1.id = t2.id",
+				"select %s * from t1, test.t2 where t1.id = t2.id",
+			},
+			hint: "/*+ merge_join(t1, t2) */",
+		},
+		{
+			sqls: []string{
+				"select %s * from t1 where a = 1",
+				"select %s * from test.t1 where a = 1",
+			},
+			hint: "/*+ ignore_index(t, a) */",
+		},
+	}
+
+	for _, testCase := range testCases {
+		for _, bind := range testCase.sqls {
+			stmtsummary.StmtSummaryByDigestMap.Clear()
+			bindSQL := fmt.Sprintf(bind, testCase.hint)
+			tk.MustExec(bindSQL)
+			planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", bindSQL)).Rows()
+			tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+			showRes := tk.MustQuery("show bindings").Rows()
+			require.Equal(t, len(showRes), 1)
+			require.Equal(t, planDigest[0][0], showRes[0][10])
+			for _, sql := range testCase.sqls {
+				tk.MustExec(fmt.Sprintf(sql, ""))
+				tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			}
+		}
+		showRes := tk.MustQuery("show bindings").Rows()
+		require.Equal(t, len(showRes), 1)
+		tk.MustExec(fmt.Sprintf("drop binding for sql digest '%s'", showRes[0][9]))
+	}
+
+	// exception cases
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", "1"), "can't find any plans for '1'")
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", ""), "plan digest is empty")
+	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2) */ * from t1, t2 where t1.id = t2.id")
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Equal(t, showRes[0][10], "") // plan digest should be nil by create for
+}
+
+func TestCreateBindingForPrepareFromHistory(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, key(a))")
+
+	tk.MustExec("prepare stmt from 'select /*+ ignore_index(t,a) */ * from t where a = ?'")
+	tk.MustExec("set @a = 1")
+	tk.MustExec("execute stmt using @a")
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", "select /*+ ignore_index(t,a) */ * from t where a = ? [arguments: 1]")).Rows()
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Equal(t, len(showRes), 0)
+	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	showRes = tk.MustQuery("show bindings").Rows()
+	require.Equal(t, len(showRes), 1)
+	require.Equal(t, planDigest[0][0], showRes[0][10])
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+}
+
+func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+	tk.MustExec("create table t3(id int)")
+
+	sql := "select * from t1 where t1.id in (select id from t2)"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with sub query")
+
+	sql = "select * from t1, t2, t3 where t1.id = t2.id and t2.id = t3.id"
+	tk.MustExec(sql)
+	planDigest = tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with more than two table join")
+}
+
+// withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
+	return mockstore.WithMultipleOptions(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+}
+
+func TestBindingFromHistoryWithTiFlashBindable(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.store = testkit.CreateMockStore(t, withMockTiFlash(2))
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("alter table test.t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+
+	sql := "select * from t"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]), "can't create binding for query with tiflash engine")
+}
+
+func TestSetBindingStatusBySQLDigest(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, a int, key(a))")
+	sql := "select /*+ ignore_index(t, a) */ * from t where t.a = 1"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.cluster_statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustExec(fmt.Sprintf("create global binding from history using plan digest '%s'", planDigest[0][0]))
+	sql = "select * from t where t.a = 1"
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	sqlDigest := tk.MustQuery("show global bindings").Rows()
+	tk.MustExec(fmt.Sprintf("set binding disabled for sql digest '%s'", sqlDigest[0][9]))
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec(fmt.Sprintf("set binding enabled for sql digest '%s'", sqlDigest[0][9]))
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	tk.MustGetErrMsg("set binding enabled for sql digest '2'", "can't find any binding for '2'")
+}
+
+func TestCreateBindingWhenCloseStmtSummaryTable(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, key(a))")
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("select /*+ ignore_index(t, a) */ * from t where a = 1")
+
+	tk.MustGetErrMsg("create binding from history using plan digest '4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb'",
+		"can't find any plans for '4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb'")
+}
+
+func TestCreateBindingForNotSupportedStmt(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, key(a))")
+
+	sql := "admin show ddl jobs"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]), fmt.Sprintf("can't find any plans for '%s'", planDigest[0][0]))
+
+	sql = "show tables"
+	tk.MustExec(sql)
+	planDigest = tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]), fmt.Sprintf("can't find any plans for '%s'", planDigest[0][0]))
+
+	sql = "explain select /*+ ignore_index(t, a) */ * from t where a = 1"
+	tk.MustExec(sql)
+	planDigest = tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustGetErrMsg(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]), fmt.Sprintf("can't find any plans for '%s'", planDigest[0][0]))
+}
+
+func TestCreateBindingRepeatedly(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, key(a))")
+
+	sql := "select /*+ ignore_index(t, a) */ * from t where a = 1"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	binding := tk.MustQuery("show bindings").Rows()
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	createTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][4].(string), loc)
+	updateTime, _ := time.ParseInLocation("2006-01-02 15:04:05", binding[0][5].(string), loc)
+
+	// binding from history cover binding from history
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	binding1 := tk.MustQuery("show bindings").Rows()
+	createTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][4].(string), loc)
+	updateTime1, _ := time.ParseInLocation("2006-01-02 15:04:05", binding1[0][5].(string), loc)
+	require.Greater(t, createTime1.UnixNano(), createTime.UnixNano())
+	require.Greater(t, updateTime1.UnixNano(), updateTime.UnixNano())
+	for i := range binding1[0] {
+		if i != 4 && i != 5 {
+			require.Equal(t, binding[0][i], binding1[0][i])
+		}
+	}
+	// binding from sql cover binding from history
+	tk.MustExec("create binding for select * from t where a = 1 using select /*+ ignore_index(t, a) */ * from t where a = 1")
+	binding2 := tk.MustQuery("show bindings").Rows()
+	createTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][4].(string), loc)
+	updateTime2, _ := time.ParseInLocation("2006-01-02 15:04:05", binding2[0][5].(string), loc)
+	require.Greater(t, createTime2.UnixNano(), createTime1.UnixNano())
+	require.Greater(t, updateTime2.UnixNano(), updateTime1.UnixNano())
+	require.Equal(t, binding2[0][8], "manual")
+	require.Equal(t, binding2[0][10], "")
+	for i := range binding2[0] {
+		if i != 1 && i != 4 && i != 5 && i != 8 && i != 10 {
+			// bind_sql, create_time, update_time, source, plan_digest may be different
+			require.Equal(t, binding1[0][i], binding2[0][i])
+		}
+	}
+	// binding from history cover binding from sql
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	binding3 := tk.MustQuery("show bindings").Rows()
+	createTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][4].(string), loc)
+	updateTime3, _ := time.ParseInLocation("2006-01-02 15:04:05", binding3[0][5].(string), loc)
+	require.Greater(t, createTime3.UnixNano(), createTime2.UnixNano())
+	require.Greater(t, updateTime3.UnixNano(), updateTime2.UnixNano())
+	require.Equal(t, binding3[0][8], "history")
+	require.Equal(t, binding3[0][10], planDigest[0][0])
+	for i := range binding3[0] {
+		if i != 1 && i != 4 && i != 5 && i != 8 && i != 10 {
+			// bind_sql, create_time, update_time, source, plan_digest may be different
+			require.Equal(t, binding2[0][i], binding3[0][i])
+		}
+	}
+}
+
+func TestCreateBindingWithUsingKeyword(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(id int primary key, a int, key(a))")
+	tk.MustExec("create table t1(id int primary key, a int, key(a))")
+	tk.MustExec("create table t2(id int primary key, a int, key(a))")
+
+	// `JOIN` keyword and not specifying the associated columns with the `USING` keyword.
+	tk.MustGetErrMsg("CREATE GLOBAL BINDING for SELECT * FROM t t1 JOIN t t2 USING SELECT * FROM t t1 JOIN t t2;",
+		"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 67 near \"SELECT * FROM t t1 JOIN t t2;\" ")
+	sql := "SELECT * FROM t t1 JOIN t t2;"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	// `DELETE` statements that contain the `USING` keyword.
+	tk.MustGetErrMsg("`CREATE GLOBAL BINDING for DELETE FROM t1 USING t1 JOIN t2 ON t1.a = t2.a USING DELETE FROM t1 USING t1 JOIN t2 ON t1.a = t2.a;",
+		"[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 127 near \"`CREATE GLOBAL BINDING for DELETE FROM t1 USING t1 JOIN t2 ON t1.a = t2.a USING DELETE FROM t1 USING t1 JOIN t2 ON t1.a = t2.a;\" ")
+	sql = "DELETE FROM t1 USING t1 JOIN t2 ON t1.a = t2.a;"
+	tk.MustExec(sql)
+	planDigest = tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+}
+
+func TestNewCreatedBindingCanWorkWithPlanCache(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t(id int primary key, a int, key(a))")
+
+	tk.MustExec("prepare stmt from 'select * from t where a = ?'")
+	tk.MustExec("set @a = 0")
+	tk.MustExec("execute stmt using @a")
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	sql := "select /*+ ignore_index(t, a) */ * from t where a = 1"
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }

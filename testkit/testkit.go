@@ -19,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,6 +56,7 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
+	runtime.GOMAXPROCS(mathutil.Min(16, runtime.GOMAXPROCS(0)))
 	tk := &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -115,7 +118,6 @@ func (tk *TestKit) Session() session.Session {
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	defer func() {
-		tk.Session().GetSessionVars().ClearAlloc()
 		if tk.alloc != nil {
 			tk.alloc.Reset()
 		}
@@ -138,7 +140,6 @@ func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	defer func() {
-		tk.Session().GetSessionVars().ClearAlloc()
 		if tk.alloc != nil {
 			tk.alloc.Reset()
 		}
@@ -233,6 +234,29 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
+func (tk *TestKit) HasTiFlashPlan(sql string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][2], "tiflash") {
+			return true
+		}
+	}
+	return false
+}
+
+// HasPlanForLastExecution checks if the execution plan of the last execution contains specific plan.
+func (tk *TestKit) HasPlanForLastExecution(plan string) bool {
+	connID := tk.session.GetSessionVars().ConnectionID
+	rs := tk.MustQuery(fmt.Sprintf("explain for connection %d", connID))
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
+}
+
 // HasKeywordInOperatorInfo checks if the result execution plan contains specific keyword in the operator info.
 func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
@@ -271,7 +295,8 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 }
 
 // ExecWithContext executes a sql statement using the prepared stmt API
-func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
+	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
 	if len(args) == 0 {
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
@@ -315,7 +340,7 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 	}
 	params := expression.Args2Expressions4Test(args...)
 	tk.Session().GetSessionVars().SetAlloc(tk.alloc)
-	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
+	rs, err = tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return rs, errors.Trace(err)
 	}

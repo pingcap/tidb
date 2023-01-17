@@ -137,6 +137,7 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=1")
 	tk.MustExec("create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(`a`))")
 	tk.MustExec("create table MemTracker4DeleteExec2 (id int, a int, b int, index idx_a(`a`))")
 
@@ -219,6 +220,11 @@ func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 			panic("end not found")
 		}
 		h.tracker = str[begin+len("8001]") : end]
+		return nil
+	}
+	// They are just common background task and not related to the oom.
+	if entry.Message == "SetTiFlashGroupConfig" ||
+		entry.Message == "record table item load status failed due to not finding item" {
 		return nil
 	}
 

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -79,6 +80,8 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
@@ -89,6 +92,7 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 		err := store.Close()
 		require.NoError(t, err)
 		view.Stop()
+		resourcemanager.GlobalResourceManager.Reset()
 	})
 	return dom
 }

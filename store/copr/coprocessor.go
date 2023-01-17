@@ -15,7 +15,6 @@
 package copr
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -27,10 +26,12 @@ import (
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -53,7 +54,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
@@ -121,10 +121,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
-			isSorted := slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
-				return bytes.Compare(i.StartKey, j.StartKey) < 0
-			})
-			if !isSorted {
+			if !req.KeyRanges.IsFullySorted() {
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
 		}
@@ -136,10 +133,43 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	failpoint.Inject("disableFixedRowCountHint", func(_ failpoint.Value) {
 		req.FixedRowCountHint = nil
 	})
+	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
+		req.StoreBatchSize = 0
+	}
+	// TODO: support keep-order batch
+	if req.ReplicaRead != kv.ReplicaReadLeader || req.KeepOrder {
+		// disable batch copr for follower read
+		req.StoreBatchSize = 0
+	}
+	// disable batch copr when paging is enabled.
+	if req.Paging.Enable {
+		req.StoreBatchSize = 0
+	}
 
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
+	var (
+		tasks []*copTask
+		err   error
+	)
+	buildTaskFunc := func(ranges []kv.KeyRange) error {
+		keyRanges := NewKeyRanges(ranges)
+		tasksFromRanges, err := buildCopTasks(bo, c.store.GetRegionCache(), keyRanges, req, eventCb)
+		if err != nil {
+			return err
+		}
+		if len(tasks) == 0 {
+			tasks = tasksFromRanges
+			return nil
+		}
+		tasks = append(tasks, tasksFromRanges...)
+		return nil
+	}
+	// Here we build the task by partition, not directly by region.
+	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
+	// Keep it split by partition would be more safe.
+	err = req.KeyRanges.ForEachPartitionWithErr(buildTaskFunc)
+	// only batch store requests in first build.
+	req.StoreBatchSize = 0
 	reqType := "null"
 	if req.ClosestReplicaReadAdjuster != nil {
 		reqType = "miss"
@@ -184,7 +214,8 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// higher concurrency, the data is just cached and not consumed for a while, this increase the memory usage.
 		// Set concurrency to 2 can reduce the memory usage and I've tested that it does not necessarily
 		// decrease the performance.
-		if it.concurrency > 2 {
+		// For ReqTypeAnalyze, we keep its concurrency to avoid slow analyze(see https://github.com/pingcap/tidb/issues/40162 for details).
+		if it.concurrency > 2 && it.req.Tp != kv.ReqTypeAnalyze {
 			oldConcurrency := it.concurrency
 			it.concurrency = 2
 
@@ -210,6 +241,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
+	taskID     uint64
 	region     tikv.RegionVerID
 	bucketsVer uint64
 	ranges     *KeyRanges
@@ -227,11 +259,36 @@ type copTask struct {
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 	requestSource  util.RequestSource
 	RowCountHint   int // used for extra concurrency of small tasks, -1 for unknown row count
+	batchTaskList  map[uint64]*batchedCopTask
+}
+
+type batchedCopTask struct {
+	task    *copTask
+	region  coprocessor.RegionInfo
+	storeID uint64
+	peer    *metapb.Peer
 }
 
 func (r *copTask) String() string {
 	return fmt.Sprintf("region(%d %d %d) ranges(%d) store(%s)",
 		r.region.GetID(), r.region.GetConfVer(), r.region.GetVer(), r.ranges.Len(), r.storeAddr)
+}
+
+func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
+	if len(r.batchTaskList) == 0 {
+		return nil
+	}
+	pbTasks := make([]*coprocessor.StoreBatchTask, 0, len(r.batchTaskList))
+	for _, task := range r.batchTaskList {
+		pbTasks = append(pbTasks, &coprocessor.StoreBatchTask{
+			RegionId:    task.region.GetRegionId(),
+			RegionEpoch: task.region.GetRegionEpoch(),
+			Peer:        task.peer,
+			Ranges:      task.region.GetRanges(),
+			TaskId:      task.task.taskID,
+		})
+	}
+	return pbTasks
 }
 
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
@@ -260,7 +317,12 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		chanSize = 18
 	}
 
-	tasks := make([]*copTask, 0, len(locs))
+	var builder taskBuilder
+	if req.StoreBatchSize > 0 {
+		builder = newBatchTaskBuilder(bo, req, cache)
+	} else {
+		builder = newLegacyTaskBuilder(len(locs))
+	}
 	origRangeIdx := 0
 	for _, loc := range locs {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
@@ -296,7 +358,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 					hint += req.FixedRowCountHint[nextOrigRangeIdx]
 				}
 			}
-			tasks = append(tasks, &copTask{
+			task := &copTask{
 				region:        loc.Location.Region,
 				bucketsVer:    loc.getBucketVersion(),
 				ranges:        loc.Ranges.Slice(i, nextI),
@@ -308,7 +370,10 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				pagingSize:    pagingSize,
 				requestSource: req.RequestSource,
 				RowCountHint:  hint,
-			})
+			}
+			if err = builder.handle(task); err != nil {
+				return nil, err
+			}
 			i = nextI
 			if req.Paging.Enable {
 				pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
@@ -317,16 +382,133 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	}
 
 	if req.Desc {
-		reverseTasks(tasks)
+		builder.reverse()
 	}
-	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
+	tasks := builder.build()
+	elapsed := time.Since(start)
+	if elapsed > time.Millisecond*500 {
 		logutil.BgLogger().Warn("buildCopTasks takes too much time",
 			zap.Duration("elapsed", elapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
 	}
-	metrics.TxnRegionsNumHistogramWithCoprocessor.Observe(float64(len(tasks)))
+	if elapsed > time.Millisecond {
+		ctx := bo.GetCtx()
+		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+			span1 := span.Tracer().StartSpan("copr.buildCopTasks", opentracing.ChildOf(span.Context()), opentracing.StartTime(start))
+			defer span1.Finish()
+		}
+	}
+	metrics.TxnRegionsNumHistogramWithCoprocessor.Observe(float64(builder.regionNum()))
 	return tasks, nil
+}
+
+type taskBuilder interface {
+	handle(*copTask) error
+	reverse()
+	build() []*copTask
+	regionNum() int
+}
+
+type legacyTaskBuilder struct {
+	tasks []*copTask
+}
+
+func newLegacyTaskBuilder(hint int) *legacyTaskBuilder {
+	return &legacyTaskBuilder{
+		tasks: make([]*copTask, 0, hint),
+	}
+}
+
+func (b *legacyTaskBuilder) handle(task *copTask) error {
+	b.tasks = append(b.tasks, task)
+	return nil
+}
+
+func (b *legacyTaskBuilder) regionNum() int {
+	return len(b.tasks)
+}
+
+func (b *legacyTaskBuilder) reverse() {
+	reverseTasks(b.tasks)
+}
+
+func (b *legacyTaskBuilder) build() []*copTask {
+	return b.tasks
+}
+
+type batchStoreTaskBuilder struct {
+	bo        *Backoffer
+	req       *kv.Request
+	cache     *RegionCache
+	taskID    uint64
+	limit     int
+	store2Idx map[uint64]int
+	tasks     []*copTask
+}
+
+func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache) *batchStoreTaskBuilder {
+	return &batchStoreTaskBuilder{
+		bo:        bo,
+		req:       req,
+		cache:     cache,
+		taskID:    0,
+		limit:     req.StoreBatchSize,
+		store2Idx: make(map[uint64]int, 16),
+		tasks:     make([]*copTask, 0, 16),
+	}
+}
+
+func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
+	b.taskID++
+	task.taskID = b.taskID
+	handled := false
+	defer func() {
+		if !handled && err == nil {
+			// fallback to non-batch way. It's mainly caused by region miss.
+			b.tasks = append(b.tasks, task)
+		}
+	}()
+	if b.limit <= 0 {
+		return nil
+	}
+	batchedTask, err := b.cache.BuildBatchTask(b.bo, task, b.req.ReplicaRead)
+	if err != nil {
+		return err
+	}
+	if batchedTask == nil {
+		return nil
+	}
+	if idx, ok := b.store2Idx[batchedTask.storeID]; !ok || len(b.tasks[idx].batchTaskList) >= b.limit {
+		b.tasks = append(b.tasks, batchedTask.task)
+		b.store2Idx[batchedTask.storeID] = len(b.tasks) - 1
+	} else {
+		if b.tasks[idx].batchTaskList == nil {
+			b.tasks[idx].batchTaskList = make(map[uint64]*batchedCopTask, b.limit)
+			// disable paging for batched task.
+			b.tasks[idx].paging = false
+			b.tasks[idx].pagingSize = 0
+		}
+		if task.RowCountHint > 0 {
+			b.tasks[idx].RowCountHint += task.RowCountHint
+		}
+		b.tasks[idx].batchTaskList[task.taskID] = batchedTask
+	}
+	handled = true
+	return nil
+}
+
+func (b *batchStoreTaskBuilder) regionNum() int {
+	// we allocate b.taskID for each region task, so the final b.taskID is equal to the related region number.
+	return int(b.taskID)
+}
+
+func (b *batchStoreTaskBuilder) reverse() {
+	reverseTasks(b.tasks)
+}
+
+func (b *batchStoreTaskBuilder) build() []*copTask {
+	return b.tasks
 }
 
 func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error) {
@@ -675,6 +857,11 @@ func (it *copIterator) GetSendRate() *util.RateLimit {
 	return it.sendRate
 }
 
+// GetTasks returns the built tasks.
+func (it *copIterator) GetTasks() []*copTask {
+	return it.tasks
+}
+
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask, sendTo chan<- *copTask) (exit bool) {
 	select {
 	case sendTo <- t:
@@ -858,6 +1045,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		Ranges:     task.ranges.ToPBRanges(),
 		SchemaVer:  worker.req.SchemaVar,
 		PagingSize: task.pagingSize,
+		Tasks:      task.ToPBBatchTasks(),
 	}
 
 	var cacheKey []byte
@@ -886,13 +1074,14 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
-		Priority:       priorityToPB(worker.req.Priority),
-		NotFillCache:   worker.req.NotFillCache,
-		RecordTimeStat: true,
-		RecordScanStat: true,
-		TaskId:         worker.req.TaskID,
-		RequestSource:  task.requestSource.GetRequestSource(),
+		IsolationLevel:    isolationLevelToPB(worker.req.IsolationLevel),
+		Priority:          priorityToPB(worker.req.Priority),
+		NotFillCache:      worker.req.NotFillCache,
+		RecordTimeStat:    true,
+		RecordScanStat:    true,
+		TaskId:            worker.req.TaskID,
+		RequestSource:     task.requestSource.GetRequestSource(),
+		ResourceGroupName: worker.req.ResourceGroupName,
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
@@ -1043,37 +1232,17 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		return buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+		remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+		if err != nil {
+			return remains, err
+		}
+		return worker.handleBatchRemainsOnErr(bo, remains, resp.pbResp.GetBatchResponses(), task, ch)
 	}
-	var resolveLockDetail *util.ResolveLockDetail
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		resolveLockDetail = worker.getLockResolverDetails()
-		// Be care that we didn't redact the SQL statement because the log is DEBUG level.
-		if task.eventCb != nil {
-			task.eventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
-				LockInfo: lockErr,
-			}))
-		} else {
-			logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
-				zap.Stringer("lock", lockErr))
+		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
+			return nil, err
 		}
-		resolveLocksOpts := txnlock.ResolveLocksOptions{
-			CallerStartTS: worker.req.StartTs,
-			Locks:         []*txnlock.Lock{txnlock.NewLock(lockErr)},
-			Detail:        resolveLockDetail,
-		}
-		resolveLocksRes, err1 := worker.kvclient.ResolveLocksWithOpts(bo.TiKVBackoffer(), resolveLocksOpts)
-		err1 = derr.ToTiDBErr(err1)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		msBeforeExpired := resolveLocksRes.TTL
-		if msBeforeExpired > 0 {
-			if err := bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.New(lockErr.String())); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		return []*copTask{task}, nil
+		return worker.handleBatchRemainsOnErr(bo, []*copTask{task}, resp.pbResp.GetBatchResponses(), task, ch)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1102,7 +1271,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
 		resp.startKey = task.ranges.At(0).StartKey
 	}
-	worker.handleCollectExecutionInfo(bo, rpcCtx, resp, resolveLockDetail)
+	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
 	resp.respTime = costTime
 	if resp.pbResp.IsCacheHit {
 		coprCacheCounterHit.Add(1)
@@ -1160,8 +1329,149 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			}
 		}
 	}
+	batchResps := resp.pbResp.BatchResponses
 	worker.sendToRespCh(resp, ch, true)
-	return nil, nil
+	return worker.handleBatchCopResponse(bo, batchResps, task.batchTaskList, ch)
+}
+
+func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, remains []*copTask, batchResp []*coprocessor.StoreBatchTaskResponse, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
+	if len(task.batchTaskList) == 0 {
+		return remains, nil
+	}
+	batchedTasks := task.batchTaskList
+	task.batchTaskList = nil
+	batchedRemains, err := worker.handleBatchCopResponse(bo, batchResp, batchedTasks, ch)
+	if err != nil {
+		return nil, err
+	}
+	return append(remains, batchedRemains...), nil
+}
+
+// handle the batched cop response.
+// tasks will be changed, so the input tasks should not be used after calling this function.
+func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResps []*coprocessor.StoreBatchTaskResponse, tasks map[uint64]*batchedCopTask, ch chan<- *copResponse) ([]*copTask, error) {
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	var remainTasks []*copTask
+	appendRemainTasks := func(tasks ...*copTask) {
+		if remainTasks == nil {
+			// allocate size fo remain length
+			remainTasks = make([]*copTask, 0, len(tasks))
+		}
+		remainTasks = append(remainTasks, tasks...)
+	}
+	for _, batchResp := range batchResps {
+		taskID := batchResp.GetTaskId()
+		batchedTask, ok := tasks[taskID]
+		if !ok {
+			return nil, errors.Errorf("task id %d not found", batchResp.GetTaskId())
+		}
+		delete(tasks, taskID)
+		resp := &copResponse{
+			pbResp: &coprocessor.Response{
+				Data: batchResp.Data,
+			},
+		}
+		task := batchedTask.task
+		if regionErr := batchResp.GetRegionError(); regionErr != nil {
+			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
+				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
+				return nil, errors.Trace(err)
+			}
+			remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+			if err != nil {
+				return nil, err
+			}
+			appendRemainTasks(remains...)
+			continue
+		}
+		//TODO: handle locks in batch
+		if lockErr := batchResp.GetLocked(); lockErr != nil {
+			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
+				return nil, err
+			}
+			appendRemainTasks(task)
+			continue
+		}
+		if otherErr := batchResp.GetOtherError(); otherErr != "" {
+			err := errors.Errorf("other error: %s", otherErr)
+
+			firstRangeStartKey := task.ranges.At(0).StartKey
+			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
+
+			logutil.Logger(bo.GetCtx()).Warn("other error",
+				zap.Uint64("txnStartTS", worker.req.StartTs),
+				zap.Uint64("regionID", task.region.GetID()),
+				zap.Uint64("bucketsVer", task.bucketsVer),
+				// TODO: add bucket version in log
+				//zap.Uint64("latestBucketsVer", batchResp.GetLatestBucketsVersion()),
+				zap.Int("rangeNums", task.ranges.Len()),
+				zap.ByteString("firstRangeStartKey", firstRangeStartKey),
+				zap.ByteString("lastRangeEndKey", lastRangeEndKey),
+				zap.String("storeAddr", task.storeAddr),
+				zap.Error(err))
+			if strings.Contains(err.Error(), "write conflict") {
+				return nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
+			}
+			return nil, errors.Trace(err)
+		}
+		// TODO: check OOM
+		worker.sendToRespCh(resp, ch, false)
+	}
+	for _, t := range tasks {
+		task := t.task
+		// when the error is generated by client, response is empty, skip warning for this case.
+		if len(batchResps) != 0 {
+			firstRangeStartKey := task.ranges.At(0).StartKey
+			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
+			logutil.Logger(bo.GetCtx()).Error("response of batched task missing",
+				zap.Uint64("id", task.taskID),
+				zap.Uint64("txnStartTS", worker.req.StartTs),
+				zap.Uint64("regionID", task.region.GetID()),
+				zap.Uint64("bucketsVer", task.bucketsVer),
+				zap.Int("rangeNums", task.ranges.Len()),
+				zap.ByteString("firstRangeStartKey", firstRangeStartKey),
+				zap.ByteString("lastRangeEndKey", lastRangeEndKey),
+				zap.String("storeAddr", task.storeAddr))
+		}
+		appendRemainTasks(t.task)
+	}
+	return remainTasks, nil
+}
+
+func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) error {
+	if lockErr == nil {
+		return nil
+	}
+	resolveLockDetail := worker.getLockResolverDetails()
+	// Be care that we didn't redact the SQL statement because the log is DEBUG level.
+	if task.eventCb != nil {
+		task.eventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
+			LockInfo: lockErr,
+		}))
+	} else {
+		logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
+			zap.Stringer("lock", lockErr))
+	}
+	resolveLocksOpts := txnlock.ResolveLocksOptions{
+		CallerStartTS: worker.req.StartTs,
+		Locks:         []*txnlock.Lock{txnlock.NewLock(lockErr)},
+		Detail:        resolveLockDetail,
+	}
+	resolveLocksRes, err1 := worker.kvclient.ResolveLocksWithOpts(bo.TiKVBackoffer(), resolveLocksOpts)
+	err1 = derr.ToTiDBErr(err1)
+	if err1 != nil {
+		return errors.Trace(err1)
+	}
+	msBeforeExpired := resolveLocksRes.TTL
+	if msBeforeExpired > 0 {
+		if err := bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.New(lockErr.String())); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetail {
@@ -1171,7 +1481,7 @@ func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetai
 	return &util.ResolveLockDetail{}
 }
 
-func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, resolveLockDetail *util.ResolveLockDetail) {
+func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
 	defer func() {
 		worker.kvclient.Stats = nil
 	}()
@@ -1199,9 +1509,6 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	sd := &util.ScanDetail{}
-	if resolveLockDetail != nil {
-		sd.ResolveLock = resolveLockDetail
-	}
 	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.

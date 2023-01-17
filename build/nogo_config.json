@@ -229,6 +229,7 @@
   },
   "gci": {
     "exclude_files": {
+      "external/": "no need to vet third party code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
@@ -364,6 +365,8 @@
       "ddl/backfilling.go": "ddl/backfilling.go",
       "ddl/column.go": "ddl/column.go",
       "ddl/index.go": "ddl/index.go",
+      "ddl/ttl.go": "ddl/ttl.go",
+      "ddl/ttl_test.go": "ddl/ttl_test.go",
       "ddl/ingest/": "ddl/ingest/",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/conn.go": "server/conn.go",
@@ -401,7 +404,9 @@
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code",
-      "extension/": "extension code"
+      "extension/": "extension code",
+      "resourcemanager/": "resourcemanager code",
+      "keyspace": "keyspace code"
     }
   },
   "shift": {
@@ -744,23 +749,27 @@
     "exclude_files": {
       "/build/": "no need to linter code",
       "/external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code"
     },
     "only_files": {
       "util/gctuner": "util/gctuner",
+      "util/cgroup": "util/cgroup code",
+      "util/watcher": "util/watcher",
+      "br/pkg/lightning/restore/": "br/pkg/lightning/restore/",
       "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/restore/opts": "br/pkg/lightning/restore/opts",
       "executor/aggregate.go": "executor/aggregate.go",
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "enable to ddl",
-      "util/cgroup": "util/cgroup code",
       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
       "planner/core/plan.go": "planner/core/plan.go",
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
-      "extension/": "extension code"
+      "extension/": "extension code",
+      "resourcemanager/": "resourcemanager code",
+      "keyspace/": "keyspace code"
     }
   },
   "SA2000": {

@@ -166,9 +166,18 @@ var (
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "lazy_pessimistic_unique_check_set_count",
-			Help:      "Counter of setting tidb_constraint_check_in_place to false",
+			Help:      "Counter of setting tidb_constraint_check_in_place to false, note that it doesn't count the default value set by tidb config",
 		},
 	)
+
+	PessimisticDMLDurationByAttempt = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "transaction_pessimistic_dml_duration_by_attempt",
+			Help:      "Bucketed histogram of duration of pessimistic DMLs, distinguished by first attempt and retries",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
+		}, []string{LblType, LblPhase})
 )
 
 // Label constants.
