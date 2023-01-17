@@ -618,7 +618,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 
 // buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
 func (ds *DataSource) buildPartialPathUp4MVIndex(partialPaths []*util.AccessPath, isIntersection bool, remainingFilters []expression.Expression) *util.AccessPath {
-	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths, AccessMVIndex: true}
+	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths, IndexMergeAccessMVIndex: true}
 	indexMergePath.IndexMergeIsIntersection = isIntersection
 	indexMergePath.TableFilters = remainingFilters
 
