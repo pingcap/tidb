@@ -4755,6 +4755,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	case *ast.DropPlacementPolicyStmt, *ast.CreatePlacementPolicyStmt, *ast.AlterPlacementPolicyStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or PLACEMENT_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "PLACEMENT_ADMIN", false, err)
+	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESOURCE_GROUP_ADMIN", false, err)
 	}
 	p := &DDL{Statement: node}
 	return p, nil
