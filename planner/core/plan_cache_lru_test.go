@@ -47,11 +47,11 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
-	lruA := NewLRUPlanCache(0, 0, 0, PickPlanFromBucket, MockContext())
+	lruA := NewLRUPlanCache(0, 0, 0, MockContext())
 	require.Equal(t, lruA.capacity, uint(100))
 
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
-	lru := NewLRUPlanCache(3, 0, 0, PickPlanFromBucket, MockContext())
+	lru := NewLRUPlanCache(3, 0, 0, MockContext())
 	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		maxMemDroppedKv[key] = value
 	}
@@ -125,7 +125,7 @@ func TestLRUPCPut(t *testing.T) {
 }
 
 func TestLRUPCGet(t *testing.T) {
-	lru := NewLRUPlanCache(3, 0, 0, PickPlanFromBucket, MockContext())
+	lru := NewLRUPlanCache(3, 0, 0, MockContext())
 
 	keys := make([]*planCacheKey, 5)
 	vals := make([]*PlanCacheValue, 5)
@@ -174,7 +174,7 @@ func TestLRUPCGet(t *testing.T) {
 }
 
 func TestLRUPCDelete(t *testing.T) {
-	lru := NewLRUPlanCache(3, 0, 0, PickPlanFromBucket, MockContext())
+	lru := NewLRUPlanCache(3, 0, 0, MockContext())
 
 	keys := make([]*planCacheKey, 3)
 	vals := make([]*PlanCacheValue, 3)
@@ -209,7 +209,7 @@ func TestLRUPCDelete(t *testing.T) {
 }
 
 func TestLRUPCDeleteAll(t *testing.T) {
-	lru := NewLRUPlanCache(3, 0, 0, PickPlanFromBucket, MockContext())
+	lru := NewLRUPlanCache(3, 0, 0, MockContext())
 
 	keys := make([]*planCacheKey, 3)
 	vals := make([]*PlanCacheValue, 3)
@@ -236,7 +236,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 
 func TestLRUPCSetCapacity(t *testing.T) {
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
-	lru := NewLRUPlanCache(5, 0, 0, PickPlanFromBucket, MockContext())
+	lru := NewLRUPlanCache(5, 0, 0, MockContext())
 	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		maxMemDroppedKv[key] = value
 	}
@@ -298,7 +298,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 }
 
 func TestIssue37914(t *testing.T) {
-	lru := NewLRUPlanCache(3, 0.1, 1, PickPlanFromBucket, MockContext())
+	lru := NewLRUPlanCache(3, 0.1, 1, MockContext())
 
 	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
 	key := &planCacheKey{database: strconv.FormatInt(int64(1), 10)}
@@ -310,7 +310,7 @@ func TestIssue37914(t *testing.T) {
 }
 
 func TestIssue38244(t *testing.T) {
-	lru := NewLRUPlanCache(3, 0, 0, PickPlanFromBucket, MockContext())
+	lru := NewLRUPlanCache(3, 0, 0, MockContext())
 	require.Equal(t, uint(3), lru.capacity)
 
 	keys := make([]*planCacheKey, 5)
@@ -337,7 +337,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
 	ctx := MockContext()
 	ctx.GetSessionVars().EnablePreparedPlanCacheMemoryMonitor = true
-	lru := NewLRUPlanCache(3, 0, 0, PickPlanFromBucket, ctx)
+	lru := NewLRUPlanCache(3, 0, 0, ctx)
 	evict := make(map[kvcache.Key]kvcache.Value)
 	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		evict[key] = value

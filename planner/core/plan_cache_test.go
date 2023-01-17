@@ -78,7 +78,7 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
 	sessionVar := tk.Session().GetSessionVars()
 
-	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, plannercore.PickPlanFromBucket, tk.Session())
+	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, tk.Session())
 	require.NotNil(t, lru)
 }
 
