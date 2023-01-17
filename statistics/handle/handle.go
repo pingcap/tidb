@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
@@ -70,7 +71,7 @@ type Handle struct {
 	initStatsCtx sessionctx.Context
 
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
@@ -361,8 +362,15 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	return "", err
 }
 
-// IsTableLocked check whether table is locked in handle
+// IsTableLocked check whether table is locked in handle with Handle.Mutex
 func (h *Handle) IsTableLocked(tableID int64) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.isTableLocked(tableID)
+}
+
+// IsTableLocked check whether table is locked in handle without Handle.Mutex
+func (h *Handle) isTableLocked(tableID int64) bool {
 	return isTableLocked(h.tableLocked, tableID)
 }
 
