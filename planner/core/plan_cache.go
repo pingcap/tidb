@@ -341,7 +341,10 @@ func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int) {
 		return
 	}
 
-	// TODO: plans accessing MVIndex are un-cacheable
+	if accessMVIndexWithIndexMerge(pp) {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"))
+		return
+	}
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
@@ -723,6 +726,41 @@ func containTableDual(p PhysicalPlan) bool {
 		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
 	return childContainTableDual
+}
+
+func accessMVIndexWithIndexMerge(p PhysicalPlan) bool {
+	if idxMerge, ok := p.(*PhysicalIndexMergeReader); ok {
+		if idxMerge.AccessMVIndex {
+			return true
+		}
+	}
+
+	for _, c := range p.Children() {
+		if accessMVIndexWithIndexMerge(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// useTiFlash used to check whether the plan use the TiFlash engine.
+func useTiFlash(p PhysicalPlan) bool {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		switch x.StoreType {
+		case kv.TiFlash:
+			return true
+		default:
+			return false
+		}
+	default:
+		if len(p.Children()) > 0 {
+			for _, plan := range p.Children() {
+				return useTiFlash(plan)
+			}
+		}
+	}
+	return false
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
