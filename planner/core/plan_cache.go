@@ -319,7 +319,7 @@ func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int) {
 	case PhysicalPlan:
 		pp = x
 	default:
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: not a PhysicalPlan"))
+		stmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: unexpected un-cacheable plan %v", p.ExplainID().String()))
 		return
 	}
 	if pp == nil { // simple DML statements
