@@ -2151,23 +2151,19 @@
           "└─HashJoin 155937656.25 root  CARTESIAN inner join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
+          "  └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
           "    ├─TableReader(Build) 9990.00 root  data:Selection",
-          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─Projection(Probe) 12475.01 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
-          "      └─HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
-          "        ├─TableReader(Build) 9980.01 root  data:Selection",
-          "        │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "        │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "        └─TableReader(Probe) 9990.00 root  data:Selection",
-          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "            └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t2) hash_join(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
@@ -2220,25 +2216,21 @@
           "└─HashJoin 155937656.25 root  CARTESIAN inner join",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─MergeJoin(Probe) 15593.77 root  inner join, left key:test.t1.b, right key:test.t2.b",
-          "    ├─Sort(Build) 9990.00 root  test.t2.b",
-          "    │ └─TableReader 9990.00 root  data:Selection",
-          "    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "    │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─Sort(Probe) 12475.01 root  test.t1.b",
-          "      └─Projection 12475.01 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
-          "        └─HashJoin 12475.01 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
-          "          ├─TableReader(Build) 9980.01 root  data:Selection",
-          "          │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "          │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "          └─TableReader(Probe) 9990.00 root  data:Selection",
-          "            └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "              └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "  └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.a, test.t.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t2.b, right key:test.t1.b",
+          "      ├─Sort(Build) 9980.01 root  test.t1.b",
+          "      │ └─TableReader 9980.01 root  data:Selection",
+          "      │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─Sort(Probe) 9990.00 root  test.t2.b",
+          "        └─TableReader 9990.00 root  data:Selection",
+          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1815 leading hint is inapplicable, check the join type or the join algorithm hint",
-          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
-        ]
+        "Warning": null
       },
       {
         "SQL": "select /*+ leading(t1) merge_join(t2) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b;",
