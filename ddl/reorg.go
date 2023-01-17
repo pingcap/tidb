@@ -167,14 +167,18 @@ func (rc *reorgCtx) clean() {
 // 3: clean global index
 //
 // ddl goroutine >---------+
-//   ^                     |
-//   |                     |
-//   |                     |
-//   |                     | <---(doneCh)--- f()
+//
+//	^                     |
+//	|                     |
+//	|                     |
+//	|                     | <---(doneCh)--- f()
+//
 // HandleDDLQueue(...)     | <---(regular timeout)
-//   |                     | <---(ctx done)
-//   |                     |
-//   |                     |
+//
+//	|                     | <---(ctx done)
+//	|                     |
+//	|                     |
+//
 // A more ddl round  <-----+
 //
 // How can we cancel reorg job?

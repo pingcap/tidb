@@ -840,42 +840,46 @@ func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res inte
 	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
-	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
-	req := new(http.Request)
 	for _, host := range pdHosts {
-		req, err = http.NewRequest(method, util.InternalHTTPSchema()+"://"+host+uri, body)
-		if err != nil {
-			// Try to request from another PD node when some nodes may down.
-			if strings.Contains(err.Error(), "connection refused") {
-				continue
-			}
-			return errors.Trace(err)
+		err = requestPDForOneHost(host, apiName, method, uri, body, res)
+		if err == nil {
+			break
 		}
+		// Try to request from another PD node when some nodes may down.
 	}
+	return err
+}
+
+func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res interface{}) error {
+	urlVar := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), host, uri)
+	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", urlVar))
+	req, err := http.NewRequest(method, urlVar, body)
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("requestPDForOneHost new request failed",
+			zap.String("url", urlVar), zap.Error(err))
+		return errors.Trace(err)
 	}
 	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
+		logutil.BgLogger().Warn("requestPDForOneHost do request failed",
+			zap.String("url", urlVar), zap.Error(err))
 		return errors.Trace(err)
 	}
 	metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
 	metrics.PDAPIRequestCounter.WithLabelValues(apiName, resp.Status).Inc()
-
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Warn("requestPDForOneHost close body failed",
+				zap.String("url", urlVar), zap.Error(err))
 		}
 	}()
-
 	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	return nil
 }
 
@@ -1138,39 +1142,6 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	return nil
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) error {
-	pdAddrs, err := h.GetPDAddr()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	startKey := tablecodec.GenTableRecordPrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-
-	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		url.QueryEscape(string(startKey)),
-		url.QueryEscape(string(endKey)))
-
-	resp, err := util.InternalHTTPClient().Get(statURL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
-		}
-	}()
-
-	dec := json.NewDecoder(resp.Body)
-
-	return dec.Decode(stats)
-}
-
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
 func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 	e, _ := hex.DecodeString(endKey)
@@ -1206,7 +1177,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 			continue
 		}
 		realN += 1
-		r, err := strconv.ParseInt(s, 10, 32)
+		r, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return errors.Trace(err)
 		}

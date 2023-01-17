@@ -60,6 +60,42 @@ type SQLWarn struct {
 	Err   error
 }
 
+// ReferenceCount indicates the reference count of StmtCtx.
+type ReferenceCount int32
+
+const (
+	// ReferenceCountIsFrozen indicates the current StmtCtx is resetting, it'll refuse all the access from other sessions.
+	ReferenceCountIsFrozen int32 = -1
+	// ReferenceCountNoReference indicates the current StmtCtx is not accessed by other sessions.
+	ReferenceCountNoReference int32 = 0
+)
+
+// TryIncrease tries to increase the reference count.
+// There is a small chance that TryIncrease returns true while TryFreeze and
+// UnFreeze are invoked successfully during the execution of TryIncrease.
+func (rf *ReferenceCount) TryIncrease() bool {
+	refCnt := atomic.LoadInt32((*int32)(rf))
+	for ; refCnt != ReferenceCountIsFrozen && !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt+1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	}
+	return refCnt != ReferenceCountIsFrozen
+}
+
+// Decrease decreases the reference count.
+func (rf *ReferenceCount) Decrease() {
+	for refCnt := atomic.LoadInt32((*int32)(rf)); !atomic.CompareAndSwapInt32((*int32)(rf), refCnt, refCnt-1); refCnt = atomic.LoadInt32((*int32)(rf)) {
+	}
+}
+
+// TryFreeze tries to freeze the StmtCtx to frozen before resetting the old StmtCtx.
+func (rf *ReferenceCount) TryFreeze() bool {
+	return atomic.LoadInt32((*int32)(rf)) == ReferenceCountNoReference && atomic.CompareAndSwapInt32((*int32)(rf), ReferenceCountNoReference, ReferenceCountIsFrozen)
+}
+
+// UnFreeze unfreeze the frozen StmtCtx thus the other session can access this StmtCtx.
+func (rf *ReferenceCount) UnFreeze() {
+	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -253,6 +289,11 @@ type StatementContext struct {
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
 	IsSQLAndPlanRegistered atomic2.Bool
+	// ColRefFromPlan mark the column ref used by assignment in update statement.
+	ColRefFromUpdatePlan []int64
+	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
+	// results to the client, the transaction should be committed first. See issue #37373 for more details.
+	IsExplainAnalyzeDML bool
 }
 
 // StmtHints are SessionVars related sql hints.

@@ -90,8 +90,9 @@ type bytesLimits struct {
 }
 
 // InitTracker initializes a memory tracker.
-//	1. "label" is the label used in the usage string.
-//	2. "bytesLimit <= 0" means no limit.
+//  1. "label" is the label used in the usage string.
+//  2. "bytesLimit <= 0" means no limit.
+//
 // For the common tracker, isGlobal is default as false
 func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed) {
 	t.mu.children = nil
@@ -109,8 +110,9 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 }
 
 // NewTracker creates a memory tracker.
-//	1. "label" is the label used in the usage string.
-//	2. "bytesLimit <= 0" means no limit.
+//  1. "label" is the label used in the usage string.
+//  2. "bytesLimit <= 0" means no limit.
+//
 // For the common tracker, isGlobal is default as false
 func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{

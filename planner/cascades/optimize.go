@@ -65,16 +65,16 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // FindBestPlan is the optimization entrance of the cascades planner. The
 // optimization is composed of 3 phases: preprocessing, exploration and implementation.
 //
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 // Phase 1: Preprocessing
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 //
 // The target of this phase is to preprocess the plan tree by some heuristic
 // rules which should always be beneficial, for example Column Pruning.
 //
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 // Phase 2: Exploration
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 //
 // The target of this phase is to explore all the logically equivalent
 // expressions by exploring all the equivalent group expressions of each group.
@@ -86,9 +86,9 @@ func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []Imp
 // graph, where nodes are expressions and directed edges are the transformation
 // rules.
 //
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 // Phase 3: Implementation
-//------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------
 //
 // The target of this phase is to search the best physical plan for a Group
 // which satisfies a certain required physical property.

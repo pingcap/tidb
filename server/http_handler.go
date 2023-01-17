@@ -767,14 +767,22 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case "reset":
 		binloginfo.ResetSkippedCommitterCounter()
 	case "nowait":
-		binloginfo.DisableSkipBinlogFlag()
+		err := binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	case "status":
 	default:
 		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
 		if sec <= 0 || err != nil {
 			sec = 1800
 		}
-		binloginfo.DisableSkipBinlogFlag()
+		err = binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		timeout := time.Duration(sec) * time.Second
 		err = binloginfo.WaitBinlogRecover(timeout)
 		if err != nil {
@@ -2054,9 +2062,9 @@ func (h *testHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // Supported operations:
-//   * resolvelock?safepoint={uint64}&physical={bool}:
-//	   * safepoint: resolve all locks whose timestamp is less than the safepoint.
-//	   * physical: whether it uses physical(green GC) mode to scan locks. Default is true.
+//   - resolvelock?safepoint={uint64}&physical={bool}:
+//   - safepoint: resolve all locks whose timestamp is less than the safepoint.
+//   - physical: whether it uses physical(green GC) mode to scan locks. Default is true.
 func (h *testHandler) handleGC(op string, w http.ResponseWriter, req *http.Request) {
 	if !atomic.CompareAndSwapUint32(&h.gcIsRunning, 0, 1) {
 		writeError(w, errors.New("GC is running"))

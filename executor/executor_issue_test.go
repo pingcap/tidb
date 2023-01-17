@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -407,6 +408,71 @@ func TestIssue30971(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, fields, test.fields)
 	}
+}
+
+func TestIssue31678(t *testing.T) {
+	// The issue31678 is mainly about type conversion in UNION
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS t1, t2;")
+
+	// https://github.com/pingcap/tidb/issues/31678
+	tk.MustExec("CREATE TABLE t1 (c VARCHAR(11)) CHARACTER SET utf8mb4")
+	tk.MustExec("CREATE TABLE t2 (b CHAR(1) CHARACTER SET binary, i INT)")
+	tk.MustExec("INSERT INTO t1 (c) VALUES ('н1234567890')")
+	tk.MustExec("INSERT INTO t2 (b, i) VALUES ('1', 1)")
+	var tests = []struct {
+		query           string
+		expectedFlen    int
+		expectedCharset string
+		result          []string
+	}{
+		{"SELECT c FROM t1 UNION SELECT b FROM t2", 44, "binary", []string{"1", "н1234567890"}},
+		{"SELECT c FROM t1 UNION SELECT i FROM t2", 20, "utf8mb4", []string{"1", "н1234567890"}},
+		{"SELECT i FROM t2 UNION SELECT c FROM t1", 20, "utf8mb4", []string{"1", "н1234567890"}},
+		{"SELECT b FROM t2 UNION SELECT c FROM t1", 44, "binary", []string{"1", "н1234567890"}},
+	}
+	for _, test := range tests {
+		tk.MustQuery(test.query).Sort().Check(testkit.Rows(test.result...))
+		rs, err := tk.Exec(test.query)
+		require.NoError(t, err)
+		resultFields := rs.Fields()
+		require.Equal(t, 1, len(resultFields), test.query)
+		require.Equal(t, test.expectedFlen, resultFields[0].Column.FieldType.GetFlen(), test.query)
+		require.Equal(t, test.expectedCharset, resultFields[0].Column.FieldType.GetCharset(), test.query)
+	}
+	tk.MustExec("DROP TABLE t1, t2;")
+
+	// test some other charset
+	tk.MustExec("CREATE TABLE t1 (c1 VARCHAR(5) CHARACTER SET utf8mb4, c2 VARCHAR(1) CHARACTER SET binary)")
+	tk.MustExec("CREATE TABLE t2 (c1 CHAR(10) CHARACTER SET GBK, c2 VARCHAR(50) CHARACTER SET binary)")
+	tk.MustExec("INSERT INTO t1 VALUES ('一二三四五', '1')")
+	tk.MustExec("INSERT INTO t2 VALUES ('一二三四五六七八九十', '1234567890')")
+	gbkResult, err := charset.NewCustomGBKEncoder().String("一二三四五六七八九十")
+	require.NoError(t, err)
+	tests = []struct {
+		query           string
+		expectedFlen    int
+		expectedCharset string
+		result          []string
+	}{
+		{"SELECT c1 FROM t1 UNION SELECT c1 FROM t2", 10, "utf8mb4", []string{"一二三四五", "一二三四五六七八九十"}},
+		{"SELECT c1 FROM t1 UNION SELECT c2 FROM t2", 50, "binary", []string{"1234567890", "一二三四五"}},
+		{"SELECT c2 FROM t1 UNION SELECT c1 FROM t2", 20, "binary", []string{"1", gbkResult}},
+		{"SELECT c2 FROM t1 UNION SELECT c2 FROM t2", 50, "binary", []string{"1", "1234567890"}},
+	}
+	for _, test := range tests {
+		tk.MustQuery(test.query).Sort().Check(testkit.Rows(test.result...))
+		rs, err := tk.Exec(test.query)
+		require.NoError(t, err)
+		resultFields := rs.Fields()
+		require.Equal(t, 1, len(resultFields), test.query)
+		require.Equal(t, test.expectedFlen, resultFields[0].Column.FieldType.GetFlen(), test.query)
+		require.Equal(t, test.expectedCharset, resultFields[0].Column.FieldType.GetCharset(), test.query)
+	}
+	tk.MustExec("DROP TABLE t1, t2;")
 }
 
 func TestIndexJoin31494(t *testing.T) {
@@ -1235,4 +1301,16 @@ func TestIssue33214(t *testing.T) {
 			break
 		}
 	}
+}
+
+func TestIssue40158(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (_id int PRIMARY KEY, c1 char, index (c1));")
+	tk.MustExec("insert into t1 values (1, null);")
+	tk.MustQuery("select * from t1 where c1 is null and _id < 1;").Check(testkit.Rows())
 }

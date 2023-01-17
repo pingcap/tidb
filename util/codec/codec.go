@@ -1324,7 +1324,8 @@ func ConvertByCollationStr(str string, tp *types.FieldType) string {
 
 // HashCode encodes a Datum into a unique byte slice.
 // It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order
-// 	to make the encoding lossless.
+//
+//	to make the encoding lossless.
 func HashCode(b []byte, d types.Datum) []byte {
 	switch d.Kind() {
 	case types.KindInt64:

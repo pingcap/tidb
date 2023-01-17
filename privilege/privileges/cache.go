@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -427,16 +428,7 @@ func (p *MySQLPrivilege) buildUserMap() {
 	p.UserMap = userMap
 }
 
-type sortedUserRecord []UserRecord
-
-func (s sortedUserRecord) Len() int {
-	return len(s)
-}
-
-func (s sortedUserRecord) Less(i, j int) bool {
-	x := s[i]
-	y := s[j]
-
+func compareBaseRecord(x, y *baseRecord) bool {
 	// Compare two item by user's host first.
 	c1 := compareHost(x.Host, y.Host)
 	if c1 < 0 {
@@ -448,6 +440,10 @@ func (s sortedUserRecord) Less(i, j int) bool {
 
 	// Then, compare item by user's name value.
 	return x.User < y.User
+}
+
+func compareUserRecord(x, y UserRecord) bool {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
 // compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
@@ -499,13 +495,9 @@ func compareHost(x, y string) int {
 	return 0
 }
 
-func (s sortedUserRecord) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
 // SortUserTable sorts p.User in the MySQLPrivilege struct.
 func (p MySQLPrivilege) SortUserTable() {
-	sort.Sort(sortedUserRecord(p.User))
+	slices.SortFunc(p.User, compareUserRecord)
 }
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
@@ -528,10 +520,19 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
 	return nil
 }
 
+func compareDBRecord(x, y dbRecord) bool {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
 func (p *MySQLPrivilege) buildDBMap() {
 	dbMap := make(map[string][]dbRecord, len(p.DB))
 	for _, record := range p.DB {
 		dbMap[record.User] = append(dbMap[record.User], record)
+	}
+
+	// Sort the records to make the matching rule work.
+	for _, records := range dbMap {
+		slices.SortFunc(records, compareDBRecord)
 	}
 	p.DBMap = dbMap
 }

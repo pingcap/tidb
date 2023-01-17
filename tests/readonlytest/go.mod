@@ -5,7 +5,7 @@ go 1.16
 require (
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/pingcap/tidb v2.0.11+incompatible
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	go.uber.org/goleak v1.1.12
 )
 

@@ -87,7 +87,15 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 		os.Exit(1)
 	}
 
-	tls, err := common.NewTLS(globalCfg.Security.CAPath, globalCfg.Security.CertPath, globalCfg.Security.KeyPath, globalCfg.App.StatusAddr)
+	tls, err := common.NewTLS(
+		globalCfg.Security.CAPath,
+		globalCfg.Security.CertPath,
+		globalCfg.Security.KeyPath,
+		globalCfg.App.StatusAddr,
+		globalCfg.Security.CABytes,
+		globalCfg.Security.CertBytes,
+		globalCfg.Security.KeyBytes,
+	)
 	if err != nil {
 		log.L().Fatal("failed to load TLS certificates", zap.Error(err))
 	}
@@ -227,11 +235,12 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 }
 
 // RunOnce is used by binary lightning and host when using lightning as a library.
-// - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
-//   cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. and glue could be nil to let lightning
-//   use a default glue later.
-// - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
-//   caller implemented glue.
+//   - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//     cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. and glue could be nil to let lightning
+//     use a default glue later.
+//   - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
+//     caller implemented glue.
+//
 // deprecated: use RunOnceWithOptions instead.
 func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glue glue.Glue) error {
 	if err := taskCfg.Adjust(taskCtx); err != nil {
@@ -270,10 +279,10 @@ func (l *Lightning) RunServer() error {
 }
 
 // RunOnceWithOptions is used by binary lightning and host when using lightning as a library.
-// - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
-//   cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. No need to set Options
-// - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and there Options may
-//   be used:
+//   - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//     cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. No need to set Options
+//   - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and there Options may
+//     be used:
 //   - WithGlue: set a caller implemented glue. Otherwise, lightning will use a default glue later.
 //   - WithDumpFileStorage: caller has opened an external storage for lightning. Otherwise, lightning will open a
 //     storage by config

@@ -31,7 +31,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -279,6 +278,7 @@ func TestAdjustWillBatchImportRatioInvalid(t *testing.T) {
 }
 
 func TestAdjustSecuritySection(t *testing.T) {
+	uuidHolder := "<uuid>"
 	testCases := []struct {
 		input       string
 		expectedCA  string
@@ -302,7 +302,7 @@ func TestAdjustSecuritySection(t *testing.T) {
 				ca-path = "/path/to/ca.pem"
 			`,
 			expectedCA:  "/path/to/ca.pem",
-			expectedTLS: "cluster",
+			expectedTLS: uuidHolder,
 		},
 		{
 			input: `
@@ -321,7 +321,7 @@ func TestAdjustSecuritySection(t *testing.T) {
 				ca-path = "/path/to/ca2.pem"
 			`,
 			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: "cluster",
+			expectedTLS: uuidHolder,
 		},
 		{
 			input: `
@@ -330,7 +330,7 @@ func TestAdjustSecuritySection(t *testing.T) {
 				ca-path = "/path/to/ca2.pem"
 			`,
 			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: "cluster",
+			expectedTLS: uuidHolder,
 		},
 		{
 			input: `
@@ -356,7 +356,11 @@ func TestAdjustSecuritySection(t *testing.T) {
 		err = cfg.Adjust(context.Background())
 		require.NoError(t, err, comment)
 		require.Equal(t, tc.expectedCA, cfg.TiDB.Security.CAPath, comment)
-		require.Equal(t, tc.expectedTLS, cfg.TiDB.TLS, comment)
+		if tc.expectedTLS == uuidHolder {
+			require.NotEmpty(t, cfg.TiDB.TLS, comment)
+		} else {
+			require.Equal(t, tc.expectedTLS, cfg.TiDB.TLS, comment)
+		}
 	}
 	// test different tls config name
 	cfg := config.NewConfig()
@@ -620,7 +624,9 @@ func TestLoadConfig(t *testing.T) {
 	taskCfg.TiDB.DistSQLScanConcurrency = 1
 	err = taskCfg.Adjust(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=false", taskCfg.Checkpoint.DSN)
+	equivalentDSN := taskCfg.Checkpoint.MySQLParam.ToDriverConfig().FormatDSN()
+	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?tls=false&maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
+	require.Equal(t, expectedDSN, equivalentDSN)
 
 	result := taskCfg.String()
 	require.Regexp(t, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`, result)

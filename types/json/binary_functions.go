@@ -207,8 +207,9 @@ func quoteString(s string) string {
 }
 
 // Extract receives several path expressions as arguments, matches them in bj, and returns:
-//  ret: target JSON matched any path expressions. maybe autowrapped as an array.
-//  found: true if any path expressions matched.
+//
+//	ret: target JSON matched any path expressions. maybe autowrapped as an array.
+//	found: true if any path expressions matched.
 func (bj BinaryJSON) Extract(pathExprList []PathExpression) (ret BinaryJSON, found bool) {
 	buf := make([]BinaryJSON, 0, 1)
 	for _, pathExpr := range pathExprList {
@@ -221,6 +222,10 @@ func (bj BinaryJSON) Extract(pathExprList []PathExpression) (ret BinaryJSON, fou
 		// even if len(pathExprList) equals to 1.
 		found = true
 		ret = buf[0]
+		// Fix https://github.com/pingcap/tidb/issues/30352
+		if pathExprList[0].ContainsAnyAsterisk() {
+			ret = buildBinaryArray(buf)
+		}
 	} else {
 		found = true
 		ret = buildBinaryArray(buf)
@@ -1105,7 +1110,9 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 type extractCallbackFn func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
 
 // extractToCallback callback alternative of extractTo
-//     would be more effective when walk through the whole JSON is unnecessary
+//
+//	would be more effective when walk through the whole JSON is unnecessary
+//
 // NOTICE: path [0] & [*] for JSON object other than array is INVALID, which is different from extractTo.
 func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extractCallbackFn, fullpath PathExpression) (stop bool, err error) {
 	if len(pathExpr.legs) == 0 {

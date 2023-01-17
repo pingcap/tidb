@@ -165,6 +165,10 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
 		// replica only -> public
+		failpoint.Inject("sleepBeforeReplicaOnly", func(val failpoint.Value) {
+			sleepSecond := val.(int)
+			time.Sleep(time.Duration(sleepSecond) * time.Second)
+		})
 		// Here need do some tiflash replica complement check.
 		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
@@ -238,10 +242,6 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
 	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
 	tblInfo.Partition = &p
-
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
-		return nil, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
-	}
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)

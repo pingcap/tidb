@@ -498,3 +498,77 @@ CTE_1	10000.00	root		Non-Recursive CTE
 CTE_0	10000.00	root		Non-Recursive CTE
 └─TableReader_22(Seed Part)	10000.00	root		data:TableFullScan_21
   └─TableFullScan_21	10000.00	cop[tikv]	table:tbl	keep order:false, stats:pseudo
+drop table if exists t1, t2, t3;
+create table t1 (a int, b int);
+create table t2 (c int, d int);
+create table t3 (e int, f int);
+insert into t1 values(1,1);
+insert into t2 values(1,1);
+insert into t3 values(1,1234);
+explain update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
+id	estRows	task	access object	operator info
+Update_14	N/A	root		N/A
+└─HashJoin_25	12.49	root		inner join, equal:[eq(test.t1.a, test.t2.c)]
+  ├─HashJoin_33(Build)	9.99	root		inner join, equal:[eq(test.t3.e, test.t2.d)]
+  │ ├─Selection_35(Build)	7.99	root		not(isnull(test.t3.e))
+  │ │ └─CTEFullScan_36	9.99	root	CTE:temp	data:CTE_0
+  │ └─TableReader_39(Probe)	9980.01	root		data:Selection_38
+  │   └─Selection_38	9980.01	cop[tikv]		not(isnull(test.t2.c)), not(isnull(test.t2.d))
+  │     └─TableFullScan_37	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader_29(Probe)	9990.00	root		data:Selection_28
+    └─Selection_28	9990.00	cop[tikv]		not(isnull(test.t1.a))
+      └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+CTE_0	9.99	root		Non-Recursive CTE
+└─Projection_17(Seed Part)	9.99	root		test.t3.e
+  └─TableReader_20	9.99	root		data:Selection_19
+    └─Selection_19	9.99	cop[tikv]		eq(test.t3.f, 1234), not(isnull(test.t3.e))
+      └─TableFullScan_18	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
+select * from t1;
+a	b
+1	4321
+explain insert into t1  select t1.a, t1.b  from  t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
+id	estRows	task	access object	operator info
+Insert_1	N/A	root		N/A
+└─HashJoin_28	12.49	root		inner join, equal:[eq(test.t2.c, test.t1.a)]
+  ├─HashJoin_30(Build)	9.99	root		inner join, equal:[eq(test.t3.e, test.t2.d)]
+  │ ├─Selection_31(Build)	7.99	root		not(isnull(test.t3.e))
+  │ │ └─CTEFullScan_32	9.99	root	CTE:temp	data:CTE_0
+  │ └─TableReader_35(Probe)	9980.01	root		data:Selection_34
+  │   └─Selection_34	9980.01	cop[tikv]		not(isnull(test.t2.c)), not(isnull(test.t2.d))
+  │     └─TableFullScan_33	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader_38(Probe)	9990.00	root		data:Selection_37
+    └─Selection_37	9990.00	cop[tikv]		not(isnull(test.t1.a))
+      └─TableFullScan_36	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+CTE_0	9.99	root		Non-Recursive CTE
+└─Projection_18(Seed Part)	9.99	root		test.t3.e
+  └─TableReader_21	9.99	root		data:Selection_20
+    └─Selection_20	9.99	cop[tikv]		eq(test.t3.f, 1234), not(isnull(test.t3.e))
+      └─TableFullScan_19	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+insert into t1  select t1.a, t1.b  from  t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
+select * from t1;
+a	b
+1	4321
+1	4321
+explain delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
+id	estRows	task	access object	operator info
+Delete_14	N/A	root		N/A
+└─Projection_25	12.49	root		test.t1.a, test.t1.b, test.t1._tidb_rowid, test.t2.c
+  └─HashJoin_27	12.49	root		inner join, equal:[eq(test.t2.c, test.t1.a)]
+    ├─HashJoin_29(Build)	9.99	root		inner join, equal:[eq(test.t3.e, test.t2.d)]
+    │ ├─Selection_30(Build)	7.99	root		not(isnull(test.t3.e))
+    │ │ └─CTEFullScan_31	9.99	root	CTE:temp	data:CTE_0
+    │ └─TableReader_34(Probe)	9980.01	root		data:Selection_33
+    │   └─Selection_33	9980.01	cop[tikv]		not(isnull(test.t2.c)), not(isnull(test.t2.d))
+    │     └─TableFullScan_32	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader_37(Probe)	9990.00	root		data:Selection_36
+      └─Selection_36	9990.00	cop[tikv]		not(isnull(test.t1.a))
+        └─TableFullScan_35	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+CTE_0	9.99	root		Non-Recursive CTE
+└─Projection_17(Seed Part)	9.99	root		test.t3.e
+  └─TableReader_20	9.99	root		data:Selection_19
+    └─Selection_19	9.99	cop[tikv]		eq(test.t3.f, 1234), not(isnull(test.t3.e))
+      └─TableFullScan_18	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+delete from  t1 using t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c;
+select * from t1;
+a	b

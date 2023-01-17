@@ -1068,7 +1068,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.GetFlen(), tp.GetCharset()
 	if flen >= 0 {
-		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the
+		// overflowed stores the part of the string that is out of the length constraint, it is later checked to see if the
 		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
@@ -2308,14 +2308,17 @@ func getDatumBound(retType *FieldType, rType RoundingType) Datum {
 
 // ChangeReverseResultByUpperLowerBound is for expression's reverse evaluation.
 // Here is an example for what's effort for the function: CastRealAsInt(t.a),
-// 		if the type of column `t.a` is mysql.TypeDouble, and there is a row that t.a == MaxFloat64
-// 		then the cast function will arrive a result MaxInt64. But when we do the reverse evaluation,
-//      if the result is MaxInt64, and the rounding type is ceiling. Then we should get the MaxFloat64
-//      instead of float64(MaxInt64).
+//
+//			if the type of column `t.a` is mysql.TypeDouble, and there is a row that t.a == MaxFloat64
+//			then the cast function will arrive a result MaxInt64. But when we do the reverse evaluation,
+//	     if the result is MaxInt64, and the rounding type is ceiling. Then we should get the MaxFloat64
+//	     instead of float64(MaxInt64).
+//
 // Another example: cast(1.1 as signed) = 1,
-// 		when we get the answer 1, we can only reversely evaluate 1.0 as the column value. So in this
-// 		case, we should judge whether the rounding type are ceiling. If it is, then we should plus one for
-// 		1.0 and get the reverse result 2.0.
+//
+//	when we get the answer 1, we can only reversely evaluate 1.0 as the column value. So in this
+//	case, we should judge whether the rounding type are ceiling. If it is, then we should plus one for
+//	1.0 and get the reverse result 2.0.
 func ChangeReverseResultByUpperLowerBound(
 	sc *stmtctx.StatementContext,
 	retType *FieldType,

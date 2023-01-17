@@ -1824,7 +1824,8 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 // TestBenchDaily collects the daily benchmark test result and generates a json output file.
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
-// 	make bench-daily TO=xxx.json
+//
+//	make bench-daily TO=xxx.json
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkPreparedPointGet,

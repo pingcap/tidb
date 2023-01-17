@@ -37,26 +37,26 @@ var (
 // joiner is used to generate join results according to the join type.
 // A typical instruction flow is:
 //
-//     hasMatch, hasNull := false, false
-//     for innerIter.Current() != innerIter.End() {
-//         matched, isNull, err := j.tryToMatchInners(outer, innerIter, chk)
-//         // handle err
-//         hasMatch = hasMatch || matched
-//         hasNull = hasNull || isNull
-//     }
-//     if !hasMatch {
-//         j.onMissMatch(hasNull, outer, chk)
-//     }
+//	hasMatch, hasNull := false, false
+//	for innerIter.Current() != innerIter.End() {
+//	    matched, isNull, err := j.tryToMatchInners(outer, innerIter, chk)
+//	    // handle err
+//	    hasMatch = hasMatch || matched
+//	    hasNull = hasNull || isNull
+//	}
+//	if !hasMatch {
+//	    j.onMissMatch(hasNull, outer, chk)
+//	}
 //
 // NOTE: This interface is **not** thread-safe.
 // TODO: unit test
 // for all join type
-//     1. no filter, no inline projection
-//     2. no filter, inline projection
-//     3. no filter, inline projection to empty column
-//     4. filter, no inline projection
-//     5. filter, inline projection
-//     6. filter, inline projection to empty column
+//  1. no filter, no inline projection
+//  2. no filter, inline projection
+//  3. no filter, inline projection to empty column
+//  4. filter, no inline projection
+//  5. filter, inline projection
+//  6. filter, inline projection to empty column
 type joiner interface {
 	// tryToMatchInners tries to join an outer row with a batch of inner rows. When
 	// 'inners.Len != 0' but all the joined rows are filtered, the outer row is

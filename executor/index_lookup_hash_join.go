@@ -39,11 +39,11 @@ import (
 // numResChkHold indicates the number of resource chunks that an inner worker
 // holds at the same time.
 // It's used in 2 cases individually:
-// 1. IndexMergeJoin
-// 2. IndexNestedLoopHashJoin:
-//    It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
-//    Otherwise, there will be at most `concurrency` resource chunks throughout
-//    the execution of IndexNestedLoopHashJoin.
+//  1. IndexMergeJoin
+//  2. IndexNestedLoopHashJoin:
+//     It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
+//     Otherwise, there will be at most `concurrency` resource chunks throughout
+//     the execution of IndexNestedLoopHashJoin.
 const numResChkHold = 4
 
 // IndexNestedLoopHashJoin employs one outer worker and N inner workers to
@@ -53,10 +53,11 @@ const numResChkHold = 4
 // 1. The outer worker reads N outer rows, builds a task and sends it to the
 // inner worker channel.
 // 2. The inner worker receives the tasks and does 3 things for every task:
-//    1. builds hash table from the outer rows
-//    2. builds key ranges from outer rows and fetches inner rows
-//    3. probes the hash table and sends the join result to the main thread channel.
-//    Note: step 1 and step 2 runs concurrently.
+//  1. builds hash table from the outer rows
+//  2. builds key ranges from outer rows and fetches inner rows
+//  3. probes the hash table and sends the join result to the main thread channel.
+//     Note: step 1 and step 2 runs concurrently.
+//
 // 3. The main thread receives the join results.
 type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
@@ -777,11 +778,11 @@ func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx contex
 }
 
 // doJoinInOrder follows the following steps:
-// 1. collect all the matched inner row ptrs for every outer row
-// 2. do the join work
-//   2.1 collect all the matched inner rows using the collected ptrs for every outer row
-//   2.2 call tryToMatchInners for every outer row
-//   2.3 call onMissMatch when no inner rows are matched
+//  1. collect all the matched inner row ptrs for every outer row
+//  2. do the join work
+//     2.1 collect all the matched inner rows using the collected ptrs for every outer row
+//     2.2 call tryToMatchInners for every outer row
+//     2.3 call onMissMatch when no inner rows are matched
 func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
 	defer func() {
 		if err == nil && joinResult.chk != nil {

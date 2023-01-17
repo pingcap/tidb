@@ -3342,7 +3342,7 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	if err != nil {
 		return nil, err
 	}
-	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	return &expression.Constant{Value: value, RetType: col.FieldType.Clone()}, nil
 }
 
 // resolveGeneratedColumns resolves generated columns with their generation
@@ -3824,6 +3824,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 					}
 					sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{Expr: colName, Offset: len(sel.Fields.Fields)})
 				}
+				defer func(originSelFieldLen int) {
+					// Revert the change for ast. Because when we use the 'prepare' and 'execute' statement it will both build plan which will cause problem.
+					// You can see the issue #37187 for more details.
+					sel.Fields.Fields = sel.Fields.Fields[:originSelFieldLen]
+				}(actualColLen)
 			}
 		}
 	}
@@ -3891,6 +3896,10 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
+	// quick fix for https://github.com/pingcap/tidb/issues/33298
+	if ld.FieldsInfo != nil && len(ld.FieldsInfo.Terminated) == 0 {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("load data with empty field terminator")
+	}
 	p := LoadData{
 		IsLocal:            ld.IsLocal,
 		OnDuplicate:        ld.OnDuplicate,

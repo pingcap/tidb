@@ -45,7 +45,9 @@ import (
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
-// 		[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
+//
+//	[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
+//
 // If you are adding a new system variable, please put it in the corresponding area.
 var defaultSysVars = []*SysVar{
 	/* The system variables below have NONE scope  */
@@ -1578,6 +1580,10 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAnalyzeSnapshot, Value: BoolToOnOff(DefTiDBEnableAnalyzeSnapshot), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAnalyzeSnapshot = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

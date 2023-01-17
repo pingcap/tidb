@@ -57,7 +57,7 @@ func (c *cowExprRef) Set(i int, changed bool, val Expression) {
 		return
 	}
 	c.new = make([]Expression, len(c.ref))
-	copy(c.new, c.ref[:i])
+	copy(c.new, c.ref)
 	c.new[i] = val
 }
 
@@ -139,9 +139,10 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 // It's often observed that the pattern of the caller like this:
 //
 // cols := ExtractColumns(...)
-// for _, col := range cols {
-//     if xxx(col) {...}
-// }
+//
+//	for _, col := range cols {
+//	    if xxx(col) {...}
+//	}
 //
 // Provide an additional filter argument, this can be done in one step.
 // To avoid allocation for cols that not need.
@@ -419,41 +420,42 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		substituted := false
 		hasFail := false
 		if v.FuncName.L == ast.Cast {
-			newFunc := v.Clone().(*ScalarFunction)
-			substituted, hasFail, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs, fail1Return)
+			substituted, hasFail, newFunc.GetArgs()[0] = ColumnSubstituteImpl(v.GetArgs()[0], schema, newExprs, fail1Return)
 			if fail1Return && hasFail {
-				return substituted, hasFail, newFunc
+				return substituted, hasFail, v
 			}
 			if substituted {
-				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
-				e := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newFunc.GetArgs()...)
+				e := BuildCastFunction(v.GetCtx(), newArg, v.RetType)
 				e.SetCoercibility(v.Coercibility())
 				return true, false, e
 			}
-			return false, false, newFunc
+			return false, false, v
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
+		var tmpArgForCollCheck []Expression
+		if collate.NewCollationEnabled() {
+			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
+		}
 		for idx, arg := range v.GetArgs() {
 			changed, hasFail, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fail1Return)
 			if fail1Return && hasFail {
 				return changed, hasFail, v
 			}
 			oldChanged := changed
-			if collate.NewCollationEnabled() {
+			if collate.NewCollationEnabled()&& changed {
 				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
-				if changed {
-					changed = false
-					tmpArgs := make([]Expression, 0, len(v.GetArgs()))
-					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
-					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
-					if coll == newColl {
-						changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
-					}
+				changed = false
+				copy(tmpArgForCollCheck, refExprArr.Result())
+				tmpArgForCollCheck[idx] = newFuncExpr
+				_, newColl := DeriveCollationFromExprs(v.GetCtx(), tmpArgForCollCheck...)
+				if coll == newColl {
+					changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
 				}
 			}
+			hasFail = hasFail || failed || oldChanged != changed
 			if fail1Return && oldChanged != changed {
 				// Only when the oldChanged is true and changed is false, we will get here.
 				// And this means there some dependency in this arg can be substituted with
@@ -468,7 +470,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			}
 		}
 		if substituted {
-			return true, false, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			return true, hasFail, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
 		}
 	}
 	return false, false, expr
@@ -732,8 +734,9 @@ func ContainOuterNot(expr Expression) bool {
 // Input `not` means whether there is `not` outside `expr`
 //
 // eg.
-//    not(0+(t.a == 1 and t.b == 2)) returns true
-//    not(t.a) and not(t.b) returns false
+//
+//	not(0+(t.a == 1 and t.b == 2)) returns true
+//	not(t.a) and not(t.b) returns false
 func containOuterNot(expr Expression, not bool) bool {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {

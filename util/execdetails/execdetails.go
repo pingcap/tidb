@@ -954,12 +954,12 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 
 // FormatDuration uses to format duration, this function will prune precision before format duration.
 // Pruning precision is for human readability. The prune rule is:
-// 1. if the duration was less than 1us, return the original string.
-// 2. readable value >=10, keep 1 decimal, otherwise, keep 2 decimal. such as:
-//    9.412345ms  -> 9.41ms
-//    10.412345ms -> 10.4ms
-//    5.999s      -> 6s
-//    100.45µs    -> 100.5µs
+//  1. if the duration was less than 1us, return the original string.
+//  2. readable value >=10, keep 1 decimal, otherwise, keep 2 decimal. such as:
+//     9.412345ms  -> 9.41ms
+//     10.412345ms -> 10.4ms
+//     5.999s      -> 6s
+//     100.45µs    -> 100.5µs
 func FormatDuration(d time.Duration) string {
 	if d <= time.Microsecond {
 		return d.String()

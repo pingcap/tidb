@@ -364,6 +364,8 @@ func mergeContinuousSelections(p PhysicalPlan) {
 }
 
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+	// some cases from update optimize will require avoiding projection elimination.
+	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)

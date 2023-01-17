@@ -2212,7 +2212,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustQuery("execute s0 using @a0, @b0, @a0").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute s0 using @a0, @a0, @b0").Check(testkit.Rows("0000 7777 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustExec("create table t1(c1 varchar(20), c2 varchar(20), c3 bigint(20), primary key(c1, c2))")
 	tk.MustExec("insert into t1 values('0000','7777',1)")
@@ -2930,4 +2930,18 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 	require.Nil(t, err)
 	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 0"))
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestIssue37901(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t4`)
+	tk.MustExec(`create table t4 (a date)`)
+	tk.MustExec(`prepare st1 from "insert into t4(a) select dt from (select ? as dt from dual union all select sysdate() ) a";`)
+	tk.MustExec(`set @t='2022-01-01 00:00:00.000000'`)
+	tk.MustExec(`execute st1 using @t`)
+	tk.MustQuery(`select count(*) from t4`).Check(testkit.Rows("2"))
 }

@@ -34,10 +34,10 @@ var (
 // Watcher watches for files or directory changes by polling
 // currently, if multi operations applied to one file or directory, only one event (with single Op) will be sent
 // the priority of Op is:
-//   1. Modify
-//   2. Chmod
-//   3. Rename / Move
-//   4. Create / Remove
+//  1. Modify
+//  2. Chmod
+//  3. Rename / Move
+//  4. Create / Remove
 type Watcher struct {
 	Events chan Event
 	Errors chan error

@@ -57,13 +57,13 @@ var (
 //
 // The execution flow is really like IndexLookUpReader. However, it uses multiple index scans
 // or table scans to get the handles:
-// 1. use the partialTableWorkers and partialIndexWorkers to fetch the handles (a batch per time)
-//    and send them to the indexMergeProcessWorker.
-// 2. indexMergeProcessWorker do the `Union` operation for a batch of handles it have got.
-//    For every handle in the batch:
-//    1. check whether it has been accessed.
-//    2. if not, record it and send it to the indexMergeTableScanWorker.
-//    3. if accessed, just ignore it.
+//  1. use the partialTableWorkers and partialIndexWorkers to fetch the handles (a batch per time)
+//     and send them to the indexMergeProcessWorker.
+//  2. indexMergeProcessWorker do the `Union` operation for a batch of handles it have got.
+//     For every handle in the batch:
+//  1. check whether it has been accessed.
+//  2. if not, record it and send it to the indexMergeTableScanWorker.
+//  3. if accessed, just ignore it.
 type IndexMergeReaderExecutor struct {
 	baseExecutor
 

@@ -50,11 +50,13 @@ type baseCollector struct {
 
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
 // It will maintain the following things:
-//   Row samples.
-//   FM sketches(To calculate the NDV).
-//   Null counts.
-//   The data sizes.
-//   The number of rows.
+//
+//	Row samples.
+//	FM sketches(To calculate the NDV).
+//	Null counts.
+//	The data sizes.
+//	The number of rows.
+//
 // It uses weighted reservoir sampling(A-Res) to do the sampling.
 type ReservoirRowSampleCollector struct {
 	*baseCollector
@@ -397,11 +399,13 @@ func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 
 // BernoulliRowSampleCollector collects the samples from the source and organize the sample by row.
 // It will maintain the following things:
-//   Row samples.
-//   FM sketches(To calculate the NDV).
-//   Null counts.
-//   The data sizes.
-//   The number of rows.
+//
+//	Row samples.
+//	FM sketches(To calculate the NDV).
+//	Null counts.
+//	The data sizes.
+//	The number of rows.
+//
 // It uses the bernoulli sampling to collect the data.
 type BernoulliRowSampleCollector struct {
 	*baseCollector

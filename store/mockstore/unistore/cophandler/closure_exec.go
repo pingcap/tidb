@@ -162,7 +162,8 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 
 // buildClosureExecutor build a closureExecutor for the DAGRequest.
 // Currently the composition of executors are:
-// 	tableScan|indexScan [selection] [topN | limit | agg]
+//
+//	tableScan|indexScan [selection] [topN | limit | agg]
 func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureExecutor, error) {
 	scanExec, err := getScanExec(dagReq)
 	if err != nil {

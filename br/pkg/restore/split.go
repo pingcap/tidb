@@ -390,6 +390,9 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*Regi
 				})
 			return nil
 		}
+		if err != nil {
+			log.Warn("scatter region meet error", logutil.ShortError(err))
+		}
 		return err
 		// the retry is for the temporary network errors during sending request.
 	}, &exponentialBackoffer{attempt: 3, baseBackoff: 500 * time.Millisecond})

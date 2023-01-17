@@ -29,22 +29,32 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// ProtectedTSList holds a list of timestamps that should delay GC.
+type ProtectedTSList interface {
+	// HoldTS holds the timestamp to prevent its data from being GCed.
+	HoldTS(ts uint64) (unhold func())
+	// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
+	GetMinProtectedTS(lowerBound uint64) (ts uint64)
+}
+
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID               uint64
-	User             string
-	Host             string
-	Port             string
-	DB               string
-	Digest           string
-	Plan             interface{}
-	PlanExplainRows  [][]string
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	Time             time.Time
-	Info             string
-	CurTxnStartTS    uint64
-	StmtCtx          *stmtctx.StatementContext
-	StatsInfo        func(interface{}) map[string]uint64
+	ProtectedTSList
+	ID                uint64
+	User              string
+	Host              string
+	Port              string
+	DB                string
+	Digest            string
+	Plan              interface{}
+	PlanExplainRows   [][]string
+	RuntimeStatsColl  *execdetails.RuntimeStatsColl
+	Time              time.Time
+	Info              string
+	CurTxnStartTS     uint64
+	StmtCtx           *stmtctx.StatementContext
+	RefCountOfStmtCtx *stmtctx.ReferenceCount
+	StatsInfo         func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64
@@ -117,6 +127,23 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz))
 }
 
+// GetMinStartTS returns the minimum start-ts (used to delay GC) that greater than `lowerBound` (0 if no such one).
+func (pi *ProcessInfo) GetMinStartTS(lowerBound uint64) (ts uint64) {
+	if pi == nil {
+		return
+	}
+	if thisTS := pi.CurTxnStartTS; thisTS > lowerBound && (thisTS < ts || ts == 0) {
+		ts = thisTS
+	}
+	if pi.ProtectedTSList == nil {
+		return
+	}
+	if thisTS := pi.GetMinProtectedTS(lowerBound); thisTS > lowerBound && (thisTS < ts || ts == 0) {
+		ts = thisTS
+	}
+	return
+}
+
 // ascServerStatus is a slice of all defined server status in ascending order.
 var ascServerStatus = []uint16{
 	mysql.ServerStatusInTrans,
@@ -180,17 +207,23 @@ type SessionManager interface {
 	DeleteInternalSession(se interface{})
 	// Get all startTS of every transactions running in the current internal sessions
 	GetInternalSessionStartTSList() []uint64
+	// GetMinStartTS returns the minimum start-ts (used to delay GC) that greater than `lowerBound` (0 if no such one).
+	GetMinStartTS(lowerBound uint64) uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
 // 64 bits version:
-//  63 62                 41 40                                   1   0
+//
+//	63 62                 41 40                                   1   0
+//
 // +--+---------------------+--------------------------------------+------+
 // |  |      serverId       |             local connId             |markup|
 // |=0|       (22b)         |                 (40b)                |  =1  |
 // +--+---------------------+--------------------------------------+------+
 // 32 bits version(coming soon):
-//  31                          1   0
+//
+//	31                          1   0
+//
 // +-----------------------------+------+
 // |             ???             |markup|
 // |             ???             |  =0  |
@@ -250,7 +283,8 @@ func (g *GlobalConnID) NextID() uint64 {
 }
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.
-//   `isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
+//
+//	`isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
 func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) {
 	if id&0x80000000_00000000 > 0 {
 		return GlobalConnID{}, false, errors.New("Unexpected connectionID excceeds int64")

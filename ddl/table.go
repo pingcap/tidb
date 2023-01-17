@@ -319,6 +319,12 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 				return ver, errors.Trace(err)
 			}
 		}
+		if tblInfo.TiFlashReplica != nil {
+			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+			if e != nil {
+				logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+			}
+		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
 		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
 
@@ -440,7 +446,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 		}
 
-		err = w.delRangeManager.removeFromGCDeleteRange(w.ddlJobCtx, dropJobID, tids)
+		err = w.delRangeManager.removeFromGCDeleteRange(w.ddlJobCtx, dropJobID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -685,6 +691,10 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Clear the TiFlash replica available status.
 	if tblInfo.TiFlashReplica != nil {
+		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo.ID)
+		if e != nil {
+			logutil.BgLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+		}
 		// Set PD rules for TiFlash
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {
@@ -1076,11 +1086,6 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 		return ver, errors.Trace(err)
 	}
 
-	if replicaInfo.Count > 0 && tableHasPlacementSettings(tblInfo) {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
-	}
-
 	// Ban setting replica count for tables in system database.
 	if tidb_util.IsMemOrSysDB(job.SchemaName) {
 		return ver, errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
@@ -1419,11 +1424,6 @@ func onAlterTablePartitionPlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return 0, err
 	}
 
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
-	}
-
 	ptInfo := tblInfo.GetPartitionInfo()
 	var partitionDef *model.PartitionDefinition
 	definitions := ptInfo.Definitions
@@ -1487,11 +1487,6 @@ func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
-	}
-
-	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
 	}
 
 	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, policyRefInfo); err != nil {

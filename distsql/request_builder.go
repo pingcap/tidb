@@ -286,8 +286,9 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 }
 
 // SetTiDBServerID sets "TiDBServerID" for "kv.Request"
-//   ServerID is a unique id of TiDB instance among the cluster.
-//   See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
+//
+//	ServerID is a unique id of TiDB instance among the cluster.
+//	See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
 func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder {
 	builder.Request.TiDBServerID = serverID
 	return builder
@@ -450,9 +451,9 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 // interpreted as an int64 variable.
 //
 // This function does the following:
-// 1. split ranges into two groups as described above.
-// 2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
-//    one greater than MaxInt64.
+//  1. split ranges into two groups as described above.
+//  2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
+//     one greater than MaxInt64.
 //
 // if `KeepOrder` is false, we merge the two groups of ranges into one group, to save an rpc call later
 // if `desc` is false, return signed ranges first, vice versa.
@@ -733,21 +734,6 @@ func EncodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 
 	if !ran.HighExclude {
 		high = kv.Key(high).PrefixNext()
-	}
-
-	var hasNull bool
-	for _, highVal := range ran.HighVal {
-		if highVal.IsNull() {
-			hasNull = true
-			break
-		}
-	}
-
-	// NOTE: this is a hard-code operation to avoid wrong results when accessing unique index with NULL;
-	// Please see https://github.com/pingcap/tidb/issues/29650 for more details
-	if hasNull {
-		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
-		high = kv.Key(high).Next()
 	}
 	return low, high, nil
 }

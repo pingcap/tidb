@@ -460,19 +460,22 @@ func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 
 // locateBucket locates where a value falls in the range of the Histogram.
 // Return value:
-// 	exceed: if the value is larger than the upper bound of the last Bucket of the Histogram
-// 	bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
+//
+//	exceed: if the value is larger than the upper bound of the last Bucket of the Histogram
+//	bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
 //		considered belong to this Bucket)
-// 	inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
+//	inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
 //		this Bucket and the previous Bucket.
-// 	matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat)
+//	matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat)
+//
 // Examples:
-// 	val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
-// 	locateBucket(val0): false, 0, false, false
-// 	locateBucket(val1): false, 1, true, true
-// 	locateBucket(val2): false, 2, false, false
-// 	locateBucket(val3): false, 2, true, false
-// 	locateBucket(val4): true, 3, false, false
+//
+//	val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
+//	locateBucket(val0): false, 0, false, false
+//	locateBucket(val1): false, 1, true, true
+//	locateBucket(val2): false, 2, false, false
+//	locateBucket(val3): false, 2, true, false
+//	locateBucket(val4): true, 3, false, false
 func (hg *Histogram) locateBucket(value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	// Empty histogram
 	if hg == nil || hg.Bounds.NumRows() == 0 {
@@ -876,23 +879,23 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 
 // outOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
-// The maximum row count it can get is the increaseCount. It reaches the maximum when out-of-range width reaches histogram range width.
+// The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
 // Note that we assume histL-boundL == histR-histL == boundR-histR here.
 //
-//               /│             │\
-//             /  │             │  \
-//           /x│  │◄─histogram─►│    \
-//         / xx│  │    range    │      \
-//       / │xxx│  │             │        \
-//     /   │xxx│  │             │          \
-//────┴────┴───┴──┴─────────────┴───────────┴─────
-//    ▲    ▲   ▲  ▲             ▲           ▲
-//    │    │   │  │             │           │
-// boundL  │   │histL         histR       boundR
-//         │   │
-//    lDatum  rDatum
-func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCount int64) float64 {
+//	               /│             │\
+//	             /  │             │  \
+//	           /x│  │◄─histogram─►│    \
+//	         / xx│  │    range    │      \
+//	       / │xxx│  │             │        \
+//	     /   │xxx│  │             │          \
+//	────┴────┴───┴──┴─────────────┴───────────┴─────
+//	    ▲    ▲   ▲  ▲             ▲           ▲
+//	    │    │   │  │             │           │
+//	 boundL  │   │histL         histR       boundR
+//	         │   │
+//	    lDatum  rDatum
+func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, modifyCount int64) float64 {
 	if hg.Len() == 0 {
 		return 0
 	}
@@ -976,8 +979,14 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 		totalPercent = 1
 	}
 	rowCount := totalPercent * hg.notNullCount()
-	if rowCount > float64(increaseCount) {
-		return float64(increaseCount)
+
+	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
+	// a rather loose upper bound.
+	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
+	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
+	// can produce a reasonable results in this scenario.
+	if rowCount > float64(modifyCount) {
+		return float64(modifyCount)
 	}
 	return rowCount
 }
@@ -1202,7 +1211,7 @@ func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encoded
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Range, realtimeRowCount int64, pkIsHandle bool) (float64, error) {
+func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	var rowCount float64
 	for _, rg := range ranges {
@@ -1299,11 +1308,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			increaseCount := realtimeRowCount - int64(c.TotalRowCount())
-			if increaseCount < 0 {
-				increaseCount = 0
-			}
-			cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, increaseCount)
+			cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, modifyCount)
 		}
 
 		rowCount += cnt
@@ -1426,11 +1431,12 @@ func (idx *Index) QueryBytes(d []byte) uint64 {
 
 // GetRowCount returns the row count of the given ranges.
 // It uses the modifyCount to adjust the influence of modifications on the table.
-func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount int64) (float64, error) {
+func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
+		var count float64
 		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
 		if err != nil {
 			return 0, err
@@ -1451,7 +1457,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 					totalCount += 1
 					continue
 				}
-				count := idx.equalRowCount(lb, realtimeRowCount)
+				count = idx.equalRowCount(lb, realtimeRowCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				totalCount += count
@@ -1471,7 +1477,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 		r := types.NewBytesDatum(rb)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if isSingleCol && lowIsNull {
-			totalCount += float64(idx.NullCount)
+			count += float64(idx.NullCount)
 		}
 		expBackoffSuccess := false
 		// Due to the limitation of calcFraction and convertDatumToScalar, the histogram actually won't estimate anything.
@@ -1506,24 +1512,21 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				if expBackoffCnt > upperLimit {
 					expBackoffCnt = upperLimit
 				}
-				totalCount += expBackoffCnt
+				count += expBackoffCnt
 			}
 		}
 		if !expBackoffSuccess {
-			totalCount += idx.BetweenRowCount(l, r)
+			count += idx.BetweenRowCount(l, r)
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
-		totalCount *= idx.GetIncreaseFactor(realtimeRowCount)
+		count *= idx.GetIncreaseFactor(realtimeRowCount)
 
 		// handling the out-of-range part
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			increaseCount := realtimeRowCount - int64(idx.TotalRowCount())
-			if increaseCount < 0 {
-				increaseCount = 0
-			}
-			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
+			count += idx.Histogram.outOfRangeRowCount(&l, &r, modifyCount)
 		}
+		totalCount += count
 	}
 	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
 	return totalCount, nil
@@ -1599,7 +1602,8 @@ type countByRangeFunc = func(sessionctx.Context, int64, []*ranger.Range) (float6
 
 // newHistogramBySelectivity fulfills the content of new histogram by the given selectivity result.
 // TODO: Datum is not efficient, try to avoid using it here.
-//  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
+//
+//	Also, there're redundant calculation with Selectivity(). We need to reduce it too.
 func newHistogramBySelectivity(sctx sessionctx.Context, histID int64, oldHist, newHist *Histogram, ranges []*ranger.Range, cntByRangeFunc countByRangeFunc) error {
 	cntPerVal := int64(oldHist.AvgCountPerNotNullValue(int64(oldHist.TotalRowCount())))
 	var totCnt int64
@@ -2019,10 +2023,12 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 
 // mergeParitionBuckets merges buckets[l...r) to one global bucket.
 // global bucket:
-//		upper = buckets[r-1].upper
-//		count = sum of buckets[l...r).count
-//		repeat = sum of buckets[i] (buckets[i].upper == global bucket.upper && i in [l...r))
-//		ndv = merge bucket ndv from r-1 to l by mergeBucketNDV
+//
+//	upper = buckets[r-1].upper
+//	count = sum of buckets[l...r).count
+//	repeat = sum of buckets[i] (buckets[i].upper == global bucket.upper && i in [l...r))
+//	ndv = merge bucket ndv from r-1 to l by mergeBucketNDV
+//
 // Notice: lower is not calculated here.
 func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Merging) (*bucket4Merging, error) {
 	if len(buckets) == 0 {

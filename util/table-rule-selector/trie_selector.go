@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// 1. asterisk character (*, also called "star") matches zero or more characters,
-//    for example, doc* matches doc and document but not dodo;
-//    asterisk character must be the last character of wildcard word.
-// 2. the question mark ? matches exactly one character
+//  1. asterisk character (*, also called "star") matches zero or more characters,
+//     for example, doc* matches doc and document but not dodo;
+//     asterisk character must be the last character of wildcard word.
+//  2. the question mark ? matches exactly one character
 const (
 	// asterisk [ * ]
 	asterisk = '*'

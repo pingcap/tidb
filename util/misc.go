@@ -74,8 +74,9 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 
 // WithRecovery wraps goroutine startup call with force recovery.
 // it will dump current goroutine stack into log if catch any recover result.
-//   exec:      execute logic function.
-//   recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
+//
+//	exec:      execute logic function.
+//	recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
 func WithRecovery(exec func(), recoverFn func(r interface{})) {
 	defer func() {
 		r := recover()
@@ -93,10 +94,11 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 
 // Recover includes operations such as recovering, clearing，and printing information.
 // It will dump current goroutine stack into log if catch any recover result.
-//   metricsLabel: The label of PanicCounter metrics.
-//   funcInfo:     Some information for the panic function.
-//   recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
-//   quit:         If this value is true, the current program exits after recovery.
+//
+//	metricsLabel: The label of PanicCounter metrics.
+//	funcInfo:     Some information for the panic function.
+//	recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
+//	quit:         If this value is true, the current program exits after recovery.
 func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 	r := recover()
 	if r == nil {

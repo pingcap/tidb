@@ -1247,3 +1247,55 @@ func TestAggPushDownCountStar(t *testing.T) {
 
 	tk.MustQuery("select count(*) from c, o where c.c_id=o.c_id").Check(testkit.Rows("5"))
 }
+
+func TestGroupStreamAggOnTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("create table foo(a int, b int, c int, d int, primary key(a,b,c,d))")
+	tk.MustExec("alter table foo set tiflash replica 1")
+	tk.MustExec("insert into foo values(1,2,3,1),(1,2,3,6),(1,2,3,5)," +
+		"(1,2,3,2),(1,2,3,4),(1,2,3,7),(1,2,3,3),(1,2,3,0)")
+	tb := external.GetTableByName(t, tk, "test", "foo")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@tidb_allow_mpp=0")
+	sql := "select a,b,c,count(*) from foo group by a,b,c order by a,b,c"
+	tk.MustQuery(sql).Check(testkit.Rows("1 2 3 8"))
+	rows := tk.MustQuery("explain " + sql).Rows()
+
+	for _, row := range rows {
+		resBuff := bytes.NewBufferString("")
+		fmt.Fprintf(resBuff, "%s\n", row)
+		res := resBuff.String()
+		// StreamAgg with group keys on TiFlash is not supported
+		if strings.Contains(res, "tiflash") {
+			require.NotContains(t, res, "StreamAgg")
+		}
+	}
+}
+
+func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `IDT_RP24833` (  `COL1` bigint(16) DEFAULT '15' COMMENT 'NUMERIC UNIQUE INDEX',\n  `COL2` varchar(20) DEFAULT NULL,\n  `COL4` datetime DEFAULT NULL,\n  `COL3` bigint(20) DEFAULT NULL,\n  `COL5` float DEFAULT NULL,\n  KEY `UK_COL1` (`COL1`) /*!80000 INVISIBLE */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ((`COL1`-57))\n(PARTITION `P0` VALUES LESS THAN (-3503857335115112215),\n PARTITION `P1` VALUES LESS THAN (-2987877108151063747),\n PARTITION `P2` VALUES LESS THAN (-1981049919102122710),\n PARTITION `P3` VALUES LESS THAN (-1635802972727465681),\n PARTITION `P4` VALUES LESS THAN (1186020639986357714),\n PARTITION `P5` VALUES LESS THAN (1220018677454711359),\n PARTITION `PMX` VALUES LESS THAN (MAXVALUE));")
+	tk.MustExec("alter table IDT_RP24833 set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "IDT_RP24833")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("insert into IDT_RP24833 values(-8448770111093677011, \"郇鋺篤堯擈斥鍮啸赠璭饱磟朅闑傒聎疫ᛄ怖霃\", \"8781-05-02 04:23:03\", -27252736532807028, -1.34554e38);")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+	tk.MustExec("set @@session.tidb_enforce_mpp = on;")
+	tk.MustQuery("select /*+ read_from_storage(tiflash[t1]) */  * from IDT_RP24833 partition(p3, p4) t1 where t1. col1 between -8448770111093677011 and -8448770111093677011;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ read_from_storage(tiflash[t2]) */  * from IDT_RP24833 partition(p2) t2 where t2. col1 <= -8448770111093677011;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ read_from_storage(tiflash[t1, t2]) */  * from IDT_RP24833 partition(p3, p4) t1 join IDT_RP24833 partition(p2) t2 on t1.col1 = t2.col1 where t1. col1 between -8448770111093677011 and -8448770111093677011 and t2. col1 <= -8448770111093677011;").Check(testkit.Rows())
+}
