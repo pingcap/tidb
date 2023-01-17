@@ -54,6 +54,8 @@ type AccessPath struct {
 	// It's only valid for a IndexMerge path.
 	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
 	IndexMergeIsIntersection bool
+	// IndexMergeAccessMVIndex indicates whether this IndexMerge path accesses a MVIndex.
+	IndexMergeAccessMVIndex bool
 
 	StoreType kv.StoreType
 
