@@ -165,6 +165,10 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
 		// replica only -> public
+		failpoint.Inject("sleepBeforeReplicaOnly", func(val failpoint.Value) {
+			sleepSecond := val.(int)
+			time.Sleep(time.Duration(sleepSecond) * time.Second)
+		})
 		// Here need do some tiflash replica complement check.
 		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
