@@ -2745,3 +2745,50 @@ func TestForeignKeyMetaInKeyColumnUsage(t *testing.T) {
 		"INFORMATION_SCHEMA.KEY_COLUMN_USAGE where CONSTRAINT_SCHEMA='test' and TABLE_NAME='t2' and REFERENCED_TABLE_SCHEMA is not null and REFERENCED_COLUMN_NAME is not null;").
 		Check(testkit.Rows("fk test t2 a test t1 a", "fk test t2 b test t1 b"))
 }
+
+func TestForeignKeyAndGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	// Test foreign key with parent column is virtual generated column.
+	tk.MustExec("create table t1 (a int, b int as (a+1) virtual, index(b));")
+	tk.MustGetErrMsg("create table t2 (a int, b int, constraint fk foreign key(b) references t1(b));", "[schema:3733]Foreign key 'fk' uses virtual column 'b' which is not supported.")
+	// Test foreign key with child column is virtual generated column.
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int key);")
+	tk.MustGetErrMsg("create table t2 (a int, c int as (a+1) virtual, constraint fk foreign key(c) references t1(a));", "[schema:3733]Foreign key 'fk' uses virtual column 'c' which is not supported.")
+	// Test foreign key with parent column is stored generated column.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int, b int as (a) stored, index(b));")
+	tk.MustExec("create table t2 (a int, b int, constraint fk foreign key(b) references t1(b) on delete cascade on update cascade);")
+	tk.MustExec("insert into t1 (a) values (1),(2)")
+	tk.MustExec("insert into t2 (a) values (1),(2)")
+	tk.MustExec("update t2 set b=a")
+	tk.MustExec("insert into t2 values (1,1),(2,2)")
+	tk.MustGetDBError("insert into t2 values (3,3)", plannercore.ErrNoReferencedRow2)
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+	tk.MustExec("update t1 set a=a+10 where a=1")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("2 2", "11 11"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 11", "1 11", "2 2", "2 2"))
+	tk.MustExec("delete from t1 where a=2")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("11 11"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 11", "1 11"))
+	// Test foreign key with parent and child column is stored generated column.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (a int, b int as (a) stored, index(b));")
+	tk.MustGetErrMsg("create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b) on update cascade);", "[ddl:3104]Cannot define foreign key with ON UPDATE CASCADE clause on a generated column.")
+	tk.MustGetErrMsg("create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b) on delete set null);", "[ddl:3104]Cannot define foreign key with ON DELETE SET NULL clause on a generated column.")
+	tk.MustExec("create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b));")
+	tk.MustExec("insert into t1 (a) values (1),(2)")
+	tk.MustExec("insert into t2 (a) values (1),(2)")
+	tk.MustGetDBError("insert into t2 (a) values (3)", plannercore.ErrNoReferencedRow2)
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustGetDBError("delete from t1 where b=1", plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError("update t1 set a=a+10 where a=1", plannercore.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop foreign key fk")
+	tk.MustExec("alter table t2 add foreign key fk (b) references t1(b) on delete cascade")
+	tk.MustExec("delete from t1 where a=1")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("2 2"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("2 2"))
+}
