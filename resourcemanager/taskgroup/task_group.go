@@ -217,6 +217,7 @@ func Scheduler() {
 
 var ctx context.Context
 
+// GetContext is to get the context
 func GetContext() context.Context {
 	return ctx
 }
