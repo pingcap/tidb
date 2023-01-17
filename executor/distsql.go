@@ -355,6 +355,8 @@ type IndexLookUpExecutor struct {
 	PushedLimit *plannercore.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
+
+	partitionIDMap map[int64]struct{}
 }
 
 type getHandleType int8
@@ -805,6 +807,12 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
 				return handles, retChk, scannedKeys, err
+			}
+			// for global index, only specified partitions' handles can be used later
+			if ph, ok := h.(kv.PartitionHandle); ok {
+				if _, exist := w.idxLookup.partitionIDMap[ph.PartitionID]; !exist {
+					continue
+				}
 			}
 			handles = append(handles, h)
 		}

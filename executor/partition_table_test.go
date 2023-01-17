@@ -287,3 +287,15 @@ func (s *globalIndexSuite) TestIssue21731(c *C) {
 	tk.MustExec("drop table if exists p")
 	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
 }
+
+func (s *globalIndexSuite) TestGlobalIndexSelectSpecifiedPartition(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists p")
+	tk.MustExec(`create table p (id int, c int) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
+	tk.MustQuery("select * from p partition(p0) use index (idx)").Sort().Check(testkit.Rows("1 3"))
+}
