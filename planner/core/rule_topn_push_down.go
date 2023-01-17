@@ -82,12 +82,20 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 		return ls.children[0].pushDownTopN(topN, opt)
 	}
 	// If a TopN is pushed down, this sort is useless.
-	// The proj below sort will prevent optimizer from pushing the topN down to TiDB/TiFlash.
-	if projection, ok := ls.children[0].(*LogicalProjection); ok {
-		for i, child := range projection.Children() {
-			projection.Children()[i] = child.pushDownTopN(nil, opt)
+	if projection, ok := ls.children[0].(*LogicalProjection); ok && !canProjectionBeEliminatedLoose(projection) {
+		// If the proj below sort cannot be eliminated and contains a column in topN.ByItems,
+		// proj will prevent the optimizer from pushing topN down.
+		for _, by := range topN.ByItems {
+			cols := expression.ExtractColumns(by.Expr)
+			for _, col := range cols {
+				if projection.Schema().Contains(col) {
+					for i, child := range projection.Children() {
+						projection.Children()[i] = child.pushDownTopN(nil, opt)
+					}
+					return topN.setChild(projection, opt)
+				}
+			}
 		}
-		return topN.setChild(projection, opt)
 	}
 	return ls.children[0].pushDownTopN(topN, opt)
 }
