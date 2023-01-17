@@ -25,6 +25,7 @@ go_library(
         "delete_range.go",
         "delete_range_util.go",
         "dist_backfilling.go",
+        "dist_owner.go",
         "foreign_key.go",
         "generated_column.go",
         "index.go",

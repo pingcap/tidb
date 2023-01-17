@@ -24,9 +24,11 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/gpool/spmc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -96,6 +98,39 @@ func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
 	return bw
 }
 
+func runBackfillJobs(d *ddl, sess *session, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
+	dbInfo, tbl, err := d.getTableByTxn(d.store, bJob.Meta.SchemaID, bJob.Meta.TableID)
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] runBackfillJobs gets table failed", zap.String("bfJob", bJob.AbbrStr()), zap.Error(err))
+		return nil, err
+	}
+
+	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+	// TODO: Different worker using different newBackfillerFunc.
+	workerCtx, err := newAddIndexWorkerContext(d, dbInfo.Name, tbl, workerCnt, bJob, jobCtx)
+	if err != nil || workerCtx == nil {
+		logutil.BgLogger().Info("[ddl] new adding index worker context failed", zap.Reflect("workerCtx", workerCtx), zap.Error(err))
+		return nil, errors.Trace(err)
+	}
+	bwMgr := newBackfilWorkerManager(workerCtx)
+	d.backfillWorkerPool.SetConsumerFunc(func(task *reorgBackfillTask, _ int, bfWorker *backfillWorker) *backfillResult {
+		return bfWorker.runTask(task)
+	})
+	proFunc := func() ([]*reorgBackfillTask, error) {
+		// TODO: After BackfillJob replaces reorgBackfillTask, use backfiller's GetTasks instead of it.
+		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, workerCnt*2)
+	}
+	// add new task
+	resultCh, control := d.backfillWorkerPool.AddProduceBySlice(proFunc, 0, workerCtx, spmc.WithConcurrency(workerCnt))
+	bwMgr.waitFinalResult(resultCh, control)
+
+	// waiting task finishing
+	control.Wait()
+	err = bwMgr.close(d)
+
+	return tbl, err
+}
+
 func (bwCtx *backfillWorkerContext) close(d *ddl) {
 	for _, s := range bwCtx.sessCtxs {
 		d.sessPool.put(s)
@@ -131,7 +166,7 @@ func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult
 				if result.err != nil {
 					logutil.BgLogger().Warn("handle backfill task failed", zap.Error(result.err))
 					bwm.unsyncErr = result.err
-					// TODO: After spmc supports, exit this tControl related goroutines in spmc pool.
+					tControl.Stop()
 					return
 				}
 			case <-bwm.exitCh:

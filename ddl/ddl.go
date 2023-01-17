@@ -348,11 +348,7 @@ type ddlCtx struct {
 	// It holds the running DDL jobs ID.
 	runningJobIDs []string
 	// reorgCtx is used for reorganization.
-	reorgCtx struct {
-		sync.RWMutex
-		// reorgCtxMap maps job ID to reorg context.
-		reorgCtxMap map[int64]*reorgCtx
-	}
+	reorgCtx reorgContexts
 	// backfillCtx is used for backfill workers.
 	backfillCtx struct {
 		sync.RWMutex
@@ -511,6 +507,19 @@ func (dc *ddlCtx) setBackfillCtxJobContext(jobID int64, jobQuery string, jobType
 	return jobCtx, existent
 }
 
+type reorgContexts struct {
+	sync.RWMutex
+	// reorgCtxMap maps job ID to reorg context.
+	reorgCtxMap map[int64]*reorgCtx
+}
+
+func getReorgCtx(reorgCtxs *reorgContexts, jobID int64) *reorgCtx {
+	reorgCtxs.RLock()
+	defer reorgCtxs.RUnlock()
+	return reorgCtxs.reorgCtxMap[jobID]
+}
+
+// TODO: Using getReorgCtx instead of dc.getReorgCtx.
 func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()

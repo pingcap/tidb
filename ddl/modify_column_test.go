@@ -53,8 +53,11 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 
 	originalTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
+	limit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(5)
 	defer func() {
 		ddl.ReorgWaitTimeout = originalTimeout
+		variable.SetDDLErrorCountLimit(limit)
 	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -159,10 +162,16 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	// Test encountering a "notOwnerErr" error which caused the processing backfill job to exit halfway.
 	// During the period, the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("addIdxNotOwnerErr")`))
-	tk.MustExec("alter table t1 add index idx2(c1)")
-	expectedElements = []*meta.Element{
-		{ID: 7, TypeKey: meta.IndexElementKey}}
-	checkReorgHandle(elements, expectedElements)
+	// TODO: Remove this check after "err" isn't nil in runReorgJobAndHandleErr.
+	if variable.DDLEnableDistributeReorg.Load() {
+		err = tk.ExecToErr("alter table t1 add index idx2(c1)")
+		require.EqualError(t, err, "[ddl:8201]TiDB server is not a DDL owner")
+	} else {
+		tk.MustExec("alter table t1 add index idx2(c1)")
+		expectedElements = []*meta.Element{
+			{ID: 7, TypeKey: meta.IndexElementKey}}
+		checkReorgHandle(elements, expectedElements)
+	}
 	tk.MustExec("admin check table t1")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"))
 }
