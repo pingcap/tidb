@@ -177,7 +177,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	for i := 0; i < concurrency; i++ {
 		workerID := i
 		ctx := taskgroup.GetContext()
-		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
+		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, ctx, cancelFunc) }, e.finishJoinWorkers)
 	}
 	go e.wait4JoinWorkers()
 }
