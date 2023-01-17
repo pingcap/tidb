@@ -183,6 +183,51 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 }
 
+func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10),c int, KEY `idx` (`c`))")
+	tk.MustExec("analyze table test.t")
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	// dump historical stats
+	h := dom.StatsHandle()
+	hsWorker := dom.GetHistoricalStatsWorker()
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+	snapshot := oracle.GoTimeToTS(time.Now())
+	jsTable, err := h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.NotEqual(t, jsTable.Version, uint64(0))
+	originVersion := jsTable.Version
+
+	// assert historical stats non-change after drop column
+	tk.MustExec("alter table t drop column b")
+	h.GCStats(is, 0)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, err = h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.Equal(t, jsTable.Version, originVersion)
+
+	// assert historical stats non-change after drop index
+	tk.MustExec("alter table t drop index idx")
+	h.GCStats(is, 0)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, err = h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.Equal(t, jsTable.Version, originVersion)
+}
+
 func TestGCOutdatedHistoryStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
