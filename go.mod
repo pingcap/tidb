@@ -63,14 +63,8 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-	github.com/tikv/client-go/v2 v2.0.1-0.20221012074928-624e0ed3cc67
+	github.com/tikv/client-go/v2 v2.0.1-0.20230117081319-35a262e90d9b
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
-=======
-	github.com/tikv/client-go/v2 v2.0.4
-	github.com/tikv/pd/client v0.0.0-20221031025758-80f0d8ca4d07
-	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
->>>>>>> a9d8bfe6ae (session: fix data race in the LazyTxn.LockKeys (#40350))
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
@@ -176,18 +170,9 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.6.1 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20190707220628-8d4bc4ba7749 // indirect
-<<<<<<< HEAD
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/tklauser/go-sysconf v0.3.9 // indirect
 	github.com/tklauser/numcpus v0.3.0 // indirect
-=======
-	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
-	github.com/sirupsen/logrus v1.9.0 // indirect
-	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a // indirect
-	github.com/tklauser/go-sysconf v0.3.10 // indirect
-	github.com/tklauser/numcpus v0.4.0 // indirect
->>>>>>> a9d8bfe6ae (session: fix data race in the LazyTxn.LockKeys (#40350))
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 // indirect
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
