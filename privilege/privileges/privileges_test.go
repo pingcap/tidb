@@ -2571,6 +2571,46 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	tk.MustExec(dropStmt)
 }
 
+func TestResourceGroupAdminDynamicPriv(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	// tk1 is the root user, create a new user for test.
+	tk1.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk1.MustExec("CREATE USER resource_group_user")
+	tk1.MustExec("set @@global.tidb_enable_resource_control = 1")
+
+	// tk2 is the new user.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.Session().Auth(&auth.UserIdentity{
+		Username: "resource_group_user",
+		Hostname: "localhost",
+	}, nil, nil)
+	err := tk2.ExecToErr("CREATE RESOURCE GROUP test RRU_PER_SEC = 666")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation")
+
+	// grant the RESOURCE_GROUP_ADMIN dynamic privilege to the user.
+	tk1.MustExec("GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_user")
+	tk1.MustQuery("SHOW GRANTS FOR resource_group_user").Check(testkit.Rows(
+		`GRANT USAGE ON *.* TO 'resource_group_user'@'%'`,
+		`GRANT RESOURCE_GROUP_ADMIN ON *.* TO 'resource_group_user'@'%'`))
+
+	tk2.MustExec("CREATE RESOURCE GROUP test RRU_PER_SEC = 666")
+	tk2.MustExec("CREATE RESOURCE GROUP test2 WRU_PER_SEC = 999")
+
+	tk2.MustExec("ALTER RESOURCE GROUP test2 WRU_PER_SEC = 1000")
+	tk2.MustExec("DROP RESOURCE GROUP test2")
+
+	tk1.MustExec("REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_user")
+	err = tk2.ExecToErr("ALTER RESOURCE GROUP test RRU_PER_SEC = 667")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation")
+	err = tk2.ExecToErr("DROP RESOURCE GROUP test")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation")
+}
+
 func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
