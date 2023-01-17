@@ -586,6 +586,11 @@ type SessionVars struct {
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
 
+	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
+	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
+	// Note: this variable should be accessed and updated by atomic operations.
+	RefCountOfStmtCtx stmtctx.ReferenceCount
+
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
@@ -1001,11 +1006,8 @@ type SessionVars struct {
 	// ReadStaleness indicates the staleness duration for the following query
 	ReadStaleness time.Duration
 
-	// cached is used to optimze the object allocation.
-	cached struct {
-		curr int8
-		data [2]stmtctx.StatementContext
-	}
+	// cachedStmtCtx is used to optimze the object allocation.
+	cachedStmtCtx [2]stmtctx.StatementContext
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *mathutil.MysqlRng
@@ -1045,13 +1047,29 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// ProtectedTSList holds a list of timestamps that should delay GC.
+	ProtectedTSList protectedTSList
+
+	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When it is false, ANALYZE reads the latest data.
+	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	EnableAnalyzeSnapshot bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
 func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
-	s.cached.curr = (s.cached.curr + 1) % 2
-	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
-	return &s.cached.data[s.cached.curr]
+	sc := &s.cachedStmtCtx[0]
+	if sc == s.StmtCtx {
+		sc = &s.cachedStmtCtx[1]
+	}
+	if s.RefCountOfStmtCtx.TryFreeze() {
+		*sc = stmtctx.StatementContext{}
+		s.RefCountOfStmtCtx.UnFreeze()
+	} else {
+		sc = &stmtctx.StatementContext{}
+	}
+	return sc
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -2405,4 +2423,54 @@ func (s *SessionVars) IsRcCheckTsRetryable(err error) bool {
 	}
 	// The `RCCheckTS` flag of `stmtCtx` is set.
 	return s.RcReadCheckTS && s.StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict)
+}
+
+// protectedTSList implements util/processinfo#ProtectedTSList
+type protectedTSList struct {
+	sync.Mutex
+	items map[uint64]int
+}
+
+// HoldTS holds the timestamp to prevent its data from being GCed.
+func (lst *protectedTSList) HoldTS(ts uint64) (unhold func()) {
+	lst.Lock()
+	if lst.items == nil {
+		lst.items = map[uint64]int{}
+	}
+	lst.items[ts] += 1
+	lst.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			lst.Lock()
+			if lst.items != nil {
+				if lst.items[ts] > 1 {
+					lst.items[ts] -= 1
+				} else {
+					delete(lst.items, ts)
+				}
+			}
+			lst.Unlock()
+		})
+	}
+}
+
+// GetMinProtectedTS returns the minimum protected timestamp that greater than `lowerBound` (0 if no such one).
+func (lst *protectedTSList) GetMinProtectedTS(lowerBound uint64) (ts uint64) {
+	lst.Lock()
+	for k, v := range lst.items {
+		if v > 0 && k > lowerBound && (k < ts || ts == 0) {
+			ts = k
+		}
+	}
+	lst.Unlock()
+	return
+}
+
+// Size returns the number of protected timestamps (exported for test).
+func (lst *protectedTSList) Size() (size int) {
+	lst.Lock()
+	size = len(lst.items)
+	lst.Unlock()
+	return
 }

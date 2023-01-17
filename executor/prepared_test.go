@@ -130,6 +130,10 @@ func (sm *mockSessionManager2) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
 
+func (sm *mockSessionManager2) GetMinStartTS(lowerBound uint64) uint64 {
+	return 0
+}
+
 func TestPreparedStmtWithHint(t *testing.T) {
 	// see https://github.com/pingcap/tidb/issues/18535
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)

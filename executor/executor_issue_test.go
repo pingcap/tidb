@@ -1302,3 +1302,15 @@ func TestIssue33214(t *testing.T) {
 		}
 	}
 }
+
+func TestIssue40158(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (_id int PRIMARY KEY, c1 char, index (c1));")
+	tk.MustExec("insert into t1 values (1, null);")
+	tk.MustQuery("select * from t1 where c1 is null and _id < 1;").Check(testkit.Rows())
+}
