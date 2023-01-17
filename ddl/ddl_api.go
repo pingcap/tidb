@@ -3079,6 +3079,15 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			handledTTLOrTTLEnable = true
+		case ast.TableOptionEncryption:
+			switch strings.ToUpper(op.StrValue) {
+			case "Y":
+				tbInfo.TableEncryption = true
+			case "N":
+				tbInfo.TableEncryption = false
+			default:
+				return errors.Trace(dbterror.ErrInvalidEncryptionOption)
+			}
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -3421,6 +3430,16 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 					err = d.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable)
 
 					handledTTLOrTTLEnable = true
+				case ast.TableOptionEncryption:
+					switch strings.ToUpper(opt.StrValue) {
+					case "Y":
+						spec.TableEncrption = true
+					case "N":
+						spec.TableEncrption = false
+					default:
+						return errors.Trace(dbterror.ErrInvalidEncryptionOption)
+					}
+					err = d.AlterTableEncryptionOption(sctx, ident, spec)
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -5212,6 +5231,33 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.Comment},
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+// AlterTableEncryptionOption updates the table encryption option.
+func (d *ddl) AlterTableEncryptionOption(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		TableName:  tb.Meta().Name.L,
+		Type:       model.ActionAlterEncryptionOption,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.TableEncrption},
 	}
 
 	err = d.DoDDLJob(ctx, job)

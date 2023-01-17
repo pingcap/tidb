@@ -427,4 +427,6 @@ var (
 	ErrTempTableNotAllowedWithTTL = ClassDDL.NewStd(mysql.ErrTempTableNotAllowedWithTTL)
 	// ErrUnsupportedTTLReferencedByFK returns when the TTL config is set for a table referenced by foreign key
 	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
+	// ErrInvalidEncryptionOption returns when en encryption option is invalid.
+	ErrInvalidEncryptionOption = ClassDDL.NewStd(mysql.ErrInvalidEncryptionOption)
 )

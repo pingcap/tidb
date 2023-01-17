@@ -1168,6 +1168,32 @@ func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 	return ver, nil
 }
 
+func onModifyTableEncryptionOption(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var encryption bool
+	if err := job.DecodeArgs(&encryption); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return ver, nil
+	}
+
+	tblInfo.TableEncryption = encryption
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var toCharset, toCollate string
 	var needsOverwriteCols bool

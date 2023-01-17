@@ -11778,7 +11778,6 @@ TableOption:
 	}
 |	"ENCRYPTION" EqOpt EncryptionOpt
 	{
-		// Parse it but will ignore it
 		$$ = &ast.TableOption{Tp: ast.TableOptionEncryption, StrValue: $3}
 	}
 |	"TTL" EqOpt Identifier '+' "INTERVAL" Literal TimeUnit

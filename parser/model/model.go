@@ -552,6 +552,8 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	TableEncryption bool `json:"encryption"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.

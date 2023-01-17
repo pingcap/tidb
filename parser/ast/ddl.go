@@ -2760,6 +2760,7 @@ type AlterTableSpec struct {
 	Statistics       *StatisticsSpec
 	AttributesSpec   *AttributesSpec
 	StatsOptionsSpec *StatsOptionsSpec
+	TableEncrption   bool
 }
 
 type TiFlashReplicaSpec struct {

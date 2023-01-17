@@ -1206,6 +1206,10 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		buf.WriteString("*/")
 	}
 
+	if tableInfo.TableEncryption {
+		fmt.Fprintf(buf, " ENCRYPTION='Y'")
+	}
+
 	if len(tableInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
 	}

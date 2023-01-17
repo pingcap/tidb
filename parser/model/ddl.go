@@ -102,6 +102,8 @@ const (
 
 	ActionAlterTTLInfo   ActionType = 65
 	ActionAlterTTLRemove ActionType = 67
+
+	ActionAlterEncryptionOption ActionType = 68
 )
 
 var actionMap = map[ActionType]string{
@@ -167,6 +169,7 @@ var actionMap = map[ActionType]string{
 	ActionReorganizePartition:           "alter table reorganize partition",
 	ActionAlterTTLInfo:                  "alter table ttl",
 	ActionAlterTTLRemove:                "alter table no_ttl",
+	ActionAlterEncryptionOption:         "alter table encryption",
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",

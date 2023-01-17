@@ -678,10 +678,13 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 			}
 			pkType := "NONCLUSTERED"
 			if !table.IsView() {
+				if table.TableEncryption {
+					createOptions = "ENCRYPTION='Y' "
+				}
 				if table.GetPartitionInfo() != nil {
-					createOptions = "partitioned"
+					createOptions += "partitioned"
 				} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
-					createOptions = "cached=on"
+					createOptions += "cached=on"
 				}
 				var autoIncID interface{}
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)

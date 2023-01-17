@@ -1015,6 +1015,17 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 					handledCharsetOrCollate = true
 				case ast.TableOptionPlacementPolicy:
 				case ast.TableOptionEngine:
+				case ast.TableOptionEncryption:
+					tblInfo = tblInfo.Clone()
+					switch strings.ToUpper(opt.StrValue) {
+					case "Y":
+						tblInfo.TableEncryption = true
+					case "N":
+						tblInfo.TableEncryption = false
+					default:
+						return errors.Trace(dbterror.ErrInvalidEncryptionOption)
+					}
+					_ = d.PutTable(ident.Schema, tblInfo)
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
