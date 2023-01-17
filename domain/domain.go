@@ -117,8 +117,7 @@ type Domain struct {
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	// TODO: use Run for each process in future pr
-	ewg                   *util.WaitGroupEnhancedWrapper
-	wg                    util.WaitGroupWrapper
+	wg                    *util.WaitGroupEnhancedWrapper
 	statsUpdating         atomicutil.Int32
 	cancel                context.CancelFunc
 	indexUsageSyncLease   time.Duration
@@ -891,7 +890,6 @@ func (do *Domain) Close() {
 		do.cancel()
 	}
 	do.wg.Wait()
-	do.ewg.Wait()
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle.Load())
 	if do.onClose != nil {
@@ -921,7 +919,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsIdsMap: make(map[int64]string),
 		},
 	}
-	do.ewg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, enableEnhancedWaitGroupCheck.Load())
+	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, enableEnhancedWaitGroupCheck.Load())
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
@@ -1068,7 +1066,7 @@ func (do *Domain) Init(
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Run(do.mdlCheckLoop)
+	do.wg.Run(do.mdlCheckLoop, "mdlCheckLoop")
 	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
@@ -1110,7 +1108,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
-	do.wg.Run(loop)
+	do.wg.Run(loop, "logBackupAdvancer")
 	return nil
 }
 
@@ -1931,7 +1929,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
-		do.wg.Run(do.loadStatsWorker)
+		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
@@ -1942,9 +1940,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		return nil
 	}
 	do.SetStatsUpdating(true)
-	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
-	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
-	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
+	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
+	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
+	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
 	return nil
 }
 
@@ -1954,7 +1952,7 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	for i, ctx := range ctxList {
 		statsHandle.StatsLoad.SubCtxs[i] = ctx
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(ctx, do.exit, &do.wg)
+		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
 	}
 }
 
@@ -2539,7 +2537,7 @@ func (do *Domain) StartTTLJobManager() {
 		if err != nil {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
-	})
+	}, "ttlJobManager")
 }
 
 // TTLJobManager returns the ttl job manager on this domain
