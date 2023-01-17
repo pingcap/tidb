@@ -191,13 +191,13 @@ func Scheduler() {
 		// So we reach a conclusion that the smaller the start running time of a task group, the less CPU resource it uses, thus the higher priority.
 
 		for !s.pq.Empty() {
-			if tokens < 20*time.Millisecond {
+			if tokens < 200*time.Millisecond {
 				// Not enough tokens, rate limiter take effect.
 				break
 			}
 
 			tg := s.pq.Dequeue()
-			tokens -= 20 * time.Millisecond
+			tokens -= 200 * time.Millisecond
 			tg.startTime = now
 			tg.cpuTime.Store(time.Duration(0))
 			tg.mu.Lock()
