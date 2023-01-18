@@ -975,7 +975,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	// by kv reset when meets a unhandled error, but the `job` modification can't.
 	// So make sure job state and args change is after all other checks or make sure these
 	// change has no effect when retrying it.
-	// TODO: Should this ^^ comment be updated with how to handle the tidb_ddl_reorg table?
 	switch job.Type {
 	case model.ActionCreateSchema:
 		ver, err = onCreateSchema(d, t, job)
