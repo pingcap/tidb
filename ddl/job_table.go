@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	su "github.com/pingcap/tidb/util/sessionutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -88,7 +89,7 @@ const (
 	reorg
 )
 
-func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
+func (d *ddl) getJob(sess *su.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
 	not := "not"
 	label := "get_job_general"
 	if tp == reorg {
@@ -96,7 +97,7 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 		label = "get_job_reorg"
 	}
 	sql := fmt.Sprintf(getJobSQL, not, d.excludeJobIDs())
-	rows, err := sess.execute(context.Background(), sql, label)
+	rows, err := sess.Execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -125,7 +126,7 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 	return nil, nil
 }
 
-func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
+func (d *ddl) getGeneralJob(sess *su.Session) (*model.Job, error) {
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
 		if job.Type == model.ActionDropSchema {
 			// Check if there is any reorg job on this schema.
@@ -140,12 +141,12 @@ func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 	})
 }
 
-func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
-	rows, err := sess.execute(context.Background(), sql, "check_runnable")
+func (d *ddl) checkJobIsRunnable(sess *su.Session, sql string) (bool, error) {
+	rows, err := sess.Execute(context.Background(), sql, "check_runnable")
 	return len(rows) == 0, err
 }
 
-func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
+func (d *ddl) getReorgJob(sess *su.Session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
@@ -163,7 +164,7 @@ func (d *ddl) startDispatchLoop() {
 		logutil.BgLogger().Fatal("dispatch loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
 	}
 	defer d.sessPool.put(se)
-	sess := newSession(se)
+	sess := su.NewSession(se)
 	var notifyDDLJobByEtcdCh clientv3.WatchChan
 	if d.etcdCli != nil {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
@@ -197,7 +198,7 @@ func (d *ddl) startDispatchLoop() {
 	}
 }
 
-func (d *ddl) loadDDLJobAndRun(sess *session, pool *workerPool, getJob func(*session) (*model.Job, error)) {
+func (d *ddl) loadDDLJobAndRun(sess *su.Session, pool *workerPool, getJob func(*su.Session) (*model.Job, error)) {
 	wk, err := pool.get()
 	if err != nil || wk == nil {
 		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
@@ -303,9 +304,9 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	})
 }
 
-func (d *ddl) markJobProcessing(sess *session, job *model.Job) error {
+func (d *ddl) markJobProcessing(sess *su.Session, job *model.Job) error {
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := sess.execute(context.Background(), fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID), "mark_job_processing")
+	_, err := sess.Execute(context.Background(), fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID), "mark_job_processing")
 	return errors.Trace(err)
 }
 
@@ -314,7 +315,7 @@ const (
 	updateDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
 
-func insertDDLJobs2Table(sess *session, updateRawArgs bool, jobs ...*model.Job) error {
+func insertDDLJobs2Table(sess *su.Session, updateRawArgs bool, jobs ...*model.Job) error {
 	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
@@ -337,7 +338,7 @@ func insertDDLJobs2Table(sess *session, updateRawArgs bool, jobs ...*model.Job) 
 	}
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, err := sess.execute(ctx, sql.String(), "insert_job")
+	_, err := sess.Execute(ctx, sql.String(), "insert_job")
 	logutil.BgLogger().Debug("[ddl] add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
 	return errors.Trace(err)
 }
@@ -381,25 +382,25 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
-	_, err := w.sess.execute(context.Background(), sql, "delete_job")
+	_, err := w.sess.Execute(context.Background(), sql, "delete_job")
 	return errors.Trace(err)
 }
 
-func updateDDLJob2Table(sctx *session, job *model.Job, updateRawArgs bool) error {
+func updateDDLJob2Table(sctx *su.Session, job *model.Job, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
 	}
 	sql := fmt.Sprintf(updateDDLJobSQL, wrapKey2String(b), job.ID)
-	_, err = sctx.execute(context.Background(), sql, "update_job")
+	_, err = sctx.Execute(context.Background(), sql, "update_job")
 	return errors.Trace(err)
 }
 
 // getDDLReorgHandle gets DDL reorg handle.
-func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+func getDDLReorgHandle(sess *su.Session, job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	sql := fmt.Sprintf("select ele_id, ele_type, start_key, end_key, physical_id from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
 	ctx := kv.WithInternalSourceType(context.Background(), getDDLRequestSource(job))
-	rows, err := sess.execute(ctx, sql, "get_handle")
+	rows, err := sess.Execute(ctx, sql, "get_handle")
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
@@ -434,54 +435,54 @@ func getDDLReorgHandle(sess *session, job *model.Job) (element *meta.Element, st
 
 // updateDDLReorgHandle update startKey, endKey physicalTableID and element of the handle.
 // Caller should wrap this in a separate transaction, to avoid conflicts.
-func updateDDLReorgHandle(sess *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+func updateDDLReorgHandle(sess *su.Session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	sql := fmt.Sprintf("update mysql.tidb_ddl_reorg set ele_id = %d, ele_type = %s, start_key = %s, end_key = %s, physical_id = %d where job_id = %d",
 		element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID, jobID)
-	_, err := sess.execute(context.Background(), sql, "update_handle")
+	_, err := sess.Execute(context.Background(), sql, "update_handle")
 	return err
 }
 
 // initDDLReorgHandle initializes the handle for ddl reorg.
-func initDDLReorgHandle(s *session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+func initDDLReorgHandle(s *su.Session, jobID int64, startKey kv.Key, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	del := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", jobID)
 	ins := fmt.Sprintf("insert into mysql.tidb_ddl_reorg(job_id, ele_id, ele_type, start_key, end_key, physical_id) values (%d, %d, %s, %s, %s, %d)",
 		jobID, element.ID, wrapKey2String(element.TypeKey), wrapKey2String(startKey), wrapKey2String(endKey), physicalTableID)
-	return s.runInTxn(func(se *session) error {
-		_, err := se.execute(context.Background(), del, "init_handle")
+	return su.RunInTxn(s, func(se *su.Session) error {
+		_, err := se.Execute(context.Background(), del, "init_handle")
 		if err != nil {
 			logutil.BgLogger().Info("initDDLReorgHandle failed to delete", zap.Int64("jobID", jobID), zap.Error(err))
 		}
-		_, err = se.execute(context.Background(), ins, "init_handle")
+		_, err = se.Execute(context.Background(), ins, "init_handle")
 		return err
 	})
 }
 
 // deleteDDLReorgHandle deletes the handle for ddl reorg.
-func removeDDLReorgHandle(s *session, job *model.Job, elements []*meta.Element) error {
+func removeDDLReorgHandle(s *su.Session, job *model.Job, elements []*meta.Element) error {
 	if len(elements) == 0 {
 		return nil
 	}
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	return s.runInTxn(func(se *session) error {
-		_, err := se.execute(context.Background(), sql, "remove_handle")
+	return su.RunInTxn(s, func(se *su.Session) error {
+		_, err := se.Execute(context.Background(), sql, "remove_handle")
 		return err
 	})
 }
 
 // removeReorgElement removes the element from ddl reorg, it is the same with removeDDLReorgHandle, only used in failpoint
-func removeReorgElement(s *session, job *model.Job) error {
+func removeReorgElement(s *su.Session, job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_reorg where job_id = %d", job.ID)
-	return s.runInTxn(func(se *session) error {
-		_, err := se.execute(context.Background(), sql, "remove_handle")
+	return su.RunInTxn(s, func(se *su.Session) error {
+		_, err := se.Execute(context.Background(), sql, "remove_handle")
 		return err
 	})
 }
 
 // cleanDDLReorgHandles removes handles that are no longer needed.
-func cleanDDLReorgHandles(s *session, job *model.Job) error {
+func cleanDDLReorgHandles(s *su.Session, job *model.Job) error {
 	sql := "delete from mysql.tidb_ddl_reorg where job_id = " + strconv.FormatInt(job.ID, 10)
-	return s.runInTxn(func(se *session) error {
-		_, err := se.execute(context.Background(), sql, "clean_handle")
+	return su.RunInTxn(s, func(se *su.Session) error {
+		_, err := se.Execute(context.Background(), sql, "clean_handle")
 		return err
 	})
 }
@@ -493,8 +494,8 @@ func wrapKey2String(key []byte) string {
 	return fmt.Sprintf("0x%x", key)
 }
 
-func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
-	rows, err := sess.execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
+func getJobsBySQL(sess *su.Session, tbl, condition string) ([]*model.Job, error) {
+	rows, err := sess.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -534,22 +535,22 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 }
 
 // AddBackfillHistoryJob adds the backfill jobs to the tidb_ddl_backfill_history table.
-func AddBackfillHistoryJob(sess *session, backfillJobs []*BackfillJob) error {
+func AddBackfillHistoryJob(sess *su.Session, backfillJobs []*BackfillJob) error {
 	label := fmt.Sprintf("add_%s_job", BackfillHistoryTable)
 	sql, err := generateInsertBackfillJobSQL(BackfillHistoryTable, backfillJobs)
 	if err != nil {
 		return err
 	}
-	_, err = sess.execute(context.Background(), sql, label)
+	_, err = sess.Execute(context.Background(), sql, label)
 	return errors.Trace(err)
 }
 
 // AddBackfillJobs adds the backfill jobs to the tidb_ddl_backfill table.
-func AddBackfillJobs(s *session, backfillJobs []*BackfillJob) error {
+func AddBackfillJobs(s *su.Session, backfillJobs []*BackfillJob) error {
 	label := fmt.Sprintf("add_%s_job", BackfillTable)
 	// Do runInTxn to get StartTS.
-	return s.runInTxn(func(se *session) error {
-		txn, err := se.txn()
+	return su.RunInTxn(s, func(se *su.Session) error {
+		txn, err := se.GetTxn()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -562,13 +563,13 @@ func AddBackfillJobs(s *session, backfillJobs []*BackfillJob) error {
 		if err != nil {
 			return err
 		}
-		_, err = se.execute(context.Background(), sql, label)
+		_, err = se.Execute(context.Background(), sql, label)
 		return errors.Trace(err)
 	})
 }
 
 // GetBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element.
-func GetBackfillJobsForOneEle(s *session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
+func GetBackfillJobsForOneEle(s *su.Session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
 	eJobIDsBuilder := strings.Builder{}
 	for i, id := range excludedJobIDs {
 		if i == 0 {
@@ -584,7 +585,7 @@ func GetBackfillJobsForOneEle(s *session, batch int, excludedJobIDs []int64, lea
 
 	var err error
 	var bJobs []*BackfillJob
-	err = s.runInTxn(func(se *session) error {
+	err = su.RunInTxn(s, func(se *su.Session) error {
 		currTime, err := GetOracleTimeWithStartTS(se)
 		if err != nil {
 			return err
@@ -613,10 +614,10 @@ func GetBackfillJobsForOneEle(s *session, batch int, excludedJobIDs []int64, lea
 
 // GetAndMarkBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element,
 // and update these jobs with instance ID and lease.
-func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid string, lease time.Duration) ([]*BackfillJob, error) {
+func GetAndMarkBackfillJobsForOneEle(s *su.Session, batch int, jobID int64, uuid string, lease time.Duration) ([]*BackfillJob, error) {
 	var validLen int
 	var bJobs []*BackfillJob
-	err := s.runInTxn(func(se *session) error {
+	err := su.RunInTxn(s, func(se *su.Session) error {
 		currTime, err := GetOracleTimeWithStartTS(se)
 		if err != nil {
 			return err
@@ -657,7 +658,7 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 }
 
 // GetInterruptedBackfillJobsForOneEle gets the interrupted backfill jobs in the tblName table that contains only one element.
-func GetInterruptedBackfillJobsForOneEle(sess *session, jobID, eleID int64, eleKey []byte) ([]*BackfillJob, error) {
+func GetInterruptedBackfillJobsForOneEle(sess *su.Session, jobID, eleID int64, eleKey []byte) ([]*BackfillJob, error) {
 	bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and (state = %d or state = %d)",
 		jobID, eleID, eleKey, model.JobStateRollingback, model.JobStateCancelling), "get_interrupt_backfill_job")
 	if err != nil || len(bJobs) == 0 {
@@ -667,8 +668,8 @@ func GetInterruptedBackfillJobsForOneEle(sess *session, jobID, eleID int64, eleK
 }
 
 // GetBackfillJobCount gets the number of rows in the tblName table according to condition.
-func GetBackfillJobCount(sess *session, tblName, condition string, label string) (int, error) {
-	rows, err := sess.execute(context.Background(), fmt.Sprintf("select count(1) from mysql.%s where %s", tblName, condition), label)
+func GetBackfillJobCount(sess *su.Session, tblName, condition string, label string) (int, error) {
+	rows, err := sess.Execute(context.Background(), fmt.Sprintf("select count(1) from mysql.%s where %s", tblName, condition), label)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -679,10 +680,10 @@ func GetBackfillJobCount(sess *session, tblName, condition string, label string)
 	return int(rows[0].GetInt64(0)), nil
 }
 
-func getUnsyncedInstanceIDs(sess *session, jobID int64, label string) ([]string, error) {
+func getUnsyncedInstanceIDs(sess *su.Session, jobID int64, label string) ([]string, error) {
 	sql := fmt.Sprintf("select sum(state = %d) as tmp, exec_id from mysql.tidb_ddl_backfill_history where ddl_job_id = %d group by exec_id having tmp = 0;",
 		model.JobStateSynced, jobID)
-	rows, err := sess.execute(context.Background(), sql, label)
+	rows, err := sess.Execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -695,8 +696,8 @@ func getUnsyncedInstanceIDs(sess *session, jobID int64, label string) ([]string,
 }
 
 // GetBackfillJobs gets the backfill jobs in the tblName table according to condition.
-func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]*BackfillJob, error) {
-	rows, err := sess.execute(context.Background(), fmt.Sprintf("select * from mysql.%s where %s", tblName, condition), label)
+func GetBackfillJobs(sess *su.Session, tblName, condition string, label string) ([]*BackfillJob, error) {
+	rows, err := sess.Execute(context.Background(), fmt.Sprintf("select * from mysql.%s where %s", tblName, condition), label)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -731,23 +732,23 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 
 // RemoveBackfillJob removes the backfill jobs from the tidb_ddl_backfill table.
 // If isOneEle is true, removes all jobs with backfillJob's ddl_job_id, ele_id and ele_key. Otherwise, removes the backfillJob.
-func RemoveBackfillJob(sess *session, isOneEle bool, backfillJob *BackfillJob) error {
+func RemoveBackfillJob(sess *su.Session, isOneEle bool, backfillJob *BackfillJob) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_backfill where ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
 		backfillJob.JobID, backfillJob.EleID, backfillJob.EleKey)
 	if !isOneEle {
 		sql += fmt.Sprintf(" and id = %d", backfillJob.ID)
 	}
-	_, err := sess.execute(context.Background(), sql, "remove_backfill_job")
+	_, err := sess.Execute(context.Background(), sql, "remove_backfill_job")
 	return err
 }
 
-func updateBackfillJob(sess *session, tableName string, backfillJob *BackfillJob, label string) error {
+func updateBackfillJob(sess *su.Session, tableName string, backfillJob *BackfillJob, label string) error {
 	mate, err := backfillJob.Meta.Encode()
 	if err != nil {
 		return err
 	}
 	sql := fmt.Sprintf("update mysql.%s set exec_id = '%s', exec_lease = '%s', state = %d, backfill_meta = '%s' where ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
 		tableName, backfillJob.InstanceID, backfillJob.InstanceLease, backfillJob.State, mate, backfillJob.JobID, backfillJob.EleID, backfillJob.EleKey, backfillJob.ID)
-	_, err = sess.execute(context.Background(), sql, label)
+	_, err = sess.Execute(context.Background(), sql, label)
 	return err
 }

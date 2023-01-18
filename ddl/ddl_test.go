@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
+	su "github.com/pingcap/tidb/util/sessionutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,7 +57,7 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 var JobNeedGCForTest = jobNeedGC
 
 // NewSession is only used for test.
-var NewSession = newSession
+var NewSession = su.NewSession
 
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {

@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sessionutil",
+    srcs = ["session.go"],
+    importpath = "github.com/pingcap/tidb/util/sessionutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "//metrics",
+        "//parser/terror",
+        "//sessionctx",
+        "//sessiontxn",
+        "//util/chunk",
+        "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "sessionutil_test",
+    srcs = ["session_test.go"],
+    deps = [
+        ":sessionutil",
+        "//testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)
