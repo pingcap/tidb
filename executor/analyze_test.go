@@ -885,53 +885,67 @@ func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T)
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
 }
 
-func TestSnapshotAnalyze(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func TestSnapshotAnalyzeAndMaxTSAnalyze(t *testing.T) {
+	for _, analyzeSnapshot := range []bool{true, false} {
+		store, clean := testkit.CreateMockStore(t)
+		defer clean()
+		tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, index index_a(a))")
-	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	tid := tblInfo.ID
-	tk.MustExec("insert into t values(1),(1),(1)")
-	tk.MustExec("begin")
-	txn, err := tk.Session().Txn(false)
-	require.NoError(t, err)
-	startTS1 := txn.StartTS()
-	tk.MustExec("commit")
-	tk.MustExec("insert into t values(2),(2),(2)")
-	tk.MustExec("begin")
-	txn, err = tk.Session().Txn(false)
-	require.NoError(t, err)
-	startTS2 := txn.StartTS()
-	tk.MustExec("commit")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)))
-	tk.MustExec("analyze table t")
-	rows := tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "3", rows[0][0])
-	s1Str := rows[0][1].(string)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS2)))
-	tk.MustExec("analyze table t")
-	rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "6", rows[0][0])
-	s2Str := rows[0][1].(string)
-	require.True(t, s1Str != s2Str)
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)))
-	tk.MustExec("analyze table t")
-	rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "6", rows[0][0])
-	s3Str := rows[0][1].(string)
-	require.Equal(t, s2Str, s3Str)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
+		tk.MustExec("use test")
+		if analyzeSnapshot {
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = on")
+		} else {
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = off")
+		}
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, index index_a(a))")
+		is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		tid := tblInfo.ID
+		tk.MustExec("insert into t values(1),(1),(1)")
+		tk.MustExec("begin")
+		txn, err := tk.Session().Txn(false)
+		require.NoError(t, err)
+		startTS1 := txn.StartTS()
+		tk.MustExec("commit")
+		tk.MustExec("insert into t values(2),(2),(2)")
+		tk.MustExec("begin")
+		txn, err = tk.Session().Txn(false)
+		require.NoError(t, err)
+		startTS2 := txn.StartTS()
+		tk.MustExec("commit")
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)))
+		tk.MustExec("analyze table t")
+		rows := tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+		require.Len(t, rows, 1)
+		if analyzeSnapshot {
+			// Analyze cannot see the second insert if it reads the snapshot.
+			require.Equal(t, "3", rows[0][0])
+		} else {
+			// Analyze can see the second insert if it reads the latest data.
+			require.Equal(t, "6", rows[0][0])
+		}
+		s1Str := rows[0][1].(string)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS2)))
+		tk.MustExec("analyze table t")
+		rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+		require.Len(t, rows, 1)
+		require.Equal(t, "6", rows[0][0])
+		s2Str := rows[0][1].(string)
+		require.True(t, s1Str != s2Str)
+		tk.MustExec("set @@session.tidb_analyze_version = 2")
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)))
+		tk.MustExec("analyze table t")
+		rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+		require.Len(t, rows, 1)
+		require.Equal(t, "6", rows[0][0])
+		s3Str := rows[0][1].(string)
+		// The third analyze doesn't write results into mysql.stats_xxx because its snapshot is smaller than the second analyze.
+		require.Equal(t, s2Str, s3Str)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
+	}
 }
 
 func TestAdjustSampleRateNote(t *testing.T) {
@@ -3409,4 +3423,66 @@ func TestAnalyzePartitionTableForFloat(t *testing.T) {
 		tk.MustExec(sql)
 	}
 	tk.MustExec("analyze table t1")
+}
+
+func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+	// We want to test that HandleAutoAnalyze is aware of setting @@global.tidb_enable_analyze_snapshot to 1 and reads data from snapshot.
+	tk.MustExec("set @@global.tidb_enable_analyze_snapshot = 1")
+	tk.MustExec("set @@global.tidb_analyze_version = 2")
+	tk.MustExec("create table t(a int)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tid := tbl.Meta().ID
+	tk.MustExec("insert into t values(1),(2),(3)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	err = h.Update(dom.InfoSchema())
+	require.NoError(t, err)
+	tk.MustExec("analyze table t")
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+		"3 0",
+	))
+
+	originalVal1 := handle.AutoAnalyzeMinCnt
+	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
+	handle.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originalVal1
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
+	}()
+
+	tk.MustExec("begin")
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startTS := txn.StartTS()
+	tk.MustExec("commit")
+
+	tk.MustExec("insert into t values(4),(5),(6)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	err = h.Update(dom.InfoSchema())
+	require.NoError(t, err)
+
+	// Simulate that the analyze would start before and finish after the second insert.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseCount", "return(3)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseModifyCount", "return(0)"))
+	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	// Check the count / modify_count changes during the analyze are not lost.
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+		"6 3",
+	))
+	// Check the histogram is correct for the snapshot analyze.
+	tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
+		"3",
+	))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"))
 }

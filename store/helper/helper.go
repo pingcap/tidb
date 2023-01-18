@@ -1142,39 +1142,6 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	return nil
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) error {
-	pdAddrs, err := h.GetPDAddr()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	startKey := tablecodec.GenTableRecordPrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-
-	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		url.QueryEscape(string(startKey)),
-		url.QueryEscape(string(endKey)))
-
-	resp, err := util.InternalHTTPClient().Get(statURL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
-		}
-	}()
-
-	dec := json.NewDecoder(resp.Body)
-
-	return dec.Decode(stats)
-}
-
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
 func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 	e, _ := hex.DecodeString(endKey)
@@ -1210,7 +1177,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 			continue
 		}
 		realN += 1
-		r, err := strconv.ParseInt(s, 10, 32)
+		r, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -629,8 +629,6 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if sm == nil {
 		return
 	}
-	pl := sm.ShowProcessList()
-	innerSessionStartTSList := sm.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -644,18 +642,8 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	minStartTS := oracle.GoTimeToTS(now)
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
-	for _, info := range pl {
-		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
-			minStartTS = info.CurTxnStartTS
-		}
-	}
-
-	for _, innerTS := range innerSessionStartTSList {
-		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("Internal Session Transaction StartTS", innerTS))
-		kv.PrintLongTimeInternalTxn(now, innerTS, false)
-		if innerTS > startTSLowerLimit && innerTS < minStartTS {
-			minStartTS = innerTS
-		}
+	if ts := sm.GetMinStartTS(startTSLowerLimit); ts > startTSLowerLimit && ts < minStartTS {
+		minStartTS = ts
 	}
 
 	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)
@@ -1024,13 +1012,13 @@ func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
 }
 
-// GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
-func GetTiFlashPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+// GetTiFlashRegionCountFromPD is a helper function calling `/stats/region`.
+func GetTiFlashRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return is.tiflashPlacementManager.GetPDRegionRecordStats(ctx, tableID, stats)
+	return is.tiflashPlacementManager.GetRegionCountFromPD(ctx, tableID, regionCount)
 }
 
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
