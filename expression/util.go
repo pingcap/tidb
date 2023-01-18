@@ -365,7 +365,8 @@ func extractColumnSet(expr Expression, set *intsets.Sparse) {
 	}
 }
 
-func setExprColumnInOperand(expr Expression) Expression {
+// SetExprColumnInOperand is used to set columns in expr as InOperand.
+func SetExprColumnInOperand(expr Expression) Expression {
 	switch v := expr.(type) {
 	case *Column:
 		col := v.Clone().(*Column)
@@ -374,7 +375,7 @@ func setExprColumnInOperand(expr Expression) Expression {
 	case *ScalarFunction:
 		args := v.GetArgs()
 		for i, arg := range args {
-			args[i] = setExprColumnInOperand(arg)
+			args[i] = SetExprColumnInOperand(arg)
 		}
 	}
 	return expr
@@ -383,13 +384,26 @@ func setExprColumnInOperand(expr Expression) Expression {
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
-	_, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs)
+	_, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, false)
 	return resExpr
+}
+
+// ColumnSubstituteAll substitutes the columns just like ColumnSubstitute, but we don't accept partial substitution.
+// Only accept:
+//
+//	1: substitute them all once find col in schema.
+//	2: nothing in expr can be substituted.
+func ColumnSubstituteAll(expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+	_, hasFail, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, true)
+	return hasFail, resExpr
 }
 
 // ColumnSubstituteImpl tries to substitute column expr using newExprs,
 // the newFunctionInternal is only called if its child is substituted
-func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression) (bool, bool, Expression) {
+// @return bool means whether the expr has changed.
+// @return bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
+// @return Expression, the original expr or the changed expr, it depends on the first @return bool.
+func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
@@ -398,7 +412,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		}
 		newExpr := newExprs[id]
 		if v.InOperand {
-			newExpr = setExprColumnInOperand(newExpr)
+			newExpr = SetExprColumnInOperand(newExpr)
 		}
 		newExpr.SetCoercibility(v.Coercibility())
 		return true, false, newExpr
@@ -409,8 +423,8 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			var (
 				newArg Expression
 			)
-			substituted, hasFail, newArg = ColumnSubstituteImpl(v.GetArgs()[0], schema, newExprs)
-			if hasFail {
+			substituted, hasFail, newArg = ColumnSubstituteImpl(v.GetArgs()[0], schema, newExprs, fail1Return)
+			if fail1Return && hasFail {
 				return substituted, hasFail, v
 			}
 			if substituted {
@@ -429,8 +443,8 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
 		}
 		for idx, arg := range v.GetArgs() {
-			changed, failed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
-			if failed {
+			changed, failed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fail1Return)
+			if fail1Return && failed {
 				return changed, failed, v
 			}
 			oldChanged := changed
@@ -445,7 +459,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				}
 			}
 			hasFail = hasFail || failed || oldChanged != changed
-			if oldChanged != changed {
+			if fail1Return && oldChanged != changed {
 				// Only when the oldChanged is true and changed is false, we will get here.
 				// And this means there some dependency in this arg can be substituted with
 				// given expressions, while it has some collation compatibility, finally we

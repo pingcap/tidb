@@ -1162,6 +1162,13 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 			// For BIT fields, convert int into BinaryLiteral.
 			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), false, nil
 		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeFloat, mysql.TypeDouble:
+		// For these types, convert it to standard format firstly.
+		// like integer fields, convert it into integer string literals. like convert "1.25" into "1" and "2.8" into "3".
+		// if raise a error, we will use original expression. We will handle it in check phase
+		if temp, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err == nil {
+			v = temp
+		}
 	}
 
 	val, err := v.ToString()

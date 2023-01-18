@@ -898,6 +898,10 @@ func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
 
+func (msm *mockSessionManager1) GetMinStartTS(lowerBound uint64) uint64 {
+	return 0
+}
+
 func TestPreparedIssue17419(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -932,4 +936,22 @@ func TestPreparedIssue17419(t *testing.T) {
 	// require.NotNil(t, tk1.Session().ShowProcess().Plan)
 	// _, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
 	// require.True(t, ok)
+}
+
+func TestIssue38323(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, k int);")
+
+	tk.MustExec("prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';")
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a, @a")
+	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where id = 1 and k = 1 group by id, k").Rows())
+
+	tk.MustExec("prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';")
+	tk.MustExec("set @a = 1;")
+	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where 1 = id and 1 = k group by id, k").Rows())
 }
