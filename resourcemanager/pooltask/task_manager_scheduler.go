@@ -14,15 +14,15 @@
 
 package pooltask
 
-// Boost is to increase the concurrency of pool.
-func (t *TaskManager[T, U, C, CT, TF]) Boost() (tid uint64, task *TaskBox[T, U, C, CT, TF]) {
+// Overclock is to increase the concurrency of pool.
+func (t *TaskManager[T, U, C, CT, TF]) Overclock() (tid uint64, task *TaskBox[T, U, C, CT, TF]) {
 	if t.concurrency > t.running.Load() {
-		return t.getNeedToBoostTask()
+		return t.getBoostTask()
 	}
 	return 0, nil
 }
 
-// Decrease is to decrease the concurrency of pool.
-func (t *TaskManager[T, U, C, CT, TF]) Decrease() {
+// Downclock is to decrease the concurrency of pool.
+func (t *TaskManager[T, U, C, CT, TF]) Downclock() {
 	t.pauseTask()
 }
