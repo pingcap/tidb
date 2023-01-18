@@ -59,6 +59,7 @@ type featureUsage struct {
 	EnableGlobalMemoryControl bool                             `json:"enableGlobalMemoryControl"`
 	AutoIDNoCache             bool                             `json:"autoIDNoCache"`
 	IndexMergeUsageCounter    *m.IndexMergeUsageCounter        `json:"indexMergeUsageCounter"`
+	ResourceGroupUsage        *resourceGroupUsage              `json:"resourceGroup"`
 }
 
 type placementPolicyUsage struct {
@@ -67,6 +68,11 @@ type placementPolicyUsage struct {
 	NumTableWithPolicies uint64 `json:"numTableWithPolicies"`
 	// The number of partitions that policies are explicitly specified.
 	NumPartitionWithExplicitPolicies uint64 `json:"numPartitionWithExplicitPolicies"`
+}
+
+type resourceGroupUsage struct {
+	Enabled           bool   `json:"resourceGroupEnabled"`
+	NumResourceGroups uint64 `json:"numResourceGroups"`
 }
 
 func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsage, error) {
@@ -114,11 +120,12 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	return &usage, nil
 }
 
-// collectFeatureUsageFromInfoschema updates the usage for temporary table, cached table and placement policies.
+// collectFeatureUsageFromInfoschema updates the usage for temporary table, cached table, placement policies and resource groups
 func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsage) {
 	if usage.PlacementPolicyUsage == nil {
 		usage.PlacementPolicyUsage = &placementPolicyUsage{}
 	}
+
 	is := GetDomainInfoSchema(ctx)
 	for _, dbInfo := range is.AllSchemas() {
 		if dbInfo.PlacementPolicyRef != nil {
@@ -149,8 +156,13 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 			}
 		}
 	}
-
 	usage.PlacementPolicyUsage.NumPlacementPolicies += uint64(len(is.AllPlacementPolicies()))
+
+	if usage.ResourceGroupUsage == nil {
+		usage.ResourceGroupUsage = &resourceGroupUsage{}
+	}
+	usage.ResourceGroupUsage.NumResourceGroups = uint64(len(is.AllResourceGroups()))
+	usage.ResourceGroupUsage.Enabled = variable.EnableResourceControl.Load()
 }
 
 // GetDomainInfoSchema is used by the telemetry package to get the latest schema information
