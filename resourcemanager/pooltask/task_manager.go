@@ -32,15 +32,15 @@ type tContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 	task *TaskBox[T, U, C, CT, TF]
 }
 
-type meta struct {
+type meta[T any, U any, C any, CT any, TF Context[CT]] struct {
 	stats    *list.List
 	createTS time.Time
 	origin   int32
 	running  atomic.Int32
 }
 
-func newStats(concurrency int32) *meta {
-	s := &meta{
+func newStats[T any, U any, C any, CT any, TF Context[CT]](concurrency int32) *meta[T, U, C, CT, TF] {
+	s := &meta[T, U, C, CT, TF]{
 		createTS: time.Now(),
 		stats:    list.New(),
 		origin:   concurrency,
@@ -48,13 +48,13 @@ func newStats(concurrency int32) *meta {
 	return s
 }
 
-func (m *meta) getOriginConcurrency() int32 {
+func (m *meta[T, U, C, CT, TF]) getOriginConcurrency() int32 {
 	return m.origin
 }
 
 // TaskStatusContainer is a container that can control or watch the pool.
 type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
-	stats map[uint64]*meta
+	stats map[uint64]*meta[T, U, C, CT, TF]
 	rw    sync.RWMutex
 }
 
@@ -70,7 +70,7 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](c int32) TaskMa
 	task := make([]TaskStatusContainer[T, U, C, CT, TF], shard)
 	for i := 0; i < shard; i++ {
 		task[i] = TaskStatusContainer[T, U, C, CT, TF]{
-			stats: make(map[uint64]*meta),
+			stats: make(map[uint64]*meta[T, U, C, CT, TF]),
 		}
 	}
 	return TaskManager[T, U, C, CT, TF]{
@@ -83,7 +83,7 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](c int32) TaskMa
 func (t *TaskManager[T, U, C, CT, TF]) RegisterTask(taskID uint64, concurrency int32) {
 	id := getShardID(taskID)
 	t.task[id].rw.Lock()
-	t.task[id].stats[taskID] = newStats(concurrency)
+	t.task[id].stats[taskID] = newStats[T, U, C, CT, TF](concurrency)
 	t.task[id].rw.Unlock()
 }
 

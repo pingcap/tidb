@@ -31,6 +31,12 @@ func (t *TaskManager[T, U, C, CT, TF]) getBoostTask() (tid uint64, result *TaskB
 			t.task[i].rw.RLock()
 			defer t.task[i].rw.RUnlock()
 			for id, stats := range t.task[i].stats {
+				if result == nil {
+					result = findTask[T, U, C, CT, TF](stats, RunningTask).Value.(tContainer[T, U, C, CT, TF]).task
+					minTS = stats.createTS
+					tid = id
+					continue
+				}
 				newResult, min, breakFind := canBoost[T, U, C, CT, TF](stats, minTS)
 				if breakFind {
 					result = newResult
@@ -56,7 +62,7 @@ func (t *TaskManager[T, U, C, CT, TF]) pauseTask() {
 	// pause task,
 	// 1、more run time, more possible to pause
 	// 2、if task have been boosted, first to pause.
-	var maxDuration time.Duration
+	var maxTS time.Time
 	var tid uint64
 	var result *list.Element
 	for i := 0; i < shard; i++ {
@@ -64,7 +70,13 @@ func (t *TaskManager[T, U, C, CT, TF]) pauseTask() {
 			t.task[i].rw.RLock()
 			defer t.task[i].rw.RUnlock()
 			for id, stats := range t.task[i].stats {
-				newResult, newMaxDuration, isBoost := canPause[T, U, C, CT, TF](stats, maxDuration)
+				if result == nil {
+					result = findTask[T, U, C, CT, TF](stats, RunningTask)
+					tid = id
+					maxTS = stats.createTS
+					continue
+				}
+				newResult, isBoost := canPause[T, U, C, CT, TF](stats, maxTS)
 				if isBoost {
 					result = newResult
 					tid = id
@@ -73,7 +85,7 @@ func (t *TaskManager[T, U, C, CT, TF]) pauseTask() {
 				if newResult != nil {
 					result = newResult
 					tid = id
-					maxDuration = newMaxDuration
+					maxTS = stats.createTS
 				}
 			}
 			return false
@@ -83,38 +95,35 @@ func (t *TaskManager[T, U, C, CT, TF]) pauseTask() {
 		}
 	}
 	if result != nil {
-		result.Value.(*TaskBox[T, U, C, CT, TF]).status.CompareAndSwap(RunningTask, StopTask)
+		result.Value.(tContainer[T, U, C, CT, TF]).task.status.CompareAndSwap(RunningTask, StopTask)
 		// delete it from list
 		shardID := getShardID(tid)
 		t.task[shardID].rw.Lock()
 		defer t.task[shardID].rw.Unlock()
 		t.task[shardID].stats[tid].stats.Remove(result)
 	}
-
 }
 
-func canPause[T any, U any, C any, CT any, TF Context[CT]](m *meta, max time.Duration) (result *list.Element, nm time.Duration, isBool bool) {
+func canPause[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, TF], min time.Time) (result *list.Element, isBoost bool) {
 	if m.origin < m.running.Load() {
 		box := findTask[T, U, C, CT, TF](m, RunningTask)
 		if box != nil {
-			return box, nm, true
+			return box, true
 		}
 	}
-	d := time.Since(m.createTS)
-	if d > max {
+	if m.createTS.Before(min) {
 		box := findTask[T, U, C, CT, TF](m, RunningTask)
 		if box != nil {
-			return box, nm, true
+			return box, false
 		}
 	}
-	return nil, nm, false
+	return nil, false
 }
 
-func canBoost[T any, U any, C any, CT any, TF Context[CT]](m *meta, min time.Time) (*TaskBox[T, U, C, CT, TF], time.Time, bool) {
+func canBoost[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, TF], min time.Time) (*TaskBox[T, U, C, CT, TF], time.Time, bool) {
 	if m.running.Load() < m.origin {
 		return nil, m.createTS, true
 	}
-	// need to add
 	if m.createTS.After(min) {
 		box := getTask[T, U, C, CT, TF](m)
 		if box != nil {
@@ -124,21 +133,20 @@ func canBoost[T any, U any, C any, CT any, TF Context[CT]](m *meta, min time.Tim
 	return nil, startTime, false
 }
 
-func findTask[T any, U any, C any, CT any, TF Context[CT]](m *meta, status int32) *list.Element {
+func findTask[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, TF], status int32) *list.Element {
 	for e := m.stats.Front(); e != nil; e = e.Next() {
-		if box, ok := e.Value.(*TaskBox[T, U, C, CT, TF]); ok {
-			if box.status.Load() == status {
-				return e
-			}
+		box := e.Value.(tContainer[T, U, C, CT, TF])
+		if box.task.status.Load() == status {
+			return e
 		}
 	}
 	return nil
 }
 
-func getTask[T any, U any, C any, CT any, TF Context[CT]](m *meta) *TaskBox[T, U, C, CT, TF] {
+func getTask[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, TF]) *TaskBox[T, U, C, CT, TF] {
 	for e := m.stats.Front(); e != nil; e = e.Next() {
-		if box, ok := e.Value.(*TaskBox[T, U, C, CT, TF]); ok {
-			return box
+		if box, ok := e.Value.(tContainer[T, U, C, CT, TF]); ok {
+			return box.task
 		}
 	}
 	return nil
