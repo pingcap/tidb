@@ -70,9 +70,9 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 	return nil
 }
 
-// PaginateScanRegion scan regions with a limit pagination and
-// return all regions at once.
-// It reduces max gRPC message size.
+// PaginateScanRegion scan regions with a limit pagination and return all regions
+// at once. The returned regions are continuous and cover the key range. If not,
+// or meet errors, it will retry internally.
 func PaginateScanRegion(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {
