@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -114,16 +116,17 @@ type Domain struct {
 	expensiveQueryHandle    *expensivequery.Handle
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
-	wg                      util.WaitGroupWrapper
-	statsUpdating           atomicutil.Int32
-	cancel                  context.CancelFunc
-	indexUsageSyncLease     time.Duration
-	dumpFileGcChecker       *dumpFileGcChecker
-	planReplayerHandle      *planReplayerHandle
-	expiredTimeStamp4PC     types.Time
-	logBackupAdvancer       *daemon.OwnerDaemon
-	historicalStatsWorker   *HistoricalStatsWorker
-	ttlJobManager           *ttlworker.JobManager
+	// TODO: use Run for each process in future pr
+	wg                    *util.WaitGroupEnhancedWrapper
+	statsUpdating         atomicutil.Int32
+	cancel                context.CancelFunc
+	indexUsageSyncLease   time.Duration
+	dumpFileGcChecker     *dumpFileGcChecker
+	planReplayerHandle    *planReplayerHandle
+	expiredTimeStamp4PC   types.Time
+	logBackupAdvancer     *daemon.OwnerDaemon
+	historicalStatsWorker *HistoricalStatsWorker
+	ttlJobManager         *ttlworker.JobManager
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -916,7 +919,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsIdsMap: make(map[int64]string),
 		},
 	}
-
+	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
@@ -965,6 +968,9 @@ func (do *Domain) Init(
 			if err != nil {
 				return errors.Trace(err)
 			}
+
+			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
+
 			do.etcdClient = cli
 		}
 	}
@@ -1060,7 +1066,7 @@ func (do *Domain) Init(
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Run(do.mdlCheckLoop)
+	do.wg.Run(do.mdlCheckLoop, "mdlCheckLoop")
 	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
@@ -1102,7 +1108,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
-	do.wg.Run(loop)
+	do.wg.Run(loop, "logBackupAdvancer")
 	return nil
 }
 
@@ -1723,12 +1729,13 @@ func (do *Domain) StartPlanReplayerHandle() {
 	}
 	do.wg.Add(2)
 	go func() {
+		logutil.BgLogger().Info("PlanReplayerTaskCollectHandle started")
 		tikcer := time.NewTicker(time.Duration(lease))
 		defer func() {
 			tikcer.Stop()
 			do.wg.Done()
-			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
 			util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
+			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
 		}()
 		for {
 			select {
@@ -1743,10 +1750,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 		}
 	}()
 	go func() {
+		logutil.BgLogger().Info("PlanReplayerTaskCollectHandle started")
 		defer func() {
 			do.wg.Done()
-			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
+			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 		}()
 		for _, worker := range do.planReplayerHandle.planReplayerTaskDumpHandle.workers {
 			go worker.run()
@@ -1765,12 +1773,13 @@ func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Add(1)
 	go func() {
+		logutil.BgLogger().Info("dumpFileGcChecker started")
 		gcTicker := time.NewTicker(do.dumpFileGcChecker.gcLease)
 		defer func() {
 			gcTicker.Stop()
 			do.wg.Done()
-			logutil.BgLogger().Info("dumpFileGcChecker exited.")
 			util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
+			logutil.BgLogger().Info("dumpFileGcChecker exited.")
 		}()
 		for {
 			select {
@@ -1798,16 +1807,21 @@ func (do *Domain) StartHistoricalStatsWorker() {
 	}
 	do.wg.Add(1)
 	go func() {
+		logutil.BgLogger().Info("HistoricalStatsWorker started")
 		defer func() {
 			do.wg.Done()
-			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
 			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
+			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
 		}()
 		for {
 			select {
 			case <-do.exit:
+				close(do.historicalStatsWorker.tblCH)
 				return
-			case tblID := <-do.historicalStatsWorker.tblCH:
+			case tblID, ok := <-do.historicalStatsWorker.tblCH:
+				if !ok {
+					return
+				}
 				err := do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
 				if err != nil {
 					logutil.BgLogger().Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
@@ -1823,8 +1837,8 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
+	h, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}
@@ -1887,8 +1901,8 @@ func (do *Domain) SetupAnalyzeExec(ctxs []sessionctx.Context) {
 }
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
-func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
+func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
 		return err
 	}
 	do.StartLoadStatsSubWorkers(ctxs[1:])
@@ -1898,9 +1912,9 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
+func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
+	statsHandle, err := handle.NewHandle(ctx, initStatsCtx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}
@@ -1908,7 +1922,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
-		do.wg.Run(do.loadStatsWorker)
+		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
@@ -1919,9 +1933,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 		return nil
 	}
 	do.SetStatsUpdating(true)
-	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
-	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
-	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
+	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
+	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
+	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
 	return nil
 }
 
@@ -1931,7 +1945,7 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	for i, ctx := range ctxList {
 		statsHandle.StatsLoad.SubCtxs[i] = ctx
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(ctx, do.exit, &do.wg)
+		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
 	}
 }
 
@@ -2025,8 +2039,30 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}
 }
 
+func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, owner owner.Manager) {
+	ch := make(chan struct{}, 1)
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
+		statsHandle.FlushStats()
+		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
+		owner.Cancel()
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		logutil.BgLogger().Info("updateStatsWorker exit preprocessing finished")
+		return
+	case <-timeout.Done():
+		logutil.BgLogger().Warn("updateStatsWorker exit preprocessing timeout, force exiting")
+		return
+	}
+}
+
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
@@ -2044,13 +2080,13 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		deltaUpdateTicker.Stop()
 		readMemTricker.Stop()
 		do.SetStatsUpdating(false)
+		util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
 	for {
 		select {
 		case <-do.exit:
-			statsHandle.FlushStats()
-			owner.Cancel()
+			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
@@ -2494,7 +2530,7 @@ func (do *Domain) StartTTLJobManager() {
 		if err != nil {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
-	})
+	}, "ttlJobManager")
 }
 
 // TTLJobManager returns the ttl job manager on this domain
