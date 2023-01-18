@@ -937,6 +937,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		IgnoreLines:        v.IgnoreLines,
 		ColumnAssignments:  v.ColumnAssignments,
 		ColumnsAndUserVars: v.ColumnsAndUserVars,
+		OnDuplicate:        v.OnDuplicate,
 		Ctx:                b.ctx,
 	}
 	columnNames := loadDataInfo.initFieldMappings()
@@ -947,7 +948,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	}
 	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		IsLocal:      v.IsLocal,
+		FileLocRef:   v.FileLocRef,
 		OnDuplicate:  v.OnDuplicate,
 		loadDataInfo: loadDataInfo,
 	}
