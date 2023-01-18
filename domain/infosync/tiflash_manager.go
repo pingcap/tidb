@@ -384,15 +384,15 @@ func MakeNewRule(ID int64, Count uint64, LocationLabels []string) *placement.TiF
 	return &ruleNew
 }
 
-type mockTiFlashTableInfo struct {
-	Regions []int
+type MockTiFlashTableInfo struct {
+	Regions []uint64
 	Accel   bool
 }
 
-func (m *mockTiFlashTableInfo) String() string {
+func (m *MockTiFlashTableInfo) String() string {
 	regionStr := ""
 	for _, s := range m.Regions {
-		regionStr = regionStr + strconv.Itoa(s) + "\n"
+		regionStr = regionStr + strconv.FormatUint(s, 10) + "\n"
 	}
 	if regionStr == "" {
 		regionStr = "\n"
@@ -406,7 +406,7 @@ type MockTiFlash struct {
 	groupIndex                  int
 	StatusAddr                  string
 	StatusServer                *httptest.Server
-	SyncStatus                  map[int]mockTiFlashTableInfo
+	SyncStatus                  map[int64]MockTiFlashTableInfo
 	StoreInfo                   map[uint64]helper.StoreBaseStat
 	GlobalTiFlashPlacementRules map[string]placement.TiFlashRule
 	PdEnabled                   bool
@@ -429,7 +429,7 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 		tiflash.Lock()
 		defer tiflash.Unlock()
 		params := mux.Vars(req)
-		tableID, err := strconv.Atoi(params["tableid"])
+		tableID, err := strconv.ParseInt(params["tableid"], 10, 64)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -437,7 +437,7 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 		table, ok := tiflash.SyncStatus[tableID]
 		if tiflash.NotAvailable {
 			// No region is available, so the table is not available.
-			table.Regions = []int{}
+			table.Regions = []uint64{}
 		}
 		if !ok {
 			w.WriteHeader(http.StatusOK)
@@ -463,7 +463,7 @@ func NewMockTiFlash() *MockTiFlash {
 	tiflash := &MockTiFlash{
 		StatusAddr:                  "",
 		StatusServer:                nil,
-		SyncStatus:                  make(map[int]mockTiFlashTableInfo),
+		SyncStatus:                  make(map[int64]MockTiFlashTableInfo),
 		StoreInfo:                   make(map[uint64]helper.StoreBaseStat),
 		GlobalTiFlashPlacementRules: make(map[string]placement.TiFlashRule),
 		PdEnabled:                   true,
@@ -491,7 +491,7 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 		tiflash.GlobalTiFlashPlacementRules[rule.ID] = rule
 	}
 	// Pd shall schedule TiFlash, we can mock here
-	tid := 0
+	tid := int64(0)
 	_, err := fmt.Sscanf(rule.ID, "table-%d-r", &tid)
 	if err != nil {
 		return errors.New("Can't parse rule")
@@ -499,11 +499,11 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 	// Set up mock TiFlash replica
 	f := func() {
 		if z, ok := tiflash.SyncStatus[tid]; ok {
-			z.Regions = []int{1}
+			z.Regions = []uint64{1}
 			tiflash.SyncStatus[tid] = z
 		} else {
-			tiflash.SyncStatus[tid] = mockTiFlashTableInfo{
-				Regions: []int{1},
+			tiflash.SyncStatus[tid] = MockTiFlashTableInfo{
+				Regions: []uint64{1},
 				Accel:   false,
 			}
 		}
@@ -521,16 +521,16 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 }
 
 // ResetSyncStatus is mock function for reset sync status.
-func (tiflash *MockTiFlash) ResetSyncStatus(tableID int, canAvailable bool) {
+func (tiflash *MockTiFlash) ResetSyncStatus(tableID int64, canAvailable bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	if canAvailable {
 		if z, ok := tiflash.SyncStatus[tableID]; ok {
-			z.Regions = []int{1}
+			z.Regions = []uint64{1}
 			tiflash.SyncStatus[tableID] = z
 		} else {
-			tiflash.SyncStatus[tableID] = mockTiFlashTableInfo{
-				Regions: []int{1},
+			tiflash.SyncStatus[tableID] = MockTiFlashTableInfo{
+				Regions: []uint64{1},
 				Accel:   false,
 			}
 		}
@@ -563,13 +563,13 @@ func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	defer tiflash.Unlock()
 	tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
 
-	table, ok := tiflash.SyncStatus[int(tableID)]
+	table, ok := tiflash.SyncStatus[tableID]
 	if ok {
 		table.Accel = true
-		tiflash.SyncStatus[int(tableID)] = table
+		tiflash.SyncStatus[tableID] = table
 	} else {
-		tiflash.SyncStatus[int(tableID)] = mockTiFlashTableInfo{
-			Regions: []int{},
+		tiflash.SyncStatus[tableID] = MockTiFlashTableInfo{
+			Regions: []uint64{},
 			Accel:   true,
 		}
 	}
@@ -730,7 +730,7 @@ func (tiflash *MockTiFlash) PlacementRulesLen() int {
 }
 
 // GetTableSyncStatus returns table sync status by given tableID.
-func (tiflash *MockTiFlash) GetTableSyncStatus(tableID int) (*mockTiFlashTableInfo, bool) {
+func (tiflash *MockTiFlash) GetTableSyncStatus(tableID int64) (*MockTiFlashTableInfo, bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	if r, ok := tiflash.SyncStatus[tableID]; ok {

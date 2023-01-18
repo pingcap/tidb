@@ -2405,14 +2405,19 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				// partitions before!
 				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 			}
+			// Try for 10 rounds (in case of transient TiFlash issues)
 			if needRetry {
-				// The new added partition hasn't been replicated.
-				// Do nothing to the job this time, wait next worker round.
-				time.Sleep(tiflashCheckTiDBHTTPAPIHalfInterval)
-				// Set the error here which will lead this job exit when it's retry times beyond the limitation.
-				return ver, errors.Errorf("[ddl] add partition wait for tiflash replica to complete")
-			}
+				if job.ErrorCount < 10 {
+					// The new added partition hasn't been replicated.
+					// Do nothing to the job this time, wait next worker round.
+					time.Sleep(tiflashCheckTiDBHTTPAPIHalfInterval)
+					// Set the error here which will lead this job exit when it's retry times beyond the limitation.
+					return ver, errors.Errorf("[ddl] reorganize partition wait for tiflash replica to complete")
+				}
 
+				logutil.Logger(w.logCtx).Error("[ddl] reorganize partition could not find all new regions in TiFlash replicas, skipping syncing to TiFlash!", zap.String("table", tblInfo.Name.O))
+				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
+			}
 			// When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
 			// Since onUpdateFlashReplicaStatus cannot see the partitions yet (not public)
 			for _, d := range addingDefinitions {
