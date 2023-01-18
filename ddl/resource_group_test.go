@@ -160,6 +160,11 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustExec("create user user2")
 	tk.MustGetErrCode("alter user user2 resource group nil_group", mysql.ErrResourceGroupNotExists)
+
+	tk.MustExec("create resource group do_not_delete_rg rru_per_sec=100 wru_per_sec=200")
+	tk.MustExec("create user usr3 resource group do_not_delete_rg")
+	//tk.MustQuery("select json_extract(user_attributes, '$.resource_group') from mysql.user where user='usr3'").Check(testkit.Rows("1"))
+	tk.MustContainErrMsg("drop resource group do_not_delete_rg", "some user depends on the resource group to drop")
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
