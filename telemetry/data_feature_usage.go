@@ -59,6 +59,7 @@ type featureUsage struct {
 	EnableGlobalMemoryControl bool                             `json:"enableGlobalMemoryControl"`
 	AutoIDNoCache             bool                             `json:"autoIDNoCache"`
 	IndexMergeUsageCounter    *m.IndexMergeUsageCounter        `json:"indexMergeUsageCounter"`
+	TTLUsage                  *ttlUsageCounter                 `json:"ttlUsage"`
 }
 
 type placementPolicyUsage struct {
@@ -110,6 +111,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.EnableGlobalMemoryControl = getGlobalMemoryControl()
 
 	usage.IndexMergeUsageCounter = getIndexMergeUsageInfo()
+
+	usage.TTLUsage = getTTLUsageInfo(ctx, sctx)
 
 	return &usage, nil
 }
