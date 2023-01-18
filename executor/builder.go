@@ -1087,7 +1087,12 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				}
 				b.Ti.PartitionTelemetry.UseAddIntervalPartition = true
 			case ast.AlterTableExchangePartition:
-				b.Ti.UesExchangePartition = true
+				b.Ti.UseExchangePartition = true
+			case ast.AlterTableReorganizePartition:
+				if b.Ti.PartitionTelemetry == nil {
+					b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+				}
+				b.Ti.PartitionTelemetry.UseReorganizePartition = true
 			}
 		}
 	case *ast.CreateTableStmt:

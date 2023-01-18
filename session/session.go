@@ -149,6 +149,7 @@ var (
 	telemetryTablePartitionDropIntervalUsage    = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
 	telemetryExchangePartitionUsage             = metrics.TelemetryExchangePartitionCnt
 	telemetryTableCompactPartitionUsage         = metrics.TelemetryCompactPartitionCnt
+	telemetryReorganizePartitionUsage           = metrics.TelemetryReorganizePartitionCnt
 
 	telemetryLockUserUsage          = metrics.TelemetryAccountLockCnt.WithLabelValues("lockUser")
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
@@ -4006,7 +4007,7 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryFlashbackClusterUsage.Inc()
 	}
 
-	if ti.UesExchangePartition {
+	if ti.UseExchangePartition {
 		telemetryExchangePartitionUsage.Inc()
 	}
 
@@ -4050,6 +4051,9 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		}
 		if ti.PartitionTelemetry.UseCompactTablePartition {
 			telemetryTableCompactPartitionUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseReorganizePartition {
+			telemetryReorganizePartitionUsage.Inc()
 		}
 	}
 

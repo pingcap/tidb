@@ -240,6 +240,7 @@ func TestTablePartition(t *testing.T) {
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionReorganizePartitionCnt)
 
 	telemetry.PostReportTelemetryDataForTest()
 	tk.MustExec("drop table if exists pt1")
@@ -251,6 +252,7 @@ func TestTablePartition(t *testing.T) {
 		"partition p4 values less than (15))")
 	tk.MustExec("alter table pt1 first partition less than (9)")
 	tk.MustExec("alter table pt1 last partition less than (21)")
+	tk.MustExec("alter table pt1 reorganize partition p4 into (partition p4 values less than (13), partition p5 values less than (15))")
 	tk.MustExec("drop table if exists pt1")
 	tk.MustExec("create table pt1 (d datetime primary key, v varchar(255)) partition by range columns(d)" +
 		" interval (1 day) first partition less than ('2022-01-01') last partition less than ('2022-02-22')")
@@ -275,6 +277,7 @@ func TestTablePartition(t *testing.T) {
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCreateIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionAddIntervalPartitionsCnt)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionDropIntervalPartitionsCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionReorganizePartitionCnt)
 
 	tk.MustExec("drop table if exists pt2")
 	tk.MustExec("create table pt2 (a int,b int) partition by range(a) (" +
