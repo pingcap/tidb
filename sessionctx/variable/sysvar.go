@@ -1783,7 +1783,7 @@ var defaultSysVars = []*SysVar{
 		s.NoopFuncsMode = TiDBOptOnOffWarn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive"}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive", "learner"}, SetSession: func(s *SessionVars, val string) error {
 		if strings.EqualFold(val, "follower") {
 			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader-and-follower") {
@@ -1794,6 +1794,8 @@ var defaultSysVars = []*SysVar{
 			s.SetReplicaRead(kv.ReplicaReadClosest)
 		} else if strings.EqualFold(val, "closest-adaptive") {
 			s.SetReplicaRead(kv.ReplicaReadClosestAdaptive)
+		} else if strings.EqualFold(val, "learner") {
+			s.SetReplicaRead(kv.ReplicaReadLearner)
 		}
 		return nil
 	}},
