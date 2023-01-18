@@ -420,7 +420,10 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		substituted := false
 		hasFail := false
 		if v.FuncName.L == ast.Cast {
-			substituted, hasFail, newFunc.GetArgs()[0] = ColumnSubstituteImpl(v.GetArgs()[0], schema, newExprs, fail1Return)
+			var (
+				newArg Expression
+			)
+			substituted, hasFail, newArg = ColumnSubstituteImpl(v.GetArgs()[0], schema, newExprs, fail1Return)
 			if fail1Return && hasFail {
 				return substituted, hasFail, v
 			}
@@ -440,9 +443,9 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
 		}
 		for idx, arg := range v.GetArgs() {
-			changed, hasFail, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fail1Return)
-			if fail1Return && hasFail {
-				return changed, hasFail, v
+			changed, failed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fail1Return)
+			if fail1Return && failed {
+				return changed, failed, v
 			}
 			oldChanged := changed
 			if collate.NewCollationEnabled() && changed {
