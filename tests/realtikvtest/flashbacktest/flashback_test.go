@@ -369,3 +369,193 @@ func TestFlashbackCreateDropSchema(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 	}
 }
+
+func TestFlashbackAutoID(t *testing.T) {
+	if *realtikvtest.WithRealTiKV {
+		store := realtikvtest.CreateMockStoreAndSetup(t)
+
+		tk := testkit.NewTestKit(t, store)
+
+		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+		defer resetGC()
+
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int auto_increment, primary key(a)) auto_id_cache 100")
+		tk.MustExec("insert into t values (),()")
+
+		time.Sleep(1 * time.Second)
+		ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+
+		tk.MustExec("insert into t values (),()")
+		res := tk.MustQuery("select max(a) from test.t").Rows()
+		require.Equal(t, res[0][0], "4")
+		tk.MustExec("drop table t")
+
+		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
+
+		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+
+		tk.MustExec("admin check table t")
+		res = tk.MustQuery("select max(a) from t").Rows()
+		require.Equal(t, res[0][0], "2")
+		tk.MustExec("insert into t values ()")
+		res = tk.MustQuery("select max(a) from t").Rows()
+		require.Equal(t, res[0][0], "101")
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	}
+}
+
+func TestFlashbackSequence(t *testing.T) {
+	if *realtikvtest.WithRealTiKV {
+		store := realtikvtest.CreateMockStoreAndSetup(t)
+
+		tk := testkit.NewTestKit(t, store)
+
+		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+		defer resetGC()
+
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+		tk.MustExec("use test")
+		tk.MustExec("create sequence seq cache 100")
+		res := tk.MustQuery("select nextval(seq)").Rows()
+		require.Equal(t, res[0][0], "1")
+
+		time.Sleep(1 * time.Second)
+		ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+
+		res = tk.MustQuery("select nextval(seq)").Rows()
+		require.Equal(t, res[0][0], "2")
+		tk.MustExec("drop sequence seq")
+
+		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
+
+		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+
+		// flashback schema and skip cached values
+		res = tk.MustQuery("select nextval(seq)").Rows()
+		require.Equal(t, res[0][0], "101")
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	}
+}
+
+func TestFlashbackPartitionTable(t *testing.T) {
+	if *realtikvtest.WithRealTiKV {
+		store := realtikvtest.CreateMockStoreAndSetup(t)
+
+		tk := testkit.NewTestKit(t, store)
+
+		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+		defer resetGC()
+
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int) partition by range(`a`) " +
+			"(partition `a_1` values less than (25), " +
+			"partition `a_2` values less than (75), " +
+			"partition `a_3` values less than (200))")
+
+		for i := 0; i < 100; i++ {
+			tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		}
+
+		time.Sleep(1 * time.Second)
+		ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+
+		tk.MustExec("alter table t drop partition `a_3`")
+		tk.MustExec("alter table t add partition (partition `a_3` values less than (300))")
+		res := tk.MustQuery("select max(a) from t").Rows()
+		require.Equal(t, res[0][0], "74")
+		tk.MustExec("drop table t")
+
+		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
+
+		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+
+		tk.MustExec("admin check table t")
+		res = tk.MustQuery("select max(a), min(a), count(*) from t").Rows()
+		require.Equal(t, res[0][0], "99")
+		require.Equal(t, res[0][1], "0")
+		require.Equal(t, res[0][2], "100")
+		tk.MustExec("insert into t values (100), (-1)")
+		res = tk.MustQuery("select max(a), min(a), count(*) from t").Rows()
+		require.Equal(t, res[0][0], "100")
+		require.Equal(t, res[0][1], "-1")
+		require.Equal(t, res[0][2], "102")
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	}
+}
+
+func TestFlashbackTmpTable(t *testing.T) {
+	if *realtikvtest.WithRealTiKV {
+		store := realtikvtest.CreateMockStoreAndSetup(t)
+
+		tk := testkit.NewTestKit(t, store)
+
+		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+		defer resetGC()
+
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+		tk.MustExec("use test")
+		tk.MustExec("create temporary table t(a int)")
+
+		// test flashback tmp table data
+		time.Sleep(1 * time.Second)
+		ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
+
+		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+
+		res := tk.MustQuery("select max(a) from t").Rows()
+		require.Equal(t, res[0][0], "3")
+
+		// test flashback tmp table schema
+		time.Sleep(1 * time.Second)
+		ts, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+
+		tk.MustExec("drop table t")
+
+		injectSafeTS = oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
+
+		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+
+		tk.MustGetErrCode("select * from t", errno.ErrNoSuchTable)
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	}
+}
