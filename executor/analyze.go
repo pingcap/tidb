@@ -175,7 +175,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 			}
 		}
-		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable()); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable(), e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(e.ctx, results.Job, err)
@@ -566,9 +566,13 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
 	}
 	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+	startTS := uint64(math.MaxUint64)
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
+		startTS = e.snapshot
+	}
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
-		SetStartTS(e.snapshot).
+		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
@@ -944,11 +948,15 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+	startTS := uint64(math.MaxUint64)
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
+		startTS = e.snapshot
+	}
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
-		SetStartTS(e.snapshot).
+		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		SetMemTracker(e.memTracker).
@@ -1903,7 +1911,11 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 		}
 	}
 	txn.SetOption(kv.Priority, kv.PriorityLow)
-	txn.SetOption(kv.IsolationLevel, kv.SI)
+	isoLevel := kv.RC
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
+		isoLevel = kv.SI
+	}
+	txn.SetOption(kv.IsolationLevel, isoLevel)
 	txn.SetOption(kv.NotFillCache, true)
 	return rollbackFn, nil
 }
@@ -2101,8 +2113,13 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 }
 
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
-	snapshot := e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))
-	snapshot.SetOption(kv.IsolationLevel, kv.SI)
+	var snapshot kv.Snapshot
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))
+		snapshot.SetOption(kv.IsolationLevel, kv.SI)
+	} else {
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
+	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
@@ -2123,9 +2140,15 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 
 func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	defer e.wg.Done()
-	snapshot := e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))
+	var snapshot kv.Snapshot
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))
+		snapshot.SetOption(kv.IsolationLevel, kv.SI)
+	} else {
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
+		snapshot.SetOption(kv.IsolationLevel, kv.RC)
+	}
 	snapshot.SetOption(kv.NotFillCache, true)
-	snapshot.SetOption(kv.IsolationLevel, kv.SI)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()

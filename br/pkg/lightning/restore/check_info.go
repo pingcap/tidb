@@ -1156,7 +1156,12 @@ func tableContainsData(ctx context.Context, db utils.DBExecutor, tableName strin
 	failpoint.Inject("CheckTableEmptyFailed", func() {
 		failpoint.Return(false, errors.New("mock error"))
 	})
-	query := "select 1 from " + tableName + " limit 1"
+	// Here we use the `USE INDEX()` hint to skip fetch the record from index.
+	// In Lightning, if previous importing is halted half-way, it is possible that
+	// the data is partially imported, but the index data has not been imported.
+	// In this situation, if no hint is added, the SQL executor might fetch the record from index,
+	// which is empty.  This will result in missing check.
+	query := "SELECT 1 FROM " + tableName + " USE INDEX() LIMIT 1"
 	exec := common.SQLWithRetry{
 		DB:     db,
 		Logger: log.L(),

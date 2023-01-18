@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 func TestLogFormat(t *testing.T) {
 	mem := memory.NewTracker(-1, -1)
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
+	var refCount stmtctx.ReferenceCount = 0
 	info := &util.ProcessInfo{
 		ID:            233,
 		User:          "PingCAP",
@@ -52,7 +53,8 @@ func TestLogFormat(t *testing.T) {
 		StmtCtx: &stmtctx.StatementContext{
 			MemTracker: mem,
 		},
-		RedactSQL: false,
+		RefCountOfStmtCtx: &refCount,
+		RedactSQL:         false,
 	}
 	costTime := time.Second * 233
 	logFields := genLogFields(costTime, info)
