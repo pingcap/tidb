@@ -196,9 +196,20 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 func setIndexesState(t *partitionedTable, state model.SchemaState) []*model.IndexInfo {
 	orig := t.meta.Indices
 	t.meta.Indices = make([]*model.IndexInfo, 0, len(orig))
-	for i := range t.meta.Indices {
+	for i := range orig {
 		t.meta.Indices = append(t.meta.Indices, orig[i].Clone())
-		t.meta.Indices[i].State = state
+		if t.meta.Indices[i].State == model.StatePublic {
+			switch state {
+			case model.StateDeleteOnly, model.StateNone:
+				t.meta.Indices[i].State = model.StateDeleteOnly
+			case model.StatePublic:
+				// Keep as is
+			default:
+				// use the 'StateWriteReorganization' here, since StateDeleteReorganization
+				// would skip index writes.
+				t.meta.Indices[i].State = model.StateWriteReorganization
+			}
+		}
 	}
 	return orig
 }
@@ -1300,9 +1311,8 @@ func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	// Because A nil of type *partition is a kind of `table.PhysicalTable`
 	part, ok := t.partitions[pid]
 	if !ok {
-		// TODO: remove and just keep return nil
-		panic("MJONSS: How did we get here?")
-		//return nil
+		// Should never happen!
+		return nil
 	}
 	return part
 }

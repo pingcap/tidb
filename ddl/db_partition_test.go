@@ -5008,6 +5008,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	require.NoError(t, err)
 	currPart := currTbl.Meta().Partition
 	currTbl.Meta().Partition = oldTbl.Meta().Partition
+	tk.MustQuery(`select * from t where b = "16"`).Sort().Check(testkit.Rows("16 16 16"))
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
