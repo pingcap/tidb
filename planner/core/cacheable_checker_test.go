@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util"
 	"testing"
 
 	"github.com/pingcap/tidb/expression"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
