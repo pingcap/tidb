@@ -1878,15 +1878,16 @@ func ExtractCorColumnsBySchema4PhysicalPlan(p PhysicalPlan, schema *expression.S
 
 // ShowContents stores the contents for the `SHOW` statement.
 type ShowContents struct {
-	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName    string
-	Table     *ast.TableName  // Used for showing columns.
-	Partition model.CIStr     // Use for showing partition
-	Column    *ast.ColumnName // Used for `desc table column`.
-	IndexName model.CIStr
-	Flag      int                  // Some flag parsed from sql, such as FULL.
-	User      *auth.UserIdentity   // Used for show grants.
-	Roles     []*auth.RoleIdentity // Used for show grants.
+	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName            string
+	Table             *ast.TableName  // Used for showing columns.
+	Partition         model.CIStr     // Use for showing partition
+	Column            *ast.ColumnName // Used for `desc table column`.
+	IndexName         model.CIStr
+	ResourceGroupName string               // Used for showing resource group
+	Flag              int                  // Some flag parsed from sql, such as FULL.
+	User              *auth.UserIdentity   // Used for show grants.
+	Roles             []*auth.RoleIdentity // Used for show grants.
 
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
