@@ -2286,21 +2286,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Re-check that the dropped/added partitions are compatible with current definition
 		firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNamesCIStr, tblInfo.Partition)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		var sctx sessionctx.Context
-		if w.sess == nil {
-			tmpSession, err := w.sessPool.get()
-			defer w.sessPool.put(tmpSession)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			sctx = tmpSession
-		} else {
-			sctx = w.sess.Context
-		}
+		sctx := w.sess.Context
 		if err = checkReorgPartitionDefs(sctx, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+			job.State = model.JobStateCancelled
 			return ver, err
 		}
 
@@ -2365,6 +2356,14 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			}
 			return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 		}
+
+		// Doing the preSplitAndScatter here, since all checks are completed,
+		// and we will soon start writing to the new partitions.
+		if s, ok := d.store.(kv.SplittableStore); ok && s != nil {
+			// partInfo only contains the AddingPartitions
+			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo, true)
+		}
+
 		// TODO: test...
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))

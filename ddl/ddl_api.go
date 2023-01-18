@@ -3995,10 +3995,6 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		return errors.Trace(err)
 	}
 
-	// Do the preSplitAndScatter before the actual DDL work, since it will copy data
-	// and we want to have the regions prepared before that.
-	d.preSplitAndScatter(ctx, meta, partInfo)
-
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -4016,6 +4012,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		},
 	}
 
+	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
