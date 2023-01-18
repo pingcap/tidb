@@ -23,7 +23,6 @@ go_test(
         "//table",
         "//tablecodec",
         "//testkit",
-        "//testkit/external",
         "//testkit/testsetup",
         "//util",
         "//util/logutil",

@@ -610,7 +610,6 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		return errors.Trace(err)
 	}
 
-	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	dc.getReorgCtx(reorgInfo.Job.ID).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
 	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
