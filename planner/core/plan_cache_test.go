@@ -208,8 +208,6 @@ func TestPlanCacheDiagInfo(t *testing.T) {
 	tk.MustExec("execute stmt using @a, @b") // a=1 and a=1 -> a=1
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: some parameters may be overwritten"))
 }
-<<<<<<< HEAD
-=======
 
 func TestIssue40224(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -242,46 +240,3 @@ func TestIssue40224(t *testing.T) {
 			{"└─IndexRangeScan_5"}, // range scan not full scan
 		})
 }
-
-func TestIssue40225(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, key(a))")
-	tk.MustExec("prepare st from 'select * from t where a<?'")
-	tk.MustExec("set @a='1'")
-	tk.MustExec("execute st using @a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip plan-cache: '1' may be converted to INT")) // plan-cache limitation
-	tk.MustExec("create binding for select * from t where a<1 using select /*+ ignore_plan_cache() */ * from t where a<1")
-	tk.MustExec("execute st using @a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by binding"))
-	// no warning about plan-cache limitations('1' -> INT) since plan-cache is totally disabled.
-
-	tk.MustExec("prepare st from 'select * from t where a>?'")
-	tk.MustExec("set @a=1")
-	tk.MustExec("execute st using @a")
-	tk.MustExec("execute st using @a")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustExec("create binding for select * from t where a>1 using select /*+ ignore_plan_cache() */ * from t where a>1")
-	tk.MustExec("execute st using @a")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustExec("execute st using @a")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-}
-
-func TestUncacheableReason(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
-
-	tk.MustExec("prepare st from 'select * from t limit ?'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
-
-	tk.MustExec("set @a=1")
-	tk.MustQuery("execute st using @a").Check(testkit.Rows())
-	tk.MustExec("prepare st from 'select * from t limit ?'")
-	// show the corresponding un-cacheable reason at execute-stage as well
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has 'limit ?' is un-cacheable"))
-}
->>>>>>> be112dc31d (planner: skip plan-cache for prepared queries with `INT in (Decimals...)` (#40312))
