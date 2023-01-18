@@ -413,14 +413,10 @@ func (r *CheckpointRunner) startCheckpointLoop(ctx context.Context, tickDuration
 		defer cancel()
 		var wg sync.WaitGroup
 		errCh := r.startCheckpointRunner(cctx, &wg)
-<<<<<<< HEAD
-		ticker := time.NewTicker(tickDuration)
-=======
 		flushTicker := time.NewTicker(tickDurationForFlush)
 		defer flushTicker.Stop()
 		lockTicker := time.NewTicker(tickDurationForLock)
 		defer lockTicker.Stop()
->>>>>>> 89de573660 (BR: add lock with ttl for checkpoint backup (#40563))
 		for {
 			select {
 			case <-ctx.Done():
