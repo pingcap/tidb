@@ -81,7 +81,7 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
-	// maxWriteAndIngestRetryTimes is the max retry times for write and doIngest.
+	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
 	maxWriteAndIngestRetryTimes = 30
 	maxRetryBackoffTime         = 30 * time.Second
@@ -313,7 +313,7 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 
 	res, err := g.GetSQLExecutor().QueryStringsWithLog(ctx, tiFlashReplicaQuery, "fetch tiflash replica info", log.FromContext(ctx))
 	if err != nil {
-		return errors.Annotate(err, "fetch tiflash replica info needRescan")
+		return errors.Annotate(err, "fetch tiflash replica info failed")
 	}
 
 	tiFlashTablesMap := make(map[tblName]struct{}, len(res))
@@ -385,7 +385,7 @@ type local struct {
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
 	// To avoid this, we should check write stall before ingesting SSTs. Note that, we
 	// must check both leader node and followers in client side, because followers will
-	// not check write stall as long as doIngest command is accepted by leader.
+	// not check write stall as long as ingest command is accepted by leader.
 	shouldCheckWriteStall bool
 }
 
@@ -490,7 +490,7 @@ func NewLocalBackend(
 
 		localStoreDir:     localFile,
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
-		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "doIngest"),
+		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
 		workerConcurrency: rangeConcurrency * 2,
 		dupeConcurrency:   rangeConcurrency * 2,
 		batchWriteKVPairs: cfg.TikvImporter.SendKVPairs,
@@ -565,7 +565,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 			client, err1 := local.getImportClient(ctx, s.Id)
 			if err1 != nil {
 				err = err1
-				log.FromContext(ctx).Warn("get import client needRescan", zap.Error(err), zap.String("store", s.Address))
+				log.FromContext(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
 				continue
 			}
 			_, err = client.MultiIngest(ctx, &sst.MultiIngestRequest{})
@@ -574,28 +574,28 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 			}
 			if st, ok := status.FromError(err); ok {
 				if st.Code() == codes.Unimplemented {
-					log.FromContext(ctx).Info("multi doIngest not support", zap.Any("unsupported store", s))
+					log.FromContext(ctx).Info("multi ingest not support", zap.Any("unsupported store", s))
 					local.supportMultiIngest = false
 					return nil
 				}
 			}
-			log.FromContext(ctx).Warn("check multi doIngest support needRescan", zap.Error(err), zap.String("store", s.Address),
+			log.FromContext(ctx).Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
 				zap.Int("retry", i))
 		}
 		if err != nil {
-			// if the cluster contains no TiFlash store, we don't need the multi-doIngest feature,
+			// if the cluster contains no TiFlash store, we don't need the multi-ingest feature,
 			// so in this condition, downgrade the logic instead of return an error.
 			if hasTiFlash {
 				return errors.Trace(err)
 			}
-			log.FromContext(ctx).Warn("check multi needRescan all retry, fallback to false", log.ShortError(err))
+			log.FromContext(ctx).Warn("check multi failed all retry, fallback to false", log.ShortError(err))
 			local.supportMultiIngest = false
 			return nil
 		}
 	}
 
 	local.supportMultiIngest = true
-	log.FromContext(ctx).Info("multi doIngest support")
+	log.FromContext(ctx).Info("multi ingest support")
 	return nil
 }
 
@@ -670,22 +670,22 @@ func (local *local) Close() {
 		hasDuplicates := iter.First()
 		allIsWell := true
 		if err := iter.Error(); err != nil {
-			local.logger.Warn("iterate duplicate db needRescan", zap.Error(err))
+			local.logger.Warn("iterate duplicate db failed", zap.Error(err))
 			allIsWell = false
 		}
 		if err := iter.Close(); err != nil {
-			local.logger.Warn("close duplicate db iter needRescan", zap.Error(err))
+			local.logger.Warn("close duplicate db iter failed", zap.Error(err))
 			allIsWell = false
 		}
 		if err := local.duplicateDB.Close(); err != nil {
-			local.logger.Warn("close duplicate db needRescan", zap.Error(err))
+			local.logger.Warn("close duplicate db failed", zap.Error(err))
 			allIsWell = false
 		}
 		// If checkpoint is disabled, or we don't detect any duplicate, then this duplicate
 		// db dir will be useless, so we clean up this dir.
 		if allIsWell && (!local.checkpointEnabled || !hasDuplicates) {
 			if err := os.RemoveAll(filepath.Join(local.localStoreDir, duplicateDBName)); err != nil {
-				local.logger.Warn("remove duplicate db file needRescan", zap.Error(err))
+				local.logger.Warn("remove duplicate db file failed", zap.Error(err))
 			}
 		}
 		local.duplicateDB = nil
@@ -696,7 +696,7 @@ func (local *local) Close() {
 	if !local.checkpointEnabled || common.IsEmptyDir(local.localStoreDir) {
 		err := os.RemoveAll(local.localStoreDir)
 		if err != nil {
-			local.logger.Warn("remove local db file needRescan", zap.Error(err))
+			local.logger.Warn("remove local db file failed", zap.Error(err))
 		}
 	}
 	_ = local.tikvCli.Close()
@@ -761,7 +761,7 @@ func (local *local) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.D
 			newRangePropertiesCollector,
 		},
 	}
-	// set level target file size to avoid pebble auto triggering compaction that split doIngest SST files into small SST.
+	// set level target file size to avoid pebble auto triggering compaction that split ingest SST files into small SST.
 	opt.Levels = []pebble.LevelOptions{
 		{
 			TargetFileSize: 16 * units.GiB,
@@ -999,7 +999,7 @@ ScanWriteIngest:
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
 		regions, err = split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 		if err != nil || len(regions) == 0 {
-			log.FromContext(ctx).Warn("scan region needRescan", log.ShortError(err), zap.Int("region_len", len(regions)),
+			log.FromContext(ctx).Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
 				logutil.Key("startKey", startKey), logutil.Key("endKey", endKey), zap.Int("retry", retry))
 			retry++
 			continue ScanWriteIngest
@@ -1129,7 +1129,7 @@ func (local *local) startWorker(
 			}
 			switch job.stage {
 			case regionScanned, wrote:
-				log.FromContext(ctx).Info("retry write and doIngest kv pairs",
+				log.FromContext(ctx).Info("retry write and ingest kv pairs",
 					logutil.Key("startKey", job.keyRange.start),
 					logutil.Key("endKey", job.keyRange.end))
 				// TODO: update least sleep time and retry counter
@@ -1238,7 +1238,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				if !local.isRetryableImportTiKVError(err) {
 					break
 				}
-				log.FromContext(ctx).Warn("write and doIngest by range needRescan",
+				log.FromContext(ctx).Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
 				if backOffTime > maxRetryBackoffTime {
@@ -1354,11 +1354,11 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 				break
 			}
 
-			log.FromContext(ctx).Warn("split and scatter needRescan in retry", zap.Stringer("uuid", engineUUID),
+			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
 				log.ShortError(err), zap.Int("retry", i))
 		}
 		if err != nil {
-			log.FromContext(ctx).Error("split & scatter ranges needRescan", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
 			return err
 		}
 		err = local.generateRegionJob(workerCtx, jobCh, lf, unfinishedRanges, regionSplitSize, regionSplitKeys)
@@ -1474,7 +1474,7 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 			err = txn.Commit(ctx)
 		} else {
 			if rollbackErr := txn.Rollback(); rollbackErr != nil {
-				logger.Warn("needRescan to rollback transaction", zap.Error(rollbackErr))
+				logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
 			}
 		}
 	}()
@@ -1661,8 +1661,8 @@ func (local *local) isIngestRetryable(
 				return retryNone, nil, errors.Trace(err)
 			}
 		}
-		// TODO: because in some case, TiKV may return retryable error while the doIngest is succeeded.
-		// Thus directly retry doIngest may cause TiKV panic. So always return retryWrite here to avoid
+		// TODO: because in some case, TiKV may return retryable error while the ingest is succeeded.
+		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
 		// this issue.
 		// See: https://github.com/tikv/tikv/issues/9496
 		return retryWrite, newRegion, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
@@ -1721,7 +1721,7 @@ func (local *local) isIngestRetryable(
 	case errPb.DiskFull != nil:
 		return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 	}
-	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
+	// all others ingest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
 	// here we use a single named-error ErrKVIngestFailed to represent them all
 	// we can separate them later if it's needed
 	return retryNone, nil, common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
@@ -1804,7 +1804,7 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		if err == nil {
 			return regionSplitSize, regionSplitKeys, nil
 		}
-		log.FromContext(ctx).Warn("get region split size and keys needRescan", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
+		log.FromContext(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
-	return 0, 0, errors.New("get region split size and keys needRescan")
+	return 0, 0, errors.New("get region split size and keys failed")
 }

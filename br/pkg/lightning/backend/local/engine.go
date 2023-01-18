@@ -101,7 +101,7 @@ type Engine struct {
 	// isImportingAtomic is an atomic variable indicating whether this engine is importing.
 	// This should not be used as a "spin lock" indicator.
 	isImportingAtomic atomic.Uint32
-	// flush and doIngest sst hold the rlock, other operation hold the wlock.
+	// flush and ingest sst hold the rlock, other operation hold the wlock.
 	mutex sync.RWMutex
 
 	ctx            context.Context
@@ -183,7 +183,7 @@ func (e *Engine) isLocked() bool {
 	return isStateLocked(importMutexState(e.isImportingAtomic.Load()))
 }
 
-// rLock locks the local file with shard read state. Only used for flush and doIngest SST files.
+// rLock locks the local file with shard read state. Only used for flush and ingest SST files.
 func (e *Engine) rLock() {
 	e.mutex.RLock()
 	e.isImportingAtomic.Add(uint32(importMutexStateReadLock))
@@ -406,7 +406,7 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 		if !bytes.Equal(key, engineMetaKey) {
 			userKey, err := keyAdapter.Decode(nil, key)
 			if err != nil {
-				return nil, errors.Annotate(err, "needRescan to decode key with keyAdapter")
+				return nil, errors.Annotate(err, "failed to decode key with keyAdapter")
 			}
 			r = append(r, rangeProperty{Key: userKey, rangeOffsets: rangeOffsets{Size: size, Keys: keys}})
 		}
@@ -418,7 +418,7 @@ func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties,
 func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) (*sizeProperties, error) {
 	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {
-		logger.Warn("get sst table properties needRescan", log.ShortError(err))
+		logger.Warn("get sst table properties failed", log.ShortError(err))
 		return nil, errors.Trace(err)
 	}
 
@@ -429,7 +429,7 @@ func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) 
 				data := hack.Slice(prop)
 				rangeProps, err := decodeRangeProperties(data, keyAdapter)
 				if err != nil {
-					logger.Warn("decodeRangeProperties needRescan",
+					logger.Warn("decodeRangeProperties failed",
 						zap.Stringer("fileNum", info.FileNum), log.ShortError(err))
 					return nil, errors.Trace(err)
 				}
@@ -527,7 +527,7 @@ func (e *Engine) ingestSSTLoop() {
 	seq := atomic.NewInt32(0)
 	finishedSeq := atomic.NewInt32(0)
 	var seqLock sync.Mutex
-	// a flush is finished iff all the compaction&doIngest tasks with a lower seq number are finished.
+	// a flush is finished iff all the compaction&ingest tasks with a lower seq number are finished.
 	flushQueue := make([]flushSeq, 0)
 	// inSyncSeqs is a heap that stores all the finished compaction tasks whose seq is bigger than `finishedSeq + 1`
 	// this mean there are still at lease one compaction task with a lower seq unfinished.
@@ -539,7 +539,7 @@ func (e *Engine) ingestSSTLoop() {
 	}
 
 	concurrency := e.config.CompactConcurrency
-	// when compaction is disabled, doIngest is an serial action, so 1 routine is enough
+	// when compaction is disabled, ingest is an serial action, so 1 routine is enough
 	if !e.config.Compact {
 		concurrency = 1
 	}
@@ -672,7 +672,7 @@ readMetaLoop:
 				break
 			}
 			if m.flushCh != nil {
-				// meet a flush event, we should trigger a doIngest task if there are pending metas,
+				// meet a flush event, we should trigger a ingest task if there are pending metas,
 				// and then waiting for all the running flush tasks to be done.
 				if len(metasTmp) > 0 {
 					addMetas()
@@ -894,7 +894,7 @@ func (e *Engine) loadEngineMeta() error {
 	defer closer.Close()
 
 	if err = json.Unmarshal(jsonBytes, &e.engineMeta); err != nil {
-		e.logger.Warn("local db needRescan to deserialize meta", zap.Stringer("uuid", e.UUID), zap.ByteString("content", jsonBytes), zap.Error(err))
+		e.logger.Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.UUID), zap.ByteString("content", jsonBytes), zap.Error(err))
 		return err
 	}
 	e.logger.Debug("load engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
@@ -996,7 +996,7 @@ func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
 	if iter.Error() != nil {
-		return nil, nil, errors.Annotate(iter.Error(), "needRescan to read the first key")
+		return nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
 	}
 	if !hasKey {
 		return nil, nil, nil
@@ -1004,7 +1004,7 @@ func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	firstKey := append([]byte{}, iter.Key()...)
 	iter.Last()
 	if iter.Error() != nil {
-		return nil, nil, errors.Annotate(iter.Error(), "needRescan to seek to the last key")
+		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
 	}
 	lastKey := append([]byte{}, iter.Key()...)
 	return firstKey, lastKey, nil
@@ -1504,7 +1504,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 		for _, m := range metas {
 			totalSize += m.fileSize
 			if err := os.Remove(m.path); err != nil {
-				i.e.logger.Warn("async cleanup sst file needRescan", zap.Error(err))
+				i.e.logger.Warn("async cleanup sst file failed", zap.Error(err))
 			}
 		}
 		// decrease the pending size after clean up

@@ -779,7 +779,7 @@ func (m *DuplicateManager) processRemoteDupTaskOnce(
 			err := func() error {
 				stream, err := NewRemoteDupKVStream(ctx, region, kr, importClientFactory)
 				if err != nil {
-					return errors.Annotatef(err, "needRescan to create remote duplicate kv stream")
+					return errors.Annotatef(err, "failed to create remote duplicate kv stream")
 				}
 				if task.indexInfo == nil {
 					err = m.RecordDataConflictError(ctx, stream)
@@ -787,15 +787,15 @@ func (m *DuplicateManager) processRemoteDupTaskOnce(
 					err = m.RecordIndexConflictError(ctx, stream, task.tableID, task.indexInfo)
 				}
 				if err != nil {
-					return errors.Annotatef(err, "needRescan to record conflict errors")
+					return errors.Annotatef(err, "failed to record conflict errors")
 				}
 				return nil
 			}()
 			if err != nil {
 				if regionErr, ok := errors.Cause(err).(regionError); ok {
-					logger.Debug("[detect-dupe] collect duplicate rows from region needRescan due to region error", zap.Error(regionErr))
+					logger.Debug("[detect-dupe] collect duplicate rows from region failed due to region error", zap.Error(regionErr))
 				} else {
-					logger.Warn("[detect-dupe] collect duplicate rows from region needRescan", log.ShortError(err))
+					logger.Warn("[detect-dupe] collect duplicate rows from region failed", log.ShortError(err))
 				}
 				metErr.Set(err)
 			} else {
@@ -837,7 +837,7 @@ func (m *DuplicateManager) processRemoteDupTask(
 		if !madeProgress {
 			remainAttempts--
 			if remainAttempts <= 0 {
-				logger.Error("[detect-dupe] all attempts to process the remote dupTask have needRescan", log.ShortError(err))
+				logger.Error("[detect-dupe] all attempts to process the remote dupTask have failed", log.ShortError(err))
 				return errors.Trace(err)
 			}
 		}
