@@ -541,6 +541,7 @@ var tokenMap = map[string]int{
 	"PARTITIONING":             partitioning,
 	"PARTITIONS":               partitions,
 	"PASSWORD":                 password,
+	"PAUSE":                    pause,
 	"PERCENT":                  percent,
 	"PER_DB":                   per_db,
 	"PER_TABLE":                per_table,
