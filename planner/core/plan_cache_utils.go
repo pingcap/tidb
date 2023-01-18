@@ -251,6 +251,14 @@ func (key *planCacheKey) MemoryUsage() (sum int64) {
 	return
 }
 
+type planCacheMatchOpts struct {
+	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
+	paramTypes FieldSlice
+	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
+	// only used for cache and pick plan with parameters in limit
+	limitOffsetAndCount []uint64
+}
+
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
 func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
@@ -341,15 +349,14 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	ParamTypes        FieldSlice
 	memoryUsage       int64
-	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
-	// only used for cache and pick plan with parameters
-	limitOffsetAndCount []uint64
+
+	// matchOpts stores some fields help to choose a suitable plan
+	matchOpts planCacheMatchOpts
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
-	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
+	return v.matchOpts.paramTypes.CheckTypesCompatibility4PC(txtVarTps)
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
@@ -378,13 +385,13 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		sum = unKnownMemoryUsage
 	}
 
-	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.matchOpts.paramTypes))*size.SizeOfPointer +
 		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
 
 	for _, name := range v.OutPutNames {
 		sum += name.MemoryUsage()
 	}
-	for _, ft := range v.ParamTypes {
+	for _, ft := range v.matchOpts.paramTypes {
 		sum += ft.MemoryUsage()
 	}
 	v.memoryUsage = sum
@@ -403,11 +410,13 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		userParamTypes[i] = tp.Clone()
 	}
 	return &PlanCacheValue{
-		Plan:                plan,
-		OutPutNames:         names,
-		TblInfo2UnionScan:   dstMap,
-		ParamTypes:          userParamTypes,
-		limitOffsetAndCount: limitParams,
+		Plan:              plan,
+		OutPutNames:       names,
+		TblInfo2UnionScan: dstMap,
+		matchOpts: planCacheMatchOpts{
+			paramTypes:          userParamTypes,
+			limitOffsetAndCount: limitParams,
+		},
 	}
 }
 
