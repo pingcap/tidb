@@ -76,9 +76,14 @@ func (p *partition) GetPhysicalID() int64 {
 	return p.physicalTableID
 }
 
-// GetPartitionedTable implements table.Table GetPhysicalID interface.
+// GetPartitionedTable implements table.Table GetPartitionedTable interface.
 func (p *partition) GetPartitionedTable() table.PartitionedTable {
 	return p.table
+}
+
+// GetPartitionedTable implements table.Table GetPartitionedTable interface.
+func (t *partitionedTable) GetPartitionedTable() table.PartitionedTable {
+	return t
 }
 
 // partitionedTable implements the table.PartitionedTable interface.
@@ -89,11 +94,17 @@ type partitionedTable struct {
 	partitions      map[int64]*partition
 	evalBufferTypes []*types.FieldType
 	evalBufferPool  sync.Pool
+
 	// Only used during Reorganize partition
-	reorgPartitions    map[int64]interface{}
-	reorgPartitionExpr *PartitionExpr
+	// reorganizePartitions is the currently used partitions that are reorganized
+	reorganizePartitions map[int64]interface{}
+	// doubleWriteParittions are the partitions not visible, but we should double write to
+	doubleWritePartitions map[int64]interface{}
+	reorgPartitionExpr    *PartitionExpr
 }
 
+// TODO: Check which data structures that can be shared between all partitions and which
+// needs to be copies
 func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.PartitionedTable, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || len(pi.Definitions) == 0 {
@@ -125,17 +136,96 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		partitions[p.ID] = &t
 	}
 	ret.partitions = partitions
-	if len(pi.DroppingDefinitions) > 0 && len(pi.AddingDefinitions) > 0 {
-		ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.AddingDefinitions)
+	// In StateWriteReorganization we are using the 'old' partition definitions
+	// and if any new change happens in DroppingDefinitions, it needs to be done
+	// also in AddingDefinitions (with new evaluation of the new expression)
+	// In StateDeleteReorganization we are using the 'new' partition definitions
+	// and if any new change happens in AddingDefinitions, it needs to be done
+	// also in DroppingDefinitions (since session running on schema version -1)
+	// should also see the changes
+	if pi.DDLState == model.StateDeleteReorganization {
+		origIdx := setIndexesState(ret, pi.DDLState)
+		defer unsetIndexesState(ret, origIdx)
+		ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DroppingDefinitions)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ret.reorgPartitions = make(map[int64]interface{}, len(pi.DroppingDefinitions))
+		ret.reorganizePartitions = make(map[int64]interface{}, len(pi.AddingDefinitions))
+		for _, def := range pi.AddingDefinitions {
+			ret.reorganizePartitions[def.ID] = nil
+		}
+		// TODO: Test decreasing end range and concurrently insert in the gap
+		// TODO: Test increasing end range and concurrently insert into the gap
+		ret.doubleWritePartitions = make(map[int64]interface{}, len(pi.DroppingDefinitions))
 		for _, def := range pi.DroppingDefinitions {
-			ret.reorgPartitions[def.ID] = nil
+			p, err := initPartition(ret, def)
+			if err != nil {
+				return nil, err
+			}
+			partitions[def.ID] = p
+			ret.doubleWritePartitions[def.ID] = nil
+		}
+	} else {
+		if len(pi.AddingDefinitions) > 0 {
+			origIdx := setIndexesState(ret, pi.DDLState)
+			defer unsetIndexesState(ret, origIdx)
+			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.AddingDefinitions)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			ret.doubleWritePartitions = make(map[int64]interface{}, len(pi.AddingDefinitions))
+			for _, def := range pi.AddingDefinitions {
+				ret.doubleWritePartitions[def.ID] = nil
+				p, err := initPartition(ret, def)
+				if err != nil {
+					return nil, err
+				}
+				partitions[def.ID] = p
+			}
+		}
+		if len(pi.DroppingDefinitions) > 0 {
+			ret.reorganizePartitions = make(map[int64]interface{}, len(pi.DroppingDefinitions))
+			for _, def := range pi.DroppingDefinitions {
+				ret.reorganizePartitions[def.ID] = nil
+			}
 		}
 	}
 	return ret, nil
+}
+
+func setIndexesState(t *partitionedTable, state model.SchemaState) []*model.IndexInfo {
+	orig := t.meta.Indices
+	t.meta.Indices = make([]*model.IndexInfo, 0, len(orig))
+	for i := range orig {
+		t.meta.Indices = append(t.meta.Indices, orig[i].Clone())
+		if t.meta.Indices[i].State == model.StatePublic {
+			switch state {
+			case model.StateDeleteOnly, model.StateNone:
+				t.meta.Indices[i].State = model.StateDeleteOnly
+			case model.StatePublic:
+				// Keep as is
+			default:
+				// use the 'StateWriteReorganization' here, since StateDeleteReorganization
+				// would skip index writes.
+				t.meta.Indices[i].State = model.StateWriteReorganization
+			}
+		}
+	}
+	return orig
+}
+
+func unsetIndexesState(t *partitionedTable, orig []*model.IndexInfo) {
+	t.meta.Indices = orig
+}
+
+func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partition, error) {
+	var newPart partition
+	err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs)
+	if err != nil {
+		return nil, err
+	}
+	newPart.table = t
+	return &newPart, nil
 }
 
 func newPartitionExpr(tblInfo *model.TableInfo, defs []model.PartitionDefinition) (*PartitionExpr, error) {
@@ -1067,6 +1157,9 @@ func (t *partitionedTable) locateReorgPartition(ctx sessionctx.Context, r []type
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	if pi.DDLState == model.StateDeleteReorganization {
+		return pi.DroppingDefinitions[idx].ID, nil
+	}
 	return pi.AddingDefinitions[idx].ID, nil
 }
 
@@ -1214,33 +1307,15 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 
 // GetPartition returns a Table, which is actually a partition.
 func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
-	// Attention, can't simply use `return t.partitions[pid]` here.
+	// Attention, can't simply use `return p.partitions[pid]` here.
 	// Because A nil of type *partition is a kind of `table.PhysicalTable`
-	p, ok := t.partitions[pid]
+	part, ok := t.partitions[pid]
 	if !ok {
-		// We might want an old or new partition.
-		pi := t.meta.Partition
-		for _, defs := range [][]model.PartitionDefinition{
-			pi.AddingDefinitions,
-			pi.DroppingDefinitions,
-		} {
-			for _, def := range defs {
-				if pid != def.ID {
-					continue
-				}
-				var newPart partition
-				err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs)
-				if err != nil {
-					return nil
-				}
-				newPart.table = t
-				t.partitions[pid] = &newPart
-				return &newPart
-			}
-		}
-		return nil
+		// TODO: remove and just keep return nil
+		panic("MJONSS: How did we get here?")
+		//return nil
 	}
-	return p
+	return part
 }
 
 // GetReorganizedPartitionedTable returns the same table
@@ -1258,7 +1333,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	tblInfo.Partition.AddingDefinitions = nil
 	tblInfo.Partition.DroppingDefinitions = nil
 	var tc TableCommon
-	tc.meta = tblInfo
+	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil))
 
 	// and rebuild the partitioning structure
 
@@ -1307,7 +1382,7 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 	if err != nil {
 		return
 	}
-	if _, ok := t.reorgPartitions[pid]; ok {
+	if _, ok := t.reorganizePartitions[pid]; ok {
 		// Double write to the ongoing reorganized partition
 		pid, err = t.locateReorgPartition(ctx, r)
 		if err != nil {
@@ -1367,7 +1442,7 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 		return errors.Trace(err)
 	}
 
-	if _, ok := t.reorgPartitions[pid]; ok {
+	if _, ok := t.reorganizePartitions[pid]; ok {
 		pid, err = t.locateReorgPartition(ctx, r)
 		if err != nil {
 			return errors.Trace(err)
@@ -1384,6 +1459,9 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 func (t *partitionedTable) GetAllPartitionIDs() []int64 {
 	ptIDs := make([]int64, 0, len(t.partitions))
 	for id := range t.partitions {
+		if _, ok := t.doubleWritePartitions[id]; ok {
+			continue
+		}
 		ptIDs = append(ptIDs, id)
 	}
 	return ptIDs
@@ -1446,33 +1524,34 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		// TODO: Test if the update is in different partitions before reorg,
 		// but is now in the same during the reorg? And vice-versa...
 		// What if the change is in the same reorged partition?!?
-		newTo, newFrom := int64(-1), int64(-1)
-		if _, ok := t.reorgPartitions[to]; ok {
+		newTo, newFrom := int64(0), int64(0)
+		if _, ok := t.reorganizePartitions[to]; ok {
 			newTo, err = t.locateReorgPartition(ctx, newData)
 			// There might be valid cases when errors should be accepted?
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		if _, ok := t.reorgPartitions[from]; ok {
+		if _, ok := t.reorganizePartitions[from]; ok {
 			newFrom, err = t.locateReorgPartition(ctx, currData)
 			// There might be valid cases when errors should be accepted?
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		if newTo == newFrom && newTo != -1 {
+		if newTo == newFrom && newTo != 0 {
+			// Update needs to be done in StateDeleteOnly as well
 			tbl := t.GetPartition(newTo)
 			return tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
 		}
-		if newTo != -1 {
+		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
 			tbl := t.GetPartition(newTo)
 			_, err = tbl.AddRecord(ctx, newData)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		if newFrom != -1 {
+		if newFrom != 0 {
 			tbl := t.GetPartition(newFrom)
 			err = tbl.RemoveRecord(ctx, h, currData)
 			// How to handle error, which can happen when the data is not yet backfilled
@@ -1488,7 +1567,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, ok := t.reorgPartitions[to]; ok {
+	if _, ok := t.reorganizePartitions[to]; ok {
 		// Even if to == from, in the reorganized partitions they may differ
 		// like in case of a split
 		newTo, err := t.locateReorgPartition(ctx, newData)
@@ -1500,6 +1579,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			return errors.Trace(err)
 		}
 		if newTo == newFrom {
+			// Update needs to be done in StateDeleteOnly as well
 			tbl = t.GetPartition(newTo)
 			err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
 			if err != nil {
@@ -1507,11 +1587,13 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 			}
 			return nil
 		}
-		tbl = t.GetPartition(newTo)
-		_, err = tbl.AddRecord(ctx, newData)
-		// TODO: Could there be a case where a duplicate unique key could happen here?
-		if err != nil {
-			return errors.Trace(err)
+		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
+			tbl = t.GetPartition(newTo)
+			_, err = tbl.AddRecord(ctx, newData)
+			// TODO: Could there be a case where a duplicate unique key could happen here?
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		tbl = t.GetPartition(newFrom)
 		err = tbl.RemoveRecord(ctx, h, currData)

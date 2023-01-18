@@ -758,6 +758,9 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
 	}
 
+	if t.Partition != nil {
+		nt.Partition = t.Partition.Clone()
+	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
 	}
@@ -1194,6 +1197,8 @@ type PartitionInfo struct {
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	States              []PartitionState      `json:"states"`
 	Num                 uint64                `json:"num"`
+	// Only used during ReorganizePartition so far
+	DDLState SchemaState `json:"ddl_state"`
 }
 
 // Clone clones itself.
@@ -1328,15 +1333,15 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
-func (t *TableInfo) FindPartitionDefinitionByName(partitionDefinitionName string) *PartitionDefinition {
+func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName string) int {
 	lowConstrName := strings.ToLower(partitionDefinitionName)
-	definitions := t.Partition.Definitions
+	definitions := pi.Definitions
 	for i := range definitions {
 		if definitions[i].Name.L == lowConstrName {
-			return &t.Partition.Definitions[i]
+			return i
 		}
 	}
-	return nil
+	return -1
 }
 
 // IndexColumn provides index column info.

@@ -668,9 +668,10 @@ func (w *worker) unlockSeqNum(err error) {
 
 // DDLBackfillers contains the DDL need backfill step.
 var DDLBackfillers = map[model.ActionType]string{
-	model.ActionAddIndex:     "add_index",
-	model.ActionModifyColumn: "modify_column",
-	model.ActionDropIndex:    "drop_index",
+	model.ActionAddIndex:            "add_index",
+	model.ActionModifyColumn:        "modify_column",
+	model.ActionDropIndex:           "drop_index",
+	model.ActionReorganizePartition: "reorganize_partition",
 }
 
 func getDDLRequestSource(job *model.Job) string {
@@ -1083,6 +1084,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
+	case model.ActionReorganizePartition:
+		ver, err = w.onReorganizePartition(d, t, job)
 	case model.ActionAlterTTLInfo:
 		ver, err = onTTLInfoChange(d, t, job)
 	case model.ActionAlterTTLRemove:
