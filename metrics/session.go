@@ -178,6 +178,14 @@ var (
 			Help:      "Bucketed histogram of duration of pessimistic DMLs, distinguished by first attempt and retries",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblPhase})
+
+	AggressiveLockingUsageCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "transaction_aggressive_locking_usage",
+			Help:      "The counter of statements and transactions that aggressive locking is used or takes effect",
+		}, []string{LblType})
 )
 
 // Label constants.
@@ -219,4 +227,9 @@ const (
 	LblModule         = "module"
 	LblRCReadCheckTS  = "read_check"
 	LblRCWriteCheckTS = "write_check"
+
+	LblAggressiveLockingTxnUsed       = "txn-used"
+	LblAggressiveLockingTxnEffective  = "txn-effective"
+	LblAggressiveLockingStmtUsed      = "stmt-used"
+	LblAggressiveLockingStmtEffective = "stmt-effective"
 )

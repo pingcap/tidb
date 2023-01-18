@@ -234,6 +234,9 @@ type TxnCtxNoNeedToRestore struct {
 	EnableMDL bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
+
+	AggressiveLockingUsed      bool
+	AggressiveLockingEffective bool
 }
 
 // SavepointRecord indicates a transaction's savepoint record.

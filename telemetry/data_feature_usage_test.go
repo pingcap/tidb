@@ -17,6 +17,7 @@ package telemetry_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
@@ -579,4 +580,70 @@ func TestIndexMergeUsage(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
+}
+
+func TestAggressiveLockingUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t set v = v + 1 where id = 1")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	// Not counted before transaction committing.
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	tk.MustExec("commit")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	// Counted by transaction instead of by statement.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t set v = v + 1 where id = 1")
+	tk.MustExec("update t set v = v + 1 where id = 2")
+	tk.MustExec("commit")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	// Effective only when LockedWithConflict occurs.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id = 1")
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("update t set v = v + 1 where id = 1")
+		ch <- nil
+	}()
+	select {
+	case <-ch:
+		require.Fail(t, "expected statement to be blocked but finished")
+	case <-time.After(time.Millisecond * 100):
+	}
+	tk2.MustExec("commit")
+	select {
+	case <-time.After(time.Second):
+		require.Fail(t, "expected statement to be resumed but still blocked")
+	case <-ch:
+	}
+	tk.MustExec("commit")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(3), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
 }
