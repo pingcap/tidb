@@ -10789,6 +10789,13 @@ ShowStmt:
 			DBName: $5,
 		}
 	}
+|	"SHOW" "CREATE" "RESOURCE" "GROUP" ResourceGroupName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:     ast.ShowCreateResourceGroup,
+			ResourceGroupName: $5,
+		}
+	}
 |	"SHOW" "CREATE" "USER" Username
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/show-create-user.html
