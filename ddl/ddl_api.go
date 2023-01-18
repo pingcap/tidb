@@ -7670,9 +7670,9 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 
 	// check to see if some user has dependency on the group
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	internal_ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	sql := "select count(*) from mysql.user where lower(json_extract(user_attributes, '$.resource_group')) ='\"" + groupName.L + "\"'"
-	rows, _, err := exec.ExecRestrictedSQL(internal_ctx, nil, sql)
+	rows, _, err := exec.ExecRestrictedSQL(internalCtx, nil, sql)
 	if err != nil {
 		err = errors.Errorf("system table mysql.user access failed")
 		return err
