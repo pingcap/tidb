@@ -892,9 +892,9 @@ func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *m
 	if len(tErr.Args()) != 2 {
 		return originErr
 	}
-	key, kIsByte := tErr.Args()[0].([]byte)
-	value, vIsByte := tErr.Args()[1].([]byte)
-	if !kIsByte || !vIsByte {
+	key, keyIsByte := tErr.Args()[0].([]byte)
+	value, valIsByte := tErr.Args()[1].([]byte)
+	if !keyIsByte || !valIsByte {
 		return originErr
 	}
 	return genKeyExistsErr(key, value, idxInfo, tblInfo)
