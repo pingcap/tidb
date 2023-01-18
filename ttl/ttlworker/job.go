@@ -89,7 +89,7 @@ func addJobHistorySQL(job *ttlJob, finishTime time.Time, summaryText string) (st
 	}
 
 	var partitionName interface{}
-	if job.tbl.Partition.L != "" {
+	if job.tbl.Partition.O != "" {
 		partitionName = job.tbl.Partition.O
 	}
 
