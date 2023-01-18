@@ -386,6 +386,7 @@ const (
 	DupeResAlgRemove
 
 	// DupeResAlgErr reports an error and stops the import process.
+	// Note: this value is only used for internal.
 	DupeResAlgErr
 )
 
