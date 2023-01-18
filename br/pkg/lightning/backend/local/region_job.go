@@ -39,19 +39,25 @@ import (
 	"go.uber.org/zap"
 )
 
+type jobStageTp string
+
 const (
-	regionScanned = iota
-	wrote
-	ingested
-	needRescan // needRescan job will not be used, the engine's unfinishedRange will generate new job for the range
+	regionScanned jobStageTp = "regionScanned"
+	wrote         jobStageTp = "wrote"
+	ingested      jobStageTp = "ingested"
+	needRescan    jobStageTp = "needRescan"
 )
+
+func (j jobStageTp) String() string {
+	return string(j)
+}
 
 // regionJob is dedicated to import the data in [keyRange.start, keyRange.end) to a region.
 type regionJob struct {
 	keyRange Range
 	region   *split.RegionInfo
-	// TODO: add a type for it. And disallow direct write to it.
-	stage int // regionScanned -> wrote -> ingested (this stage will not be put to the queue)
+	// stage should be updated only by convertStageTo
+	stage jobStageTp
 
 	engine          *Engine
 	regionSplitSize int64
@@ -61,7 +67,17 @@ type regionJob struct {
 	writeResult *tikvWriteResult
 }
 
-func (j *regionJob) convertStageTo(stage int) {
+type tikvWriteResult struct {
+	sstMeta    []*sst.SSTMeta
+	rangeStats rangeStats
+}
+
+type rangeStats struct {
+	count      int64
+	totalBytes int64
+}
+
+func (j *regionJob) convertStageTo(stage jobStageTp) {
 	j.stage = stage
 	if stage == ingested {
 		j.engine.importedKVSize.Add(j.writeResult.rangeStats.totalBytes)
@@ -75,6 +91,10 @@ func (j *regionJob) convertStageTo(stage int) {
 }
 
 // writeToTiKV writes the data to TiKV and mark this job as wrote stage.
+// if any write logic has error, writeToTiKV will set job to a proper stage and return nil.
+// if any underlying logic has error, writeToTiKV will return an error.
+// we don't need to do cleanup for the pairs written to tikv if encounters an error,
+// tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
 func (j *regionJob) writeToTiKV(
 	ctx context.Context,
@@ -261,7 +281,8 @@ func (j *regionJob) writeToTiKV(
 		}
 	}
 
-	// if there is not leader currently, we should directly return an error
+	// if there is not leader currently, we don't forward the stage to wrote and let caller
+	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
 		log.FromContext(ctx).Warn("write to tikv no leader",
 			logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),
@@ -310,8 +331,11 @@ func (j *regionJob) checkWriteStall(
 	return false, nil, nil
 }
 
-// ingest tries to finish the regionJob, it will retry internally for some error
-// or revert the job stage to an earlier stage.
+// ingest tries to finish the regionJob.
+// if any ingest logic has error, ingest may retry sometimes to resolve it and finally
+// set job to a proper stage with nil error returned.
+// if any underlying logic has error, ingest will return an error to let caller
+// handle it.
 func (j *regionJob) ingest(
 	ctx context.Context,
 	clientFactory ImportClientFactory,
@@ -320,11 +344,14 @@ func (j *regionJob) ingest(
 	checkWriteStall bool,
 ) error {
 	switch j.stage {
-	case ingested:
+	case regionScanned, ingested:
 		return nil
 	case wrote:
-	case regionScanned:
-		panic("wrong job stage, should not happen")
+	}
+
+	if len(j.writeResult.sstMeta) == 0 {
+		j.convertStageTo(ingested)
+		return nil
 	}
 
 	for retry := 0; retry < maxRetryTimes; retry++ {
