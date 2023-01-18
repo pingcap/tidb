@@ -286,7 +286,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 
 	// check whether this plan is cacheable.
-	checkPlanCacheability(sctx, p, len(paramTypes), len(limitParams))
+	if stmtCtx.UseCache {
+		checkPlanCacheability(sctx, p, len(paramTypes), len(limitParams))
+	}
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache {
@@ -341,12 +343,14 @@ func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int, limitP
 		return
 	}
 
-	// TODO: plans accessing MVIndex are un-cacheable
-
-	// before cache the limit plan, check switch
-	if sctx.GetSessionVars().EnablePlanCacheForParamLimit == false && limitParamNum != 0 {
-		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
+	if accessMVIndexWithIndexMerge(pp) {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"))
 		return
+	}
+
+	// before cache the param limit plan, check switch
+	if limitParamNum != 0 && sctx.GetSessionVars().EnablePlanCacheForParamLimit == false {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
 	}
 }
 
@@ -729,6 +733,41 @@ func containTableDual(p PhysicalPlan) bool {
 		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
 	return childContainTableDual
+}
+
+func accessMVIndexWithIndexMerge(p PhysicalPlan) bool {
+	if idxMerge, ok := p.(*PhysicalIndexMergeReader); ok {
+		if idxMerge.AccessMVIndex {
+			return true
+		}
+	}
+
+	for _, c := range p.Children() {
+		if accessMVIndexWithIndexMerge(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// useTiFlash used to check whether the plan use the TiFlash engine.
+func useTiFlash(p PhysicalPlan) bool {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		switch x.StoreType {
+		case kv.TiFlash:
+			return true
+		default:
+			return false
+		}
+	default:
+		if len(p.Children()) > 0 {
+			for _, plan := range p.Children() {
+				return useTiFlash(plan)
+			}
+		}
+	}
+	return false
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
