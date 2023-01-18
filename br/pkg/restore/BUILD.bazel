@@ -115,6 +115,7 @@ go_test(
         "search_test.go",
         "split_test.go",
         "stream_metas_test.go",
+        "systable_restore_test.go",
         "util_test.go",
     ],
     embed = [":restore"],

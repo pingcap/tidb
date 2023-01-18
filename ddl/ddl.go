@@ -188,6 +188,9 @@ type DDL interface {
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
+	CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error
+	AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error
+	DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error
 	FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
@@ -417,15 +420,15 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-func (dc *ddlCtx) setDDLLabelForTopSQL(job *model.Job) {
+func (dc *ddlCtx) setDDLLabelForTopSQL(jobID int64, jobQuery string) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
-	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
 		ctx = NewJobContext()
-		dc.jobCtx.jobCtxMap[job.ID] = ctx
+		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
-	ctx.setDDLLabelForTopSQL(job)
+	ctx.setDDLLabelForTopSQL(jobQuery)
 }
 
 func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
@@ -439,10 +442,10 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
 	ctx.setDDLLabelForDiagnosis(job)
 }
 
-func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(job *model.Job) tikvrpc.ResourceGroupTagger {
+func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) tikvrpc.ResourceGroupTagger {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
-	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
 	if !exists {
 		return nil
 	}
@@ -455,19 +458,19 @@ func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	delete(dc.jobCtx.jobCtxMap, job.ID)
 }
 
-func (dc *ddlCtx) jobContext(job *model.Job) *JobContext {
+func (dc *ddlCtx) jobContext(jobID int64) *JobContext {
 	dc.jobCtx.RLock()
 	defer dc.jobCtx.RUnlock()
-	if jobContext, exists := dc.jobCtx.jobCtxMap[job.ID]; exists {
+	if jobContext, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
 		return jobContext
 	}
 	return NewJobContext()
 }
 
-func (dc *ddlCtx) getReorgCtx(job *model.Job) *reorgCtx {
+func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()
-	return dc.reorgCtx.reorgCtxMap[job.ID]
+	return dc.reorgCtx.reorgCtxMap[jobID]
 }
 
 func (dc *ddlCtx) newReorgCtx(r *reorgInfo) *reorgCtx {
@@ -492,7 +495,7 @@ func (dc *ddlCtx) removeReorgCtx(job *model.Job) {
 }
 
 func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
-	rc := dc.getReorgCtx(job)
+	rc := dc.getReorgCtx(job.ID)
 	if rc == nil {
 		return
 	}
@@ -1340,7 +1343,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = newReorgHandler(t, sess).GetDDLReorgHandle(reorgJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(sess).GetDDLReorgHandle(reorgJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1579,6 +1582,19 @@ func (s *session) execute(ctx context.Context, query string, label string) ([]ch
 
 func (s *session) session() sessionctx.Context {
 	return s.Context
+}
+
+func (s *session) runInTxn(f func(*session) error) (err error) {
+	err = s.begin()
+	if err != nil {
+		return err
+	}
+	err = f(s)
+	if err != nil {
+		s.rollback()
+		return
+	}
+	return errors.Trace(s.commit())
 }
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.

@@ -1052,7 +1052,7 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			assert.Equal(t, len(rows), 4)
 			assert.Equal(t, rows[1][1], "test")
 			assert.Equal(t, rows[1][2], "t")
-			assert.Equal(t, rows[1][3], "add index /* subjob */")
+			assert.Equal(t, rows[1][3], "add index /* subjob */ /* txn-merge */")
 			assert.Equal(t, rows[1][4], "delete only")
 			assert.Equal(t, rows[1][len(rows[1])-1], "running")
 
@@ -1206,6 +1206,17 @@ func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
 	tk.MustExec("alter table t add index k(b), add column e int")
 	tk.MustExec("alter table t alter index k invisible, drop column e")
 	dom.DDL().SetHook(originHook)
+}
+
+func TestMultiSchemaChangeAddIndexChangeColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t (a SMALLINT DEFAULT '30219', b TIME NULL DEFAULT '02:45:06', PRIMARY KEY (a));")
+	tk.MustExec("ALTER TABLE t ADD unique INDEX idx4 (b), change column a e MEDIUMINT DEFAULT '5280454' FIRST;")
+	tk.MustExec("insert ignore into t (e) values (5586359),(501788),(-5961048),(220083),(-4917129),(-7267211),(7750448);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("5586359 02:45:06"))
+	tk.MustExec("admin check table t;")
 }
 
 func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {

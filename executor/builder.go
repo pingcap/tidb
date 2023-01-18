@@ -433,7 +433,8 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	tps := make([]*types.FieldType, 0, fullColLen)
 	for _, col := range is.Columns {
-		tps = append(tps, &(col.FieldType))
+		// tps is used to decode the index, we should use the element type of the array if any.
+		tps = append(tps, col.FieldType.ArrayType())
 	}
 
 	if !e.isCommonHandle() {
@@ -1729,7 +1730,7 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 
 // `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise the isolation read ts
 // Please notice that in RC isolation, the above two ts are the same
-func (b *executorBuilder) getSnapshotTS() (uint64, error) {
+func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	if b.forDataReaderBuilder {
 		return b.dataReaderTS, nil
 	}

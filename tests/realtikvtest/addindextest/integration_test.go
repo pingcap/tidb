@@ -137,6 +137,54 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
+func TestIngestMVIndexOnPartitionTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (pk int primary key, a json) partition by hash(pk) partitions 32;")
+	var sb strings.Builder
+	sb.WriteString("insert into t values ")
+	for i := 0; i < 10240; i++ {
+		sb.WriteString(fmt.Sprintf("(%d, '[%d, %d, %d]')", i, i+1, i+2, i+3))
+		if i != 10240-1 {
+			sb.WriteString(",")
+		}
+	}
+	tk.MustExec(sb.String())
+	tk.MustExec("alter table t add index idx((cast(a as signed array)));")
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (pk int primary key, a json) partition by hash(pk) partitions 32;")
+	tk.MustExec(sb.String())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		n := 10240
+		internalTK := testkit.NewTestKit(t, store)
+		internalTK.MustExec("use addindexlit;")
+
+		for i := 0; i < 1024; i++ {
+			internalTK.MustExec(fmt.Sprintf("insert into t values (%d, '[%d, %d, %d]')", n, n, n+1, n+2))
+			internalTK.MustExec(fmt.Sprintf("delete from t where pk = %d", n-10))
+			internalTK.MustExec(fmt.Sprintf("update t set a = '[%d, %d, %d]' where pk = %d", n-3, n-2, n+1000, n-5))
+			n++
+		}
+		wg.Done()
+	}()
+	tk.MustExec("alter table t add index idx((cast(a as signed array)));")
+	wg.Wait()
+	tk.MustExec("admin check table t")
+}
+
 func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

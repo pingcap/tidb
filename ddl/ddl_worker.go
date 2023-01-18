@@ -641,14 +641,14 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 	return true, nil
 }
 
-func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
-	if !topsqlstate.TopSQLEnabled() || job == nil {
+func (w *JobContext) setDDLLabelForTopSQL(jobQuery string) {
+	if !topsqlstate.TopSQLEnabled() || jobQuery == "" {
 		return
 	}
 
-	if job.Query != w.cacheSQL || w.cacheDigest == nil {
-		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
-		w.cacheSQL = job.Query
+	if jobQuery != w.cacheSQL || w.cacheDigest == nil {
+		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(jobQuery)
+		w.cacheSQL = jobQuery
 		w.ddlJobCtx = topsql.AttachAndRegisterSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, false)
 	} else {
 		topsql.AttachAndRegisterSQLInfo(w.ddlJobCtx, w.cacheNormalizedSQL, w.cacheDigest, false)
@@ -668,9 +668,10 @@ func (w *worker) unlockSeqNum(err error) {
 
 // DDLBackfillers contains the DDL need backfill step.
 var DDLBackfillers = map[model.ActionType]string{
-	model.ActionAddIndex:     "add_index",
-	model.ActionModifyColumn: "modify_column",
-	model.ActionDropIndex:    "drop_index",
+	model.ActionAddIndex:            "add_index",
+	model.ActionModifyColumn:        "modify_column",
+	model.ActionDropIndex:           "drop_index",
+	model.ActionReorganizePartition: "reorganize_partition",
 }
 
 func getDDLRequestSource(job *model.Job) string {
@@ -699,6 +700,7 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	if err != nil {
 		return err
 	}
+	CleanupDDLReorgHandles(job, w.sess)
 	asyncNotify(d.ddlJobDoneCh)
 	return nil
 }
@@ -735,10 +737,10 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	if w.tp == addIdxWorker && job.IsRunning() {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
-	w.setDDLLabelForTopSQL(job)
+	w.setDDLLabelForTopSQL(job.ID, job.Query)
 	w.setDDLSourceForDiagnosis(job)
-	jobContext := w.jobContext(job)
-	if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
+	jobContext := w.jobContext(job.ID)
+	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
 	t := meta.NewMeta(txn)
@@ -1068,6 +1070,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterTablePartitionPlacement(d, t, job)
 	case model.ActionAlterTablePlacement:
 		ver, err = onAlterTablePlacement(d, t, job)
+	case model.ActionCreateResourceGroup:
+		ver, err = onCreateResourceGroup(d, t, job)
+	case model.ActionAlterResourceGroup:
+		ver, err = onAlterResourceGroup(d, t, job)
+	case model.ActionDropResourceGroup:
+		ver, err = onDropResourceGroup(d, t, job)
 	case model.ActionAlterCacheTable:
 		ver, err = onAlterCacheTable(d, t, job)
 	case model.ActionAlterNoCacheTable:
@@ -1076,6 +1084,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onFlashbackCluster(d, t, job)
 	case model.ActionMultiSchemaChange:
 		ver, err = onMultiSchemaChange(w, d, t, job)
+	case model.ActionReorganizePartition:
+		ver, err = w.onReorganizePartition(d, t, job)
 	case model.ActionAlterTTLInfo:
 		ver, err = onTTLInfoChange(d, t, job)
 	case model.ActionAlterTTLRemove:
