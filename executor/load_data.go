@@ -80,7 +80,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	switch e.FileLocRef {
 	case ast.FileLocServer:
-		panic("should never happen")
+		panic("FileLocServer should be handled earlier")
 	case ast.FileLocClient:
 		// let caller use handleQuerySpecial to read data in this connection
 		sctx := e.loadDataInfo.ctx

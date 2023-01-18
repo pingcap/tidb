@@ -35,6 +35,25 @@ func ParseRawURL(rawURL string) (*url.URL, error) {
 	return u, nil
 }
 
+// ParseBackendFromURL constructs a structured backend description from the
+// *url.URL.
+func ParseBackendFromURL(u *url.URL, options *BackendOptions) (*backuppb.StorageBackend, error) {
+	return parseBackend(u, "", options)
+}
+
+// ParseBackend constructs a structured backend description from the
+// storage URL.
+func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBackend, error) {
+	if len(rawURL) == 0 {
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
+	}
+	u, err := ParseRawURL(rawURL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return parseBackend(u, rawURL, options)
+}
+
 func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb.StorageBackend, error) {
 	if rawURL == "" {
 		// try to handle hdfs for ParseBackendFromURL caller
@@ -108,25 +127,6 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %s not support yet", u.Scheme)
 	}
-}
-
-// ParseBackendFromURL constructs a structured backend description from the
-// *url.URL.
-func ParseBackendFromURL(u *url.URL, options *BackendOptions) (*backuppb.StorageBackend, error) {
-	return parseBackend(u, "", options)
-}
-
-// ParseBackend constructs a structured backend description from the
-// storage URL.
-func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBackend, error) {
-	if len(rawURL) == 0 {
-		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
-	}
-	u, err := ParseRawURL(rawURL)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return parseBackend(u, rawURL, options)
 }
 
 // ExtractQueryParameters moves the query parameters of the URL into the options
