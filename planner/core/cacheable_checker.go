@@ -87,6 +87,19 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
+	case *ast.InsertStmt:
+		if node.Select == nil {
+			// do not cache insert-values-stmt like 'insert into t values (...)' since
+			// no performance benefit and to save memory.
+			checker.cacheable = false
+			return in, true
+		}
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				checker.cacheable = false
+				return in, true
+			}
+		}
 	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
 		checker.cacheable = false
 		return in, true
