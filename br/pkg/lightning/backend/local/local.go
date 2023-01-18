@@ -1050,6 +1050,7 @@ ScanWriteIngest:
 func (local *local) generateRegionJob(
 	ctx context.Context,
 	jobCh chan<- *regionJob,
+	jobWg *sync.WaitGroup,
 	engine *Engine,
 	ranges []Range,
 	regionSplitSize, regionSplitKeys int64,
@@ -1099,9 +1100,10 @@ func (local *local) generateRegionJob(
 				metrics:         local.metrics,
 			}
 
+			jobWg.Add(1)
 			select {
 			case <-ctx.Done():
-				return nil
+				return ctx.Err()
 			case jobCh <- job:
 			}
 		}
@@ -1113,7 +1115,7 @@ func (local *local) generateRegionJob(
 func (local *local) startWorker(
 	ctx context.Context,
 	jobCh chan *regionJob,
-	idleCh chan struct{},
+	jobWg *sync.WaitGroup,
 ) error {
 	for {
 		select {
@@ -1135,6 +1137,7 @@ func (local *local) startWorker(
 				// TODO: update least sleep time and retry counter
 				jobCh <- job
 			case ingested, needRescan:
+				jobWg.Done()
 			}
 		}
 	}
@@ -1329,11 +1332,11 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
 	group, workerCtx := errgroup.WithContext(ctx)
-	jobCh := make(chan *regionJob, local.workerConcurrency)
-	idleCh := make(chan struct{}, local.workerConcurrency)
+	jobCh := make(chan *regionJob)
+	jobWg := &sync.WaitGroup{}
 	for i := 0; i < local.workerConcurrency; i++ {
 		group.Go(func() error {
-			return local.startWorker(workerCtx, jobCh, idleCh)
+			return local.startWorker(workerCtx, jobCh, jobWg)
 		})
 	}
 
@@ -1361,12 +1364,20 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
 			return err
 		}
-		err = local.generateRegionJob(workerCtx, jobCh, lf, unfinishedRanges, regionSplitSize, regionSplitKeys)
+		err = local.generateRegionJob(
+			workerCtx,
+			jobCh,
+			jobWg,
+			lf,
+			unfinishedRanges,
+			regionSplitSize,
+			regionSplitKeys,
+		)
 		if err != nil {
-			// TODO:
+			// TODO: filter IsContextCanceledError? read worker error?
+			return err
 		}
-
-		// TODO: trigger rescan. maybe let jobCh unbuffered and wait all worker idle
+		jobWg.Wait()
 	}
 
 	log.FromContext(ctx).Info("import engine success", zap.Stringer("uuid", engineUUID),
