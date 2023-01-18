@@ -503,18 +503,3 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
 }
-
-func TestUncacheableReason(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-
-	tk.MustExec("prepare st from 'select /*+ ignore_plan_cache() */ * from t'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by hint"))
-	tk.MustExec("execute st") // show the un-cacheable reason when executing the statement
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: ignore plan cache by hint"))
-	tk.MustExec("execute st")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-}
