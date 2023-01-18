@@ -778,6 +778,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		Partition:             v.Partition,
 		Column:                v.Column,
 		IndexName:             v.IndexName,
+		ResourceGroupName:     model.NewCIStr(v.ResourceGroupName),
 		Flag:                  v.Flag,
 		Roles:                 v.Roles,
 		User:                  v.User,
@@ -1930,7 +1931,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableMemoryUsage),
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
-			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory):
+			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
+			strings.ToLower(infoschema.TableResourceGroups):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -3572,8 +3574,8 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 	partitions := make(map[int64]table.PhysicalTable)
 	contentPos = make([]int64, len(lookUpContent))
 	for idx, content := range lookUpContent {
-		for i, date := range content.keys {
-			locateKey[keyColOffsets[i]] = date
+		for i, data := range content.keys {
+			locateKey[keyColOffsets[i]] = data
 		}
 		p, err := partitionTbl.GetPartitionByRow(builder.ctx, locateKey)
 		if err != nil {
@@ -4156,13 +4158,13 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	if v.IsCommonHandle {
 		if len(keyColOffsets) > 0 {
-			locateKey := make([]types.Datum, e.Schema().Len())
+			locateKey := make([]types.Datum, len(pt.Cols()))
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 			// lookUpContentsByPID groups lookUpContents by pid(partition) so that kv ranges for same partition can be merged.
 			lookUpContentsByPID := make(map[int64][]*indexJoinLookUpContent)
 			for _, content := range lookUpContents {
-				for i, date := range content.keys {
-					locateKey[content.keyCols[i]] = date
+				for i, data := range content.keys {
+					locateKey[keyColOffsets[i]] = data
 				}
 				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
 				if err != nil {
@@ -4202,11 +4204,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	handles, lookUpContents := dedupHandles(lookUpContents)
 
 	if len(keyColOffsets) > 0 {
-		locateKey := make([]types.Datum, e.Schema().Len())
+		locateKey := make([]types.Datum, len(pt.Cols()))
 		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 		for _, content := range lookUpContents {
-			for i, date := range content.keys {
-				locateKey[content.keyCols[i]] = date
+			for i, data := range content.keys {
+				locateKey[keyColOffsets[i]] = data
 			}
 			p, err := pt.GetPartitionByRow(e.ctx, locateKey)
 			if err != nil {
@@ -4901,6 +4903,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, plan.GetAvgRowSize()))
 	}
+	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
