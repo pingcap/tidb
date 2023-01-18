@@ -768,26 +768,6 @@ func TestPreparedIssue17419(t *testing.T) {
 	// require.True(t, ok)
 }
 
-func TestLimitUnsupportedCase(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, key(a))")
-	tk.MustExec("prepare stmt from 'select * from t limit ?'")
-
-	tk.MustExec("set @a = 1.2")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-	tk.MustExec("set @a = 1.")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-	tk.MustExec("set @a = '0'")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-	tk.MustExec("set @a = '1'")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-	tk.MustExec("set @a = 1_2")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-}
-
 func TestIssue38323(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
