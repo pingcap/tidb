@@ -371,3 +371,22 @@ func TestIssue40224(t *testing.T) {
 			{"└─IndexRangeScan_5"}, // range scan not full scan
 		})
 }
+
+func TestIssue40679(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a));")
+	tk.MustExec("prepare st from 'select * from t use index(a) where a < ?'")
+	tk.MustExec("set @a1=1.1")
+	tk.MustExec("execute st using @a1")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.True(t, strings.Contains(rows[1][0].(string), "RangeScan")) // RangeScan not FullScan
+
+	tk.MustExec("execute st using @a1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '1.1' may be converted to INT"))
+}
