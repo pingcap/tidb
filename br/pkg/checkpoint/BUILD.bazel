@@ -15,6 +15,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -29,5 +30,6 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
     ],
 )
