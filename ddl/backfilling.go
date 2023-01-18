@@ -144,7 +144,7 @@ func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
 // 1: add-index
 // 2: modify-column-type
 // 3: clean-up global index
-// 4: reorganize partition (copy data between partitions + create indexes on those new partitions)
+// 4: reorganize partition
 //
 // They all have a write reorganization state to back fill data into the rows existed.
 // Backfilling is time consuming, to accelerate this process, TiDB has built some sub
@@ -610,7 +610,6 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		return errors.Trace(err)
 	}
 
-	// TODO: Maybe do reorgInfo.UpdateReorgMeta here too?
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	dc.getReorgCtx(reorgInfo.Job.ID).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
@@ -625,7 +624,7 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 	return nil
 }
 
-func getBatchTasks(t table.PhysicalTable, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
+func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
 	batchTasks := make([]*reorgBackfillTask, 0, batch)
 	physicalTableID := reorgInfo.PhysicalTableID
 	var prefix kv.Key
@@ -655,11 +654,13 @@ func getBatchTasks(t table.PhysicalTable, reorgInfo *reorgInfo, kvRanges []kv.Ke
 			endKey = prefix.PrefixNext()
 		}
 
+		//nolint:forcetypeassert
+		phyTbl := t.(table.PhysicalTable)
 		task := &reorgBackfillTask{
 			id:              i,
 			jobID:           reorgInfo.Job.ID,
 			physicalTableID: physicalTableID,
-			physicalTable:   t,
+			physicalTable:   phyTbl,
 			priority:        reorgInfo.Priority,
 			startKey:        startKey,
 			endKey:          endKey,

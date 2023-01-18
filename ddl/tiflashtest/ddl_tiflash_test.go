@@ -300,7 +300,7 @@ func TestTiFlashReplicaPartitionTableNormal(t *testing.T) {
 	for _, p := range pi.Definitions {
 		require.True(t, tb2.Meta().TiFlashReplica.IsPartitionAvailable(p.ID))
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
-			table, ok := s.tiflash.GetTableSyncStatus(p.ID)
+			table, ok := s.tiflash.GetTableSyncStatus(int(p.ID))
 			require.True(t, ok)
 			require.True(t, table.Accel)
 		}
@@ -340,7 +340,7 @@ func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 	for _, p := range pi.Definitions {
 		require.True(t, tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID))
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
-			table, ok := s.tiflash.GetTableSyncStatus(p.ID)
+			table, ok := s.tiflash.GetTableSyncStatus(int(p.ID))
 			require.True(t, ok)
 			require.True(t, table.Accel)
 		}
@@ -1107,13 +1107,13 @@ func TestTiFlashProgressAfterAvailable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	// after available, progress should can be updated.
-	s.tiflash.ResetSyncStatus(tb.Meta().ID, false)
+	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), false)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 	require.True(t, isExist)
 	require.True(t, progress == 0)
 
-	s.tiflash.ResetSyncStatus(tb.Meta().ID, true)
+	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), true)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	progress, isExist = infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 	require.True(t, isExist)
@@ -1136,13 +1136,13 @@ func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	// after available, progress should can be updated.
-	s.tiflash.ResetSyncStatus(tb.Meta().Partition.Definitions[0].ID, false)
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
 	require.True(t, isExist)
 	require.True(t, progress == 0)
 
-	s.tiflash.ResetSyncStatus(tb.Meta().Partition.Definitions[0].ID, true)
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	progress, isExist = infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
 	require.True(t, isExist)
@@ -1199,7 +1199,7 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 		tbls[i], err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableNames[i]))
 		require.NoError(t, err)
 		require.NotNil(t, tbls[i])
-		s.tiflash.ResetSyncStatus(tbls[i].Meta().ID, false)
+		s.tiflash.ResetSyncStatus(int(tbls[i].Meta().ID), false)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollAvailableTableProgressMaxCount", `return(2)`))
 	defer func() {
@@ -1274,7 +1274,7 @@ func TestTiFlashPartitionNotAvailable(t *testing.T) {
 	require.NotNil(t, tb)
 
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	s.tiflash.ResetSyncStatus(tb.Meta().Partition.Definitions[0].ID, false)
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 
 	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
@@ -1284,7 +1284,7 @@ func TestTiFlashPartitionNotAvailable(t *testing.T) {
 	require.NotNil(t, replica)
 	require.False(t, replica.Available)
 
-	s.tiflash.ResetSyncStatus(tb.Meta().Partition.Definitions[0].ID, true)
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 
 	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
@@ -1294,7 +1294,7 @@ func TestTiFlashPartitionNotAvailable(t *testing.T) {
 	require.NotNil(t, replica)
 	require.True(t, replica.Available)
 
-	s.tiflash.ResetSyncStatus(tb.Meta().Partition.Definitions[0].ID, false)
+	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	require.NoError(t, err)
 	require.NotNil(t, tb)
@@ -1365,8 +1365,6 @@ func TestTiFlashReorgPartition(t *testing.T) {
 	defer teardown()
 	fCancel := TempDisableEmulatorGC()
 	defer fCancel()
-	gcWorker, err := gcworker.NewMockGCWorker(s.store)
-	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
@@ -1438,8 +1436,13 @@ func TestTiFlashReorgPartition(t *testing.T) {
 	tk.MustExec(`admin check table ddltiflash`)
 	_, ok = s.tiflash.GetPlacementRule(ruleName)
 	require.True(t, ok)
-	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
-	_, ok = s.tiflash.GetPlacementRule(ruleName)
-	require.False(t, ok)
+	// TODO: when delete range is merged, enable this check
+	/*
+		gcWorker, err := gcworker.NewMockGCWorker(s.store)
+		require.NoError(t, err)
+		require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+		_, ok = s.tiflash.GetPlacementRule(ruleName)
+		require.False(t, ok)
+	*/
 	tk.MustExec(`drop table ddltiflash`)
 }

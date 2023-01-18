@@ -220,14 +220,11 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return b.applyTruncateTableOrPartition(m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
-		return b.applyDropTableOrPartition(m, diff)
+		return b.applyDropTableOrParition(m, diff)
 	case model.ActionRecoverTable:
 		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
-	case model.ActionReorganizePartition:
-		// TODO: How to test?
-		return b.applyReorganizePartition(m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
 	default:
@@ -278,7 +275,7 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -286,28 +283,6 @@ func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff
 
 	for _, opt := range diff.AffectedOpts {
 		b.deleteBundle(b.is, opt.OldTableID)
-	}
-	return tblIDs, nil
-}
-
-// TODO: How to test this?
-func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	// Is this needed? Since there should be no difference more than partition changes?
-	tblIDs, err := b.applyTableUpdate(m, diff)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// Minimum allocation, one partition is reorganized into 1 or more new ones
-	//tblIDs := make([]int64, 0, 1+len(diff.AffectedOpts))
-	for _, opt := range diff.AffectedOpts {
-		if opt.OldTableID != 0 {
-			b.deleteBundle(b.is, opt.OldTableID)
-			//tblIDs = append(tblIDs, opt.OldTableID)
-		}
-		if opt.TableID != 0 {
-			b.markTableBundleShouldUpdate(opt.TableID)
-			//tblIDs = append(tblIDs, opt.TableID)
-		}
 	}
 	return tblIDs, nil
 }
@@ -721,8 +696,6 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	switch tp {
 	case model.ActionDropTablePartition:
 	case model.ActionTruncateTablePartition:
-	// ReorganizePartition handle the bundles in applyReorganizePartition
-	case model.ActionReorganizePartition:
 	default:
 		pi := tblInfo.GetPartitionInfo()
 		if pi != nil {
