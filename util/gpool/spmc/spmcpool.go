@@ -152,7 +152,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 			return
 		}
 		p.cond.Broadcast()
-
+		return
 	}
 	if size < capacity {
 		p.taskManager.Downclock()
