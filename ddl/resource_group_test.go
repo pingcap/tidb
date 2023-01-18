@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
@@ -29,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResourceGroupBaisc(t *testing.T) {
+func TestResourceGroupBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -47,6 +48,16 @@ func TestResourceGroupBaisc(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	dom.DDL().SetHook(hook)
 
+	tk.MustExec("set global tidb_enable_resource_control = 'off'")
+	tk.MustGetErrCode("create user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustExec("create user usr1")
+	tk.MustGetErrCode("alter user usr1 resource group rg1", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("create resource group x "+
+		"RRU_PER_SEC=1000 "+
+		"WRU_PER_SEC=2000", mysql.ErrResourceGroupSupportDisabled)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'on'")
+
 	tk.MustExec("create resource group x " +
 		"RRU_PER_SEC=1000 " +
 		"WRU_PER_SEC=2000")
@@ -61,6 +72,14 @@ func TestResourceGroupBaisc(t *testing.T) {
 	g := testResourceGroupNameFromIS(t, tk.Session(), "x")
 	checkFunc(g)
 
+	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
+	tk.MustGetErrCode("alter resource group x "+
+		"RRU_PER_SEC=2000 "+
+		"WRU_PER_SEC=3000", mysql.ErrResourceGroupSupportDisabled)
+	tk.MustGetErrCode("drop resource group x ", mysql.ErrResourceGroupSupportDisabled)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'on'")
+
 	tk.MustGetErrCode("create resource group x "+
 		"RRU_PER_SEC=1000 "+
 		"WRU_PER_SEC=2000", mysql.ErrResourceGroupExists)
@@ -71,6 +90,8 @@ func TestResourceGroupBaisc(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(2000), g.RRURate)
 	re.Equal(uint64(3000), g.WRURate)
+
+	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x'").Check(testkit.Rows(strconv.FormatInt(g.ID, 10) + " x 2000 3000"))
 
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -111,7 +132,34 @@ func TestResourceGroupBaisc(t *testing.T) {
 	groups, err := infosync.GetAllResourceGroups(context.TODO())
 	require.Equal(t, 0, len(groups))
 	require.NoError(t, err)
-	// TODO: privilege check & constraint syntax check.
+
+	// Check information schema table information_schema.resource_groups
+	tk.MustExec("create resource group x " +
+		"RRU_PER_SEC=1000 " +
+		"WRU_PER_SEC=2000")
+	g1 := testResourceGroupNameFromIS(t, tk.Session(), "x")
+	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x'").Check(testkit.Rows(strconv.FormatInt(g1.ID, 10) + " x 1000 2000"))
+	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RRU_PER_SEC=1000 WRU_PER_SEC=2000"))
+
+	tk.MustExec("create resource group y " +
+		"RRU_PER_SEC=2000 " +
+		"WRU_PER_SEC=3000")
+	g2 := testResourceGroupNameFromIS(t, tk.Session(), "y")
+	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'y'").Check(testkit.Rows(strconv.FormatInt(g2.ID, 10) + " y 2000 3000"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RRU_PER_SEC=2000 WRU_PER_SEC=3000"))
+
+	tk.MustExec("alter resource group y " +
+		"RRU_PER_SEC=4000 " +
+		"WRU_PER_SEC=2000")
+
+	g2 = testResourceGroupNameFromIS(t, tk.Session(), "y")
+	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'y'").Check(testkit.Rows(strconv.FormatInt(g2.ID, 10) + " y 4000 2000"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RRU_PER_SEC=4000 WRU_PER_SEC=2000"))
+
+	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("2"))
+	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
+	tk.MustExec("create user user2")
+	tk.MustGetErrCode("alter user user2 resource group nil_group", mysql.ErrResourceGroupNotExists)
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
