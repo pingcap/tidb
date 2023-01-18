@@ -183,7 +183,8 @@
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
-      "ddl/util/": "ddl/util code"
+      "ddl/util/": "ddl/util code",
+      "resourcemanger/": "resourcemanger/"
     }
   },
   "findcall": {
@@ -334,7 +335,8 @@
       "util/memory": "util/memory",
       "ddl/": "ddl",
       "planner/": "planner",
-      "extension/": "extension code"
+      "extension/": "extension code",
+      "resourcemanager/": "resourcemanager code"
     }
   },
   "pkgfact": {
