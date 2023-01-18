@@ -259,10 +259,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	instanceLease := ddl.InstanceLease
 
 	// test no backfill job
-	bJobs, err := ddl.GetBackfillJobsForOneEle(se, 1, []int64{jobID1, jobID2}, instanceLease)
+	bJob, err := ddl.GetBackfillJobForOneEle(se, []int64{jobID1, jobID2}, instanceLease)
 	require.NoError(t, err)
-	require.Nil(t, bJobs)
-	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, instanceLease)
+	require.Nil(t, bJob)
+	bJobs, err := ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, instanceLease)
 	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job").Error())
 	require.Nil(t, bJobs)
 	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID2), "check_backfill_job_count")
@@ -291,14 +291,13 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 1      jobID2     eleID3    ""
 	require.NoError(t, err)
 	// test get some backfill jobs
-	bJobs, err = ddl.GetBackfillJobsForOneEle(se, 1, []int64{jobID2 - 1, jobID2 + 1}, instanceLease)
+	bJob, err = ddl.GetBackfillJobForOneEle(se, []int64{jobID2 - 1, jobID2 + 1}, instanceLease)
 	require.NoError(t, err)
-	require.Len(t, bJobs, 1)
 	expectJob := bjTestCases[2]
-	if expectJob.ID != bJobs[0].ID {
+	if expectJob.ID != bJob.ID {
 		expectJob = bjTestCases[3]
 	}
-	require.Equal(t, expectJob, bJobs[0])
+	require.Equal(t, expectJob, bJob)
 	previousTime, err := ddl.GetOracleTimeWithStartTS(se)
 	require.EqualError(t, err, "[kv:8024]invalid transaction")
 	readInTxn(se, func(sessionctx.Context) {
@@ -386,7 +385,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.Nil(t, bjob)
 	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
-	require.Nil(t, bJobs)
+	require.Len(t, bJobs, 0)
 	err = ddl.AddBackfillJobs(se, bjTestCases)
 	require.NoError(t, err)
 	// ID     jobID     eleID
@@ -402,7 +401,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.Equal(t, bJobs2[1], bjob)
 	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
-	require.Nil(t, bJobs)
+	require.Len(t, bJobs, 0)
 	bJobs1[0].State = model.JobStateRollingback
 	bJobs1[0].ID = 2
 	bJobs1[0].InstanceID = uuid

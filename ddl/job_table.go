@@ -379,53 +379,51 @@ func (d *ddl) loadBackfillJobAndRun() {
 
 	runningJobIDs := d.backfillCtxJobIDs()
 	if len(runningJobIDs) >= reorgWorkerCnt {
-		d.backfillCtx.Unlock()
 		return
 	}
 
 	// TODO: Add ele info to distinguish backfill jobs.
-	bJobs, err := GetBackfillJobsForOneEle(sess, 1, runningJobIDs, InstanceLease)
-	bJobCnt := len(bJobs)
-	if bJobCnt == 0 || err != nil {
+	// Get a Backfill job to get the reorg info like element info, schema ID and so on.
+	bfJob, err := GetBackfillJobForOneEle(sess, runningJobIDs, InstanceLease)
+	if err != nil || bfJob == nil {
 		if err != nil {
-			logutil.BgLogger().Warn("[ddl] get backfill jobs failed in a instance", zap.Error(err))
+			logutil.BgLogger().Warn("[ddl] get backfill jobs failed in this instance", zap.Error(err))
 		} else {
-			logutil.BgLogger().Debug("[ddl] get no backfill job in a instance")
+			logutil.BgLogger().Debug("[ddl] get no backfill job in this instance")
 		}
 		return
 	}
 
-	bJob := bJobs[0]
-	jobCtx, existent := d.setBackfillCtxJobContext(bJob.JobID, bJob.Meta.Query, bJob.Meta.Type)
+	jobCtx, existent := d.setBackfillCtxJobContext(bfJob.JobID, bfJob.Meta.Query, bfJob.Meta.Type)
 	if existent {
-		logutil.BgLogger().Warn("[ddl] get the type of backfill job is running in a instance", zap.String("backfill job", bJob.AbbrStr()))
+		logutil.BgLogger().Warn("[ddl] get the type of backfill job is running in this instance", zap.String("backfill job", bfJob.AbbrStr()))
 		return
 	}
 	// TODO: Adjust how the non-owner uses ReorgCtx.
-	d.setReorgCtxForBackfill(bJob)
+	d.setReorgCtxForBackfill(bfJob)
 	d.wg.Run(func() {
 		defer func() {
-			d.removeBackfillCtxJobCtx(bJob.JobID)
+			d.removeBackfillCtxJobCtx(bfJob.JobID)
 			tidbutil.Recover(metrics.LabelBackfillWorker, "runBackfillJobs", nil, false)
 		}()
 
-		if bJob.Meta.ReorgTp == model.ReorgTypeLitMerge {
+		if bfJob.Meta.ReorgTp == model.ReorgTypeLitMerge {
 			if !ingest.LitInitialized {
-				logutil.BgLogger().Warn("[ddl] we can't do ingest in a instance",
-					zap.Bool("LitInitialized", ingest.LitInitialized), zap.String("bJob", bJob.AbbrStr()))
+				logutil.BgLogger().Warn("[ddl] we can't do ingest in this instance",
+					zap.Bool("LitInitialized", ingest.LitInitialized), zap.String("bfJob", bfJob.AbbrStr()))
 				return
 			}
-			logutil.BgLogger().Info("[ddl] run backfill jobs with ingest in a instance", zap.String("bJob", bJob.AbbrStr()))
-			err = runBackfillJobsWithLightning(d, sess, bJob, jobCtx)
+			logutil.BgLogger().Info("[ddl] run backfill jobs with ingest in this instance", zap.String("bfJob", bfJob.AbbrStr()))
+			err = runBackfillJobsWithLightning(d, sess, bfJob, jobCtx)
 		} else {
-			logutil.BgLogger().Info("[ddl] run backfill jobs with txn-merge in a instance", zap.String("bJob", bJob.AbbrStr()))
-			_, err = runBackfillJobs(d, sess, bJob, jobCtx)
+			logutil.BgLogger().Info("[ddl] run backfill jobs with txn-merge in this instance", zap.String("bfJob", bfJob.AbbrStr()))
+			_, err = runBackfillJobs(d, sess, bfJob, jobCtx)
 		}
 
 		if err == nil {
-			err = syncBackfillHistoryJobs(sess, d.uuid, bJob)
+			err = syncBackfillHistoryJobs(sess, d.uuid, bfJob)
 		}
-		logutil.BgLogger().Warn("[ddl] run backfill jobs finished in a instance", zap.Stringer("reorg type", bJob.Meta.ReorgTp), zap.Error(err))
+		logutil.BgLogger().Warn("[ddl] run backfill jobs finished in this instance", zap.Stringer("reorg type", bfJob.Meta.ReorgTp), zap.Error(err))
 	})
 }
 
@@ -696,8 +694,8 @@ func AddBackfillJobs(s *session, backfillJobs []*BackfillJob) error {
 	})
 }
 
-// GetBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element.
-func GetBackfillJobsForOneEle(s *session, batch int, excludedJobIDs []int64, lease time.Duration) ([]*BackfillJob, error) {
+// GetBackfillJobForOneEle gets the backfill jobs in the tblName table that contains only one element.
+func GetBackfillJobForOneEle(s *session, excludedJobIDs []int64, lease time.Duration) (*BackfillJob, error) {
 	eJobIDsBuilder := strings.Builder{}
 	for i, id := range excludedJobIDs {
 		if i == 0 {
@@ -721,24 +719,15 @@ func GetBackfillJobsForOneEle(s *session, batch int, excludedJobIDs []int64, lea
 		leaseStr := currTime.Add(-lease).Format(types.TimeFormat)
 
 		bJobs, err = GetBackfillJobs(se, BackfillTable,
-			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by ddl_job_id, ele_key, ele_id limit %d",
-				leaseStr, eJobIDsBuilder.String(), batch), "get_backfill_job")
+			fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') %s order by ddl_job_id, ele_key, ele_id limit 1",
+				leaseStr, eJobIDsBuilder.String()), "get_backfill_job")
 		return err
 	})
 	if err != nil || len(bJobs) == 0 {
 		return nil, err
 	}
 
-	validLen := 1
-	firstJobID, firstEleID, firstEleKey := bJobs[0].JobID, bJobs[0].EleID, bJobs[0].EleKey
-	for i := 1; i < len(bJobs); i++ {
-		if bJobs[i].JobID != firstJobID || bJobs[i].EleID != firstEleID || !bytes.Equal(bJobs[i].EleKey, firstEleKey) {
-			break
-		}
-		validLen++
-	}
-
-	return bJobs[:validLen], nil
+	return bJobs[0], nil
 }
 
 // GetAndMarkBackfillJobsForOneEle batch gets the backfill jobs in the tblName table that contains only one element,

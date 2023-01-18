@@ -118,7 +118,7 @@ func runBackfillJobs(d *ddl, sess *session, bJob *BackfillJob, jobCtx *JobContex
 	})
 	proFunc := func() ([]*reorgBackfillTask, error) {
 		// TODO: After BackfillJob replaces reorgBackfillTask, use backfiller's GetTasks instead of it.
-		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, workerCnt*2)
+		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, workerCnt+5)
 	}
 	// add new task
 	resultCh, control := d.backfillWorkerPool.AddProduceBySlice(proFunc, 0, workerCtx, spmc.WithConcurrency(workerCnt))

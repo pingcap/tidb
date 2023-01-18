@@ -89,12 +89,12 @@ func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgC
 
 		select {
 		case <-ticker.C:
+			times++
 			// Print this log every 5 min.
 			if times%1000 == 0 {
 				logutil.BgLogger().Info("[ddl] check all backfill jobs is finished",
 					zap.Int64("job ID", ddlJobID), zap.Bool("isFinished", backfillJobFinished), zap.Reflect("bfJob", bfJob))
 			}
-			times++
 			if !backfillJobFinished {
 				err := checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEle.ID, currEle.TypeKey)
 				if err != nil {

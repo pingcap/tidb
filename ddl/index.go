@@ -2050,7 +2050,6 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 	// TODO: Consider redo it.
 	bc, ok := ingest.LitBackCtxMgr.Load(bfJob.JobID)
 	if ok && bc.Done() {
-		logutil.BgLogger().Warn("[ddl] lightning loaded")
 		return errors.New(ingest.LitErrGetBackendFail)
 	}
 	var err error
