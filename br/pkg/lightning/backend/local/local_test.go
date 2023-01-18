@@ -1013,7 +1013,7 @@ func TestMultiIngest(t *testing.T) {
 			true,
 			"",
 		},
-		// test all up stores with tiflash not support multi doIngest
+		// test all up stores with tiflash not support multi ingest
 		{
 			func(store *metapb.Store) bool {
 				return store.State == metapb.StoreState_Up
@@ -1026,7 +1026,7 @@ func TestMultiIngest(t *testing.T) {
 			true,
 			"",
 		},
-		// test all up stores with only tiflash support multi doIngest
+		// test all up stores with only tiflash support multi ingest
 		{
 			func(store *metapb.Store) bool {
 				return store.State == metapb.StoreState_Up
@@ -1039,7 +1039,7 @@ func TestMultiIngest(t *testing.T) {
 			false,
 			"",
 		},
-		// test all up stores with some non-tiflash store support multi doIngest
+		// test all up stores with some non-tiflash store support multi ingest
 		{
 			func(store *metapb.Store) bool {
 				return store.State == metapb.StoreState_Up
@@ -1078,7 +1078,7 @@ func TestMultiIngest(t *testing.T) {
 			true,
 			"",
 		},
-		// test only up stores support multi doIngest
+		// test only up stores support multi ingest
 		{
 			func(store *metapb.Store) bool {
 				return true
@@ -1091,7 +1091,7 @@ func TestMultiIngest(t *testing.T) {
 			true,
 			"",
 		},
-		// test only offline/tombstore stores support multi doIngest
+		// test only offline/tombstore stores support multi ingest
 		{
 			func(store *metapb.Store) bool {
 				return true
@@ -1285,7 +1285,7 @@ func TestCheckPeersBusy(t *testing.T) {
 			},
 		},
 		logger:                log.L(),
-		ingestConcurrency:     worker.NewPool(ctx, 1, "doIngest"),
+		ingestConcurrency:     worker.NewPool(ctx, 1, "ingest"),
 		writeLimiter:          noopStoreWriteLimiter{},
 		bufferPool:            membuf.NewPool(),
 		supportMultiIngest:    true,
