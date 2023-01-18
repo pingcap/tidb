@@ -3816,9 +3816,9 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(hintData.To)
 	case "set_var":
 		hintData := n.HintData.(HintSetVar)
-		ctx.WriteString(hintData.VarName)
-		ctx.WritePlain(", ")
-		ctx.WriteString(hintData.Value)
+		ctx.WritePlain(hintData.VarName)
+		ctx.WritePlain(" = ")
+		ctx.WritePlain(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil
