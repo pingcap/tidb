@@ -582,6 +582,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: On, Type: TypeBool, ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(!IsSandBoxModeEnabled.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TableEncryptionPrivilegeCheck, Value: Off, Type: TypeBool},
 
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
@@ -1162,6 +1163,7 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
+	{Scope: ScopeGlobal | ScopeSession, Name: DefaultTableEncryption, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnablePlanReplayerCapture = TiDBOptOn(val)
@@ -2562,4 +2564,9 @@ const (
 	ValidatePasswordSpecialCharCount = "validate_password.special_char_count"
 	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is separated by semicolon (;).
 	ValidatePasswordDictionary = "validate_password.dictionary"
+	// DefaultTableEncryption defines the default encryption setting applied to schemas when they are created without specifying an ENCRYPTION clause.
+	DefaultTableEncryption = "default_table_encryption"
+	// TableEncryptionPrivilegeCheck controls the TABLE_ENCRYPTION_ADMIN privilege check that occurs
+	// when creating or altering a table with an encryption setting that differs from the default schema encryption
+	TableEncryptionPrivilegeCheck = "table_encryption_privilege_check"
 )
