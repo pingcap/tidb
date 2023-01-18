@@ -156,6 +156,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'y'").Check(testkit.Rows(strconv.FormatInt(g2.ID, 10) + " y 4000 2000"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RRU_PER_SEC=4000 WRU_PER_SEC=2000"))
 
+	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("2"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustExec("create user user2")
 	tk.MustGetErrCode("alter user user2 resource group nil_group", mysql.ErrResourceGroupNotExists)
