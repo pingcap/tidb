@@ -381,7 +381,7 @@ func TestFlashbackAutoID(t *testing.T) {
 
 		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 		tk.MustExec("use test")
-		tk.MustExec("create table t(a int auto_increment, primary key(a))")
+		tk.MustExec("create table t(a int auto_increment, primary key(a)) auto_id_cache 100")
 		tk.MustExec("insert into t values (),()")
 
 		time.Sleep(1 * time.Second)
@@ -404,9 +404,9 @@ func TestFlashbackAutoID(t *testing.T) {
 		tk.MustExec("admin check table t")
 		res = tk.MustQuery("select max(a) from t").Rows()
 		require.Equal(t, res[0][0], "2")
-		tk.MustExec("insert into t values (),()")
-		res = tk.MustQuery("select max(a) >= 4 from t").Rows()
-		require.Equal(t, res[0][0], "1")
+		tk.MustExec("insert into t values ()")
+		res = tk.MustQuery("select max(a) from t").Rows()
+		require.Equal(t, res[0][0], "101")
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
 		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
