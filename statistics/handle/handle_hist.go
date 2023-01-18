@@ -182,7 +182,7 @@ type StatsReaderContext struct {
 }
 
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupWrapper) {
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
 	readerCtx := &StatsReaderContext{}
 	defer func() {
 		exitWg.Done()

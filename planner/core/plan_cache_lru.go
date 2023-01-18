@@ -51,9 +51,6 @@ type LRUPlanCache struct {
 	lruList *list.List
 	// lock make cache thread safe
 	lock sync.Mutex
-
-	// pickFromBucket get one element from bucket. The LRUPlanCache can not work if it is nil
-	//pickFromBucket func(map[*list.Element]struct{}, []*types.FieldType, []uint64) (*list.Element, bool)
 	// onEvict will be called if any eviction happened, only for test use now
 	onEvict func(kvcache.Key, kvcache.Value)
 
@@ -98,7 +95,11 @@ func (l *LRUPlanCache) Get(key kvcache.Key, paramTypes []*types.FieldType, limit
 
 	bucket, bucketExist := l.buckets[strHashKey(key, false)]
 	if bucketExist {
-		if element, exist := l.pickFromBucket(bucket, paramTypes, limitParams); exist {
+		matchOpts := &planCacheMatchOpts{
+			paramTypes:          paramTypes,
+			limitOffsetAndCount: limitParams,
+		}
+		if element, exist := l.pickFromBucket(bucket, matchOpts); exist {
 			l.lruList.MoveToFront(element)
 			return element.Value.(*planCacheEntry).PlanValue, true
 		}
@@ -114,7 +115,11 @@ func (l *LRUPlanCache) Put(key kvcache.Key, value kvcache.Value, paramTypes []*t
 	hash := strHashKey(key, true)
 	bucket, bucketExist := l.buckets[hash]
 	if bucketExist {
-		if element, exist := l.pickFromBucket(bucket, paramTypes, limitParams); exist {
+		matchOpts := &planCacheMatchOpts{
+			paramTypes:          paramTypes,
+			limitOffsetAndCount: limitParams,
+		}
+		if element, exist := l.pickFromBucket(bucket, matchOpts); exist {
 			l.updateInstanceMetric(&planCacheEntry{PlanKey: key, PlanValue: value}, element.Value.(*planCacheEntry))
 			element.Value.(*planCacheEntry).PlanValue = value
 			l.lruList.MoveToFront(element)
@@ -250,14 +255,14 @@ func (l *LRUPlanCache) memoryControl() {
 }
 
 // PickPlanFromBucket pick one plan from bucket
-func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, paramTypes []*types.FieldType, limitParams []uint64) (*list.Element, bool) {
+func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *planCacheMatchOpts) (*list.Element, bool) {
 	for k := range bucket {
 		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
-		ok1 := plan.ParamTypes.CheckTypesCompatibility4PC(paramTypes)
+		ok1 := plan.matchOpts.paramTypes.CheckTypesCompatibility4PC(matchOpts.paramTypes)
 		if !ok1 {
 			continue
 		}
-		ok2 := checkUint64SliceIfEqual(plan.limitOffsetAndCount, limitParams)
+		ok2 := checkUint64SliceIfEqual(plan.matchOpts.limitOffsetAndCount, matchOpts.limitOffsetAndCount)
 		if ok2 {
 			return k, true
 		}
