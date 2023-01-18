@@ -144,8 +144,8 @@ func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, Nu
 		TotalDmfileRoughSetIndexLoadTimeMs: &totalDmfileRoughSetIndexLoadTimeMs,
 		TotalDmfileReadTimeMs:              &totalDmfileReadTimeMs,
 		TotalCreateSnapshotTimeMs:          &totalCreateSnapshotTimeMs,
-		totalLocalRegionNum:                &totalLocalRegionNum,
-		totalRemoteRegionNum:               &totalRemoteRegionNum,
+		TotalLocalRegionNum:                &totalLocalRegionNum,
+		TotalRemoteRegionNum:               &totalRemoteRegionNum,
 	}
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
 		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, XXX_unrecognized: nil}
