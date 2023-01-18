@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
@@ -753,10 +754,12 @@ func (ds *DataSource) prepareCols4MVIndex(mvIndex *model.IndexInfo) (idxCols []*
 		if col == nil { // unexpected, no vir-col on this MVIndex
 			return nil, false
 		}
-		if col.VirtualExpr != nil {
+		if col.GetType().IsArray() {
 			virColNum++
 			col = col.Clone().(*expression.Column)
 			col.RetType = col.GetType().ArrayType() // use the underlying type directly: JSON-ARRAY(INT) --> INT
+			col.RetType.SetCharset(charset.CharsetBin)
+			col.RetType.SetCollate(charset.CollationBin)
 		}
 		idxCols = append(idxCols, col)
 	}
