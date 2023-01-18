@@ -550,7 +550,7 @@ func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	for _, cond := range sel.Conditions {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, projSchema, proj.Exprs)
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, projSchema, proj.Exprs, false)
 		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {

@@ -1248,6 +1248,36 @@ func TestAggPushDownCountStar(t *testing.T) {
 	tk.MustQuery("select count(*) from c, o where c.c_id=o.c_id").Check(testkit.Rows("5"))
 }
 
+func TestGroupStreamAggOnTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("create table foo(a int, b int, c int, d int, primary key(a,b,c,d))")
+	tk.MustExec("alter table foo set tiflash replica 1")
+	tk.MustExec("insert into foo values(1,2,3,1),(1,2,3,6),(1,2,3,5)," +
+		"(1,2,3,2),(1,2,3,4),(1,2,3,7),(1,2,3,3),(1,2,3,0)")
+	tb := external.GetTableByName(t, tk, "test", "foo")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@tidb_allow_mpp=0")
+	sql := "select a,b,c,count(*) from foo group by a,b,c order by a,b,c"
+	tk.MustQuery(sql).Check(testkit.Rows("1 2 3 8"))
+	rows := tk.MustQuery("explain " + sql).Rows()
+
+	for _, row := range rows {
+		resBuff := bytes.NewBufferString("")
+		fmt.Fprintf(resBuff, "%s\n", row)
+		res := resBuff.String()
+		// StreamAgg with group keys on TiFlash is not supported
+		if strings.Contains(res, "tiflash") {
+			require.NotContains(t, res, "StreamAgg")
+		}
+	}
+}
+
 func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t, withMockTiFlash(2))
 	defer clean()
