@@ -101,7 +101,7 @@ func (rc *Controller) clusterResource(ctx context.Context, localSource int64) er
 	passed := true
 	message := "Cluster resources are rich for this import task"
 	defer func() {
-		rc.checkTemplate.Collect(Critical, passed, message)
+		rc.checkTemplate.Collect(Warn, passed, message)
 	}()
 
 	var (
@@ -194,7 +194,7 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 	passed := true
 	message := "Cluster doesn't have too many empty regions"
 	defer func() {
-		rc.checkTemplate.Collect(Critical, passed, message)
+		rc.checkTemplate.Collect(Warn, passed, message)
 	}()
 	storeInfo := &pdtypes.StoresInfo{}
 	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, storeInfo)
