@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
@@ -718,7 +719,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	argTp := args[0].GetType().EvalType()
 	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration {
 		argTp = types.ETInt
-	} else if argTp == types.ETJson || argTp == types.ETString {
+	} else if argTp == types.ETString {
 		argTp = types.ETReal
 	}
 
@@ -739,6 +740,17 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETInt:
 		sig = &builtinUnaryNotIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryNotInt)
+	case types.ETJson:
+		// not(json) is to compare the json with json integer 0
+		zeroJSON := &Constant{
+			Value:   types.NewJSONDatum(types.CreateBinaryJSON(int64(0))),
+			RetType: types.NewFieldType(mysql.TypeJSON),
+		}
+		sig, err = funcs[ast.EQ].getFunction(ctx, []Expression{args[0], zeroJSON})
+		if err != nil {
+			return nil, err
+		}
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errJSONInBooleanContext)
 	default:
 		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 	}

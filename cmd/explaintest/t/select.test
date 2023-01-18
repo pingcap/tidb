@@ -283,3 +283,8 @@ insert into t3 values ('a');
 --error 1105
 select * from t3 where a > 0x80;
 set @@tidb_enable_outer_join_reorder=false;
+
+drop table if exists t1;
+create table t1(j json);
+insert into t1 values ('{"a":"b"}');
+explain format = 'brief' select * from t1 WHERE NOT t1.j;

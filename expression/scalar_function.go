@@ -234,6 +234,12 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
+	// TODO: add a method for functions to get a name, or use other ways to replace this special case
+	// not(json) is implemented with comparing json with json 0. If we don't overwrite the funcName,
+	// the explain information will be `not(json, "0")`. We prefer to make it `eq(json, "0")`
+	if funcName == ast.UnaryNot && funcArgs[0].GetType().GetType() == mysql.TypeJSON {
+		funcName = ast.EQ
+	}
 	sf := &ScalarFunction{
 		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,

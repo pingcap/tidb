@@ -658,3 +658,11 @@ insert into t3 values ('a');
 select * from t3 where a > 0x80;
 Error 1105 (HY000): Cannot convert string '\x80' from binary to utf8mb4
 set @@tidb_enable_outer_join_reorder=false;
+drop table if exists t1;
+create table t1(j json);
+insert into t1 values ('{"a":"b"}');
+explain format = 'brief' select * from t1 WHERE NOT t1.j;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		eq(test.t1.j, "0")
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
