@@ -767,8 +767,6 @@ func TestPreparedIssue17419(t *testing.T) {
 	// _, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
 	// require.True(t, ok)
 }
-<<<<<<< HEAD
-=======
 
 func TestLimitUnsupportedCase(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -808,4 +806,3 @@ func TestIssue38323(t *testing.T) {
 	tk.MustExec("set @a = 1;")
 	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where 1 = id and 1 = k group by id, k").Rows())
 }
->>>>>>> ee6d291f4e (planner: fix prepare explain index out of range bug (#40568))
