@@ -114,6 +114,8 @@ func TestStopPool(t *testing.T) {
 	control.Stop()
 	close(exit)
 	control.Wait()
+	// it should pass. Stop can be used after the pool is closed. we should prevent it from panic.
+	control.Stop()
 	wg.Wait()
 	// close pool
 	pool.ReleaseAndWait()
