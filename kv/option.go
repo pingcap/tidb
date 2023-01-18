@@ -113,6 +113,8 @@ const (
 	ReplicaReadClosest
 	// ReplicaReadClosestAdaptive stands for 'read from follower which locates in the same zone if the response size exceeds certain threshold'
 	ReplicaReadClosestAdaptive
+	// ReplicaReadLearner stands for 'read from learner'.
+	ReplicaReadLearner
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
