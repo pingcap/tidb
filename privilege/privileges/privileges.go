@@ -62,6 +62,7 @@ var dynamicPrivs = []string{
 	"RESTRICTED_USER_ADMIN",           // User can not have their access revoked by SUPER users.
 	"RESTRICTED_CONNECTION_ADMIN",     // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
+	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
@@ -307,6 +308,16 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 		return record.User, record.Host, true
 	}
 	return "", "", false
+}
+
+// MatchUserResourceGroupName implements the Manager interface.
+func (p *UserPrivileges) MatchUserResourceGroupName(resourceGroupName string) (u string, success bool) {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchResoureGroup(resourceGroupName)
+	if record != nil {
+		return record.User, true
+	}
+	return "", false
 }
 
 // GetAuthWithoutVerification implements the Manager interface.
