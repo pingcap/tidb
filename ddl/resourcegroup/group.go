@@ -21,14 +21,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const maxGroupNameLength = 32
+const MaxGroupNameLength = 32
 
 // NewGroupFromOptions creates a new resource group from the given options.
 func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings) (*rmpb.ResourceGroup, error) {
 	if options == nil {
 		return nil, ErrInvalidGroupSettings
 	}
-	if len(groupName) > maxGroupNameLength {
+	if len(groupName) > MaxGroupNameLength {
 		return nil, ErrTooLongResourceGroupName
 	}
 	group := &rmpb.ResourceGroup{

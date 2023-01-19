@@ -1574,6 +1574,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
 		p = explain.TargetPlan
 	}
+
 	pi := util.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
@@ -1595,6 +1596,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ProtectedTSList:       &s.sessionVars.ProtectedTSList,
+		ResourceGroupName:     s.sessionVars.ResourceGroupName,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {

@@ -303,87 +303,92 @@ func TestSomeTables(t *testing.T) {
 	tk.SetSession(se)
 	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "user-1",
-		Host:    "localhost",
-		Port:    "",
-		DB:      "information_schema",
-		Command: byte(1),
-		Digest:  "abc1",
-		State:   1,
-		Info:    "do something",
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                1,
+		User:              "user-1",
+		Host:              "localhost",
+		Port:              "",
+		DB:                "information_schema",
+		Command:           byte(1),
+		Digest:            "abc1",
+		State:             1,
+		Info:              "do something",
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		ResourceGroupName: "rg1",
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      2,
-		User:    "user-2",
-		Host:    "localhost",
-		Port:    "",
-		DB:      "test",
-		Command: byte(2),
-		Digest:  "abc2",
-		State:   2,
-		Info:    strings.Repeat("x", 101),
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                2,
+		User:              "user-2",
+		Host:              "localhost",
+		Port:              "",
+		DB:                "test",
+		Command:           byte(2),
+		Digest:            "abc2",
+		State:             2,
+		Info:              strings.Repeat("x", 101),
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		ResourceGroupName: "rg2",
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      3,
-		User:    "user-3",
-		Host:    "127.0.0.1",
-		Port:    "12345",
-		DB:      "test",
-		Command: byte(2),
-		Digest:  "abc3",
-		State:   1,
-		Info:    "check port",
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                3,
+		User:              "user-3",
+		Host:              "127.0.0.1",
+		Port:              "12345",
+		DB:                "test",
+		Command:           byte(2),
+		Digest:            "abc3",
+		State:             1,
+		Info:              "check port",
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		ResourceGroupName: "rg3",
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0 ", "autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0 ", "in transaction", "check port"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 rg1 ", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0 rg2 ", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0 rg3 ", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 100)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s rg1", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s rg2", "autocommit", strings.Repeat("x", 100)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s rg3", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s rg1", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s rg2", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s rg3", "in transaction", "check port"),
 		))
 
 	sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "user-1",
-		Host:    "localhost",
-		DB:      "information_schema",
-		Command: byte(1),
-		Digest:  "abc1",
-		State:   1,
+		ID:                1,
+		User:              "user-1",
+		Host:              "localhost",
+		DB:                "information_schema",
+		Command:           byte(1),
+		Digest:            "abc1",
+		State:             1,
+		ResourceGroupName: "rg1",
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:            2,
-		User:          "user-2",
-		Host:          "localhost",
-		Command:       byte(2),
-		Digest:        "abc2",
-		State:         2,
-		Info:          strings.Repeat("x", 101),
-		CurTxnStartTS: 410090409861578752,
+		ID:                2,
+		User:              "user-2",
+		Host:              "localhost",
+		Command:           byte(2),
+		Digest:            "abc2",
+		State:             2,
+		Info:              strings.Repeat("x", 101),
+		CurTxnStartTS:     410090409861578752,
+		ResourceGroupName: "rg2",
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 rg1 ", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752) rg2", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -392,16 +397,16 @@ func TestSomeTables(t *testing.T) {
 		))
 	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s rg1", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s rg2", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752) rg2", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 rg1 ", "in transaction", "<nil>"),
 		))
 }
 
