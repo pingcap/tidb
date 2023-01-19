@@ -1001,3 +1001,47 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 		require.Equal(t, []byte(fmt.Sprintf("a%d", next)), r.Item.StartKey)
 	}
 }
+
+func regionInfo(startKey, endKey string) *split.RegionInfo {
+	return &split.RegionInfo{
+		Region: &metapb.Region{
+			StartKey: []byte(startKey),
+			EndKey:   []byte(endKey),
+		},
+	}
+}
+
+func TestSplitCheckPartRegionConsistency(t *testing.T) {
+	var (
+		startKey []byte = []byte("a")
+		endKey   []byte = []byte("f")
+		err      error  = nil
+	)
+	err = split.CheckPartRegionConsistency(startKey, endKey, nil)
+	require.Error(t, err)
+	err = split.CheckPartRegionConsistency(startKey, endKey, []*split.RegionInfo{
+		regionInfo("b", "c"),
+	})
+	require.Error(t, err)
+	err = split.CheckPartRegionConsistency(startKey, endKey, []*split.RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("d", "e"),
+	})
+	require.Error(t, err)
+	err = split.CheckPartRegionConsistency(startKey, endKey, []*split.RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "d"),
+	})
+	require.NoError(t, err)
+	err = split.CheckPartRegionConsistency(startKey, endKey, []*split.RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "d"),
+		regionInfo("d", "f"),
+	})
+	require.NoError(t, err)
+	err = split.CheckPartRegionConsistency(startKey, endKey, []*split.RegionInfo{
+		regionInfo("a", "c"),
+		regionInfo("c", "z"),
+	})
+	require.NoError(t, err)
+}

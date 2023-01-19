@@ -103,10 +103,10 @@ func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
 }
 
 func GetRegionSplitInfo(ctx sqlexec.RestrictedSQLExecutor) (uint64, int64) {
-	return getSplitSize(ctx), getSplitKeys(ctx)
+	return GetSplitSize(ctx), GetSplitKeys(ctx)
 }
 
-func getSplitSize(ctx sqlexec.RestrictedSQLExecutor) uint64 {
+func GetSplitSize(ctx sqlexec.RestrictedSQLExecutor) uint64 {
 	const defaultSplitSize = 96 * 1024 * 1024
 	varStr := "show config where name = 'coprocessor.region-split-size' and type = 'tikv'"
 	rows, fields, err := ctx.ExecRestrictedSQL(
@@ -137,7 +137,7 @@ func getSplitSize(ctx sqlexec.RestrictedSQLExecutor) uint64 {
 	return uint64(splitSize)
 }
 
-func getSplitKeys(ctx sqlexec.RestrictedSQLExecutor) int64 {
+func GetSplitKeys(ctx sqlexec.RestrictedSQLExecutor) int64 {
 	const defaultSplitKeys = 960000
 	varStr := "show config where name = 'coprocessor.region-split-keys' and type = 'tikv'"
 	rows, fields, err := ctx.ExecRestrictedSQL(
