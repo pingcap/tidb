@@ -178,7 +178,12 @@ func foldConstant(expr Expression) (Expression, bool) {
 			}
 		}
 		if !allConstArg {
-			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ {
+			// try to optimize on the situation when not all arguments are const
+			// for most functions, if one of the arguments are NULL, the result can be a constant (NULL or something else)
+			//
+			// NullEQ and ConcatWS are excluded, because they could have different value when the non-constant value is
+			// 1 or NULL. For example, concat_ws(NULL, NULL) gives NULL, but concat_ws(1, NULL) gives ''
+			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ || x.FuncName.L == ast.ConcatWS {
 				return expr, isDeferredConst
 			}
 			constArgs := make([]Expression, len(args))

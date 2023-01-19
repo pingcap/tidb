@@ -289,7 +289,7 @@ func TestDropColumn(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
 	err := tk.ExecToErr("alter table t1 drop column a")
-	require.EqualError(t, err, "[ddl:3885]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	require.EqualError(t, err, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
 func TestChangeColumn(t *testing.T) {
@@ -1028,79 +1028,4 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	require.Equal(t, 3, tbl.Meta().Columns[3].Offset)
 
 	tk.MustExec("drop table if exists t")
-}
-
-func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_enable_metadata_lock=0")
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
-	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = ON")
-	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF")
-
-	d := dom.DDL()
-	testInsertOnModifyColumn := func(sql string, startColState, commitColState model.SchemaState, retStrs []string, retErr error) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
-		tk.MustExec("insert into t1 values (20, 20, 20);")
-
-		var checkErr error
-		tk1 := testkit.NewTestKit(t, store)
-		defer func() {
-			if tk1.Session() != nil {
-				tk1.Session().Close()
-			}
-		}()
-		hook := &ddl.TestDDLCallback{Do: dom}
-		times := 0
-		hook.OnJobRunBeforeExported = func(job *model.Job) {
-			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != startColState {
-				return
-			}
-
-			tk1.MustExec("use test")
-			tk1.MustExec("begin pessimistic;")
-			tk1.MustExec("insert into t1 values(101, 102, 103)")
-		}
-		onJobUpdatedExportedFunc := func(job *model.Job) {
-			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != commitColState {
-				return
-			}
-			if times == 0 {
-				_, checkErr = tk1.Exec("commit;")
-			}
-			times++
-		}
-		hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-		d.SetHook(hook)
-
-		tk.MustExec(sql)
-		if retErr == nil {
-			require.NoError(t, checkErr)
-		} else {
-			require.Error(t, checkErr)
-			require.Contains(t, checkErr.Error(), retErr.Error())
-		}
-		tk.MustQuery("select * from t1").Check(testkit.Rows(retStrs...))
-		tk.MustExec("admin check table t1")
-	}
-
-	// Testing it needs reorg data.
-	ddlStatement := "alter table t1 change column c2 cc smallint;"
-	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
-
-	// Testing it needs not reorg data. This case only have two states: none, public.
-	ddlStatement = "alter table t1 change column c2 cc bigint;"
-	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, nil)
-	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, nil)
-	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20", "101 102 103"}, nil)
-	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, nil)
 }

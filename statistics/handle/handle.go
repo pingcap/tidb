@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
@@ -65,11 +66,19 @@ const (
 
 // Handle can update stats info periodically.
 type Handle struct {
+
+	// initStatsCtx is the ctx only used for initStats
+	initStatsCtx sessionctx.Context
+
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
+	}
+
+	schemaMu struct {
+		sync.RWMutex
 		// pid2tid is the map from partition ID to table ID.
 		pid2tid map[int64]int64
 		// schemaVersion is the version of information schema when `pid2tid` is built.
@@ -353,8 +362,15 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	return "", err
 }
 
-// IsTableLocked check whether table is locked in handle
+// IsTableLocked check whether table is locked in handle with Handle.Mutex
 func (h *Handle) IsTableLocked(tableID int64) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.isTableLocked(tableID)
+}
+
+// IsTableLocked check whether table is locked in handle without Handle.Mutex
+func (h *Handle) isTableLocked(tableID int64) bool {
 	return isTableLocked(h.tableLocked, tableID)
 }
 
@@ -460,7 +476,7 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
+func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
 		ddlEventCh:       make(chan *ddlUtil.Event, 1000),
@@ -470,6 +486,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tr
 		sysProcTracker:   tracker,
 		serverIDGetter:   serverIDGetter,
 	}
+	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
@@ -933,11 +950,13 @@ func (h *Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchS
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	if is.SchemaMetaVersion() != h.mu.schemaVersion {
-		h.mu.schemaVersion = is.SchemaMetaVersion()
-		h.mu.pid2tid = buildPartitionID2TableID(is)
+	h.schemaMu.Lock()
+	defer h.schemaMu.Unlock()
+	if is.SchemaMetaVersion() != h.schemaMu.schemaVersion {
+		h.schemaMu.schemaVersion = is.SchemaMetaVersion()
+		h.schemaMu.pid2tid = buildPartitionID2TableID(is)
 	}
-	if id, ok := h.mu.pid2tid[physicalID]; ok {
+	if id, ok := h.schemaMu.pid2tid[physicalID]; ok {
 		return is.TableByID(id)
 	}
 	return is.TableByID(physicalID)
@@ -973,8 +992,13 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...TableStatsOpt) 
 
 // GetPartitionStats retrieves the partition stats from cache.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...TableStatsOpt) *statistics.Table {
-	statsCache := h.statsCache.Load().(statsCache)
 	var tbl *statistics.Table
+	if h == nil {
+		tbl = statistics.PseudoTable(tblInfo)
+		tbl.PhysicalID = pid
+		return tbl
+	}
+	statsCache := h.statsCache.Load().(statsCache)
 	var ok bool
 	option := &tableStatsOption{}
 	for _, opt := range opts {
@@ -2565,17 +2589,27 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 const maxColumnSize = 6 << 20
 
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
-func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
+func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil, true)
+	var js *JSONTable
+	var err error
+	if isPartition {
+		js, err = h.tableStatsToJSON(dbName, tableInfo, physicalID, 0)
+	} else {
+		js, err = h.DumpStatsToJSON(dbName, tableInfo, nil, true)
+	}
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	version := uint64(0)
-	for _, value := range js.Columns {
-		version = uint64(*value.StatsVer)
-		if version != 0 {
-			break
+	if len(js.Partitions) == 0 {
+		version = js.Version
+	} else {
+		for _, p := range js.Partitions {
+			version = p.Version
+			if version != 0 {
+				break
+			}
 		}
 	}
 	blocks, err := JSONTableToBlocks(js, maxColumnSize)
@@ -2596,7 +2630,7 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 
 	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
 	for i := 0; i < len(blocks); i++ {
-		if _, err := exec.ExecuteInternal(ctx, sql, tableInfo.ID, blocks[i], i, version, ts); err != nil {
+		if _, err := exec.ExecuteInternal(ctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
 			return version, errors.Trace(err)
 		}
 	}

@@ -551,9 +551,9 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 4)
-	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
-	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[3][0])
+	require.Len(t, res.Rows(), 3)
+	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[2][0])
 
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;")
@@ -589,11 +589,9 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 5)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Equal(t, "lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))", res.Rows()[1][4])
-	require.Regexp(t, ".*IndexReader.*", res.Rows()[2][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[4][0])
+	require.Len(t, res.Rows(), 4)
+	require.Regexp(t, ".*Selection.*", res.Rows()[2][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
 
 	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
 		"where (a between 0 and 2 or a < 2) and b < 1;")
@@ -636,12 +634,11 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 6)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[2][0])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
-	require.Regexp(t, ".*Selection.*", res.Rows()[4][0])
-	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[5][0])
+	require.Len(t, res.Rows(), 5)
+	require.Regexp(t, ".*IndexLookUp.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Regexp(t, ".*Selection.*", res.Rows()[3][0])
+	require.Regexp(t, ".*TableRowIDScan.*", res.Rows()[4][0])
 
 	res = tk.MustQuery("explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) " +
 		"where (a between 0 and 2 or a < 2) and b < 1;")
@@ -860,7 +857,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustExec("prepare stmt from 'select /*+ use_index_merge(t1) */ * from t1 where c=? or (b=? and (a >= ? and a <= ?));';")
 	tk.MustQuery("execute stmt using @a, @a, @b, @a").Check(testkit.Rows("10 10 10"))
 	tk.MustQuery("execute stmt using @b, @b, @b, @b").Check(testkit.Rows("11 11 11"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("prepare stmt from 'select /*+ use_index_merge(t1) */ * from t1 where c=10 or (a >=? and a <= ?);';")
 	tk.MustExec("set @a=9, @b=10, @c=11;")

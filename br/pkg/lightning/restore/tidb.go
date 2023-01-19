@@ -152,7 +152,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 	}
 
 	var res strings.Builder
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment, &res)
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment|format.RestoreWithTTLEnableOff, &res)
 
 	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {

@@ -816,7 +816,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		return expr
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: %v affects null check"))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -1171,7 +1171,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return false
 		}
 		return true
-	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr:
+	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr, ast.RegexpReplace:
 		funcCharset, funcCollation := function.Function.CharsetAndCollation()
 		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
 			return false
@@ -1267,7 +1267,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
-	case ast.Hex, ast.Bin:
+	case ast.Hex, ast.Unhex, ast.Bin:
 		return true
 	case ast.GetFormat:
 		return true
@@ -1574,6 +1574,10 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 			ft = types.NewFieldType(mysql.TypeDouble)
 		case types.KindString:
 			ft = types.NewFieldType(mysql.TypeVarString)
+		case types.KindMysqlTime:
+			ft = types.NewFieldType(mysql.TypeTimestamp)
+		case types.KindBytes:
+			ft = types.NewFieldType(mysql.TypeBlob)
 		default:
 			exprs[i] = nil
 			continue

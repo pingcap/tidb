@@ -433,7 +433,8 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	tps := make([]*types.FieldType, 0, fullColLen)
 	for _, col := range is.Columns {
-		tps = append(tps, &(col.FieldType))
+		// tps is used to decode the index, we should use the element type of the array if any.
+		tps = append(tps, col.FieldType.ArrayType())
 	}
 
 	if !e.isCommonHandle() {
@@ -777,6 +778,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		Partition:             v.Partition,
 		Column:                v.Column,
 		IndexName:             v.IndexName,
+		ResourceGroupName:     model.NewCIStr(v.ResourceGroupName),
 		Flag:                  v.Flag,
 		Roles:                 v.Roles,
 		User:                  v.User,
@@ -935,6 +937,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		IgnoreLines:        v.IgnoreLines,
 		ColumnAssignments:  v.ColumnAssignments,
 		ColumnsAndUserVars: v.ColumnsAndUserVars,
+		OnDuplicate:        v.OnDuplicate,
 		Ctx:                b.ctx,
 	}
 	columnNames := loadDataInfo.initFieldMappings()
@@ -945,7 +948,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	}
 	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		IsLocal:      v.IsLocal,
+		FileLocRef:   v.FileLocRef,
 		OnDuplicate:  v.OnDuplicate,
 		loadDataInfo: loadDataInfo,
 	}
@@ -1724,7 +1727,7 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 
 // `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise the isolation read ts
 // Please notice that in RC isolation, the above two ts are the same
-func (b *executorBuilder) getSnapshotTS() (uint64, error) {
+func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	if b.forDataReaderBuilder {
 		return b.dataReaderTS, nil
 	}
@@ -1929,7 +1932,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableMemoryUsage),
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
-			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory):
+			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
+			strings.ToLower(infoschema.TableResourceGroups):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2580,7 +2584,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
 		SampleRate:   sampleRate,
 		SketchSize:   maxSketchSize,
-		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
+		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false),
 		ColumnGroups: colGroups,
 	}
 	if task.TblInfo != nil {
@@ -2741,7 +2745,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    MaxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt()),
+		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt(), false),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
@@ -3571,8 +3575,8 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 	partitions := make(map[int64]table.PhysicalTable)
 	contentPos = make([]int64, len(lookUpContent))
 	for idx, content := range lookUpContent {
-		for i, date := range content.keys {
-			locateKey[keyColOffsets[i]] = date
+		for i, data := range content.keys {
+			locateKey[keyColOffsets[i]] = data
 		}
 		p, err := partitionTbl.GetPartitionByRow(builder.ctx, locateKey)
 		if err != nil {
@@ -4155,13 +4159,13 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	if v.IsCommonHandle {
 		if len(keyColOffsets) > 0 {
-			locateKey := make([]types.Datum, e.Schema().Len())
+			locateKey := make([]types.Datum, len(pt.Cols()))
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 			// lookUpContentsByPID groups lookUpContents by pid(partition) so that kv ranges for same partition can be merged.
 			lookUpContentsByPID := make(map[int64][]*indexJoinLookUpContent)
 			for _, content := range lookUpContents {
-				for i, date := range content.keys {
-					locateKey[content.keyCols[i]] = date
+				for i, data := range content.keys {
+					locateKey[keyColOffsets[i]] = data
 				}
 				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
 				if err != nil {
@@ -4201,11 +4205,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	handles, lookUpContents := dedupHandles(lookUpContents)
 
 	if len(keyColOffsets) > 0 {
-		locateKey := make([]types.Datum, e.Schema().Len())
+		locateKey := make([]types.Datum, len(pt.Cols()))
 		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 		for _, content := range lookUpContents {
-			for i, date := range content.keys {
-				locateKey[content.keyCols[i]] = date
+			for i, data := range content.keys {
+				locateKey[keyColOffsets[i]] = data
 			}
 			p, err := pt.GetPartitionByRow(e.ctx, locateKey)
 			if err != nil {
@@ -4900,6 +4904,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, plan.GetAvgRowSize()))
 	}
+	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{

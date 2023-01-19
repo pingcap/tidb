@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -4528,6 +4529,62 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
 }
 
+func TestIssue40135Ver2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', index(a)) PARTITION BY HASH (a) PARTITIONS 6")
+	tk.MustExec("insert into t40135 values (1, 'md'), (2, 'ma'), (3, 'md'), (4, 'ma'), (5, 'md'), (6, 'ma')")
+	one := true
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var checkErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly {
+			tk3.MustExec("delete from t40135 where a = 1")
+		}
+		if one {
+			one = false
+			go func() {
+				_, checkErr = tk1.Exec("alter table t40135 modify column a int NULL")
+				wg.Done()
+			}()
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
+	wg.Wait()
+	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.MustExec("admin check table t40135")
+}
+
+func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
+	t.Skip("waiting for supporting Modify Partition Column again")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "truncWarn"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`set sql_mode = default`)
+	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
+	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
+	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
+	tk.MustExec(`set sql_mode = ''`)
+	tk.MustExec(`alter table t modify a varchar(5)`)
+	// Fix the duplicate warning, see https://github.com/pingcap/tidb/issues/38699
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
+}
+
 func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -4535,19 +4592,19 @@ func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
 	tk.MustExec(`create table t (a int, b char) partition by range (a) (partition p0 values less than (10))`)
-	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a char, b char) partition by range columns (a) (partition p0 values less than ('z'))`)
-	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int, b char) partition by list (a) (partition p0 values in (10))`)
-	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a char, b char) partition by list columns (a) (partition p0 values in ('z'))`)
-	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int, b char) partition by hash (a) partitions 3`)
-	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:8200]Unsupported modify column: Column 'a' has a partitioning function dependency and cannot be renamed")
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
 func TestDropPartitionKeyColumn(t *testing.T) {
@@ -4560,24 +4617,24 @@ func TestDropPartitionKeyColumn(t *testing.T) {
 	tk.MustExec("create table t1 (a tinyint, b char) partition by range (a) ( partition p0 values less than (10) )")
 	err := tk.ExecToErr("alter table t1 drop column a")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:3885]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
 	tk.MustExec("alter table t1 drop column b")
 
 	tk.MustExec("create table t2 (a tinyint, b char) partition by range (a-1) ( partition p0 values less than (10) )")
 	err = tk.ExecToErr("alter table t2 drop column a")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:3885]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
 	tk.MustExec("alter table t2 drop column b")
 
 	tk.MustExec("create table t3 (a tinyint, b char) partition by hash(a) partitions 4;")
 	err = tk.ExecToErr("alter table t3 drop column a")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:3885]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
 	tk.MustExec("alter table t3 drop column b")
 
 	tk.MustExec("create table t4 (a char, b char) partition by list columns (a) ( partition p0 values in ('0'),  partition p1 values in ('a'), partition p2 values in ('b'));")
 	err = tk.ExecToErr("alter table t4 drop column a")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:3885]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
 	tk.MustExec("alter table t4 drop column b")
 }

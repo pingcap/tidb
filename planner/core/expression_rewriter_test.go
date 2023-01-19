@@ -71,7 +71,8 @@ func TestDefaultFunction(t *testing.T) {
 		c int default '10',
 		d double default '3.14',
 		e datetime default '20180101',
-		f datetime default current_timestamp);`)
+		f datetime default current_timestamp,
+		g date default current_date);`)
 	tk.MustExec("insert into t1(a, b, c, d) values ('1', '1', 1, 1)")
 	tk.MustExec("set @@timestamp = 1321009871")
 	defer tk.MustExec("set @@timestamp = DEFAULT")
@@ -83,8 +84,9 @@ func TestDefaultFunction(t *testing.T) {
 		default(c) as defc,
 		default(d) as defd,
 		default(e) as defe,
-		default(f) as deff
-		from t1`).Check(testkit.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11"))
+		default(f) as deff,
+		default(g) as defg
+		from t1`).Check(testkit.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|2011-11-11 11:11:11|2011-11-11"))
 	require.EqualError(t, tk.ExecToErr("select default(x) from t1"), "[planner:1054]Unknown column 'x' in 'field list'")
 
 	tk.MustQuery("select default(a0) from (select a as a0 from t1) as t0").Check(testkit.Rows("def"))
