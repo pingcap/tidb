@@ -83,7 +83,10 @@ type rangeStats struct {
 
 func (j *regionJob) convertStageTo(stage jobStageTp) {
 	j.stage = stage
-	if stage == ingested {
+	switch stage {
+	case regionScanned:
+		j.writeResult = nil
+	case ingested:
 		// when the write is skipped because range is empty
 		if j.writeResult != nil {
 			j.engine.importedKVSize.Add(j.writeResult.rangeStats.totalBytes)
@@ -316,29 +319,6 @@ func (j *regionJob) writeToTiKV(
 	return nil
 }
 
-func (j *regionJob) checkWriteStall(
-	ctx context.Context,
-	region *split.RegionInfo,
-	clientFactory ImportClientFactory,
-) (bool, *sst.IngestResponse, error) {
-	for _, peer := range region.Region.GetPeers() {
-		cli, err := clientFactory.Create(ctx, peer.StoreId)
-		if err != nil {
-			return false, nil, errors.Trace(err)
-		}
-		// currently we use empty MultiIngestRequest to check if TiKV is busy.
-		// If in future the rate limit feature contains more metrics we can switch to use it.
-		resp, err := cli.MultiIngest(ctx, &sst.MultiIngestRequest{})
-		if err != nil {
-			return false, nil, errors.Trace(err)
-		}
-		if resp.Error != nil && resp.Error.ServerIsBusy != nil {
-			return true, resp, nil
-		}
-	}
-	return false, nil, nil
-}
-
 // ingest tries to finish the regionJob.
 // if any ingest logic has error, ingest may retry sometimes to resolve it and finally
 // set job to a proper stage with nil error returned.
@@ -397,6 +377,123 @@ func (j *regionJob) ingest(
 			logutil.Key("end", j.keyRange.end))
 	}
 	return nil
+}
+
+func (j *regionJob) checkWriteStall(
+	ctx context.Context,
+	region *split.RegionInfo,
+	clientFactory ImportClientFactory,
+) (bool, *sst.IngestResponse, error) {
+	for _, peer := range region.Region.GetPeers() {
+		cli, err := clientFactory.Create(ctx, peer.StoreId)
+		if err != nil {
+			return false, nil, errors.Trace(err)
+		}
+		// currently we use empty MultiIngestRequest to check if TiKV is busy.
+		// If in future the rate limit feature contains more metrics we can switch to use it.
+		resp, err := cli.MultiIngest(ctx, &sst.MultiIngestRequest{})
+		if err != nil {
+			return false, nil, errors.Trace(err)
+		}
+		if resp.Error != nil && resp.Error.ServerIsBusy != nil {
+			return true, resp, nil
+		}
+	}
+	return false, nil, nil
+}
+
+// doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
+// When meet error, it will remove finished sstMetas before return.
+func (j *regionJob) doIngest(
+	ctx context.Context,
+	clientFactory ImportClientFactory,
+	supportMultiIngest bool,
+	checkWriteStall bool,
+) (*sst.IngestResponse, error) {
+	if checkWriteStall {
+		writeStall, resp, err := j.checkWriteStall(ctx, j.region, clientFactory)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if writeStall {
+			return resp, nil
+		}
+	}
+
+	batch := 1
+	if supportMultiIngest {
+		batch = len(j.writeResult.sstMeta)
+	}
+
+	var resp *sst.IngestResponse
+	for i := 0; i < len(j.writeResult.sstMeta); i += batch {
+		start := i * batch
+		end := mathutil.Min((i+1)*batch, len(j.writeResult.sstMeta))
+		ingestMetas := j.writeResult.sstMeta[start:end]
+
+		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
+
+		failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
+			// only inject the error once
+			var resp *sst.IngestResponse
+
+			switch val.(string) {
+			case "notleader":
+				resp = &sst.IngestResponse{
+					Error: &errorpb.Error{
+						NotLeader: &errorpb.NotLeader{
+							RegionId: j.region.Region.Id,
+							Leader:   j.region.Leader,
+						},
+					},
+				}
+			case "epochnotmatch":
+				resp = &sst.IngestResponse{
+					Error: &errorpb.Error{
+						EpochNotMatch: &errorpb.EpochNotMatch{
+							CurrentRegions: []*metapb.Region{j.region.Region},
+						},
+					},
+				}
+			}
+			failpoint.Return(resp, nil)
+		})
+
+		leader := j.region.Leader
+		if leader == nil {
+			leader = j.region.Region.GetPeers()[0]
+		}
+
+		cli, err := clientFactory.Create(ctx, leader.StoreId)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		reqCtx := &kvrpcpb.Context{
+			RegionId:    j.region.Region.GetId(),
+			RegionEpoch: j.region.Region.GetRegionEpoch(),
+			Peer:        leader,
+		}
+
+		if supportMultiIngest {
+			req := &sst.MultiIngestRequest{
+				Context: reqCtx,
+				Ssts:    ingestMetas,
+			}
+			resp, err = cli.MultiIngest(ctx, req)
+		} else {
+			req := &sst.IngestRequest{
+				Context: reqCtx,
+				Sst:     ingestMetas[0],
+			}
+			resp, err = cli.Ingest(ctx, req)
+		}
+		if resp.GetError() != nil || err != nil {
+			// remove finished sstMetas
+			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
+			return resp, errors.Trace(err)
+		}
+	}
+	return resp, nil
 }
 
 // fixIngestError will try to fix the error contained in ingest response.
@@ -521,98 +618,4 @@ func (j *regionJob) fixIngestError(
 	j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
 	j.convertStageTo(regionScanned)
 	return false, nil
-}
-
-// doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
-// When meet error, it will remove finished sstMetas before return.
-func (j *regionJob) doIngest(
-	ctx context.Context,
-	clientFactory ImportClientFactory,
-	supportMultiIngest bool,
-	checkWriteStall bool,
-) (*sst.IngestResponse, error) {
-	if checkWriteStall {
-		writeStall, resp, err := j.checkWriteStall(ctx, j.region, clientFactory)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if writeStall {
-			return resp, nil
-		}
-	}
-
-	batch := 1
-	if supportMultiIngest {
-		batch = len(j.writeResult.sstMeta)
-	}
-
-	var resp *sst.IngestResponse
-	for i := 0; i < len(j.writeResult.sstMeta); i += batch {
-		start := i * batch
-		end := mathutil.Min((i+1)*batch, len(j.writeResult.sstMeta))
-		ingestMetas := j.writeResult.sstMeta[start:end]
-
-		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
-
-		failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
-			// only inject the error once
-			var resp *sst.IngestResponse
-
-			switch val.(string) {
-			case "notleader":
-				resp = &sst.IngestResponse{
-					Error: &errorpb.Error{
-						NotLeader: &errorpb.NotLeader{
-							RegionId: j.region.Region.Id,
-							Leader:   j.region.Leader,
-						},
-					},
-				}
-			case "epochnotmatch":
-				resp = &sst.IngestResponse{
-					Error: &errorpb.Error{
-						EpochNotMatch: &errorpb.EpochNotMatch{
-							CurrentRegions: []*metapb.Region{j.region.Region},
-						},
-					},
-				}
-			}
-			failpoint.Return(resp, nil)
-		})
-
-		leader := j.region.Leader
-		if leader == nil {
-			leader = j.region.Region.GetPeers()[0]
-		}
-
-		cli, err := clientFactory.Create(ctx, leader.StoreId)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		reqCtx := &kvrpcpb.Context{
-			RegionId:    j.region.Region.GetId(),
-			RegionEpoch: j.region.Region.GetRegionEpoch(),
-			Peer:        leader,
-		}
-
-		if supportMultiIngest {
-			req := &sst.MultiIngestRequest{
-				Context: reqCtx,
-				Ssts:    ingestMetas,
-			}
-			resp, err = cli.MultiIngest(ctx, req)
-		} else {
-			req := &sst.IngestRequest{
-				Context: reqCtx,
-				Sst:     ingestMetas[0],
-			}
-			resp, err = cli.Ingest(ctx, req)
-		}
-		if resp.GetError() != nil || err != nil {
-			// remove finished sstMetas
-			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
-			return resp, errors.Trace(err)
-		}
-	}
-	return resp, nil
 }

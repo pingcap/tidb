@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
-	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -354,8 +353,6 @@ type local struct {
 
 	localStoreDir string
 
-	rangeConcurrency  *worker.Pool
-	ingestConcurrency *worker.Pool
 	workerConcurrency int
 	batchWriteKVPairs int
 	checkpointEnabled bool
@@ -489,8 +486,6 @@ func NewLocalBackend(
 		g:        g,
 
 		localStoreDir:     localFile,
-		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
-		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
 		workerConcurrency: rangeConcurrency * 2,
 		dupeConcurrency:   rangeConcurrency * 2,
 		batchWriteKVPairs: cfg.TikvImporter.SendKVPairs,
@@ -965,7 +960,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	return ranges, nil
 }
 
-func (local *local) generateRegionJob(
+func (local *local) sendRegionJob(
 	ctx context.Context,
 	jobCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
@@ -1091,15 +1086,6 @@ func (local *local) startWorker(
 		}
 	}
 }
-
-type retryType int
-
-const (
-	retryNone retryType = iota
-	retryWrite
-	retryIngest
-	retryBusyIngest
-)
 
 func (local *local) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
@@ -1278,7 +1264,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
 			return err
 		}
-		err = local.generateRegionJob(
+		err = local.sendRegionJob(
 			workerCtx,
 			jobCh,
 			jobWg,
@@ -1545,116 +1531,6 @@ func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize i
 	}
 	engine.localWriters.Store(w, nil)
 	return w, nil
-}
-
-func (local *local) isIngestRetryable(
-	ctx context.Context,
-	resp *sst.IngestResponse,
-	region *split.RegionInfo,
-	metas []*sst.SSTMeta,
-) (retryType, *split.RegionInfo, error) {
-	if resp.GetError() == nil {
-		return retryNone, nil, nil
-	}
-
-	getRegion := func() (*split.RegionInfo, error) {
-		for i := 0; ; i++ {
-			newRegion, err := local.splitCli.GetRegion(ctx, region.Region.GetStartKey())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if newRegion != nil {
-				return newRegion, nil
-			}
-			log.FromContext(ctx).Warn("get region by key return nil, will retry", logutil.Region(region.Region), logutil.Leader(region.Leader),
-				zap.Int("retry", i))
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(time.Second):
-			}
-		}
-	}
-
-	var newRegion *split.RegionInfo
-	var err error
-	switch errPb := resp.GetError(); {
-	case errPb.NotLeader != nil:
-		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
-			newRegion = &split.RegionInfo{
-				Leader: newLeader,
-				Region: region.Region,
-			}
-		} else {
-			newRegion, err = getRegion()
-			if err != nil {
-				return retryNone, nil, errors.Trace(err)
-			}
-		}
-		// TODO: because in some case, TiKV may return retryable error while the ingest is succeeded.
-		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
-		// this issue.
-		// See: https://github.com/tikv/tikv/issues/9496
-		return retryWrite, newRegion, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
-	case errPb.EpochNotMatch != nil:
-		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
-			var currentRegion *metapb.Region
-			for _, r := range currentRegions {
-				if insideRegion(r, metas) {
-					currentRegion = r
-					break
-				}
-			}
-			if currentRegion != nil {
-				var newLeader *metapb.Peer
-				for _, p := range currentRegion.Peers {
-					if p.GetStoreId() == region.Leader.GetStoreId() {
-						newLeader = p
-						break
-					}
-				}
-				if newLeader != nil {
-					newRegion = &split.RegionInfo{
-						Leader: newLeader,
-						Region: currentRegion,
-					}
-				}
-			}
-		}
-		retryTy := retryNone
-		if newRegion != nil {
-			retryTy = retryWrite
-		}
-		return retryTy, newRegion, common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
-	case strings.Contains(errPb.Message, "raft: proposal dropped"):
-		newRegion, err = getRegion()
-		if err != nil {
-			return retryNone, nil, errors.Trace(err)
-		}
-		return retryWrite, newRegion, common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
-	case errPb.ServerIsBusy != nil:
-		return retryBusyIngest, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
-	case errPb.RegionNotFound != nil:
-		return retryNone, nil, common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
-	case errPb.ReadIndexNotReady != nil:
-		// this error happens when this region is splitting, the error might be:
-		//   read index not ready, reason can not read index due to split, region 64037
-		// we have paused schedule, but it's temporary,
-		// if next request takes a long time, there's chance schedule is enabled again
-		// or on key range border, another engine sharing this region tries to split this
-		// region may cause this error too.
-		newRegion, err = getRegion()
-		if err != nil {
-			return retryNone, nil, errors.Trace(err)
-		}
-		return retryWrite, newRegion, common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
-	case errPb.DiskFull != nil:
-		return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
-	}
-	// all others ingest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
-	// here we use a single named-error ErrKVIngestFailed to represent them all
-	// we can separate them later if it's needed
-	return retryNone, nil, common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
 }
 
 // return the smallest []byte that is bigger than current bytes.

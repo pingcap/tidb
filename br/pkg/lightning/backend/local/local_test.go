@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -426,108 +425,6 @@ func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.Reg
 			StartKey: key,
 		},
 	}, nil
-}
-
-func TestIsIngestRetryable(t *testing.T) {
-	local := &local{
-		splitCli: &mockSplitClient{},
-		logger:   log.L(),
-	}
-
-	resp := &sst.IngestResponse{
-		Error: &errorpb.Error{
-			NotLeader: &errorpb.NotLeader{
-				Leader: &metapb.Peer{Id: 2},
-			},
-		},
-	}
-	ctx := context.Background()
-	region := &split.RegionInfo{
-		Leader: &metapb.Peer{Id: 1},
-		Region: &metapb.Region{
-			Id:       1,
-			StartKey: []byte{1},
-			EndKey:   []byte{3},
-			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: 1,
-				Version: 1,
-			},
-		},
-	}
-	metas := []*sst.SSTMeta{
-		{
-			Range: &sst.Range{
-				Start: []byte{1},
-				End:   []byte{2},
-			},
-		},
-		{
-			Range: &sst.Range{
-				Start: []byte{1, 1},
-				End:   []byte{2},
-			},
-		},
-	}
-	retryType, newRegion, err := local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Equal(t, uint64(2), newRegion.Leader.Id)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{
-		EpochNotMatch: &errorpb.EpochNotMatch{
-			CurrentRegions: []*metapb.Region{
-				{
-					Id:       1,
-					StartKey: []byte{1},
-					EndKey:   []byte{3},
-					RegionEpoch: &metapb.RegionEpoch{
-						ConfVer: 1,
-						Version: 2,
-					},
-					Peers: []*metapb.Peer{{Id: 1}},
-				},
-			},
-		},
-	}
-	retryType, newRegion, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Equal(t, uint64(2), newRegion.Region.RegionEpoch.Version)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{
-		ReadIndexNotReady: &errorpb.ReadIndexNotReady{
-			Reason: "test",
-		},
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.Error(t, err)
-
-	resp.Error = &errorpb.Error{
-		Message: "raft: proposal dropped",
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryWrite, retryType)
-	require.True(t, berrors.Is(err, common.ErrKVRaftProposalDropped))
-
-	resp.Error = &errorpb.Error{
-		DiskFull: &errorpb.DiskFull{},
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryNone, retryType)
-	require.Contains(t, err.Error(), "non-retryable error")
-
-	resp.Error = &errorpb.Error{
-		StaleCommand: &errorpb.StaleCommand{},
-	}
-	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
-	require.Equal(t, retryNone, retryType)
-	require.True(t, berrors.Is(err, common.ErrKVIngestFailed))
 }
 
 type testIngester struct{}
