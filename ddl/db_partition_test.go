@@ -5218,7 +5218,6 @@ func getNumRowsFromPartitionDefs(t *testing.T, tk *testkit.TestKit, tbl table.Ta
 	return cnt
 }
 
-// TODO: Test with TiFlash
 func TestReorgPartitionTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -5303,7 +5302,6 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	for _, pid := range p.GetAllPartitionIDs() {
 		require.True(t, tbl.Meta().TiFlashReplica.IsPartitionAvailable(pid))
 	}
-	// TODO: How to test that the dropped partitions are gone?
 }
 
 func TestReorgPartitionFailInject(t *testing.T) {
