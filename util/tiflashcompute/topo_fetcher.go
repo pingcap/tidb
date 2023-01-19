@@ -289,7 +289,7 @@ func NewAWSAutoScalerFetcher(addr string, clusterID string, isFixed bool) *AWSTo
 }
 
 // AssureAndGetTopo implements TopoFetcher interface.
-func (f *AWSTopoFetcher) AssureAndGetTopo() ([]string, error) {
+func (*AWSTopoFetcher) AssureAndGetTopo() ([]string, error) {
 	return nil, errors.New("AWSTopoFetcher AssureAndGetTopo not implemented")
 }
 
@@ -434,11 +434,11 @@ func NewTestAutoScalerFetcher() *TestTopoFetcher {
 }
 
 // AssureAndGetTopo implements TopoFetcher interface.
-func (f *TestTopoFetcher) AssureAndGetTopo() ([]string, error) {
+func (*TestTopoFetcher) AssureAndGetTopo() ([]string, error) {
 	return []string{}, nil
 }
 
 // FetchAndGetTopo implements TopoFetcher interface.
-func (f *TestTopoFetcher) FetchAndGetTopo() ([]string, error) {
+func (*TestTopoFetcher) FetchAndGetTopo() ([]string, error) {
 	return []string{}, nil
 }

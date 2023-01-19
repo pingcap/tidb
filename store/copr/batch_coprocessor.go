@@ -566,7 +566,7 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 
 			mu.Lock()
 			defer mu.Unlock()
-			aliveIdx = append(aliveIdx, i)
+			aliveIdx = append(aliveIdx, idx)
 		}(i)
 	}
 	wg.Wait()
