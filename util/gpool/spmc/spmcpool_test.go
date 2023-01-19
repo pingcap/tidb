@@ -15,6 +15,7 @@
 package spmc
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -131,10 +132,10 @@ func TestTuneMultiPool(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		go func() {
-			testTunePool(t, "TestTuneSimplePool"+string(1))
+		go func(id int) {
+			testTunePool(t, fmt.Sprintf("TestTuneMultiPool%d", id))
 			wg.Done()
-		}()
+		}(i)
 	}
 	wg.Wait()
 }
