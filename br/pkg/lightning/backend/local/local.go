@@ -197,6 +197,7 @@ func (f *importClientFactoryImpl) Close() {
 
 // Range record start and end key for localStoreDir.DB
 // so we can write it to tikv in streaming
+// TODO: Range is [start, end)?
 type Range struct {
 	start []byte
 	end   []byte

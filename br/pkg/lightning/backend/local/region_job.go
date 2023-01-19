@@ -55,7 +55,8 @@ func (j jobStageTp) String() string {
 // regionJob is dedicated to import the data in [keyRange.start, keyRange.end) to a region.
 type regionJob struct {
 	keyRange Range
-	region   *split.RegionInfo
+	// TODO: check the keyRange so that it's always included in region
+	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
 	stage jobStageTp
 
@@ -87,13 +88,15 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 	case regionScanned:
 		j.writeResult = nil
 	case ingested:
-		// when the write is skipped because range is empty
-		if j.writeResult != nil {
-			j.engine.importedKVSize.Add(j.writeResult.rangeStats.totalBytes)
-			j.engine.importedKVCount.Add(j.writeResult.rangeStats.count)
+		j.engine.finishedRanges.add(j.keyRange)
+
+		// when writing is skipped because range is empty
+		if j.writeResult == nil {
+			return
 		}
 
-		j.engine.finishedRanges.add(j.keyRange)
+		j.engine.importedKVSize.Add(j.writeResult.rangeStats.totalBytes)
+		j.engine.importedKVCount.Add(j.writeResult.rangeStats.count)
 		if j.metrics != nil {
 			j.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).
 				Add(float64(j.writeResult.rangeStats.totalBytes))
@@ -585,12 +588,7 @@ func (j *regionJob) fixIngestError(
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		j.lastRetryableErr = common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
 
-		newRegion, err = getRegion()
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		j.region = newRegion
-		j.convertStageTo(regionScanned)
+		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.ServerIsBusy != nil:
 		j.lastRetryableErr = common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
@@ -599,6 +597,7 @@ func (j *regionJob) fixIngestError(
 	case errPb.RegionNotFound != nil:
 		j.lastRetryableErr = common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
 
+		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.ReadIndexNotReady != nil:
 		j.lastRetryableErr = common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
