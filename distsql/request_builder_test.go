@@ -61,10 +61,11 @@ func TestTableHandlesToKVRanges(t *testing.T) {
 
 	// Build key ranges.
 	expect := getExpectedRanges(1, hrs)
-	actual, _ := TableHandlesToKVRanges(1, handles)
+	actual, hints := TableHandlesToKVRanges(1, handles)
 
 	// Compare key ranges and expected key ranges.
 	require.Equal(t, len(expect), len(actual))
+	require.Equal(t, hints, []int{1, 4, 2, 1, 2})
 	for i := range actual {
 		require.Equal(t, expect[i].StartKey, actual[i].StartKey)
 		require.Equal(t, expect[i].EndKey, actual[i].EndKey)
@@ -378,7 +379,7 @@ func TestRequestBuilder3(t *testing.T) {
 		Tp:      103,
 		StartTs: 0x0,
 		Data:    []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges: kv.NewNonParitionedKeyRanges([]kv.KeyRange{
+		KeyRanges: kv.NewNonParitionedKeyRangesWithHint([]kv.KeyRange{
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -395,17 +396,16 @@ func TestRequestBuilder3(t *testing.T) {
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x64},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x65},
 			},
-		}),
-		Cacheable:         true,
-		KeepOrder:         false,
-		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
-		IsolationLevel:    0,
-		Priority:          0,
-		NotFillCache:      false,
-		ReplicaRead:       kv.ReplicaReadLeader,
-		ReadReplicaScope:  kv.GlobalReplicaScope,
-		FixedRowCountHint: []int{1, 4, 2, 1},
+		}, []int{1, 4, 2, 1}),
+		Cacheable:        true,
+		KeepOrder:        false,
+		Desc:             false,
+		Concurrency:      variable.DefDistSQLScanConcurrency,
+		IsolationLevel:   0,
+		Priority:         0,
+		NotFillCache:     false,
+		ReplicaRead:      kv.ReplicaReadLeader,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
