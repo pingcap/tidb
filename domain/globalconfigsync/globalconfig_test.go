@@ -58,10 +58,10 @@ func TestGlobalConfigSyncer(t *testing.T) {
 	syncer.Notify(pd.GlobalConfigItem{Name: "a", Value: "b"})
 	err = syncer.StoreGlobalConfig(context.Background(), <-syncer.NotifyCh)
 	require.NoError(t, err)
-	items, revision, err := client.LoadGlobalConfig(context.Background(), globalconfigsync.GLOBAL_CONFIG_PATH)
+	items, revision, err := client.LoadGlobalConfig(context.Background(), globalconfigsync.GlobalConfigPath)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(items))
-	require.Equal(t, globalconfigsync.GLOBAL_CONFIG_PATH+"a", items[0].Name)
+	require.Equal(t, globalconfigsync.GlobalConfigPath+"a", items[0].Name)
 	require.Equal(t, int64(0), revision)
 	require.Equal(t, "b", items[0].Value)
 }
@@ -96,17 +96,18 @@ func TestStoreGlobalConfig(t *testing.T) {
 		client :=
 			store.(kv.StorageWithPD).GetPDClient()
 		// enable top sql will be translated to enable_resource_metering
-		items, _, err := client.LoadGlobalConfig(context.Background(), globalconfigsync.GLOBAL_CONFIG_PATH)
+		items, _, err := client.LoadGlobalConfig(context.Background(), globalconfigsync.GlobalConfigPath)
 		require.NoError(t, err)
 		if len(items) == 2 && items[0].Value == "" {
 			continue
 		}
 		require.Len(t, items, 2)
-		require.Equal(t, items[0].Name, globalconfigsync.GLOBAL_CONFIG_PATH+"enable_resource_metering")
+		require.Equal(t, items[0].Name, globalconfigsync.GlobalConfigPath+"enable_resource_metering")
 		require.Equal(t, items[0].Value, "true")
-		require.Equal(t, items[1].Name, globalconfigsync.GLOBAL_CONFIG_PATH+"source_id")
+		require.Equal(t, items[1].Name, globalconfigsync.GlobalConfigPath+"source_id")
 		require.Equal(t, items[1].Value, "2")
 		return
 	}
 	require.Fail(t, "timeout for waiting global config synced")
 }
+
