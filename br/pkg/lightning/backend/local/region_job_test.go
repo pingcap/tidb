@@ -66,7 +66,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	}
 	splitCli := &mockSplitClient{}
 
-	// TODO: NotLeader means leader is transferred to another peer and all peers are still alive?
+	// NotLeader doesn't mean region peers are changed, so we can retry ingest.
 
 	resp := &sst.IngestResponse{
 		Error: &errorpb.Error{
@@ -142,7 +142,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
-	require.Equal(t, regionScanned, clone.stage)
+	require.Equal(t, needRescan, clone.stage)
 	require.Nil(t, clone.writeResult)
 	require.Error(t, clone.lastRetryableErr)
 
