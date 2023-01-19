@@ -300,6 +300,10 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if progress > 1 {
 			progress = 1
 		}
+		logutil.BgLogger().Debug("[ddl] update progress",
+			zap.Float64("progress", progress),
+			zap.Int64("addedRowCount", addedRowCount),
+			zap.Int64("totalCount", totalCount))
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:

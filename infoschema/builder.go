@@ -287,6 +287,24 @@ func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff)
 	return tblIDs, nil
 }
 
+// TODO: How to test this?
+func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	// Is this needed? Since there should be no difference more than partition changes?
+	tblIDs, err := b.applyTableUpdate(m, diff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, opt := range diff.AffectedOpts {
+		if opt.OldTableID != 0 {
+			b.deleteBundle(b.is, opt.OldTableID)
+		}
+		if opt.TableID != 0 {
+			b.markTableBundleShouldUpdate(opt.TableID)
+		}
+	}
+	return tblIDs, nil
+}
+
 func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {

@@ -5378,6 +5378,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 	// (partitions used during reorg, but was dropped)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`))
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
+	tk.MustExec(`admin check table t`)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
@@ -5390,6 +5391,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 		require.NoError(t, err)
 	}()
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
+	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(10) unsigned NOT NULL,\n" +
