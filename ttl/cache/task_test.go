@@ -41,7 +41,7 @@ func newTaskGetter(ctx context.Context, t *testing.T, tk *testkit.TestKit) *task
 }
 
 func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
-	sql, args := cache.SelectFromTTLTaskWithID("test-job")
+	sql, args := cache.SelectFromTTLTaskWithJobID("test-job")
 	rs, err := tg.tk.Session().ExecuteInternal(tg.ctx, sql, args...)
 	require.NoError(tg.t, err)
 	rows, err := session.GetRows4Test(context.Background(), tg.tk.Session(), rs)
