@@ -1436,13 +1436,10 @@ func TestTiFlashReorgPartition(t *testing.T) {
 	tk.MustExec(`admin check table ddltiflash`)
 	_, ok = s.tiflash.GetPlacementRule(ruleName)
 	require.True(t, ok)
-	// TODO: when delete range is merged, enable this check
-	/*
-		gcWorker, err := gcworker.NewMockGCWorker(s.store)
-		require.NoError(t, err)
-		require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
-		_, ok = s.tiflash.GetPlacementRule(ruleName)
-		require.False(t, ok)
-	*/
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	_, ok = s.tiflash.GetPlacementRule(ruleName)
+	require.False(t, ok)
 	tk.MustExec(`drop table ddltiflash`)
 }
