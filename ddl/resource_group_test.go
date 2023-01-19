@@ -163,7 +163,7 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustExec("create resource group do_not_delete_rg rru_per_sec=100 wru_per_sec=200")
 	tk.MustExec("create user usr3 resource group do_not_delete_rg")
-	tk.MustContainErrMsg("drop resource group do_not_delete_rg", "some user depends on the resource group to drop")
+	tk.MustContainErrMsg("drop resource group do_not_delete_rg", "user [usr3] depends on the resource group to drop")
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {

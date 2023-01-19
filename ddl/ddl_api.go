@@ -7671,14 +7671,14 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 	// check to see if some user has dependency on the group
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	sql := "select count(*) from mysql.user where lower(json_extract(user_attributes, '$.resource_group')) ='\"" + groupName.L + "\"'"
+	sql := "select user from mysql.user where lower(json_extract(user_attributes, '$.resource_group')) ='\"" + groupName.L + "\"' limit 1"
 	rows, _, err := exec.ExecRestrictedSQL(internalCtx, nil, sql)
 	if err != nil {
 		err = errors.Errorf("system table mysql.user access failed")
 		return err
 	}
-	if len(rows) != 0 && rows[0].GetInt64(0) > 0 {
-		err = errors.Errorf("some user depends on the resource group to drop")
+	if len(rows) != 0 {
+		err = errors.Errorf("user [%s] depends on the resource group to drop", rows[0].GetString(0))
 		return err
 	}
 
