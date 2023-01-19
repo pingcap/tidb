@@ -15,7 +15,6 @@
 package config
 
 import (
-	"reflect"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -24,6 +23,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -297,7 +297,7 @@ type Config struct {
 	TiFlashComputeAutoScalerType string `toml:"autoscaler-type" json:"autoscaler-type"`
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
-	ClusterName string `toml:"cluster-name" json:"cluster-name"`
+	ClusterName                  string `toml:"cluster-name" json:"cluster-name"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
@@ -1012,7 +1012,7 @@ var defaultConf = Config{
 	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
 	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
-	ClusterName: "",
+	ClusterName:                          "",
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 }
@@ -1043,7 +1043,7 @@ func StoreGlobalConfig(config *Config) {
 	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
-// GetClusterName() returns clusterName, which is KeyspaceName or ClusterName.
+// GetClusterName returns clusterName, which is KeyspaceName or ClusterName.
 func GetClusterName() (string, error) {
 	c := GetGlobalConfig()
 	var keyspaceName string
@@ -1355,7 +1355,7 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("stats-load-queue-size should be [%d, %d]", DefStatsLoadQueueSizeLimit, DefMaxOfStatsLoadQueueSizeLimit)
 	}
 
-	// check tiflash_compute topo fetch is valid.
+	// Check tiflash_compute topo fetch is valid.
 	if c.DisaggregatedTiFlash {
 		if tiflashcompute.GetAutoScalerType(c.TiFlashComputeAutoScalerType) == tiflashcompute.InvalidASType {
 			return fmt.Errorf("invalid AutoScaler type, expect %s, %s or %s, got %s",

@@ -499,7 +499,9 @@ func buildBatchCopTasksForNonPartitionedTable(
 	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 }
 
-func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer,
+func buildBatchCopTasksForPartitionedTable(
+	ctx context.Context,
+	bo *backoff.Backoffer,
 	store *kvStore,
 	rangesForEachPhysicalTable []*KeyRanges,
 	storeType kv.StoreType,
@@ -653,7 +655,6 @@ func buildBatchCopTasksConsistentHash(
 		break
 	}
 
-	// todo: put to here; construct rpcCtx by self.
 	rpcCtxs, err := getTiFlashComputeRPCContextByConsistentHash(regionIDs, storesStr)
 	if err != nil {
 		return nil, err
@@ -870,7 +871,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	} else {
 		// TODO: merge the if branch.
 		ranges := NewKeyRanges(req.KeyRanges.FirstPartitionRange())
-		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store.kvStore, ranges, req.StoreType, false, 0, false, 0)
 	}
 
 	if err != nil {
@@ -1017,7 +1018,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 				ranges = append(ranges, *ran)
 			})
 		}
-		ret, err := buildBatchCopTasksForNonPartitionedTable(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false, 0, false, 0)
+		ret, err := buildBatchCopTasksForNonPartitionedTable(ctx, bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false, 0, false, 0)
 		return ret, err
 	}
 	// Retry Partition Table Scan
