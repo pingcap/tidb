@@ -203,6 +203,7 @@ type LockCtx = tikvstore.LockCtx
 type Transaction interface {
 	RetrieverMutator
 	AssertionProto
+	AggressiveLockingController
 	// Size returns sum of keys and values length.
 	Size() int
 	// Mem returns the memory consumption of the transaction.
@@ -279,6 +280,15 @@ type AssertionProto interface {
 	// TODO: Use a special type instead of `FlagsOp`. Otherwise there's risk that the assertion flag is incorrectly used
 	// in other places like `MemBuffer.SetWithFlags`.
 	SetAssertion(key []byte, assertion ...FlagsOp) error
+}
+
+// AggressiveLockingController is the interface that defines aggressive locking related operations.
+type AggressiveLockingController interface {
+	StartAggressiveLocking() error
+	RetryAggressiveLocking(ctx context.Context) error
+	CancelAggressiveLocking(ctx context.Context) error
+	DoneAggressiveLocking(ctx context.Context) error
+	IsInAggressiveLockingMode() bool
 }
 
 // Client is used to send request to KV layer.
@@ -543,6 +553,8 @@ type Request struct {
 	FixedRowCountHint []int
 	// StoreBatchSize indicates the batch size of coprocessor in the same store.
 	StoreBatchSize int
+	// ResourceGroupName is the name of the bind resource group.
+	ResourceGroupName string
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
@@ -651,6 +663,8 @@ type Storage interface {
 	GetMinSafeTS(txnScope string) uint64
 	// GetLockWaits return all lock wait information
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
+	// GetCodec gets the codec of the storage.
+	GetCodec() tikv.Codec
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

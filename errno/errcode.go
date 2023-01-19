@@ -1043,6 +1043,7 @@ const (
 	ErrSetTTLOptionForNonTTLTable          = 8150
 	ErrTempTableNotAllowedWithTTL          = 8151
 	ErrUnsupportedTTLReferencedByFK        = 8152
+	ErrUnsupportedPrimaryKeyTypeWithTTL    = 8153
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1094,6 +1095,7 @@ const (
 	ErrIngestFailed                       = 8247
 	ErrResourceGroupExists                = 8248
 	ErrResourceGroupNotExists             = 8249
+	ErrResourceGroupSupportDisabled       = 8250
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

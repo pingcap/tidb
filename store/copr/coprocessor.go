@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -384,11 +385,19 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		builder.reverse()
 	}
 	tasks := builder.build()
-	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
+	elapsed := time.Since(start)
+	if elapsed > time.Millisecond*500 {
 		logutil.BgLogger().Warn("buildCopTasks takes too much time",
 			zap.Duration("elapsed", elapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
+	}
+	if elapsed > time.Millisecond {
+		ctx := bo.GetCtx()
+		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+			span1 := span.Tracer().StartSpan("copr.buildCopTasks", opentracing.ChildOf(span.Context()), opentracing.StartTime(start))
+			defer span1.Finish()
+		}
 	}
 	metrics.TxnRegionsNumHistogramWithCoprocessor.Observe(float64(builder.regionNum()))
 	return tasks, nil
@@ -1065,13 +1074,14 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
-		Priority:       priorityToPB(worker.req.Priority),
-		NotFillCache:   worker.req.NotFillCache,
-		RecordTimeStat: true,
-		RecordScanStat: true,
-		TaskId:         worker.req.TaskID,
-		RequestSource:  task.requestSource.GetRequestSource(),
+		IsolationLevel:    isolationLevelToPB(worker.req.IsolationLevel),
+		Priority:          priorityToPB(worker.req.Priority),
+		NotFillCache:      worker.req.NotFillCache,
+		RecordTimeStat:    true,
+		RecordScanStat:    true,
+		TaskId:            worker.req.TaskID,
+		RequestSource:     task.requestSource.GetRequestSource(),
+		ResourceGroupName: worker.req.ResourceGroupName,
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
