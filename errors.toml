@@ -526,6 +526,11 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundDuplicateKey"]
+error = '''
+found duplicate key '%s', value '%s'
+'''
+
 ["Lightning:Restore:ErrInvalidMetaStatus"]
 error = '''
 invalid meta status: '%s'

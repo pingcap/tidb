@@ -384,6 +384,10 @@ const (
 	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
 	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
 	DupeResAlgRemove
+
+	// DupeResAlgErr reports an error and stops the import process.
+	// Note: this value is only used for internal.
+	DupeResAlgErr
 )
 
 func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
