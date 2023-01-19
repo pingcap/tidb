@@ -17,7 +17,6 @@ package domain
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/pdpb"
 	"math"
 	"math/rand"
 	"sort"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"

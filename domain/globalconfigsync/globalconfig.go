@@ -16,6 +16,7 @@ package globalconfigsync
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -55,4 +56,3 @@ func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.Glob
 func (s *GlobalConfigSyncer) Notify(globalConfigItem pd.GlobalConfigItem) {
 	s.NotifyCh <- globalConfigItem
 }
-

@@ -110,4 +110,3 @@ func TestStoreGlobalConfig(t *testing.T) {
 	}
 	require.Fail(t, "timeout for waiting global config synced")
 }
-
