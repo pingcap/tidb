@@ -80,6 +80,7 @@ go_library(
         "//parser/opcode",
         "//parser/terror",
         "//parser/types",
+        "//privilege",
         "//sessionctx",
         "//sessionctx/binloginfo",
         "//sessionctx/stmtctx",
