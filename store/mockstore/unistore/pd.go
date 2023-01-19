@@ -58,7 +58,7 @@ func (c *pdClient) LoadGlobalConfig(ctx context.Context, configPath string) ([]p
 
 func (c *pdClient) StoreGlobalConfig(ctx context.Context, configPath string, items []pd.GlobalConfigItem) error {
 	for _, item := range items {
-		c.globalConfig["/global/config/"+item.Name] = item.Value
+		c.globalConfig[configPath+item.Name] = item.Value
 	}
 	return nil
 }
@@ -200,6 +200,10 @@ func (c *pdClient) ModifyResourceGroup(ctx context.Context, metaGroup *rmpb.Reso
 
 func (c *pdClient) DeleteResourceGroup(ctx context.Context, resourceGroupName string) (string, error) {
 	return "", nil
+}
+
+func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
+	return nil, nil
 }
 
 func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {

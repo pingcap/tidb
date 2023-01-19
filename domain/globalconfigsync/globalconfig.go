@@ -16,11 +16,12 @@ package globalconfigsync
 
 import (
 	"context"
-
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
+
+const GLOBAL_CONFIG_PATH = "/global/config/"
 
 // GlobalConfigSyncer is used to sync pd global config.
 type GlobalConfigSyncer struct {
@@ -41,7 +42,7 @@ func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.Glob
 	if s.pd == nil {
 		return nil
 	}
-	err := s.pd.StoreGlobalConfig(ctx, "global/config", []pd.GlobalConfigItem{item})
+	err := s.pd.StoreGlobalConfig(ctx, GLOBAL_CONFIG_PATH, []pd.GlobalConfigItem{item})
 	if err != nil {
 		return err
 	}

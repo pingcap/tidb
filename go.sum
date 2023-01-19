@@ -1274,8 +1274,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.5-0.20230118121938-bd5598952082 h1:cJZvNF6D4d7qhaZZn9AZlJ9qF6pGhGzJ2fcVc/EaK5M=
-github.com/tikv/client-go/v2 v2.0.5-0.20230118121938-bd5598952082/go.mod h1:6nlhK8pWj2l8R8AR6RpZwTzvCdYQwVUYza2GwCfrITY=
+github.com/tikv/client-go/v2 v2.0.5-0.20230119021317-7409e690af6b h1:yj8IVYpuSwCYYVlYoMecbRDx1PzgyghtF5lQheZDyv0=
+github.com/tikv/client-go/v2 v2.0.5-0.20230119021317-7409e690af6b/go.mod h1:6nlhK8pWj2l8R8AR6RpZwTzvCdYQwVUYza2GwCfrITY=
 github.com/tikv/pd/client v0.0.0-20230118040950-082fc6a9bc2e h1:MD/PZa8Hcv7dg3cFY0tO+g+OPMhTW3O3tXetE80SjbY=
 github.com/tikv/pd/client v0.0.0-20230118040950-082fc6a9bc2e/go.mod h1:yRGXx64wsS1dGsjtyeBm6Iy6DItkYkbcQ9+Hj9OED4U=
 github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144 h1:kl4KhGNsJIbDHS9/4U9yQo1UcPQM0kOMJHn29EoH/Ro=
