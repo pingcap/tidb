@@ -748,7 +748,7 @@ func canUseIngest(w *worker) bool {
 
 // IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
 func IngestJobsNotExisted(ctx sessionctx.Context) bool {
-	sess := su.Session{Context: ctx}
+	sess := su.NewSession(ctx)
 	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
 	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
 	rows, err := sess.Execute(context.Background(), sql, "check-pitr")
