@@ -196,18 +196,22 @@ func GetSSTMetaFromFile(
 	file *backuppb.File,
 	region *metapb.Region,
 	regionRule *import_sstpb.RewriteRule,
+	rewriteMode RewriteMode,
 ) (meta *import_sstpb.SSTMeta, err error) {
 	r := *region
-	if len(region.GetStartKey()) > 0 {
-		_, r.StartKey, err = codec.DecodeBytes(region.GetStartKey(), nil)
-		if err != nil {
-			return
+	// If the rewrite mode is for keyspace, then the region bound should be decoded.
+	if rewriteMode == RewriteModeKeyspace {
+		if len(region.GetStartKey()) > 0 {
+			_, r.StartKey, err = codec.DecodeBytes(region.GetStartKey(), nil)
+			if err != nil {
+				return
+			}
 		}
-	}
-	if len(region.GetEndKey()) > 0 {
-		_, r.EndKey, err = codec.DecodeBytes(region.GetEndKey(), nil)
-		if err != nil {
-			return
+		if len(region.GetEndKey()) > 0 {
+			_, r.EndKey, err = codec.DecodeBytes(region.GetEndKey(), nil)
+			if err != nil {
+				return
+			}
 		}
 	}
 

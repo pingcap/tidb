@@ -167,6 +167,9 @@ type Client struct {
 
 	// the successfully preallocated table IDs.
 	preallocedTableIDs *tidalloc.PreallocIDs
+
+	// the rewrite mode of the downloaded SST files in TiKV.
+	rewriteMode RewriteMode
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -315,6 +318,14 @@ func (rc *Client) GetBatchDdlSize() uint {
 	return rc.batchDdlSize
 }
 
+func (rc *Client) SetRewriteMode(mode RewriteMode) {
+	rc.rewriteMode = mode
+}
+
+func (rc *Client) GetRewriteMode() RewriteMode {
+	return rc.rewriteMode
+}
+
 // Close a client.
 func (rc *Client) Close() {
 	// rc.db can be nil in raw kv mode.
@@ -344,7 +355,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rewriteMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -1040,7 +1051,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, RewriteModeLegacy)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -2746,6 +2757,10 @@ func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
 		}
 	}
 	return schemas
+}
+
+func CheckKeyspaceBREnable(ctx context.Context, pdClient pd.Client) error {
+	return version.CheckClusterVersion(ctx, pdClient, version.CheckVersionForKeyspaceBR)
 }
 
 func CheckNewCollationEnable(

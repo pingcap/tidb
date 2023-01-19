@@ -47,6 +47,17 @@ const (
 	gRPCBackOffMaxDelay  = 3 * time.Second
 )
 
+// RewriteMode is a mode flag that tells the TiKV how to handle the rewrite rules.
+type RewriteMode int
+
+const (
+	// RewriteModeLegacy means no rewrite rule is applied.
+	RewriteModeLegacy RewriteMode = iota
+
+	// RewriteModeKeyspace means the rewrite rule could be applied to keyspace.
+	RewriteModeKeyspace
+)
+
 // ImporterClient is used to import a file to TiKV.
 type ImporterClient interface {
 	ClearFiles(
@@ -249,6 +260,7 @@ type FileImporter struct {
 	rawStartKey        []byte
 	rawEndKey          []byte
 	supportMultiIngest bool
+	rewriteMode        RewriteMode
 
 	cacheKey string
 }
@@ -259,12 +271,14 @@ func NewFileImporter(
 	importClient ImporterClient,
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
+	rewriteMode RewriteMode,
 ) FileImporter {
 	return FileImporter{
 		metaClient:   metaClient,
 		backend:      backend,
 		importClient: importClient,
 		isRawKvMode:  isRawKvMode,
+		rewriteMode:  rewriteMode,
 		cacheKey:     fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 	}
 }
@@ -631,7 +645,13 @@ func (importer *FileImporter) downloadSST(
 		return nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
 	}
 
-	sstMeta, err := GetSSTMetaFromFile(id, file, regionInfo.Region, fileRule)
+	rule := *fileRule
+	if importer.rewriteMode == RewriteModeLegacy {
+		rule.OldKeyPrefix = encodeKeyPrefix(fileRule.GetOldKeyPrefix())
+		rule.NewKeyPrefix = encodeKeyPrefix(fileRule.GetNewKeyPrefix())
+	}
+
+	sstMeta, err := GetSSTMetaFromFile(id, file, regionInfo.Region, &rule, importer.rewriteMode)
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +660,7 @@ func (importer *FileImporter) downloadSST(
 		Sst:            *sstMeta,
 		StorageBackend: importer.backend,
 		Name:           file.GetName(),
-		RewriteRule:    *fileRule,
+		RewriteRule:    rule,
 		CipherInfo:     cipher,
 		StorageCacheId: importer.cacheKey,
 		// For the older version of TiDB, the request type will  be default to `import_sstpb.RequestType_Legacy`
@@ -703,7 +723,7 @@ func (importer *FileImporter) downloadRawKVSST(
 	id := uid[:]
 	// Empty rule
 	var rule import_sstpb.RewriteRule
-	sstMeta, err := GetSSTMetaFromFile(id, file, regionInfo.Region, &rule)
+	sstMeta, err := GetSSTMetaFromFile(id, file, regionInfo.Region, &rule, RewriteModeLegacy)
 	if err != nil {
 		return nil, err
 	}

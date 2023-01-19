@@ -422,7 +422,15 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 
-	err := client.LoadRestoreStores(ctx)
+	err := restore.CheckKeyspaceBREnable(ctx, client.GetPDClient())
+	if err != nil {
+		log.Warn("Keyspace BR is not supported in this cluster, fallback to legacy restore", zap.Error(err))
+		client.SetRewriteMode(restore.RewriteModeLegacy)
+	} else {
+		client.SetRewriteMode(restore.RewriteModeKeyspace)
+	}
+
+	err = client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -673,16 +681,19 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
 	} else {
-		var oldKeyspace []byte
-		oldKeyspace, _, err = tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
+		oldKeyspace, _, err := tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		newKeyspace := codec.GetKeyspace()
+		if (len(oldKeyspace) > 0 || len(newKeyspace) > 0) && client.GetRewriteMode() == restore.RewriteModeLegacy {
+			return errors.Annotate(berrors.ErrRestoreModeMismatch, "cluster only supports legacy rewrite mode")
 		}
 
 		// Hijack the tableStream and rewrite the rewrite rules.
 		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
 			t.RewriteRule.OldKeyspace = oldKeyspace
-			t.RewriteRule.NewKeyspace = codec.GetKeyspace()
+			t.RewriteRule.NewKeyspace = newKeyspace
 
 			for _, rule := range t.RewriteRule.Data {
 				rule.OldKeyPrefix = append(append([]byte{}, oldKeyspace...), rule.OldKeyPrefix...)

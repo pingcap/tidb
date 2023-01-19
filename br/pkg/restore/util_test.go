@@ -53,7 +53,7 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 		StartKey: []byte("t2abc"),
 		EndKey:   []byte("t3a"),
 	}
-	sstMeta, err := restore.GetSSTMetaFromFile([]byte{}, file, region, rule)
+	sstMeta, err := restore.GetSSTMetaFromFile([]byte{}, file, region, rule, restore.RewriteModeLegacy)
 	require.Nil(t, err)
 	require.Equal(t, "t2abc", string(sstMeta.GetRange().GetStart()))
 	require.Equal(t, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", string(sstMeta.GetRange().GetEnd()))
