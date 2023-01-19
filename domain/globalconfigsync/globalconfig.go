@@ -37,15 +37,15 @@ func NewGlobalConfigSyncer(p pd.Client) *GlobalConfigSyncer {
 }
 
 // StoreGlobalConfig is used to store global config.
-func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.GlobalConfigItem) error {
+func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, configPath string, item pd.GlobalConfigItem) error {
 	if s.pd == nil {
 		return nil
 	}
-	err := s.pd.StoreGlobalConfig(ctx, []pd.GlobalConfigItem{item})
+	err := s.pd.StoreGlobalConfig(ctx, configPath, []pd.GlobalConfigItem{item})
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("store global config", zap.String("name", item.Name), zap.String("value", item.Value))
+	logutil.BgLogger().Info("store global config", zap.String("name", item.Name), zap.String("path", configPath), zap.String("value", item.Value))
 	return nil
 }
 

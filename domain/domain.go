@@ -612,7 +612,7 @@ func (do *Domain) globalConfigSyncerKeeper() {
 	for {
 		select {
 		case entry := <-do.globalCfgSyncer.NotifyCh:
-			err := do.globalCfgSyncer.StoreGlobalConfig(context.Background(), entry)
+			err := do.globalCfgSyncer.StoreGlobalConfig(context.Background(), "/global/config/", entry)
 			if err != nil {
 				logutil.BgLogger().Error("global config syncer store failed", zap.Error(err))
 			}

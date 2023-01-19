@@ -18,10 +18,12 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/kvproto/pkg/resource_manager"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	pd "github.com/tikv/pd/client"
 )
@@ -44,26 +46,24 @@ func newPDClient(pd *us.MockPD) *pdClient {
 	}
 }
 
-func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string) ([]pd.GlobalConfigItem, error) {
-	ret := make([]pd.GlobalConfigItem, len(names))
-	for i, name := range names {
-		if r, ok := c.globalConfig["/global/config/"+name]; ok {
-			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: r}
-		} else {
-			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Error: errors.New("not found")}
+func (c *pdClient) LoadGlobalConfig(ctx context.Context, configPath string) ([]pd.GlobalConfigItem, int64, error) {
+	ret := make([]pd.GlobalConfigItem, 0)
+	for k, v := range c.globalConfig {
+		if strings.HasPrefix(k, configPath) {
+			ret = append(ret, pd.GlobalConfigItem{Name: k, Value: v})
 		}
 	}
-	return ret, nil
+	return ret, 0, nil
 }
 
-func (c *pdClient) StoreGlobalConfig(ctx context.Context, items []pd.GlobalConfigItem) error {
+func (c *pdClient) StoreGlobalConfig(ctx context.Context, configPath string, items []pd.GlobalConfigItem) error {
 	for _, item := range items {
-		c.globalConfig["/global/config/"+item.Name] = item.Value
+		c.globalConfig[configPath+item.Name] = item.Value
 	}
 	return nil
 }
 
-func (c *pdClient) WatchGlobalConfig(ctx context.Context) (chan []pd.GlobalConfigItem, error) {
+func (c *pdClient) WatchGlobalConfig(ctx context.Context, configPath string, revision int64) (chan []pd.GlobalConfigItem, error) {
 	globalConfigWatcherCh := make(chan []pd.GlobalConfigItem, 16)
 	go func() {
 		defer func() {
@@ -175,5 +175,33 @@ func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.K
 // The first message in stream contains all current keyspaceMeta,
 // all subsequent messages contains new put events for all keyspaces.
 func (c *pdClient) WatchKeyspaces(ctx context.Context) (chan []*keyspacepb.KeyspaceMeta, error) {
+	return nil, nil
+}
+
+func (c *pdClient) UpdateKeyspaceState(ctx context.Context, id uint32, state keyspacepb.KeyspaceState) (*keyspacepb.KeyspaceMeta, error) {
+	return nil, nil
+}
+
+func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *resource_manager.TokenBucketsRequest) ([]*resource_manager.TokenBucketResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) ListResourceGroups(ctx context.Context) ([]*resource_manager.ResourceGroup, error) {
+	return nil, nil
+}
+func (c *pdClient) GetResourceGroup(ctx context.Context, resourceGroupName string) (*resource_manager.ResourceGroup, error) {
+	return nil, nil
+}
+func (c *pdClient) AddResourceGroup(ctx context.Context, metaGroup *resource_manager.ResourceGroup) (string, error) {
+	return "", nil
+}
+func (c *pdClient) ModifyResourceGroup(ctx context.Context, metaGroup *resource_manager.ResourceGroup) (string, error) {
+	return "", nil
+}
+func (c *pdClient) DeleteResourceGroup(ctx context.Context, resourceGroupName string) (string, error) {
+	return "", nil
+}
+
+func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*resource_manager.ResourceGroup, error) {
 	return nil, nil
 }
