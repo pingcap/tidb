@@ -40,7 +40,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -975,7 +974,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	// by kv reset when meets a unhandled error, but the `job` modification can't.
 	// So make sure job state and args change is after all other checks or make sure these
 	// change has no effect when retrying it.
-	// TODO: Should this ^^ comment be updated with how to handle the tidb_ddl_reorg table?
 	switch job.Type {
 	case model.ActionCreateSchema:
 		ver, err = onCreateSchema(d, t, job)
@@ -1360,22 +1358,6 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
-			}
-		}
-	case model.ActionReorganizePartition:
-		diff.TableID = job.TableID
-		if len(job.CtxVars) > 0 {
-			if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
-				if addedIDs, ok := job.CtxVars[1].([]int64); ok {
-					// to use AffectedOpts we need both new and old to have the same length
-					maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
-					// Also initialize them to 0!
-					oldIDs := make([]int64, maxParts)
-					copy(oldIDs, droppedIDs)
-					newIDs := make([]int64, maxParts)
-					copy(newIDs, addedIDs)
-					diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
-				}
 			}
 		}
 	case model.ActionCreateTable:

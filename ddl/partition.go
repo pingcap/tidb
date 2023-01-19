@@ -1719,7 +1719,6 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
 		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
 		if err != nil {
-			// Why cancel here and not try to clean up as much as possible?
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
@@ -2816,7 +2815,6 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		// First run, have not yet started backfilling index data
 		// Restart with the first new partition.
 		// TODO: handle remove partitioning
-		// TODO: Check if there is a better way to restart?
 		reorgInfo.PhysicalTableID = firstNewPartitionID
 	} else {
 		// The job was interrupted and has been restarted,
