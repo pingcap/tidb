@@ -1015,7 +1015,7 @@ func TestSplitCheckPartRegionConsistency(t *testing.T) {
 	var (
 		startKey []byte = []byte("a")
 		endKey   []byte = []byte("f")
-		err      error  = nil
+		err      error
 	)
 	err = split.CheckPartRegionConsistency(startKey, endKey, nil)
 	require.Error(t, err)
