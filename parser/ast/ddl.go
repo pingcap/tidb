@@ -656,7 +656,7 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 			return nil
 		})
 	case ColumnOptionSrid:
-		ctx.WritePlainf("/*!80003 SRID %d", n.Srid)
+		ctx.WritePlainf("/*!80003 SRID %d */", n.Srid)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
