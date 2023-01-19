@@ -2485,13 +2485,13 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AdminPause:
 		ctx.WriteKeyWord("PAUSE ")
-		ctx.WriteKeyWord(strings.ToUpper(n.TaskType))
+		ctx.WritePlain(strings.ToUpper(n.TaskType))
 		if n.Force {
 			ctx.WriteKeyWord("FORCE")
 		}
 	case AdminResume:
 		ctx.WriteKeyWord("RESUME ")
-		ctx.WriteKeyWord(strings.ToUpper(n.TaskType))
+		ctx.WritePlain(strings.ToUpper(n.TaskType))
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
