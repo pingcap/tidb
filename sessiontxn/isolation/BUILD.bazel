@@ -21,6 +21,7 @@ go_library(
         "//parser/terror",
         "//planner/core",
         "//sessionctx",
+        "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
         "//sessiontxn/internal",

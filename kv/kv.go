@@ -616,6 +616,18 @@ type SnapshotInterceptor interface {
 	OnIterReverse(snap Snapshot, k Key) (Iterator, error)
 }
 
+// SnapshotReadObserver is used to observe snapshot's read operation.
+type SnapshotReadObserver interface {
+	// OnGet observes Get operation for Snapshot
+	OnGet()
+	// OnBatchGet observes BatchGet operation for Snapshot
+	OnBatchGet()
+	// OnIter observes Iter operation for Snapshot
+	OnIter()
+	// OnIterReverse observes IterReverse operation for Snapshot
+	OnIterReverse()
+}
+
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.

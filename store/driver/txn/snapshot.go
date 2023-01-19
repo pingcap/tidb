@@ -31,18 +31,24 @@ import (
 
 type tikvSnapshot struct {
 	*txnsnapshot.KVSnapshot
-	// customRetrievers stores all custom retrievers, it is sorted
+	// interceptor intercepts read operations to replace them with custom read logic.
 	interceptor kv.SnapshotInterceptor
+	// readObservers observe read operations performed on the snapshot.
+	readObservers []kv.SnapshotReadObserver
 }
 
 // NewSnapshot creates a kv.Snapshot with txnsnapshot.KVSnapshot.
 func NewSnapshot(snapshot *txnsnapshot.KVSnapshot) kv.Snapshot {
-	return &tikvSnapshot{snapshot, nil}
+	return &tikvSnapshot{snapshot, nil, nil}
 }
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	for _, o := range s.readObservers {
+		o.OnBatchGet()
+	}
+
 	if s.interceptor != nil {
 		return s.interceptor.OnBatchGet(ctx, NewSnapshot(s.KVSnapshot), keys)
 	}
@@ -52,6 +58,10 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	for _, o := range s.readObservers {
+		o.OnGet()
+	}
+
 	if s.interceptor != nil {
 		return s.interceptor.OnGet(ctx, NewSnapshot(s.KVSnapshot), k)
 	}
@@ -62,6 +72,10 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 
 // Iter return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	for _, o := range s.readObservers {
+		o.OnIter()
+	}
+
 	if s.interceptor != nil {
 		return s.interceptor.OnIter(NewSnapshot(s.KVSnapshot), k, upperBound)
 	}
@@ -75,6 +89,10 @@ func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
+	for _, o := range s.readObservers {
+		o.OnIterReverse()
+	}
+
 	if s.interceptor != nil {
 		return s.interceptor.OnIterReverse(NewSnapshot(s.KVSnapshot), k)
 	}
@@ -122,6 +140,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetReadReplicaScope(val.(string))
 	case kv.SnapInterceptor:
 		s.interceptor = val.(kv.SnapshotInterceptor)
+	case kv.AddSnapReadObserver:
+		s.readObservers = append(s.readObservers, val.(kv.SnapshotReadObserver))
 	case kv.RPCInterceptor:
 		s.KVSnapshot.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
 	case kv.RequestSourceInternal:

@@ -390,6 +390,9 @@ type StatementContext struct {
 	TableStats map[int64]interface{}
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
+
+	// KvReadWriteOperationsCount counts the amount of read operations of the statement.
+	KvReadOperationsCount atomic2.Uint64
 }
 
 // StmtHints are SessionVars related sql hints.

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/internal"
@@ -303,6 +304,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		txn.SetOption(kv.SnapInterceptor, interceptor)
 	}
 
+	p.setSnapReadObserver(txn)
+
 	if sessVars.StmtCtx.WeakConsistency {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}
@@ -459,6 +462,38 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	return snapshot, nil
 }
 
+// setSnapReadObserver adds an interceptor to the transaction to observe read operations on it.
+func (p *baseTxnContextProvider) setSnapReadObserver(txn kv.Transaction) {
+	stmtCtx := p.sctx.GetSessionVars().StmtCtx
+	txn.SetOption(kv.AddSnapReadObserver, &snapReadOperationsStatsObserver{stmtCtx: stmtCtx})
+}
+
+// snapReadOperationsStatsObserver hooks read operations on the snapshot or transaction to record the amount of
+// the read operations, without changing anything of the read operation.
+type snapReadOperationsStatsObserver struct {
+	stmtCtx *stmtctx.StatementContext
+}
+
+// OnGet implements SnapshotReadObserver interface.
+func (s snapReadOperationsStatsObserver) OnGet() {
+	s.stmtCtx.KvReadOperationsCount.Inc()
+}
+
+// OnBatchGet implements SnapshotReadObserver interface.
+func (s snapReadOperationsStatsObserver) OnBatchGet() {
+	s.stmtCtx.KvReadOperationsCount.Inc()
+}
+
+// OnIter implements SnapshotReadObserver interface.
+func (s snapReadOperationsStatsObserver) OnIter() {
+	s.stmtCtx.KvReadOperationsCount.Inc()
+}
+
+// OnIterReverse implements SnapshotReadObserver interface.
+func (s snapReadOperationsStatsObserver) OnIterReverse() {
+	s.stmtCtx.KvReadOperationsCount.Inc()
+}
+
 // canReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transaction explicitly
 func canReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 	sessVars := sctx.GetSessionVars()
@@ -513,7 +548,7 @@ func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx con
 	if err := p.baseTxnContextProvider.OnHandlePessimisticStmtStart(ctx); err != nil {
 		return err
 	}
-	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking && p.txn != nil {
+	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking && p.sctx.GetSessionVars().ConnectionID != 0 && p.txn != nil {
 		if err := p.txn.StartAggressiveLocking(); err != nil {
 			return err
 		}

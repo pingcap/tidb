@@ -42,8 +42,9 @@ import (
 
 type tikvTxn struct {
 	*tikv.KVTxn
-	idxNameCache        map[int64]*model.TableInfo
-	snapshotInterceptor kv.SnapshotInterceptor
+	idxNameCache          map[int64]*model.TableInfo
+	snapshotInterceptor   kv.SnapshotInterceptor
+	snapshotReadObservers []kv.SnapshotReadObserver
 	// columnMapsCache is a cache used for the mutation checker
 	columnMapsCache interface{}
 }
@@ -56,7 +57,7 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil, nil}
+	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil, nil, nil}
 }
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -108,7 +109,7 @@ func (txn *tikvTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
 
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	return &tikvSnapshot{txn.KVTxn.GetSnapshot(), txn.snapshotInterceptor}
+	return &tikvSnapshot{txn.KVTxn.GetSnapshot(), txn.snapshotInterceptor, txn.snapshotReadObservers}
 }
 
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.

@@ -74,7 +74,9 @@ const (
 	KVFilter
 	// SnapInterceptor is used for setting the interceptor for snapshot
 	SnapInterceptor
-	// CommitTSUpperBoundChec is used by cached table
+	// AddSnapReadObserver is used for adding an read observer for snapshot.
+	AddSnapReadObserver
+	// CommitTSUpperBoundCheck is used by cached table
 	// The commitTS must be greater than all the write lock lease of the visited cached table.
 	CommitTSUpperBoundCheck
 	// RPCInterceptor is interceptor.RPCInterceptor on Transaction or Snapshot, used to decorate
