@@ -122,14 +122,31 @@ func TestStopPool(t *testing.T) {
 	pool.ReleaseAndWait()
 }
 
-func TestTunePool(t *testing.T) {
+func TestTuneSimplePool(t *testing.T) {
+	testTunePool(t, "TestTuneSimplePool")
+}
+
+func TestTuneMultiPool(t *testing.T) {
+	var concurrency = 5
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			testTunePool(t, "TestTuneSimplePool"+string(1))
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}
+
+func testTunePool(t *testing.T, name string) {
 	type ConstArgs struct {
 		a int
 	}
 	myArgs := ConstArgs{a: 10}
 	// init the pool
 	// input type， output type, constArgs type
-	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestStopPool", 10, rmutil.UNKNOWN)
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext](name, 10, rmutil.UNKNOWN)
 	require.NoError(t, err)
 	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
 		return task + constArgs.a
