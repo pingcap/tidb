@@ -20,9 +20,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
@@ -3147,4 +3150,57 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 	err = tk.Session().Auth(user, nil, nil)
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
+}
+
+func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
+	// prepare signing certs
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
+	sessionstates.SetKeyPath(keyPath)
+	sessionstates.SetCertPath(certPath)
+
+	// prepare user
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
+	// prepare session token
+	token, err := sessionstates.CreateSessionToken("testuser")
+	require.NoError(t, err)
+	tokenBytes, err := json.Marshal(token)
+	require.NoError(t, err)
+
+	// Test password expiration without sandbox.
+	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost", AuthPlugin: mysql.AuthTiDBSessionToken}
+	tk := testkit.NewTestKit(t, store)
+	err = tk.Session().Auth(user, tokenBytes, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// Test password expiration with sandbox.
+	variable.IsSandBoxModeEnabled.Store(true)
+	err = tk.Session().Auth(user, tokenBytes, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// Disable resource group.
+	require.Equal(t, "", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Enable resource group.
+	variable.EnableResourceControl.Store(true)
+	err = tk.Session().Auth(user, tokenBytes, nil)
+	require.NoError(t, err)
+	require.Equal(t, "default", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Non-default resource group.
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' RESOURCE GROUP rg1`)
+	err = tk.Session().Auth(user, tokenBytes, nil)
+	require.NoError(t, err)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Wrong token
+	err = tk.Session().Auth(user, nil, nil)
+	require.ErrorContains(t, err, "Access denied")
 }
