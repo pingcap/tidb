@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/privilege"
 	"math"
 	"strconv"
 	"strings"
@@ -7669,16 +7670,13 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 	}
 
 	// check to see if some user has dependency on the group
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	sql := "select user from mysql.user where lower(json_extract(user_attributes, '$.resource_group')) ='\"" + groupName.L + "\"' limit 1"
-	rows, _, err := exec.ExecRestrictedSQL(internalCtx, nil, sql)
-	if err != nil {
-		err = errors.Errorf("system table mysql.user access failed")
-		return err
+	checker := privilege.GetPrivilegeManager(ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
 	}
-	if len(rows) != 0 {
-		err = errors.Errorf("user [%s] depends on the resource group to drop", rows[0].GetString(0))
+	user, matched := checker.MatchUserResourceGroupName(groupName.L)
+	if matched {
+		err = errors.Errorf("user [%s] depends on the resource group to drop", user)
 		return err
 	}
 
