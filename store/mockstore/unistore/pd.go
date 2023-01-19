@@ -17,7 +17,6 @@ package unistore
 import (
 	"context"
 	"errors"
-	"github.com/tikv/client-go/v2/oracle"
 	"math"
 	"path"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -241,3 +241,4 @@ func (c *pdClient) SetExternalTimestamp(ctx context.Context, newTimestamp uint64
 func (c *pdClient) GetExternalTimestamp(ctx context.Context) (uint64, error) {
 	return c.externalTimestamp.Load(), nil
 }
+
