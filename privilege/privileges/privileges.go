@@ -310,6 +310,16 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 	return "", "", false
 }
 
+// MatchUserResourceGroupName implements the Manager interface.
+func (p *UserPrivileges) MatchUserResourceGroupName(resourceGroupName string) (u string, success bool) {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchResoureGroup(resourceGroupName)
+	if record != nil {
+		return record.User, true
+	}
+	return "", false
+}
+
 // GetAuthWithoutVerification implements the Manager interface.
 func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success bool) {
 	if SkipWithGrant {
