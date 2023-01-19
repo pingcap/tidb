@@ -1328,7 +1328,7 @@ func newAddIndexWorker(decodeColMap map[int64]decoder.Column, t table.PhysicalTa
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		lwCtx, err = ei.NewWriterCtx(bfCtx.id)
+		lwCtx, err = ei.NewWriterCtx(bfCtx.id, indexInfo.Unique)
 		if err != nil {
 			return nil, err
 		}
