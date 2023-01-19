@@ -124,7 +124,7 @@ autoscaler-type = "aws"
 # autoscaler-addr is the host of AutoScaler, Only meaningful when disaggregated-tiflash is true.
 autoscaler-addr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081"
 
-# cluster-name is the name of cluster. Only meaningfule for Decicated Tier.
+# cluster-name is the name of cluster. DON NOT set this if config.KeyspaceName is already set.
 cluster-name = ""
 
 # is-tiflashcompute-fixed-pool controls whether autoscaler use fixed shared pool(free user) or not.
