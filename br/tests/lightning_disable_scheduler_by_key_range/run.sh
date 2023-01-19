@@ -51,15 +51,15 @@ ready_for_import_engine
 run_curl "https://${PD_ADDR}/pd/api/v1/config/cluster-version"
 
 length=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
-if [ "$length" != "1" ]; then
-  echo "region-label key-range rules should be 1, but got $length" >&2
+if [ "$length" != "2" ]; then
+  echo "region-label key-range rules should be 2, but got $length" >&2
   exit 1
 fi
 
 wait "$shpid"
 
 length=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | jq 'select(.[].rule_type == "key-range") | length')
-if [ -n "$length" ] && [ "$length" -ne 0 ]; then
-  echo "region-label key-range rules should be 0, but got $length" >&2
+if [ "$length" != "1" ]; then
+  echo "region-label key-range rules should be 1, but got $length" >&2
   exit 1
 fi
