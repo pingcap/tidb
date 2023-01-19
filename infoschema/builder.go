@@ -297,16 +297,12 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Minimum allocation, one partition is reorganized into 1 or more new ones
-	//tblIDs := make([]int64, 0, 1+len(diff.AffectedOpts))
 	for _, opt := range diff.AffectedOpts {
 		if opt.OldTableID != 0 {
 			b.deleteBundle(b.is, opt.OldTableID)
-			//tblIDs = append(tblIDs, opt.OldTableID)
 		}
 		if opt.TableID != 0 {
 			b.markTableBundleShouldUpdate(opt.TableID)
-			//tblIDs = append(tblIDs, opt.TableID)
 		}
 	}
 	return tblIDs, nil

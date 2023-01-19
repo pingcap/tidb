@@ -301,8 +301,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if progress > 1 {
 			progress = 1
 		}
-		// TODO: change back to Debug
-		logutil.BgLogger().Info("[ddl] update progress",
+		logutil.BgLogger().Debug("[ddl] update progress",
 			zap.Float64("progress", progress),
 			zap.Int64("addedRowCount", addedRowCount),
 			zap.Int64("totalCount", totalCount))
