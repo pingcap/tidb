@@ -10,7 +10,6 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -90,7 +89,7 @@ func TestMapTableToFiles(t *testing.T) {
 		},
 	}
 
-	result := restore.MapTableToFiles(append(filesOfTable2, filesOfTable1...), kvrpcpb.APIVersion_V1)
+	result := restore.MapTableToFiles(append(filesOfTable2, filesOfTable1...))
 
 	require.Equal(t, filesOfTable1, result[1])
 	require.Equal(t, filesOfTable2, result[2])
