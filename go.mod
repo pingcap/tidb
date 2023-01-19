@@ -51,11 +51,22 @@ require (
 	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+<<<<<<< HEAD
 	github.com/pingcap/tipb v0.0.0-20220314125451-bfb5c2c55188
 	github.com/prometheus/client_golang v1.11.0
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.32.1
 	github.com/shirou/gopsutil/v3 v3.21.12
+=======
+	github.com/pingcap/tipb v0.0.0-20230119054146-c6b7a5a1623b
+	github.com/pkg/errors v0.9.1
+	github.com/prometheus/client_golang v1.14.0
+	github.com/prometheus/client_model v0.3.0
+	github.com/prometheus/common v0.39.0
+	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
+	github.com/sasha-s/go-deadlock v0.0.0-20161201235124-341000892f3d
+	github.com/shirou/gopsutil/v3 v3.22.9
+>>>>>>> efbdeed4ab (json, expression: add json unary not implementation (#40723))
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/shurcooL/vfsgen v0.0.0-20200824052919-0d455de96546 // indirect
 	github.com/soheilhy/cmux v0.1.5

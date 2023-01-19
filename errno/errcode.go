@@ -912,6 +912,12 @@ const (
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
+<<<<<<< HEAD
+=======
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
+	ErrJSONInBooleanContext                                  = 3986
+	ErrTableWithoutPrimaryKey                                = 3750
+>>>>>>> efbdeed4ab (json, expression: add json unary not implementation (#40723))
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
