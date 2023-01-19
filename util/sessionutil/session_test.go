@@ -24,7 +24,7 @@ import (
 )
 
 func TestSessionCommit(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	s := testkit.NewTestKit(t, store).Session()
 	se := su.NewSession(s)
 	se.Begin()
@@ -32,7 +32,7 @@ func TestSessionCommit(t *testing.T) {
 }
 
 func TestSessionRollback(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	s := testkit.NewTestKit(t, store).Session()
 	se := su.NewSession(s)
 	se.Begin()
@@ -40,7 +40,7 @@ func TestSessionRollback(t *testing.T) {
 }
 
 func TestSessionReset(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	s := testkit.NewTestKit(t, store).Session()
 	se := su.NewSession(s)
 	se.Begin()
@@ -48,7 +48,7 @@ func TestSessionReset(t *testing.T) {
 }
 
 func TestSessionGetTxn(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	s := testkit.NewTestKit(t, store).Session()
 	se := su.NewSession(s)
 	se.Begin()
@@ -57,7 +57,7 @@ func TestSessionGetTxn(t *testing.T) {
 }
 
 func TestSession(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	s := testkit.NewTestKit(t, store).Session()
 	se := su.NewSession(s)
 	se.Begin()
@@ -66,7 +66,7 @@ func TestSession(t *testing.T) {
 }
 
 func TestRunInTxn(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	s := testkit.NewTestKit(t, store).Session()
 	se := su.NewSession(s)
 	su.RunInTxn(se, func(se *su.Session) error {
