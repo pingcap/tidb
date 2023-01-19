@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
+// MaxGroupNameLength is max length of the name of a resource group
 const MaxGroupNameLength = 32
 
 // NewGroupFromOptions creates a new resource group from the given options.
