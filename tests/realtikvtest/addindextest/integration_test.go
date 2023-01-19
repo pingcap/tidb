@@ -308,3 +308,97 @@ func TestAddIndexIngestPanicOnCopRead(t *testing.T) {
 	// Fallback to txn-merge process.
 	require.True(t, strings.Contains(jobTp, "txn-merge"), jobTp)
 }
+<<<<<<< HEAD
+=======
+
+func TestAddIndexIngestUniqueKey(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (10000, 1);")
+	tk.MustExec("split table t by (5000);")
+	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a varchar(255) primary key, b int);")
+	tk.MustExec("insert into t values ('a', 1), ('z', 1);")
+	tk.MustExec("split table t by ('m');")
+	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a varchar(255) primary key, b int, c char(5));")
+	tk.MustExec("insert into t values ('a', 1, 'c1'), ('d', 2, 'c1'), ('x', 1, 'c2'), ('z', 1, 'c1');")
+	tk.MustExec("split table t by ('m');")
+	tk.MustGetErrMsg("alter table t add unique index idx(b, c);", "[kv:1062]Duplicate entry '1-c1' for key 't.idx'")
+}
+
+func TestAddIndexIngestCancel(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
+	defHook := dom.DDL().GetHook()
+	customHook := newTestCallBack(t, dom)
+	cancelled := false
+	customHook.OnJobRunBeforeExported = func(job *model.Job) {
+		if cancelled {
+			return
+		}
+		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
+			idx := findIdxInfo(dom, "addindexlit", "t", "idx")
+			if idx == nil {
+				return
+			}
+			if idx.BackfillState == model.BackfillStateRunning {
+				tk2 := testkit.NewTestKit(t, store)
+				rs, err := tk2.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+				assert.NoError(t, err)
+				assert.NoError(t, rs.Close())
+				cancelled = true
+			}
+		}
+	}
+	dom.DDL().SetHook(customHook)
+	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
+	require.True(t, cancelled)
+	dom.DDL().SetHook(defHook)
+	require.Empty(t, ingest.LitBackCtxMgr.Keys())
+}
+
+type testCallback struct {
+	ddl.Callback
+	OnJobRunBeforeExported func(job *model.Job)
+}
+
+func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
+	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
+	require.NoError(t, err)
+	return &testCallback{
+		Callback: defHookFactory(dom),
+	}
+}
+
+func (c *testCallback) OnJobRunBefore(job *model.Job) {
+	if c.OnJobRunBeforeExported != nil {
+		c.OnJobRunBeforeExported(job)
+	}
+}
+
+func findIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
+	if err != nil {
+		logutil.BgLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
+		return nil
+	}
+	return tbl.Meta().FindIndexByName(idxName)
+}
+>>>>>>> bbd1995ea3 (ddl, lightning: support detecting duplicate keys in different batch (#40701))

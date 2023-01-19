@@ -369,6 +369,7 @@ type local struct {
 
 	checkTiKVAvaliable  bool
 	duplicateDetection  bool
+	duplicateDetectOpt  dupDetectOpt
 	duplicateDB         *pebble.DB
 	keyAdapter          KeyAdapter
 	errorMgr            *errormanager.ErrorManager
@@ -493,6 +494,7 @@ func NewLocalBackend(
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
 		duplicateDetection:      duplicateDetection,
+		duplicateDetectOpt:      dupDetectOpt{duplicateDetection && cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		keyAdapter:              keyAdapter,
@@ -796,6 +798,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		config:             engineCfg,
 		tableInfo:          cfg.TableInfo,
 		duplicateDetection: local.duplicateDetection,
+		dupDetectOpt:       local.duplicateDetectOpt,
 		duplicateDB:        local.duplicateDB,
 		errorMgr:           local.errorMgr,
 		keyAdapter:         local.keyAdapter,
@@ -846,6 +849,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			tableInfo:          cfg.TableInfo,
 			keyAdapter:         local.keyAdapter,
 			duplicateDetection: local.duplicateDetection,
+			dupDetectOpt:       local.duplicateDetectOpt,
 			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 			logger:             log.FromContext(ctx),
