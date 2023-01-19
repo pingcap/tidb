@@ -7145,7 +7145,7 @@ func TestTTLTableOption(t *testing.T) {
 
 func TestMultiStmt(t *testing.T) {
 	p := parser.New()
-	stmts, _, err := p.Parse("SELECT 'foo'; SELECT 'bar','baz' ; select 'foo' , 'bar', 'baz';select 1", "", "")
+	stmts, _, err := p.Parse("SELECT 'foo'; SELECT 'foo;bar','baz'; select 'foo' , 'bar' , 'baz' ;select 1", "", "")
 	require.NoError(t, err)
 	require.Equal(t, len(stmts), 4)
 	stmt1 := stmts[0].(*ast.SelectStmt)
@@ -7153,7 +7153,7 @@ func TestMultiStmt(t *testing.T) {
 	stmt3 := stmts[2].(*ast.SelectStmt)
 	stmt4 := stmts[3].(*ast.SelectStmt)
 	require.Equal(t, "'foo'", stmt1.Fields.Fields[0].Text())
-	require.Equal(t, "'bar'", stmt2.Fields.Fields[0].Text())
+	require.Equal(t, "'foo;bar'", stmt2.Fields.Fields[0].Text())
 	require.Equal(t, "'baz'", stmt2.Fields.Fields[1].Text())
 	require.Equal(t, "'foo'", stmt3.Fields.Fields[0].Text())
 	require.Equal(t, "'bar'", stmt3.Fields.Fields[1].Text())
