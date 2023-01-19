@@ -186,8 +186,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			// be finished. Otherwise the query to this partition will be blocked.
 			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, d)
 			if err != nil {
-				ver, err = convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
-				return ver, err
+				return convertAddTablePartitionJob2RollbackJob(d, t, job, err, tblInfo)
 			}
 			if needRetry {
 				// The new added partition hasn't been replicated.
@@ -250,8 +249,9 @@ func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) 
 		if err != nil {
 			return false, errors.Wrapf(err, "failed to notify PD label rule")
 		}
+		return true, nil
 	}
-	return true, nil
+	return false, nil
 }
 
 func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
@@ -1705,7 +1705,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if job.Type == model.ActionAddTablePartition {
+	if job.Type == model.ActionAddTablePartition || job.Type == model.ActionReorganizePartition {
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
 		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
