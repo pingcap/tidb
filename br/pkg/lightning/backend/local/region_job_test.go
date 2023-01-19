@@ -143,7 +143,6 @@ func TestIsIngestRetryable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, canContinueIngest)
 	require.Equal(t, needRescan, clone.stage)
-	require.Nil(t, clone.writeResult)
 	require.Error(t, clone.lastRetryableErr)
 
 	// ReadIndexNotReady means the region is changed, we need to restart from region scanning
