@@ -135,12 +135,13 @@ func TestIsIngestRetryable(t *testing.T) {
 	require.Equal(t, needRescan, clone.stage)
 	require.Error(t, clone.lastRetryableErr)
 
-	// TODO: what's the meaning of raft layer dropped message?
+	// TODO: in which case raft layer will drop message?
 
 	resp.Error = &errorpb.Error{Message: "raft: proposal dropped"}
 	clone = job
 	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
+	require.False(t, canContinueIngest)
 	require.Equal(t, regionScanned, clone.stage)
 	require.Nil(t, clone.writeResult)
 	require.Error(t, clone.lastRetryableErr)
@@ -165,7 +166,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		DiskFull: &errorpb.DiskFull{},
 	}
 	clone = job
-	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
+	_, err = (&clone).fixIngestError(ctx, resp, splitCli)
 	require.ErrorContains(t, err, "non-retryable error")
 
 	// a general error is retryable from writing
@@ -176,6 +177,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	clone = job
 	canContinueIngest, err = (&clone).fixIngestError(ctx, resp, splitCli)
 	require.NoError(t, err)
+	require.False(t, canContinueIngest)
 	require.Equal(t, regionScanned, clone.stage)
 	require.Nil(t, clone.writeResult)
 	require.Error(t, clone.lastRetryableErr)

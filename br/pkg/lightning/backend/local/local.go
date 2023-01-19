@@ -1231,11 +1231,11 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
-	group, workerCtx := errgroup.WithContext(ctx)
+	workGroup, workerCtx := errgroup.WithContext(ctx)
 	jobCh := make(chan *regionJob)
 	jobWg := &sync.WaitGroup{}
 	for i := 0; i < local.workerConcurrency; i++ {
-		group.Go(func() error {
+		workGroup.Go(func() error {
 			return local.startWorker(workerCtx, jobCh, jobWg)
 		})
 	}
@@ -1276,7 +1276,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		if err != nil {
 			// the context is derived from error group, we should return the real error
 			if common.IsContextCanceledError(err) {
-				return group.Wait()
+				return workGroup.Wait()
 			}
 			return err
 		}
@@ -1288,7 +1288,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	log.FromContext(ctx).Info("import engine success", zap.Stringer("uuid", engineUUID),
 		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
 		zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
-	return nil
+	return workGroup.Wait()
 }
 
 func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
