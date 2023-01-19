@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@ package globalconfigsync_test
 
 import (
 	"context"
+	"path"
 	"runtime"
 	"testing"
 	"time"
@@ -61,7 +62,7 @@ func TestGlobalConfigSyncer(t *testing.T) {
 	items, revision, err := client.LoadGlobalConfig(context.Background(), globalconfigsync.GlobalConfigPath)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(items))
-	require.Equal(t, globalconfigsync.GlobalConfigPath+"a", items[0].Name)
+	require.Equal(t, path.Join(globalconfigsync.GlobalConfigPath, "a"), items[0].Name)
 	require.Equal(t, int64(0), revision)
 	require.Equal(t, "b", items[0].Value)
 }
@@ -102,9 +103,9 @@ func TestStoreGlobalConfig(t *testing.T) {
 			continue
 		}
 		require.Len(t, items, 2)
-		require.Equal(t, items[0].Name, globalconfigsync.GlobalConfigPath+"enable_resource_metering")
+		require.Equal(t, items[0].Name, path.Join(globalconfigsync.GlobalConfigPath, "enable_resource_metering"))
 		require.Equal(t, items[0].Value, "true")
-		require.Equal(t, items[1].Name, globalconfigsync.GlobalConfigPath+"source_id")
+		require.Equal(t, items[1].Name, path.Join(globalconfigsync.GlobalConfigPath, "source_id"))
 		require.Equal(t, items[1].Value, "2")
 		return
 	}

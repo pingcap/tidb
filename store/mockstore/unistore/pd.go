@@ -17,9 +17,12 @@ package unistore
 import (
 	"context"
 	"errors"
+	"github.com/tikv/client-go/v2/oracle"
 	"math"
+	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -36,6 +39,7 @@ type pdClient struct {
 	serviceSafePoints map[string]uint64
 	gcSafePointMu     sync.Mutex
 	globalConfig      map[string]string
+	externalTimestamp atomic.Uint64
 }
 
 func newPDClient(pd *us.MockPD) *pdClient {
@@ -58,7 +62,7 @@ func (c *pdClient) LoadGlobalConfig(ctx context.Context, configPath string) ([]p
 
 func (c *pdClient) StoreGlobalConfig(ctx context.Context, configPath string, items []pd.GlobalConfigItem) error {
 	for _, item := range items {
-		c.globalConfig[configPath+item.Name] = item.Value
+		c.globalConfig[path.Join(configPath, item.Name)] = item.Value
 	}
 	return nil
 }
@@ -211,9 +215,29 @@ func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenB
 }
 
 func (c *pdClient) SetExternalTimestamp(ctx context.Context, newTimestamp uint64) error {
-	return nil
+	p, l, err := c.GetTS(ctx)
+	if err != nil {
+		return err
+	}
+
+	currentTSO := oracle.ComposeTS(p, l)
+	if newTimestamp > currentTSO {
+		return errors.New("external timestamp is greater than global tso")
+	}
+	for {
+		externalTimestamp := c.externalTimestamp.Load()
+		if externalTimestamp > newTimestamp {
+			return errors.New("cannot decrease the external timestamp")
+		} else if externalTimestamp == newTimestamp {
+			return nil
+		}
+
+		if c.externalTimestamp.CompareAndSwap(externalTimestamp, newTimestamp) {
+			return nil
+		}
+	}
 }
 
 func (c *pdClient) GetExternalTimestamp(ctx context.Context) (uint64, error) {
-	return 0, nil
+	return c.externalTimestamp.Load(), nil
 }
