@@ -65,6 +65,10 @@ type regionJob struct {
 	metrics         *metric.Metrics
 	// below fields are available after wrote stage
 	writeResult *tikvWriteResult
+
+	retryCount       int
+	waitUntil        time.Time
+	lastRetryableErr error
 }
 
 type tikvWriteResult struct {
@@ -80,8 +84,12 @@ type rangeStats struct {
 func (j *regionJob) convertStageTo(stage jobStageTp) {
 	j.stage = stage
 	if stage == ingested {
-		j.engine.importedKVSize.Add(j.writeResult.rangeStats.totalBytes)
-		j.engine.importedKVCount.Add(j.writeResult.rangeStats.count)
+		// when the write is skipped because range is empty
+		if j.writeResult != nil {
+			j.engine.importedKVSize.Add(j.writeResult.rangeStats.totalBytes)
+			j.engine.importedKVCount.Add(j.writeResult.rangeStats.count)
+		}
+
 		j.engine.finishedRanges.add(j.keyRange)
 		if j.metrics != nil {
 			j.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).
@@ -364,7 +372,7 @@ func (j *regionJob) ingest(
 			if common.IsContextCanceledError(err) {
 				return err
 			}
-			log.FromContext(ctx).Warn("doIngest needRescan",
+			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
 			continue
@@ -376,12 +384,16 @@ func (j *regionJob) ingest(
 		if !canContinue {
 			log.FromContext(ctx).Warn("meet error and handle the job later",
 				zap.Stringer("job stage", j.stage),
-				logutil.Region(j.region.Region), logutil.Key("start", j.keyRange.start),
+				logutil.ShortError(j.lastRetryableErr),
+				logutil.Region(j.region.Region),
+				logutil.Key("start", j.keyRange.start),
 				logutil.Key("end", j.keyRange.end))
 			return nil
 		}
 		log.FromContext(ctx).Warn("meet error and will doIngest region, again",
-			logutil.Region(j.region.Region), logutil.Key("start", j.keyRange.start),
+			logutil.ShortError(j.lastRetryableErr),
+			logutil.Region(j.region.Region),
+			logutil.Key("start", j.keyRange.start),
 			logutil.Key("end", j.keyRange.end))
 	}
 	return nil
@@ -424,6 +436,8 @@ func (j *regionJob) fixIngestError(
 	var err error
 	switch errPb := resp.GetError(); {
 	case errPb.NotLeader != nil:
+		j.lastRetryableErr = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
+
 		if newLeader := errPb.GetNotLeader().GetLeader(); newLeader != nil {
 			newRegion = &split.RegionInfo{
 				Leader: newLeader,
@@ -438,6 +452,8 @@ func (j *regionJob) fixIngestError(
 		j.region = newRegion
 		return true, nil
 	case errPb.EpochNotMatch != nil:
+		j.lastRetryableErr = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
+
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
 			for _, r := range currentRegions {
@@ -470,6 +486,8 @@ func (j *regionJob) fixIngestError(
 		j.convertStageTo(needRescan)
 		return false, nil
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
+		j.lastRetryableErr = common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
+
 		newRegion, err = getRegion()
 		if err != nil {
 			return false, errors.Trace(err)
@@ -478,10 +496,16 @@ func (j *regionJob) fixIngestError(
 		j.convertStageTo(regionScanned)
 		return false, nil
 	case errPb.ServerIsBusy != nil:
+		j.lastRetryableErr = common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
+
 		return false, nil
 	case errPb.RegionNotFound != nil:
+		j.lastRetryableErr = common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
+
 		return false, nil
 	case errPb.ReadIndexNotReady != nil:
+		j.lastRetryableErr = common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
+
 		// this error happens when this region is splitting, the error might be:
 		//   read index not ready, reason can not read index due to split, region 64037
 		// we have paused schedule, but it's temporary,
@@ -494,6 +518,7 @@ func (j *regionJob) fixIngestError(
 		return false, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 	}
 	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
+	j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
 	j.convertStageTo(regionScanned)
 	return false, nil
 }
@@ -527,7 +552,7 @@ func (j *regionJob) doIngest(
 		end := mathutil.Min((i+1)*batch, len(j.writeResult.sstMeta))
 		ingestMetas := j.writeResult.sstMeta[start:end]
 
-		log.FromContext(ctx).Debug("doIngest meta", zap.Reflect("meta", ingestMetas))
+		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 
 		failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
 			// only inject the error once

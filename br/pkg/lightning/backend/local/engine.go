@@ -984,7 +984,12 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger)
 }
 
+// getFirstAndLastKey reads the first and last key in range [lowerBound, upperBound).
+// empty upperBound means unbounded.
 func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+	if len(upperBound) == 0 {
+		upperBound = nil
+	}
 	opt := &pebble.IterOptions{
 		LowerBound: lowerBound,
 		UpperBound: upperBound,

@@ -65,7 +65,6 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
@@ -84,6 +83,7 @@ const (
 	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
 	maxWriteAndIngestRetryTimes = 30
+	maxRetryBackoffSecond       = 30
 	maxRetryBackoffTime         = 30 * time.Second
 
 	gRPCKeepAliveTime    = 10 * time.Minute
@@ -965,88 +965,6 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	return ranges, nil
 }
 
-func (local *local) writeAndIngestByRange(
-	ctx context.Context,
-	engine *Engine,
-	start, end []byte,
-	regionSplitSize int64,
-	regionSplitKeys int64,
-) error {
-	pairStart, pairEnd, err := engine.getFirstAndLastKey(start, end)
-	if err != nil {
-		return err
-	}
-	if pairStart == nil {
-		log.FromContext(ctx).Info("There is no pairs in iterator",
-			logutil.Key("start", start),
-			logutil.Key("end", end))
-		engine.finishedRanges.add(Range{start: start, end: end})
-		return nil
-	}
-
-	var regions []*split.RegionInfo
-
-ScanWriteIngest:
-	for retry := 0; retry < maxRetryTimes; {
-		if retry != 0 {
-			select {
-			case <-time.After(time.Second):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		startKey := codec.EncodeBytes([]byte{}, pairStart)
-		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
-		regions, err = split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
-		if err != nil || len(regions) == 0 {
-			log.FromContext(ctx).Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
-				logutil.Key("startKey", startKey), logutil.Key("endKey", endKey), zap.Int("retry", retry))
-			retry++
-			continue ScanWriteIngest
-		}
-
-		for _, region := range regions {
-			log.FromContext(ctx).Debug("get region", zap.Int("retry", retry), zap.Binary("startKey", startKey),
-				zap.Binary("endKey", endKey), zap.Uint64("id", region.Region.GetId()),
-				zap.Stringer("epoch", region.Region.GetRegionEpoch()), zap.Binary("start", region.Region.GetStartKey()),
-				zap.Binary("end", region.Region.GetEndKey()), zap.Reflect("peers", region.Region.GetPeers()))
-
-			jobRange := intersectRange(region.Region, Range{start: start, end: end})
-			// TODO: here
-			job := &regionJob{
-				keyRange:        jobRange,
-				region:          region,
-				stage:           regionScanned,
-				engine:          engine,
-				regionSplitSize: regionSplitSize,
-				regionSplitKeys: regionSplitKeys,
-				metrics:         local.metrics,
-			}
-			w := local.ingestConcurrency.Apply()
-			err = local.writeAndIngestPairs(ctx, job)
-			local.ingestConcurrency.Recycle(w)
-			if err != nil {
-				if !local.isRetryableImportTiKVError(err) {
-					return err
-				}
-				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
-				// if we have at least succeeded one region, retry without increasing the retry count
-				if bytes.Compare(regionStart, pairStart) > 0 {
-					pairStart = regionStart
-				} else {
-					retry++
-				}
-
-				continue ScanWriteIngest
-			}
-		}
-
-		return err
-	}
-
-	return err
-}
-
 func (local *local) generateRegionJob(
 	ctx context.Context,
 	jobCh chan<- *regionJob,
@@ -1055,6 +973,7 @@ func (local *local) generateRegionJob(
 	ranges []Range,
 	regionSplitSize, regionSplitKeys int64,
 ) error {
+	log.FromContext(ctx).Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
 	for _, r := range ranges {
 		start, end := r.start, r.end
 		pairStart, pairEnd, err := engine.getFirstAndLastKey(start, end)
@@ -1112,6 +1031,9 @@ func (local *local) generateRegionJob(
 }
 
 // startWorker creates a worker that reads from the job channel and processes.
+// startWorker will return nil if it's expected to stop, which means the context
+// is canceled or channel is closed. It will return not nil error when it actively
+// stops.
 func (local *local) startWorker(
 	ctx context.Context,
 	jobCh chan *regionJob,
@@ -1125,16 +1047,43 @@ func (local *local) startWorker(
 			if !ok {
 				return nil
 			}
+
+			now := time.Now()
+			if now.Before(job.waitUntil) {
+				duration := job.waitUntil.Sub(now)
+				log.FromContext(ctx).Debug("need to wait before processing this job",
+					zap.Duration("wait", duration))
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(duration):
+				}
+			}
+
 			err := local.writeAndIngestPairs(ctx, job)
 			if err != nil {
 				return err
 			}
+
 			switch job.stage {
 			case regionScanned, wrote:
-				log.FromContext(ctx).Info("retry write and ingest kv pairs",
+				job.retryCount++
+				if job.retryCount > maxWriteAndIngestRetryTimes {
+					return job.lastRetryableErr
+				}
+				// max retry backoff time: 2+4+8+16+30*26=810s
+				sleepSecond := math.Pow(2, float64(job.retryCount))
+				if sleepSecond > maxRetryBackoffSecond {
+					sleepSecond = maxRetryBackoffSecond
+				}
+				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
+				log.FromContext(ctx).Info("put job back to jobCh to retry later",
 					logutil.Key("startKey", job.keyRange.start),
-					logutil.Key("endKey", job.keyRange.end))
-				// TODO: update least sleep time and retry counter
+					logutil.Key("endKey", job.keyRange.end),
+					zap.Stringer("stage", job.stage),
+					zap.Int("retryCount", job.retryCount),
+					zap.Time("waitUntil", job.waitUntil))
+
 				jobCh <- job
 			case ingested, needRescan:
 				jobWg.Done()
@@ -1174,6 +1123,35 @@ func (local *local) writeAndIngestPairs(
 	ctx context.Context,
 	job *regionJob,
 ) error {
+	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
+		failpoint.Return(
+			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
+	})
+	if local.checkTiKVAvaliable {
+		for _, peer := range job.region.Region.GetPeers() {
+			var e error
+			for i := 0; i < maxRetryTimes; i++ {
+				store, err := local.pdCtl.GetStoreInfo(ctx, peer.StoreId)
+				if err != nil {
+					e = err
+					continue
+				}
+				if store.Status.Capacity > 0 {
+					// The available disk percent of TiKV
+					ratio := store.Status.Available * 100 / store.Status.Capacity
+					if ratio < 10 {
+						return errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d",
+							store.Store.Address, store.Status.Available, store.Status.Capacity)
+					}
+				}
+				break
+			}
+			if e != nil {
+				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(e))
+			}
+		}
+	}
+
 	err := job.writeToTiKV(ctx,
 		local.importClientFactory,
 		local.batchWriteKVPairs,
@@ -1185,6 +1163,7 @@ func (local *local) writeAndIngestPairs(
 		}
 		log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
 			log.ShortError(err), zap.Stringer("job stage", job.stage))
+		job.lastRetryableErr = err
 		return nil
 	}
 
@@ -1201,75 +1180,10 @@ func (local *local) writeAndIngestPairs(
 		}
 		log.FromContext(ctx).Warn("meet retryable error when ingesting",
 			log.ShortError(err), zap.Stringer("job stage", job.stage))
+		job.lastRetryableErr = err
 		return nil
 	}
 	return nil
-}
-
-// TODO: not used
-func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, ranges []Range, regionSplitSize int64, regionSplitKeys int64) error {
-	log.FromContext(ctx).Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
-
-	var allErrLock sync.Mutex
-	var allErr error
-	var wg sync.WaitGroup
-	metErr := atomic.NewBool(false)
-
-	for _, r := range ranges {
-		startKey := r.start
-		endKey := r.end
-		w := local.rangeConcurrency.Apply()
-		// if meet error here, skip try more here to allow fail fast.
-		if metErr.Load() {
-			local.rangeConcurrency.Recycle(w)
-			break
-		}
-		wg.Add(1)
-		go func(w *worker.Worker) {
-			defer func() {
-				local.rangeConcurrency.Recycle(w)
-				wg.Done()
-			}()
-			var err error
-			// max retry backoff time: 2+4+8+16+30*26=810s
-			backOffTime := time.Second
-			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
-				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
-				if err == nil || common.IsContextCanceledError(err) {
-					return
-				}
-				if !local.isRetryableImportTiKVError(err) {
-					break
-				}
-				log.FromContext(ctx).Warn("write and ingest by range failed",
-					zap.Int("retry time", i+1), log.ShortError(err))
-				backOffTime *= 2
-				if backOffTime > maxRetryBackoffTime {
-					backOffTime = maxRetryBackoffTime
-				}
-				select {
-				case <-time.After(backOffTime):
-				case <-ctx.Done():
-					return
-				}
-			}
-
-			allErrLock.Lock()
-			allErr = multierr.Append(allErr, err)
-			allErrLock.Unlock()
-			if err != nil {
-				metErr.Store(true)
-			}
-		}(w)
-	}
-
-	// wait for all sub tasks finish to avoid panic. if we return on the first error,
-	// the outer tasks may close the pebble db but some sub tasks still read from the db
-	wg.Wait()
-	if allErr == nil {
-		return ctx.Err()
-	}
-	return allErr
 }
 
 func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
@@ -1374,12 +1288,17 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			regionSplitKeys,
 		)
 		if err != nil {
-			// TODO: filter IsContextCanceledError? read worker error?
+			// the context is derived from error group, we should return the real error
+			if common.IsContextCanceledError(err) {
+				return group.Wait()
+			}
 			return err
 		}
+		// TODO: check if worker all exited so no one will process the job
 		jobWg.Wait()
 	}
 
+	close(jobCh)
 	log.FromContext(ctx).Info("import engine success", zap.Stringer("uuid", engineUUID),
 		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
 		zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
