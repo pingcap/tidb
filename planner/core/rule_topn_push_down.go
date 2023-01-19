@@ -82,20 +82,6 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 		return ls.children[0].pushDownTopN(topN, opt)
 	}
 	// If a TopN is pushed down, this sort is useless.
-	if projection, ok := ls.children[0].(*LogicalProjection); ok {
-		// If the proj below sort contains a column in topN.ByItems, proj will prevent the optimizer from pushing topN down.
-		for _, by := range topN.ByItems {
-			cols := expression.ExtractColumns(by.Expr)
-			for _, col := range cols {
-				if projection.Schema().Contains(col) {
-					for i, child := range projection.Children() {
-						projection.Children()[i] = child.pushDownTopN(nil, opt)
-					}
-					return topN.setChild(projection, opt)
-				}
-			}
-		}
-	}
 	return ls.children[0].pushDownTopN(topN, opt)
 }
 
@@ -148,6 +134,17 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN, opt *logicalOptimize
 			switch topN.ByItems[i].Expr.(type) {
 			case *expression.Constant, *expression.CorrelatedColumn:
 				topN.ByItems = append(topN.ByItems[:i], topN.ByItems[i+1:]...)
+			}
+		}
+
+		// if the projection contains a column in topN.ByItems, projection will prevent the optimizer from pushing topN down.
+		for _, by := range topN.ByItems {
+			cols := expression.ExtractColumns(by.Expr)
+			for _, col := range cols {
+				if p.Schema().Contains(col) {
+					p.children[0] = p.children[0].pushDownTopN(nil, opt)
+					return topN.setChild(p, opt)
+				}
 			}
 		}
 	}
