@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tikv/client-go/v2/tikv"
-
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -32,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
