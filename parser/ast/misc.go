@@ -2487,7 +2487,7 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("PAUSE ")
 		ctx.WritePlain(strings.ToUpper(n.TaskType))
 		if n.Force {
-			ctx.WriteKeyWord("FORCE")
+			ctx.WriteKeyWord(" FORCE")
 		}
 	case AdminResume:
 		ctx.WriteKeyWord("RESUME ")

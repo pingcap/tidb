@@ -7142,3 +7142,26 @@ func TestTTLTableOption(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestAdminPauseResumeOption(t *testing.T) {
+	table := []testCase{
+		{"admin pause ddl", true, "ADMIN PAUSE DDL"},
+		{"admin pause ddl force", true, "ADMIN PAUSE DDL FORCE"},
+		{"admin pause abc", true, "ADMIN PAUSE ABC"},
+		{"admin resume ddl", true, "ADMIN RESUME DDL"},
+		{"admin resume ttl", true, "ADMIN RESUME TTL"},
+		{"admin pause ttl", true, "ADMIN PAUSE TTL"},
+		{"admin PAUSE ttl force", true, "ADMIN PAUSE TTL FORCE"},
+		{"admin pause backgroundTask", true, "ADMIN PAUSE BACKGROUNDTASK"},
+		{"admin pause backgroundTask force", true, "ADMIN PAUSE BACKGROUNDTASK FORCE"},
+		{"admin resume backup", true, "ADMIN RESUME BACKUP"},
+		{"admin pause analyzing", true, "ADMIN PAUSE ANALYZING"},
+		{"admin pause analyzing force", true, "ADMIN PAUSE ANALYZING FORCE"},
+		{"admin resume analyzing", true, "ADMIN RESUME ANALYZING"},
+		{"admin pause checksum", true, "ADMIN PAUSE CHECKSUM"},
+		{"admin pause checksum force", true, "ADMIN PAUSE CHECKSUM FORCE"},
+		{"admin resume checksum", true, "ADMIN RESUME CHECKSUM"},
+	}
+
+	RunTest(t, table, false)
+}
