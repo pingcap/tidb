@@ -1257,6 +1257,7 @@ func TestShowStateFail(t *testing.T) {
 			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
 				tk.Session().EnableSandBoxMode()
 			},
+			showErr: errno.ErrCannotMigrateSession,
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.Session().DisableSandBoxMode()
 			},
