@@ -42,6 +42,13 @@ type TaskGroup struct {
 	}
 }
 
+// NewTaskGroup is to create a new task group
+func NewTaskGroup() *TaskGroup {
+	return &TaskGroup{
+		startTime: time.Now(),
+	}
+}
+
 // TaskContext is the context of a task
 type TaskContext struct {
 	tg *TaskGroup
@@ -49,13 +56,6 @@ type TaskContext struct {
 
 	lastCheck time.Duration
 	next      *TaskContext
-}
-
-// NewTaskGroup is to create a new task group
-func NewTaskGroup() *TaskGroup {
-	return &TaskGroup{
-		startTime: time.Now(),
-	}
 }
 
 func fromContext(ctx context.Context) *TaskContext {
