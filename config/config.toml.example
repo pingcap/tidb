@@ -119,13 +119,19 @@ disaggregated-tiflash = false
 
 # autoscaler-type indicates which type of AutoScaler will be used. Possible values are: mock, aws, gcp.
 # Only meaningful when disaggregated-tiflash is true
-# autoscaler-type = "aws"
+autoscaler-type = "aws"
 
 # autoscaler-addr is the host of AutoScaler, Only meaningful when disaggregated-tiflash is true.
-# autoscaler-addr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081"
+autoscaler-addr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081"
+
+# cluster-name is the name of cluster. Only meaningfule for Decicated Tier.
+cluster-name = ""
 
 # is-tiflashcompute-fixed-pool controls whether autoscaler use fixed shared pool(free user) or not.
-# is-tiflashcompute-fixed-pool: false
+is-tiflashcompute-fixed-pool = false
+
+# skip-gc-drop-table is used to control whether to skip keyspace gc drop table range in gc worker.
+skip-gc-drop-table = true
 
 [log]
 # Log level: debug, info, warn, error, fatal.

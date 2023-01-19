@@ -15,6 +15,7 @@
 package config
 
 import (
+	"reflect"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -94,6 +95,8 @@ const (
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
+	// ConfigKeyspaceFieldName is the struct field name Config.KeyspaceName.
+	ConfigKeyspaceFieldName = "KeyspaceName"
 )
 
 // Valid config maps
@@ -283,17 +286,18 @@ type Config struct {
 	OOMUseTmpStorage bool `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 
 	// These items are deprecated because they are turned into instance system variables.
-	CheckMb4ValueInUTF8          AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	EnableCollectExecutionInfo   bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
-	Plugin                       Plugin     `toml:"plugin" json:"plugin"`
-	MaxServerConnections         uint32     `toml:"max-server-connections" json:"max-server-connections"`
-	RunDDL                       bool       `toml:"run-ddl" json:"run-ddl"`
+	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	EnableCollectExecutionInfo bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
+	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
+	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
 
 	// These config is related to disaggregated-tiflash mode.
 	DisaggregatedTiFlash         bool   `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
 	TiFlashComputeAutoScalerType string `toml:"autoscaler-type" json:"autoscaler-type"`
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
+	ClusterName string `toml:"cluster-name" json:"cluster-name"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
@@ -1008,6 +1012,7 @@ var defaultConf = Config{
 	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
 	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
+	ClusterName: "",
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 }
@@ -1036,6 +1041,34 @@ func StoreGlobalConfig(config *Config) {
 	defer TikvConfigLock.Unlock()
 	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
+}
+
+// GetClusterName() returns clusterName, which is KeyspaceName or ClusterName.
+func GetClusterName() (string, error) {
+	c := GetGlobalConfig()
+	var keyspaceName string
+	clusterName := c.ClusterName
+
+	// TODO: Delete using reflect when keyspace code is merged.
+	v := reflect.ValueOf(c).FieldByName(ConfigKeyspaceFieldName)
+	if v.IsValid() {
+		if v.Kind() != reflect.String {
+			terror.MustNil(errors.New("config.KeyspaceName should be String type"))
+		}
+		keyspaceName = v.String()
+	}
+	if keyspaceName != "" && clusterName != "" {
+		return "", errors.Errorf("config.KeyspaceName(%s) and config.ClusterName(%s) are not empty both", keyspaceName, clusterName)
+	}
+	if keyspaceName == "" && clusterName == "" {
+		return "", errors.Errorf("config.KeyspaceName and config.ClusterName are both empty")
+	}
+
+	res := keyspaceName
+	if res == "" {
+		res = clusterName
+	}
+	return res, nil
 }
 
 // removedConfig contains items that are no longer supported.

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/config"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -205,17 +206,19 @@ func main() {
 	terror.MustNil(err)
 
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		clusterID, err := config.GetClusterName()
+		terror.MustNil(err)
+
 		err = tiflashcompute.InitGlobalTopoFetcher(
 			config.GetGlobalConfig().TiFlashComputeAutoScalerType,
 			config.GetGlobalConfig().TiFlashComputeAutoScalerAddr,
-			// todo: fix
-			"mock_cluste_id",
+			clusterID,
 			config.GetGlobalConfig().IsTiFlashComputeFixedPool)
-			terror.MustNil(err)
+		terror.MustNil(err)
 	}
 
-		// Enable failpoints in tikv/client-go if the test API is enabled.
-		// It appears in the main function to be set before any use of client-go to prevent data race.
+	// Enable failpoints in tikv/client-go if the test API is enabled.
+	// It appears in the main function to be set before any use of client-go to prevent data race.
 	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
 		warnMsg := "tikv/client-go failpoint is enabled, this should NOT happen in the production environment"
 		logutil.BgLogger().Warn(warnMsg)

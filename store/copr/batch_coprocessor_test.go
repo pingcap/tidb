@@ -15,16 +15,21 @@
 package copr
 
 import (
+	"context"
 	"math/rand"
 	"sort"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 // StoreID: [1, storeCount]
@@ -204,4 +209,21 @@ func TestConsistentHash(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestTopoFetcherBackoff(t *testing.T) {
+	fetchTopoBo := backoff.NewBackofferWithVars(context.Background(), fetchTopoMaxBackoff, nil)
+	expectErr := errors.New("Cannot find proper topo from AutoScaler")
+	var retryNum int
+	start := time.Now()
+	for {
+		retryNum++
+		if err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), expectErr); err != nil {
+			break
+		}
+		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Any("retryNum", retryNum))
+	}
+	dura := time.Since(start)
+	// fetchTopoMaxBackoff is milliseconds.
+	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
 }

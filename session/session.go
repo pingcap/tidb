@@ -3340,14 +3340,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	// if config.GetGlobalConfig().DisaggregatedTiFlash {
-	// 	// Invalid client-go tiflash_compute store cache if necessary.
-	// 	err = dom.WatchTiFlashComputeNodeChange()
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// }
-
 	if err = extensionimpl.Bootstrap(context.Background(), dom); err != nil {
 		return nil, err
 	}
