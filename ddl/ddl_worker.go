@@ -40,6 +40,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -1358,6 +1359,22 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
+			}
+		}
+	case model.ActionReorganizePartition:
+		diff.TableID = job.TableID
+		if len(job.CtxVars) > 0 {
+			if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
+				if addedIDs, ok := job.CtxVars[1].([]int64); ok {
+					// to use AffectedOpts we need both new and old to have the same length
+					maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
+					// Also initialize them to 0!
+					oldIDs := make([]int64, maxParts)
+					copy(oldIDs, droppedIDs)
+					newIDs := make([]int64, maxParts)
+					copy(newIDs, addedIDs)
+					diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+				}
 			}
 		}
 	case model.ActionCreateTable:
