@@ -1134,7 +1134,7 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	resourceControlEnabled := GetSysVar(TiDBEnableResourceControl)
 
-	// Default true
+	// Default false
 	require.Equal(t, resourceControlEnabled.Value, Off)
 	require.Equal(t, enable, false)
 
