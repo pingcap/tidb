@@ -16,6 +16,7 @@ package taskgroup
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -140,11 +141,13 @@ func Scheduler() {
 	tg := NewTaskGroup()
 	ctx = NewContext(context.Background(), tg)
 	lastTime := time.Now()
-	const rate = 10
+
 	capacity := 200 * time.Millisecond
+	timeSliceSize := 20 * time.Millisecond
 	tokens := capacity
 	for {
 		cp := <-s.ch
+		rate := runtime.GOMAXPROCS(0) // it can be changed dynamically
 		tg := cp.tg
 		tg.mu.Lock()
 		if tg.mu.tasks == nil {
@@ -174,7 +177,7 @@ func Scheduler() {
 		lastTime = now
 
 		// refill tokens
-		tokens += rate * elapse
+		tokens += time.Duration(rate) * elapse
 		if tokens > capacity {
 			tokens = capacity
 		}
@@ -191,13 +194,13 @@ func Scheduler() {
 		// So we reach a conclusion that the smaller the start running time of a task group, the less CPU resource it uses, thus the higher priority.
 
 		for !s.pq.Empty() {
-			if tokens < 200*time.Millisecond {
+			if tokens < timeSliceSize {
 				// Not enough tokens, rate limiter take effect.
 				break
 			}
 
 			tg := s.pq.Dequeue()
-			tokens -= 200 * time.Millisecond
+			tokens -= timeSliceSize
 			tg.startTime = now
 			tg.cpuTime.Store(time.Duration(0))
 			tg.mu.Lock()
