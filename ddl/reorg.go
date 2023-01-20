@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
