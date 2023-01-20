@@ -1347,6 +1347,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		select {
 		case <-workerCtx.Done():
 			return workGroup.Wait()
+		default:
 		}
 	}
 
