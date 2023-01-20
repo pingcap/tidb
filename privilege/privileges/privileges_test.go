@@ -3195,6 +3195,7 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.Equal(t, "default", tk.Session().GetSessionVars().ResourceGroupName)
 
 	// Non-default resource group.
+	rootTk.MustExec("CREATE RESOURCE GROUP rg1 WRU_PER_SEC = 999")
 	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' RESOURCE GROUP rg1`)
 	err = tk.Session().Auth(user, tokenBytes, nil)
 	require.NoError(t, err)

@@ -1555,6 +1555,13 @@ func TestAuthTokenPlugin(t *testing.T) {
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
 	require.NoError(t, err)
 
+	// login succeeds even if the password expires now
+	tk.MustExec("ALTER USER auth_session_token PASSWORD EXPIRE")
+	err = cc.openSessionAndDoAuth([]byte{}, mysql.AuthNativePassword)
+	require.ErrorContains(t, err, "Your password has expired")
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	require.NoError(t, err)
+
 	// wrong token should fail
 	tokenBytes[0] ^= 0xff
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
