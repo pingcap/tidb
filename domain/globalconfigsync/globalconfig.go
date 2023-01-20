@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// GlobalConfigPath as Etcd prefix
+const GlobalConfigPath = "/global/config/"
+
 // GlobalConfigSyncer is used to sync pd global config.
 type GlobalConfigSyncer struct {
 	pd       pd.Client
@@ -41,7 +44,7 @@ func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, configPath s
 	if s.pd == nil {
 		return nil
 	}
-	err := s.pd.StoreGlobalConfig(ctx, configPath, []pd.GlobalConfigItem{item})
+	err := s.pd.StoreGlobalConfig(ctx, GlobalConfigPath, []pd.GlobalConfigItem{item})
 	if err != nil {
 		return err
 	}

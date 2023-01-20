@@ -18,13 +18,16 @@ import (
 	"context"
 	"errors"
 	"math"
+	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/kvproto/pkg/resource_manager"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -36,6 +39,7 @@ type pdClient struct {
 	serviceSafePoints map[string]uint64
 	gcSafePointMu     sync.Mutex
 	globalConfig      map[string]string
+	externalTimestamp atomic.Uint64
 }
 
 func newPDClient(pd *us.MockPD) *pdClient {
@@ -58,7 +62,7 @@ func (c *pdClient) LoadGlobalConfig(ctx context.Context, configPath string) ([]p
 
 func (c *pdClient) StoreGlobalConfig(ctx context.Context, configPath string, items []pd.GlobalConfigItem) error {
 	for _, item := range items {
-		c.globalConfig[configPath+item.Name] = item.Value
+		c.globalConfig[path.Join(configPath, item.Name)] = item.Value
 	}
 	return nil
 }
@@ -182,26 +186,58 @@ func (c *pdClient) UpdateKeyspaceState(ctx context.Context, id uint32, state key
 	return nil, nil
 }
 
-func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *resource_manager.TokenBucketsRequest) ([]*resource_manager.TokenBucketResponse, error) {
+func (c *pdClient) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
 	return nil, nil
 }
 
-func (c *pdClient) ListResourceGroups(ctx context.Context) ([]*resource_manager.ResourceGroup, error) {
+func (c *pdClient) GetResourceGroup(ctx context.Context, resourceGroupName string) (*rmpb.ResourceGroup, error) {
 	return nil, nil
 }
-func (c *pdClient) GetResourceGroup(ctx context.Context, resourceGroupName string) (*resource_manager.ResourceGroup, error) {
-	return nil, nil
-}
-func (c *pdClient) AddResourceGroup(ctx context.Context, metaGroup *resource_manager.ResourceGroup) (string, error) {
+
+func (c *pdClient) AddResourceGroup(ctx context.Context, metaGroup *rmpb.ResourceGroup) (string, error) {
 	return "", nil
 }
-func (c *pdClient) ModifyResourceGroup(ctx context.Context, metaGroup *resource_manager.ResourceGroup) (string, error) {
+
+func (c *pdClient) ModifyResourceGroup(ctx context.Context, metaGroup *rmpb.ResourceGroup) (string, error) {
 	return "", nil
 }
+
 func (c *pdClient) DeleteResourceGroup(ctx context.Context, resourceGroupName string) (string, error) {
 	return "", nil
 }
 
-func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*resource_manager.ResourceGroup, error) {
+func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
 	return nil, nil
+}
+
+func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) SetExternalTimestamp(ctx context.Context, newTimestamp uint64) error {
+	p, l, err := c.GetTS(ctx)
+	if err != nil {
+		return err
+	}
+
+	currentTSO := oracle.ComposeTS(p, l)
+	if newTimestamp > currentTSO {
+		return errors.New("external timestamp is greater than global tso")
+	}
+	for {
+		externalTimestamp := c.externalTimestamp.Load()
+		if externalTimestamp > newTimestamp {
+			return errors.New("cannot decrease the external timestamp")
+		} else if externalTimestamp == newTimestamp {
+			return nil
+		}
+
+		if c.externalTimestamp.CompareAndSwap(externalTimestamp, newTimestamp) {
+			return nil
+		}
+	}
+}
+
+func (c *pdClient) GetExternalTimestamp(ctx context.Context) (uint64, error) {
+	return c.externalTimestamp.Load(), nil
 }
