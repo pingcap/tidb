@@ -610,7 +610,6 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		return errors.Trace(err)
 	}
 
-	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	dc.getReorgCtx(reorgInfo.Job.ID).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
 	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
@@ -624,7 +623,7 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 	return nil
 }
 
-func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
+func getBatchTasks(t table.PhysicalTable, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
 	batchTasks := make([]*reorgBackfillTask, 0, batch)
 	physicalTableID := reorgInfo.PhysicalTableID
 	var prefix kv.Key
@@ -654,13 +653,11 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 			endKey = prefix.PrefixNext()
 		}
 
-		//nolint:forcetypeassert
-		phyTbl := t.(table.PhysicalTable)
 		task := &reorgBackfillTask{
 			id:              i,
 			jobID:           reorgInfo.Job.ID,
 			physicalTableID: physicalTableID,
-			physicalTable:   phyTbl,
+			physicalTable:   t,
 			priority:        reorgInfo.Priority,
 			startKey:        startKey,
 			endKey:          endKey,
