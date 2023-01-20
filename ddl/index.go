@@ -882,6 +882,12 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateMerging:
+		failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
+			//nolint:forcetypeassert
+			if val.(bool) && MockDMLExecution != nil {
+				MockDMLExecution()
+			}
+		})
 		done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, true)
 		if !done {
 			return false, ver, err
