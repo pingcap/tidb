@@ -143,7 +143,7 @@ func Scheduler() {
 	lastTime := time.Now()
 
 	capacity := 400 * time.Millisecond
-	timeSliceSize := 40 * time.Millisecond
+	timeSliceSize := 60 * time.Millisecond
 	tokens := capacity
 	for {
 		cp := <-s.ch
