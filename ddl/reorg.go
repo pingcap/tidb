@@ -569,12 +569,12 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
-		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle",
+		logutil.BgLogger().Info("[ddl] get noop table range",
 			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
-			zap.Bool("isEmptyTable", isEmptyTable),
-			zap.String("endHandle", hex.EncodeToString(endHandleKey)),
-			zap.String("startHandle", hex.EncodeToString(startHandleKey)))
+			zap.String("start key", hex.EncodeToString(startHandleKey)),
+			zap.String("end key", hex.EncodeToString(endHandleKey)),
+			zap.Bool("is empty table", isEmptyTable))
 		endHandleKey = startHandleKey
 	}
 	return
@@ -710,6 +710,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 		}
 		pid = partitionIDs[0]
 		physTbl := tbl.GetPartition(pid)
+
 		start, end, err = getTableRange(ctx, d, physTbl, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
