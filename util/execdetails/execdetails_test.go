@@ -135,7 +135,7 @@ func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIteration
 		NumIterations: &NumIterations, XXX_unrecognized: nil}
 }
 
-func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, totalDmfileScannedPacks, totalDmfileScannedRows, totalDmfileSkippedPacks, totalDmfileSkippedRows, totalDmfileRoughSetIndexLoadTimeMs, totalDmfileReadTimeMs, totalCreateSnapshotTimeMs uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
+func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, totalDmfileScannedPacks, totalDmfileScannedRows, totalDmfileSkippedPacks, totalDmfileSkippedRows, totalDmfileRoughSetIndexLoadTimeMs, totalDmfileReadTimeMs, totalCreateSnapshotTimeMs uint64, totalLocalRegionNum uint64, totalRemoteRegionNum uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
 	tiflashScanContext := tipb.TiFlashScanContext{
 		TotalDmfileScannedPacks:            &totalDmfileScannedPacks,
 		TotalDmfileSkippedPacks:            &totalDmfileSkippedPacks,
@@ -144,6 +144,8 @@ func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, Nu
 		TotalDmfileRoughSetIndexLoadTimeMs: &totalDmfileRoughSetIndexLoadTimeMs,
 		TotalDmfileReadTimeMs:              &totalDmfileReadTimeMs,
 		TotalCreateSnapshotTimeMs:          &totalCreateSnapshotTimeMs,
+		TotalLocalRegionNum:                &totalLocalRegionNum,
+		TotalRemoteRegionNum:               &totalRemoteRegionNum,
 	}
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
 		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, XXX_unrecognized: nil}
@@ -208,10 +210,10 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	tableScanID := 1
 	aggID := 2
 	tableReaderID := 3
-	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 1, 8192, 0, 0, 15, 200, 40, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 0, 0, 2, 0, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 2, 12000, 1, 6000, 60, 1000, 20, "aggregation_"+strconv.Itoa(aggID)))
-	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 1, 8192, 10, 80000, 40, 2000, 30, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 1, 8192, 0, 0, 15, 200, 40, 10, 4, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 0, 0, 2, 0, 0, 0, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 2, 12000, 1, 6000, 60, 1000, 20, 5, 1, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 1, 8192, 10, 80000, 40, 2000, 30, 1, 1, "aggregation_"+strconv.Itoa(aggID)))
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 10,
 		ProcessedKeys:             10,
@@ -225,15 +227,15 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tiflash")
-	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_load_time: 15ms, total_read_time: 202ms}, total_create_snapshot_time: 40ms}", cop.String())
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_load_time: 15ms, total_read_time: 202ms}, total_create_snapshot_time: 40ms, total_local_region_num: 10, total_remote_region_num: 4}", cop.String())
 
 	copStats := cop.stats["8.8.8.8"]
 	require.NotNil(t, copStats)
 
 	copStats.SetRowNum(10)
 	copStats.Record(time.Second, 10)
-	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_load_time: 15ms, total_read_time: 200ms}, total_create_snapshot_time: 40ms}", copStats.String())
-	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:3, total_skipped_packs:11, total_scanned_rows:20192, total_skipped_rows:86000, total_rs_index_load_time: 100ms, total_read_time: 3000ms}, total_create_snapshot_time: 50ms}"
+	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_load_time: 15ms, total_read_time: 200ms}, total_create_snapshot_time: 40ms, total_local_region_num: 10, total_remote_region_num: 4}", copStats.String())
+	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:3, total_skipped_packs:11, total_scanned_rows:20192, total_skipped_rows:86000, total_rs_index_load_time: 100ms, total_read_time: 3000ms}, total_create_snapshot_time: 50ms, total_local_region_num: 6, total_remote_region_num: 2}"
 	require.Equal(t, expected, stats.GetOrCreateCopStats(aggID, "tiflash").String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
