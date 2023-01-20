@@ -937,6 +937,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		IgnoreLines:        v.IgnoreLines,
 		ColumnAssignments:  v.ColumnAssignments,
 		ColumnsAndUserVars: v.ColumnsAndUserVars,
+		OnDuplicate:        v.OnDuplicate,
 		Ctx:                b.ctx,
 	}
 	columnNames := loadDataInfo.initFieldMappings()
@@ -947,7 +948,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	}
 	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		IsLocal:      v.IsLocal,
+		FileLocRef:   v.FileLocRef,
 		OnDuplicate:  v.OnDuplicate,
 		loadDataInfo: loadDataInfo,
 	}
@@ -4219,13 +4220,13 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				continue
 			}
 			handle := kv.IntHandle(content.keys[0].GetInt64())
-			tmp, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
-			kvRanges = append(kvRanges, tmp...)
+			ranges, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
+			kvRanges = append(kvRanges, ranges...)
 		}
 	} else {
 		for _, p := range usedPartitionList {
-			tmp, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
-			kvRanges = append(kvRanges, tmp...)
+			ranges, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
+			kvRanges = append(kvRanges, ranges...)
 		}
 	}
 

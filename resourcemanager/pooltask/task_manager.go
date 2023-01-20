@@ -139,8 +139,12 @@ func (t *TaskManager[T, U, C, CT, TF]) StopTask(taskID uint64) {
 	shardID := getShardID(taskID)
 	t.task[shardID].rw.Lock()
 	defer t.task[shardID].rw.Unlock()
-	l := t.task[shardID].stats[taskID].stats
-	for e := l.Front(); e != nil; e = e.Next() {
-		e.Value.(tContainer[T, U, C, CT, TF]).task.SetStatus(StopTask)
+	// When call the StopTask, the task may have been deleted from the manager.
+	s, ok := t.task[shardID].stats[taskID]
+	if ok {
+		l := s.stats
+		for e := l.Front(); e != nil; e = e.Next() {
+			e.Value.(tContainer[T, U, C, CT, TF]).task.SetStatus(StopTask)
+		}
 	}
 }
