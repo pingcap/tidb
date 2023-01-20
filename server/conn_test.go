@@ -1484,7 +1484,7 @@ func TestAuthPlugin2(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestAuthTokenPlugin(t *testing.T) {
+func TestAuthSessionTokenPlugin(t *testing.T) {
 	// create the cert
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "test1_cert.pem")
