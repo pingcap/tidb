@@ -142,8 +142,8 @@ func Scheduler() {
 	ctx = NewContext(context.Background(), tg)
 	lastTime := time.Now()
 
-	capacity := 200 * time.Millisecond
-	timeSliceSize := 20 * time.Millisecond
+	capacity := 400 * time.Millisecond
+	timeSliceSize := 40 * time.Millisecond
 	tokens := capacity
 	for {
 		cp := <-s.ch
