@@ -75,7 +75,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -833,16 +832,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 		return errAccessDeniedNoPassword.FastGenByArgs(cc.user, host)
 	}
 
-	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host}
-	if authPlugin == mysql.AuthTiDBSessionToken {
-		if !cc.ctx.AuthWithoutVerification(userIdentity) {
-			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
-		}
-		if err = sessionstates.ValidateSessionToken(authData, cc.user); err != nil {
-			logutil.BgLogger().Warn("verify session token failed", zap.String("username", cc.user), zap.Error(err))
-			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
-		}
-	} else if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
+	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
+	if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
 		return err
 	}
 	cc.ctx.SetPort(port)

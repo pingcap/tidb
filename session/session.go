@@ -4138,6 +4138,10 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 	if len(s.lockedTables) > 0 {
 		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has locked tables")
 	}
+	// It's insecure to migrate sandBoxMode because users can fake it.
+	if s.InSandBoxMode() {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session is in sandbox mode")
+	}
 
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
 		return err
