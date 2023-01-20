@@ -81,7 +81,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.capacity.Add(size)
 	result.workers = newWorkerLoopQueue[T, U, C, CT, TF](int(size))
 	result.cond = sync.NewCond(result.lock)
-	err := resourcemanager.GlobalResourceManager.Register(result, name, component)
+	err := resourcemanager.InstanceResourceManager.Register(result, name, component)
 	if err != nil {
 		return nil, err
 	}

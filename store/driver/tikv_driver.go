@@ -94,10 +94,12 @@ func WithPDClientConfig(client config.PDClient) Option {
 
 // TrySetupGlobalResourceController tries to setup global resource controller.
 func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv.Storage) error {
-	var store *tikvStore
-	var ok = false
+	var (
+		store *tikvStore
+		ok    bool
+	)
 	if store, ok = s.(*tikvStore); !ok {
-		return errors.New("invalid storage")
+		return errors.New("cannot setup up resource controller, should use tikv storage")
 	}
 
 	control, err := rmclient.NewResourceGroupController(serverID, store.GetPDClient(), rmclient.DefaultRequestUnitConfig())

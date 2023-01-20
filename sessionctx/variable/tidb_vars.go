@@ -1271,9 +1271,9 @@ var (
 
 // Hooks functions for Cluster Resource Control.
 var (
-	// SetupGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
+	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
 	EnableGlobalResourceControlFunc func() = func() {}
-	// UnsetGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
+	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
 	DisableGlobalResourceControlFunc func() = func() {}
 )
 
