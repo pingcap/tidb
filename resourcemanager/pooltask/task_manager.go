@@ -33,23 +33,23 @@ type tContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 }
 
 type meta[T any, U any, C any, CT any, TF Context[CT]] struct {
-	stats    *list.List
-	createTS time.Time
-	origin   int32
-	running  atomic.Int32
+	stats              *list.List
+	createTS           time.Time
+	initialConcurrency int32
+	running            atomic.Int32
 }
 
 func newStats[T any, U any, C any, CT any, TF Context[CT]](concurrency int32) *meta[T, U, C, CT, TF] {
 	s := &meta[T, U, C, CT, TF]{
-		createTS: time.Now(),
-		stats:    list.New(),
-		origin:   concurrency,
+		createTS:           time.Now(),
+		stats:              list.New(),
+		initialConcurrency: concurrency,
 	}
 	return s
 }
 
 func (m *meta[T, U, C, CT, TF]) getOriginConcurrency() int32 {
-	return m.origin
+	return m.initialConcurrency
 }
 
 // TaskStatusContainer is a container that can control or watch the pool.

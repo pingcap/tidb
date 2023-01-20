@@ -48,7 +48,7 @@ func (t *TaskManager[T, U, C, CT, TF]) pauseTask() {
 func (t *TaskManager[T, U, C, CT, TF]) iter(fn func(m *meta[T, U, C, CT, TF], max time.Time) (*list.Element, bool)) (tid uint64, result *list.Element) {
 	var compareTS time.Time
 	for i := 0; i < shard; i++ {
-		isBoost := func(index int) (isBoost bool) {
+		breakFind := func(index int) (breakFind bool) {
 			t.task[i].rw.RLock()
 			defer t.task[i].rw.RUnlock()
 			for id, stats := range t.task[i].stats {
@@ -58,8 +58,8 @@ func (t *TaskManager[T, U, C, CT, TF]) iter(fn func(m *meta[T, U, C, CT, TF], ma
 					compareTS = stats.createTS
 					continue
 				}
-				newResult, isBoost := fn(stats, compareTS)
-				if isBoost {
+				newResult, pauseFind := fn(stats, compareTS)
+				if pauseFind {
 					result = newResult
 					tid = id
 					compareTS = stats.createTS
@@ -73,7 +73,7 @@ func (t *TaskManager[T, U, C, CT, TF]) iter(fn func(m *meta[T, U, C, CT, TF], ma
 			}
 			return false
 		}(shard)
-		if isBoost {
+		if breakFind {
 			break
 		}
 	}
@@ -81,7 +81,7 @@ func (t *TaskManager[T, U, C, CT, TF]) iter(fn func(m *meta[T, U, C, CT, TF], ma
 }
 
 func canPause[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, TF], max time.Time) (result *list.Element, isBreak bool) {
-	if m.origin < m.running.Load() {
+	if m.initialConcurrency < m.running.Load() {
 		box := findTask[T, U, C, CT, TF](m, RunningTask)
 		if box != nil {
 			return box, true
@@ -97,7 +97,7 @@ func canPause[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, 
 }
 
 func canBoost[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, TF], min time.Time) (result *list.Element, isBreak bool) {
-	if m.running.Load() < m.origin {
+	if m.running.Load() < m.initialConcurrency {
 		return nil, true
 	}
 	if m.createTS.After(min) {
