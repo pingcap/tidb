@@ -94,7 +94,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	var err error
 
 	session.SetSchemaLease(500 * time.Millisecond)
-	resourcemanager.GlobalResourceManager.Start()
+	resourcemanager.InstanceResourceManager.Start()
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
@@ -134,7 +134,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
 		view.Stop()
-		resourcemanager.GlobalResourceManager.Stop()
+		resourcemanager.InstanceResourceManager.Stop()
 	})
 	return store, dom
 }
