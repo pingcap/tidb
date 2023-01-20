@@ -9,6 +9,7 @@ go_library(
         "//config",
         "//domain",
         "//kv",
+        "//resourcemanager",
         "//session",
         "//sessionctx/variable",
         "//store/driver",
