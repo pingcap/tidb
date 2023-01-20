@@ -101,7 +101,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 		output: &rmpb.ResourceGroup{
 			Name: groupName,
 			Mode: rmpb.GroupMode_RawMode,
-			ResourceSettings: &rmpb.GroupResourceSettings{
+			RawResourceSettings: &rmpb.GroupRawResourceSettings{
 				Cpu:     &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 8000}},
 				IoRead:  &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 3000000000}},
 				IoWrite: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 1500000000}},
@@ -119,7 +119,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 		output: &rmpb.ResourceGroup{
 			Name: groupName,
 			Mode: rmpb.GroupMode_RawMode,
-			ResourceSettings: &rmpb.GroupResourceSettings{
+			RawResourceSettings: &rmpb.GroupRawResourceSettings{
 				Cpu:     &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 8000}},
 				IoRead:  &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 3145728000}},
 				IoWrite: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 3145728000}},
