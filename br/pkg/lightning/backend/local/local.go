@@ -1340,6 +1340,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			case jobCh <- job:
 			}
 		}
+		pendingJobs = nil
 		// all jobs are received by workers and worker will always call jobWg.Done() after processing
 		// no need to check workerCtx.Done() here.
 		jobWg.Wait()
