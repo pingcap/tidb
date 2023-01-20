@@ -241,4 +241,3 @@ func (c *pdClient) SetExternalTimestamp(ctx context.Context, newTimestamp uint64
 func (c *pdClient) GetExternalTimestamp(ctx context.Context) (uint64, error) {
 	return c.externalTimestamp.Load(), nil
 }
-

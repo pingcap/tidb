@@ -17,7 +17,6 @@ go_library(
     deps = [
         "//config",
         "//ddl/placement",
-	"//ddl/resourcegroup",
         "//domain/infosync",
         "//errno",
         "//kv",
