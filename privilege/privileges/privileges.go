@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -544,7 +545,13 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
-	if record.AuthPlugin == mysql.AuthTiDBAuthToken {
+	// If the user uses session token to log in, skip checking record.AuthPlugin.
+	if user.AuthPlugin == mysql.AuthTiDBSessionToken {
+		if err = sessionstates.ValidateSessionToken(authentication, user.Username); err != nil {
+			logutil.BgLogger().Warn("verify session token failed", zap.String("username", user.Username), zap.Error(err))
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+	} else if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		if len(authentication) == 0 {
 			logutil.BgLogger().Error("empty authentication")
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
@@ -617,7 +624,11 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	} else {
 		info.ResourceGroupName = record.ResourceGroup
 	}
-	info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
+	// Skip checking password expiration if the session is migrated from another session.
+	// Otherwise, the user cannot log in or execute statements after migration.
+	if user.AuthPlugin != mysql.AuthTiDBSessionToken {
+		info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
+	}
 	return
 }
 
