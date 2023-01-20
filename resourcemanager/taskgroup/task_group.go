@@ -31,6 +31,8 @@ type key int
 // Key is the key of TaskContext
 const Key key = 0
 
+const timeSliceSize = 60 * time.Millisecond
+
 // TaskGroup is a group of tasks
 type TaskGroup struct {
 	cpuTime   atomicutil.Duration
@@ -104,7 +106,7 @@ func CheckPoint(ctx context.Context) {
 		elapse := runningTime - tc.lastCheck
 		tc.lastCheck = runningTime
 		cpuTime := tg.cpuTime.Add(elapse)
-		if cpuTime < 20*time.Millisecond {
+		if cpuTime < timeSliceSize {
 			return
 		}
 	}
@@ -143,7 +145,6 @@ func Scheduler() {
 	lastTime := time.Now()
 
 	capacity := 400 * time.Millisecond
-	timeSliceSize := 60 * time.Millisecond
 	tokens := capacity
 	for {
 		cp := <-s.ch
