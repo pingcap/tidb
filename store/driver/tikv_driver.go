@@ -92,7 +92,7 @@ func WithPDClientConfig(client config.PDClient) Option {
 	}
 }
 
-// TrySetupGlobalResourceController
+// TrySetupGlobalResourceController tries to setup global resource controller.
 func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv.Storage) error {
 	var store *tikvStore
 	var ok = false

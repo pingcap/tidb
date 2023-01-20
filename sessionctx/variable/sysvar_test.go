@@ -987,6 +987,7 @@ func TestTiDBServerMemoryLimitSessMinSize(t *testing.T) {
 	serverMemroyLimitSessMinSize := GetSysVar(TiDBServerMemoryLimitSessMinSize)
 	// Check default value
 	require.Equal(t, serverMemroyLimitSessMinSize.Value, strconv.FormatInt(DefTiDBServerMemoryLimitSessMinSize, 10))
+
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitSessMinSize, "123456")
 	require.NoError(t, err)
 	val, err = mock.GetGlobalSysVar(TiDBServerMemoryLimitSessMinSize)
