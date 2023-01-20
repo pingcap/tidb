@@ -37,6 +37,9 @@ func (do *Domain) initDomainSysVars() {
 
 	variable.SetExternalTimestamp = do.setExternalTimestamp
 	variable.GetExternalTimestamp = do.getExternalTimestamp
+
+	setGlobalResourceControlFunc := do.setGlobalResourceControl
+	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -65,6 +68,15 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) {
 		}
 		variable.EnableTSOFollowerProxy.Store(val)
 	}
+}
+
+func (do *Domain) setGlobalResourceControl(enable bool) {
+	if enable {
+		variable.EnableGlobalResourceControlFunc()
+	} else {
+		variable.DisableGlobalResourceControlFunc()
+	}
+	logutil.BgLogger().Info("set resource control", zap.Bool("enable", enable))
 }
 
 // updatePDClient is used to set the dynamic option into the PD client.

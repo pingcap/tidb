@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/util/cpu"
 )
 
-// GlobalResourceManager is a global resource manager
-var GlobalResourceManager = NewResourceManger()
+// InstanceResourceManager is a local instance resource manager
+var InstanceResourceManager = NewResourceManger()
 
 // RandomName is to get a random name for register pool. It is just for test.
 func RandomName() string {
