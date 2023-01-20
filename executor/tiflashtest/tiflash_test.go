@@ -1259,6 +1259,9 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = true
 	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
 	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "", "", false)
 	require.NoError(t, err)
 
@@ -1276,10 +1279,10 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	err = tk.ExecToErr("select * from t;")
 	require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = false
-	})
-	tk.MustQuery("select * from t;").Check(testkit.Rows())
+	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "", "", false)
+	require.NoError(t, err)
+	err = tk.ExecToErr("select * from t;")
+	require.Contains(t, err.Error(), "[util:1815]Internal : get tiflash_compute topology failed")
 }
 
 func TestDisaggregatedTiFlashQuery(t *testing.T) {
