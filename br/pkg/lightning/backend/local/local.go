@@ -1080,7 +1080,11 @@ func (local *local) startWorker(
 					zap.Int("retryCount", job.retryCount),
 					zap.Time("waitUntil", job.waitUntil))
 
-				jobCh <- job
+				select {
+				case <-ctx.Done():
+					return nil
+				case jobCh <- job:
+				}
 			case ingested, needRescan:
 				jobWg.Done()
 			}
@@ -1281,7 +1285,6 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			}
 			return err
 		}
-		// TODO: check if worker all exited so no one will process the job
 		jobWg.Wait()
 	}
 
