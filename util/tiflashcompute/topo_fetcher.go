@@ -23,10 +23,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -70,9 +70,10 @@ const (
 )
 
 const (
-	httpGetFailedErrMsg = "get tiflash_compute topology failed"
+	httpGetFailedErrMsg     = "get tiflash_compute topology failed"
 	parseTopoTSFailedErrMsg = "parse timestamp of tiflash_compute topology failed"
 )
+
 var errTopoFetcher = dbterror.ClassUtil.NewStd(errno.ErrInternal)
 
 // TopoFetcher is interface for fetching topo from AutoScaler.
