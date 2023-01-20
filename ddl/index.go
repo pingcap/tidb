@@ -1329,7 +1329,7 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
 	s := session.NewSession(w.backfillCtx.sessCtx)
 	return s.RunInTxn(func(se *session.Session) error {
-		txn, err := se.Txn(true)
+		txn, err := se.Txn()
 		if err != nil {
 			return errors.Trace(err)
 		}

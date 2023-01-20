@@ -550,7 +550,7 @@ func AddBackfillJobs(s *session.Session, backfillJobs []*BackfillJob) error {
 	label := fmt.Sprintf("add_%s_job", BackfillTable)
 	// Do runInTxn to get StartTS.
 	return s.RunInTxn(func(se *session.Session) error {
-		txn, err := se.Txn(true)
+		txn, err := se.Txn()
 		if err != nil {
 			return errors.Trace(err)
 		}

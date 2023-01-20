@@ -55,8 +55,8 @@ func (s *Session) Commit() error {
 }
 
 // Txn returns the current transaction.
-func (s *Session) Txn(active bool) (kv.Transaction, error) {
-	return s.Context.Txn(active)
+func (s *Session) Txn() (kv.Transaction, error) {
+	return s.Context.Txn(true)
 }
 
 // Rollback aborts the transaction.

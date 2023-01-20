@@ -294,7 +294,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.Equal(t, expectJob, bJobs[0])
 	previousTime, err := ddl.GetOracleTimeWithStartTS(se)
 	require.EqualError(t, err, "[kv:8024]invalid transaction")
-	readInTxn(se, func(sessionctx.Context) {
+	readInTxn(se.Session(), func(sessionctx.Context) {
 		previousTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
@@ -309,7 +309,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	expectJob.InstanceID = uuid
 	equalBackfillJob(t, expectJob, bJobs[0], ddl.GetLeaseGoTime(previousTime, instanceLease))
 	var currTime time.Time
-	readInTxn(se, func(sessionctx.Context) {
+	readInTxn(se.Session(), func(sessionctx.Context) {
 		currTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
@@ -363,7 +363,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// ID     jobID     eleID
 	// ------------------------
 	// 0      jobID2     eleID2
-	readInTxn(se, func(sessionctx.Context) {
+	readInTxn(se.Session(), func(sessionctx.Context) {
 		currTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})

@@ -1314,7 +1314,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
 	sess := session.NewSession(s)
-	txn, err := sess.Txn(true)
+	txn, err := sess.Txn()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

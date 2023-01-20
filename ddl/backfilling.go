@@ -116,7 +116,7 @@ func (bj *BackfillJob) AbbrStr() string {
 
 // GetOracleTimeWithStartTS returns the current time with txn's startTS.
 func GetOracleTimeWithStartTS(se *session.Session) (time.Time, error) {
-	txn, err := se.Txn(true)
+	txn, err := se.Txn()
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -1334,7 +1334,7 @@ func MoveBackfillJobsToHistoryTable(s *session.Session, bfJob *BackfillJob) erro
 		if len(bJobs) == 0 {
 			return nil
 		}
-		txn, err := se.Txn(true)
+		txn, err := se.Txn()
 		if err != nil {
 			return errors.Trace(err)
 		}
