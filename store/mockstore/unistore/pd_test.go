@@ -34,50 +34,25 @@ func SetUpSuite() *GlobalConfigTestSuite {
 	return s
 }
 
-func TestLoad(t *testing.T) {
+func TestLoadAndStore(t *testing.T) {
 	s := SetUpSuite()
 
-	s.client.StoreGlobalConfig(context.Background(), []pd.GlobalConfigItem{{Name: "LoadOkGlobalConfig", Value: "ok"}})
-	res, err := s.client.LoadGlobalConfig(context.Background(), []string{"LoadOkGlobalConfig", "LoadErrGlobalConfig"})
-	require.Equal(t, err, nil)
-	for _, j := range res {
-		switch j.Name {
-		case "/global/config/LoadOkGlobalConfig":
-			require.Equal(t, j.Value, "ok")
+	err := s.client.StoreGlobalConfig(context.Background(), "/global/config", []pd.GlobalConfigItem{{Name: "NewObject", Value: "ok"}})
+	require.Equal(t, nil, err)
 
-		case "/global/config/LoadErrGlobalConfig":
-			require.Equal(t, j.Value, "")
-			require.EqualError(t, j.Error, "not found")
-		default:
-			require.Equal(t, true, false)
-		}
-	}
-	s.TearDownSuite()
-}
-
-func TestStore(t *testing.T) {
-	s := SetUpSuite()
-
-	res, err := s.client.LoadGlobalConfig(context.Background(), []string{"NewObject"})
-	require.Equal(t, err, nil)
-	require.EqualError(t, res[0].Error, "not found")
-
-	err = s.client.StoreGlobalConfig(context.Background(), []pd.GlobalConfigItem{{Name: "NewObject", Value: "ok"}})
-	require.Equal(t, err, nil)
-
-	res, err = s.client.LoadGlobalConfig(context.Background(), []string{"NewObject"})
-	require.Equal(t, err, nil)
-	require.Equal(t, res[0].Error, nil)
+	res, _, err := s.client.LoadGlobalConfig(context.Background(), "/global/config")
+	require.Equal(t, nil, err)
+	require.Equal(t, 1, len(res))
 
 	s.TearDownSuite()
 }
 
 func TestWatch(t *testing.T) {
 	s := SetUpSuite()
-	err := s.client.StoreGlobalConfig(context.Background(), []pd.GlobalConfigItem{{Name: "NewObject", Value: "ok"}})
+	err := s.client.StoreGlobalConfig(context.Background(), "/global/config", []pd.GlobalConfigItem{{Name: "NewObject", Value: "ok"}})
 	require.Equal(t, err, nil)
 
-	ch, err := s.client.WatchGlobalConfig(context.Background())
+	ch, err := s.client.WatchGlobalConfig(context.Background(), "/global/config", 0)
 	require.Equal(t, err, nil)
 
 	for i := 0; i < 10; i++ {
