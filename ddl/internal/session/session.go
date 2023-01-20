@@ -98,6 +98,7 @@ func (s *Session) Session() sessionctx.Context {
 	return s.Context
 }
 
+// RunInTxn runs a function in a transaction.
 func (s *Session) RunInTxn(f func(*Session) error) (err error) {
 	err = s.Begin()
 	if err != nil {
