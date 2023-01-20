@@ -228,8 +228,8 @@ func equalBackfillJob(t *testing.T, a, b *ddl.BackfillJob, lessTime types.Time) 
 }
 
 func getIdxConditionStr(jobID, eleID int64) string {
-	return fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
-		jobID, eleID, meta.IndexElementKey)
+	return fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s",
+		jobID, eleID, wrapKey2String(meta.IndexElementKey))
 }
 
 func readInTxn(se sessionctx.Context, f func(sessionctx.Context)) (err error) {
@@ -379,13 +379,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.Len(t, bJobs, 1)
 	require.Equal(t, bJobs[0].FinishTS, uint64(0))
 
-	// test GetMaxBackfillJob and GetInterruptedBackfillJobsForOneEle
+	// test GetMaxBackfillJob
 	bjob, err := ddl.GetMaxBackfillJob(se, bJobs3[0].JobID, bJobs3[0].EleID, eleKey)
 	require.NoError(t, err)
 	require.Nil(t, bjob)
-	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
-	require.NoError(t, err)
-	require.Len(t, bJobs, 0)
 	err = ddl.AddBackfillJobs(se, bjTestCases)
 	require.NoError(t, err)
 	// ID     jobID     eleID
@@ -399,9 +396,6 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bjob, err = ddl.GetMaxBackfillJob(se, jobID2, eleID2, eleKey)
 	require.NoError(t, err)
 	require.Equal(t, bJobs2[1], bjob)
-	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
-	require.NoError(t, err)
-	require.Len(t, bJobs, 0)
 	bJobs1[0].State = model.JobStateRollingback
 	bJobs1[0].ID = 2
 	bJobs1[0].InstanceID = uuid
@@ -423,10 +417,6 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bjob, err = ddl.GetMaxBackfillJob(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
 	require.Equal(t, bJobs1[1], bjob)
-	bJobs, err = ddl.GetInterruptedBackfillJobsForOneEle(se, jobID1, eleID1, eleKey)
-	require.NoError(t, err)
-	require.Len(t, bJobs, 1)
-	equalBackfillJob(t, bJobs1[1], bJobs[0], types.ZeroTimestamp)
 	// test the BackfillJob's AbbrStr
 	require.Equal(t, fmt.Sprintf("ID:2, JobID:1, EleID:11, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
 	require.Equal(t, "ID:3, JobID:1, EleID:11, Type:add index, State:cancelled, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
@@ -458,7 +448,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID3    JobStateNone
 	// 1      jobID2     eleID3    JobStateNone
 	// 2      jobID1     eleID1    JobStateRollingback
-	// 3      jobID1     eleID1    JobStateCancelling
+	// 3      jobID1     eleID1    JobStateCancelled
 	//
 	// BackfillHistoryTable
 	// ID     jobID     eleID     state
@@ -481,7 +471,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID3    JobStateNone
 	// 1      jobID2     eleID3    JobStateNone
 	// 2      jobID1     eleID1    JobStateRollingback
-	// 3      jobID1     eleID1    JobStateCancelling
+	// 3      jobID1     eleID1    JobStateCancelled
 	// 6      jobID1     eleID1    JobStateNone
 	// 7      jobID1     eleID1    JobStateNone
 	//
@@ -494,7 +484,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, bJobs1[1], bjob)
 
-	// test MoveBackfillJobsToHistoryTable
+	// test MoveBackfillJobsToHistoryTable and GetInterruptedBackfillJobForOneEle
 	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 2)
@@ -514,7 +504,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID2    JobStateNone
 	// 1      jobID2     eleID2    JobStateNone
 	// 2      jobID1     eleID1    JobStateRollingback
-	// 3      jobID1     eleID1    JobStateCancelling
+	// 3      jobID1     eleID1    JobStateCancelled
 	// 6      jobID1     eleID1    JobStateNone
 	// 7      jobID1     eleID1    JobStateNone
 	//
@@ -523,8 +513,11 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone
 	// 4      jobID1     eleID1    JobStateNone
-	// 0      jobID2     eleID3    JobStateNone
-	// 1      jobID2     eleID3    JobStateNone
+	// 0      jobID2     eleID3    JobStateCancelled
+	// 1      jobID2     eleID3    JobStateCancelled
+	bJobs, err = ddl.GetInterruptedBackfillJobForOneEle(se, jobID1, eleID1, eleKey)
+	require.NoError(t, err)
+	require.Len(t, bJobs, 0)
 	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 6)
@@ -536,6 +529,15 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillHistoryTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 8)
+	bJobs, err = ddl.GetInterruptedBackfillJobForOneEle(se, jobID2, eleID3, eleKey)
+	require.NoError(t, err)
+	require.Len(t, bJobs, 1)
+	expectJob = bJobs3[0]
+	if expectJob.ID != bJob.ID {
+		expectJob = bJobs3[1]
+	}
+	expectJob.State = model.JobStateCancelled
+	equalBackfillJob(t, bJobs3[0], bJobs[0], types.ZeroTimestamp)
 	// BackfillTable
 	// ID     jobID     eleID     state
 	// --------------------------------
@@ -547,14 +549,14 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone
 	// 4      jobID1     eleID1    JobStateNone
-	// 0      jobID2     eleID3    JobStateNone
-	// 1      jobID2     eleID3    JobStateNone
-	// 0      jobID1     eleID1    JobStateNone
-	// 1      jobID1     eleID1    JobStateNone
-	// 2      jobID1     eleID1    JobStateRollingback
-	// 3      jobID1     eleID1    JobStateCancelling
-	// 6      jobID1     eleID1    JobStateNone
-	// 7      jobID1     eleID1    JobStateNone
+	// 0      jobID2     eleID3    JobStateCancelled
+	// 1      jobID2     eleID3    JobStateCancelled
+	// 0      jobID1     eleID1    JobStateCancelled
+	// 1      jobID1     eleID1    JobStateCancelled
+	// 2      jobID1     eleID1    JobStateCancelled
+	// 3      jobID1     eleID1    JobStateCancelled
+	// 6      jobID1     eleID1    JobStateCancelled
+	// 7      jobID1     eleID1    JobStateCancelled
 }
 
 func TestGetTasks(t *testing.T) {

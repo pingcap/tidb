@@ -15,7 +15,8 @@
 package util
 
 import (
-	"flag"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -25,8 +26,17 @@ import (
 // InTest is a flag to indicate whether the code is running in test.
 var InTest atomic.Bool
 
+func isInTests() bool {
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, "-test.v=") {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
-	if flag.Lookup("test.v") != nil {
+	if isInTests() {
 		InTest.Store(true)
 	}
 }

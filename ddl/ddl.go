@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
@@ -351,7 +352,7 @@ type ddlCtx struct {
 	reorgCtx reorgContexts
 	// backfillCtx is used for backfill workers.
 	backfillCtx struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		jobCtxMap      map[int64]*JobContext
 		backfillCtxMap map[int64]struct{}
 	}

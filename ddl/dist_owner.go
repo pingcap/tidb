@@ -175,7 +175,7 @@ func GetBackfillErr(sess *session, ddlJobID, currEleID int64, currEleKey []byte)
 func checkAndHandleInterruptedBackfillJobs(sess *session, ddlJobID, currEleID int64, currEleKey []byte) (err error) {
 	var bJobs []*BackfillJob
 	for i := 0; i < retrySQLTimes; i++ {
-		bJobs, err = GetInterruptedBackfillJobsForOneEle(sess, ddlJobID, currEleID, currEleKey)
+		bJobs, err = GetInterruptedBackfillJobForOneEle(sess, ddlJobID, currEleID, currEleKey)
 		if err == nil {
 			break
 		}

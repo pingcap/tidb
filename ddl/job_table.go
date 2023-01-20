@@ -631,7 +631,7 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 
 func syncBackfillHistoryJobs(sess *session, uuid string, backfillJob *BackfillJob) error {
 	sql := fmt.Sprintf("update mysql.%s set state = %d where ddl_job_id = %d and ele_id = %d and ele_key = %s and exec_id = '%s' limit 1;",
-		BackfillHistoryTable, model.JobStateSynced, backfillJob.JobID, backfillJob.EleID, wrapKey2String(backfillJob.EleKey), uuid)
+		BackfillHistoryTable, model.JobStateSynced, backfillJob.JobID, backfillJob.EleID, (backfillJob.EleKey), uuid)
 	_, err := sess.execute(context.Background(), sql, "sync_backfill_history_job")
 	return err
 }
@@ -776,23 +776,14 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 	return bJobs[:validLen], err
 }
 
-// GetInterruptedBackfillJobsForOneEle gets the interrupted backfill jobs in the tblName table that contains only one element.
-func GetInterruptedBackfillJobsForOneEle(sess *session, jobID, eleID int64, eleKey []byte) ([]*BackfillJob, error) {
-	condition := fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and state = %d limit 1",
-		jobID, eleID, eleKey, model.JobStateCancelled)
-	var bJobs []*BackfillJob
-	err := sess.runInTxn(func(se *session) error {
-		var err1 error
-		bJobs, err1 = GetBackfillJobs(sess, BackfillTable, condition, "get_interrupt_backfill_job")
-		if err1 != nil || len(bJobs) != 0 {
-			return err1
-		}
-
-		bJobs, err1 = GetBackfillJobs(sess, BackfillHistoryTable, condition, "get_interrupt_backfill_job")
-		return err1
-	})
-
-	return bJobs, err
+// GetInterruptedBackfillJobForOneEle gets a interrupted backfill job in the tblName table that contains only one element.
+func GetInterruptedBackfillJobForOneEle(sess *session, jobID, eleID int64, eleKey []byte) ([]*BackfillJob, error) {
+	bJobs, err := GetBackfillJobs(sess, BackfillHistoryTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s and state = %d limit 1",
+		jobID, eleID, wrapKey2String(eleKey), model.JobStateCancelled), "get_interrupt_backfill_job")
+	if err != nil || len(bJobs) == 0 {
+		return nil, err
+	}
+	return bJobs, nil
 }
 
 // GetBackfillJobCount gets the number of rows in the tblName table according to condition.
