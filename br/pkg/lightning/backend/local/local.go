@@ -961,20 +961,66 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	return ranges, nil
 }
 
-func (local *local) sendRegionJob(
+// prepareAndGenerateUnfinishedJob will read the engine to get unfinished key range,
+// then split and scatter regions for these range and generate region jobs.
+func (local *local) prepareAndGenerateUnfinishedJob(
 	ctx context.Context,
-	jobCh chan<- *regionJob,
-	jobWg *sync.WaitGroup,
+	engineUUID uuid.UUID,
+	lf *Engine,
+	initialSplitRanges []Range,
+	regionSplitSize, regionSplitKeys int64,
+) ([]*regionJob, error) {
+	lfTotalSize := lf.TotalSize.Load()
+	lfLength := lf.Length.Load()
+	unfinishedRanges := lf.unfinishedRanges(initialSplitRanges)
+	log.FromContext(ctx).Info("import engine unfinished ranges", zap.Int("count", len(unfinishedRanges)))
+
+	if len(unfinishedRanges) > 0 {
+		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
+		// the table when table is created.
+		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
+		var err error
+		// split region by given ranges
+		for i := 0; i < maxRetryTimes; i++ {
+			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
+			if err == nil || common.IsContextCanceledError(err) {
+				break
+			}
+
+			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
+				log.ShortError(err), zap.Int("retry", i))
+		}
+		if err != nil {
+			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
+			return nil, err
+		}
+	}
+
+	return local.generateJobInRanges(
+		ctx,
+		lf,
+		unfinishedRanges,
+		regionSplitSize,
+		regionSplitKeys,
+	)
+}
+
+// generateJobInRanges scans the region in ranges and generate region jobs.
+func (local *local) generateJobInRanges(
+	ctx context.Context,
 	engine *Engine,
 	ranges []Range,
 	regionSplitSize, regionSplitKeys int64,
-) error {
+) ([]*regionJob, error) {
 	log.FromContext(ctx).Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
+
+	ret := make([]*regionJob, 0, len(ranges))
+
 	for _, r := range ranges {
 		start, end := r.start, r.end
 		pairStart, pairEnd, err := engine.getFirstAndLastKey(start, end)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if pairStart == nil {
 			log.FromContext(ctx).Info("There is no pairs in range",
@@ -992,7 +1038,7 @@ func (local *local) sendRegionJob(
 				log.ShortError(err), zap.Int("region_len", len(regions)),
 				logutil.Key("startKey", startKey),
 				logutil.Key("endKey", endKey))
-			return err
+			return nil, err
 		}
 
 		for _, region := range regions {
@@ -1015,26 +1061,32 @@ func (local *local) sendRegionJob(
 				metrics:         local.metrics,
 			}
 
-			jobWg.Add(1)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case jobCh <- job:
-			}
+			ret = append(ret, job)
 		}
 	}
-	return nil
+	return ret, nil
 }
 
 // startWorker creates a worker that reads from the job channel and processes.
 // startWorker will return nil if it's expected to stop, which means the context
 // is canceled or channel is closed. It will return not nil error when it actively
 // stops.
+// worker must always call jobWg.Done() no matter it successfully processes it or
+// meets error.
+// putBackFn will be called when the job should be retried later.
 func (local *local) startWorker(
 	ctx context.Context,
 	jobCh chan *regionJob,
 	jobWg *sync.WaitGroup,
+	putBackFn func(*regionJob),
 ) error {
+	owningJob := false
+	defer func() {
+		if owningJob {
+			jobWg.Done()
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1043,6 +1095,8 @@ func (local *local) startWorker(
 			if !ok {
 				return nil
 			}
+
+			owningJob = true
 
 			now := time.Now()
 			if now.Before(job.waitUntil) {
@@ -1079,15 +1133,12 @@ func (local *local) startWorker(
 					zap.Stringer("stage", job.stage),
 					zap.Int("retryCount", job.retryCount),
 					zap.Time("waitUntil", job.waitUntil))
-
-				select {
-				case <-ctx.Done():
-					return nil
-				case jobCh <- job:
-				}
+				putBackFn(job)
 			case ingested, needRescan:
-				jobWg.Done()
 			}
+
+			jobWg.Done()
+			owningJob = false
 		}
 	}
 }
@@ -1236,56 +1287,67 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
-	workGroup, workerCtx := errgroup.WithContext(ctx)
-	jobCh := make(chan *regionJob)
-	jobWg := &sync.WaitGroup{}
+	var (
+		workGroup, workerCtx = errgroup.WithContext(ctx)
+		// jobCh is unbuffered so when we finished sending all jobs, we can make sure all jobs have been
+		// received by workers.
+		jobCh = make(chan *regionJob)
+		// jobWg is the number of jobs that need to be processed by worker in this round.
+		jobWg           sync.WaitGroup
+		needRetryJobs   []*regionJob
+		needRetryJobsMu sync.Mutex
+		putBackFn       = func(job *regionJob) {
+			needRetryJobsMu.Lock()
+			defer needRetryJobsMu.Unlock()
+			needRetryJobs = append(needRetryJobs, job)
+		}
+	)
+
 	for i := 0; i < local.workerConcurrency; i++ {
 		workGroup.Go(func() error {
-			return local.startWorker(workerCtx, jobCh, jobWg)
+			return local.startWorker(workerCtx, jobCh, &jobWg, putBackFn)
 		})
 	}
 
+	var pendingJobs []*regionJob
 	for {
-		unfinishedRanges := lf.unfinishedRanges(ranges)
-		if len(unfinishedRanges) == 0 {
-			break
-		}
-		log.FromContext(ctx).Info("import engine unfinished ranges", zap.Int("count", len(unfinishedRanges)))
+		pendingJobs = append(pendingJobs, needRetryJobs...)
+		needRetryJobs = nil
+		log.FromContext(ctx).Info("import engine pending jobs", zap.Int("count", len(pendingJobs)))
 
-		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
-		// the table when table is created.
-		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
-		// split region by given ranges
-		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
-			if err == nil || common.IsContextCanceledError(err) {
-				break
-			}
-
-			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
-				log.ShortError(err), zap.Int("retry", i))
-		}
-		if err != nil {
-			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
-			return err
-		}
-		err = local.sendRegionJob(
-			workerCtx,
-			jobCh,
-			jobWg,
+		newJobs, err := local.prepareAndGenerateUnfinishedJob(
+			ctx,
+			engineUUID,
 			lf,
-			unfinishedRanges,
+			ranges,
 			regionSplitSize,
 			regionSplitKeys,
 		)
 		if err != nil {
-			// the context is derived from error group, we should return the real error
-			if common.IsContextCanceledError(err) {
-				return workGroup.Wait()
-			}
 			return err
 		}
+
+		pendingJobs = append(pendingJobs, newJobs...)
+		if len(pendingJobs) == 0 {
+			break
+		}
+
+		jobWg.Add(len(pendingJobs))
+		for _, job := range pendingJobs {
+			select {
+			case <-workerCtx.Done():
+				return workGroup.Wait()
+			case jobCh <- job:
+			}
+		}
+		// all jobs are received by workers and worker will always call jobWg.Done() after processing
+		// no need to check workerCtx.Done() here.
 		jobWg.Wait()
+		// check if worker has error in this round
+		select {
+		case <-workerCtx.Done():
+			return workGroup.Wait()
+		}
 	}
 
 	close(jobCh)

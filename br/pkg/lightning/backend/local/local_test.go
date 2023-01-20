@@ -1100,7 +1100,9 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	}()
 	jobCh := make(chan *regionJob, 1)
 	jobCh <- &regionJob{}
-	err := bak.startWorker(context.Background(), jobCh, nil)
+	jobWg := &sync.WaitGroup{}
+	jobWg.Add(1)
+	err := bak.startWorker(context.Background(), jobCh, jobWg, nil)
 	require.Error(t, err)
 	require.Regexp(t, "The available disk of TiKV.*", err.Error())
 	require.Len(t, jobCh, 0)
@@ -1245,17 +1247,24 @@ func TestCheckPeersBusy(t *testing.T) {
 		waitUntil:  time.Now().Add(-time.Second),
 	}
 
+	retryJobs := make([]*regionJob, 0, 1)
+	putBackFn := func(job *regionJob) {
+		retryJobs = append(retryJobs, job)
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, &jobWg)
+		err := local.startWorker(ctx, jobCh, &jobWg, putBackFn)
 		require.NoError(t, err)
 	}()
 
 	// retryJob will be retried once and worker will sleep 30s before processing the
 	// job again, we simply hope below check is happened when worker is sleeping
 	time.Sleep(5 * time.Second)
+	require.Len(t, retryJobs, 1)
+	require.Same(t, retryJob, retryJobs[0])
 	require.Equal(t, 21, retryJob.retryCount)
 	require.Equal(t, wrote, retryJob.stage)
 
