@@ -63,6 +63,16 @@ func GetDDLCtx(d DDL) *ddlCtx {
 	return d.(*ddl).ddlCtx
 }
 
+// SetCheckInterval sets checkBackfillJobFinishInterval, it's for test.
+func SetCheckInterval(interval time.Duration) {
+	checkBackfillJobFinishInterval = interval
+}
+
+// GetCheckInterval gets checkBackfillJobFinishInterval, it's for test.
+func GetCheckInterval() time.Duration {
+	return checkBackfillJobFinishInterval
+}
+
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
 	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)

@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
@@ -478,6 +479,11 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	tk.MustExec(`CREATE TABLE t (id int primary key, a int);`)
 	tk.MustExec(`INSERT INTO t VALUES (1, 1);`)
 
+	// Make shorten the conversion time from ReorgTypeLitMerge to BackfillStateReadyToMerge.
+	interval := ddl.GetCheckInterval()
+	ddl.SetCheckInterval(50 * time.Millisecond)
+	defer ddl.SetCheckInterval(interval)
+
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
@@ -487,7 +493,6 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	callback := &ddl.TestDDLCallback{Do: dom}
 
 	runPessimisticTxn := false
-	doRollbackCh := make(chan struct{}, 1)
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -510,7 +515,6 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 			assert.NoError(t, err)
 			_, err = tk2.Exec("update t set a = 3 where id = 1;")
 			assert.NoError(t, err)
-			doRollbackCh <- struct{}{}
 		}
 	}
 	dom.DDL().SetHook(callback)
@@ -519,7 +523,13 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 		tk.MustExec("alter table t add index idx(a);")
 		afterCommit <- struct{}{}
 	}()
-	<-doRollbackCh
+	timer := time.NewTimer(300 * time.Millisecond)
+	select {
+	case <-timer.C:
+		break
+	case <-afterCommit:
+		require.Fail(t, "should be blocked by the pessimistic txn")
+	}
 	tk2.MustExec("rollback;")
 	<-afterCommit
 	dom.DDL().SetHook(originHook)

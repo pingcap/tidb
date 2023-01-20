@@ -30,6 +30,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var checkBackfillJobFinishInterval = 300 * time.Millisecond
+
 func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	if startKey == nil && endKey == nil {
@@ -79,7 +81,7 @@ func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgC
 	var times int64
 	var bfJob *BackfillJob
 	var backfillJobFinished bool
-	ticker := time.NewTicker(300 * time.Millisecond)
+	ticker := time.NewTicker(checkBackfillJobFinishInterval)
 	defer ticker.Stop()
 	for {
 		if getReorgCtx(reorgCtxs, ddlJobID).isReorgCanceled() {
