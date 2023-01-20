@@ -80,7 +80,7 @@ require (
 	github.com/prometheus/client_model v0.3.0
 	github.com/prometheus/common v0.39.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
-	github.com/sasha-s/go-deadlock v0.0.0-20161201235124-341000892f3d
+	github.com/sasha-s/go-deadlock v0.2.0
 	github.com/shirou/gopsutil/v3 v3.22.9
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
@@ -90,8 +90,8 @@ require (
 	github.com/stretchr/testify v1.8.1
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.5-0.20230119111955-f4c3cc6313d0
-	github.com/tikv/pd/client v0.0.0-20230119114149-402c2bfee2f3
+	github.com/tikv/client-go/v2 v2.0.5-0.20230120021435-f89383775234
+	github.com/tikv/pd/client v0.0.0-20230119115149-5c518d079b93
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -207,7 +207,7 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
-	github.com/petermattis/goid v0.0.0-20170504144140-0ded85884ba5 // indirect
+	github.com/petermattis/goid v0.0.0-20211229010228-4d14c490ee36 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712 // indirect
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
@@ -225,6 +225,7 @@ require (
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a // indirect
+	github.com/tikv/pd v1.1.0-beta.0.20230119114149-402c2bfee2f3 // indirect
 	github.com/tklauser/go-sysconf v0.3.10 // indirect
 	github.com/tklauser/numcpus v0.4.0 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 // indirect
