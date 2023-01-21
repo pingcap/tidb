@@ -365,9 +365,11 @@ type planReplayerTaskDumpWorker struct {
 }
 
 func (w *planReplayerTaskDumpWorker) run() {
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker started.")
 	for task := range w.taskCH {
 		w.handleTask(task)
 	}
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker exited.")
 }
 
 func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
@@ -419,7 +421,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
-	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture)
+	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture, task.IsContinuesCapture, variable.EnableHistoricalStatsForCapture.Load())
 	if err != nil {
 		logutil.BgLogger().Warn("[plan-replayer-capture] generate task file failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),

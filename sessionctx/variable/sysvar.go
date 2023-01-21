@@ -1164,7 +1164,15 @@ var defaultSysVars = []*SysVar{
 		PasswordReuseInterval.Store(TidbOptInt64(val, DefPasswordReuseTime))
 		return nil
 	}},
-
+	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStatsForCapture, Value: BoolToOnOff(DefTiDBEnableHistoricalStatsForCapture), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			EnableHistoricalStatsForCapture.Store(TiDBOptOn(s))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableHistoricalStatsForCapture.Load()), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBHistoricalStatsDuration, Value: DefTiDBHistoricalStatsDuration.String(), Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: uint64(time.Hour * 24 * 365),
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return HistoricalStatsDuration.Load().String(), nil
@@ -1187,7 +1195,7 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(vars.EnablePlanReplayedContinuesCapture), nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(false), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(true), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnablePlanReplayerCapture = TiDBOptOn(val)
 			return nil
@@ -1775,7 +1783,7 @@ var defaultSysVars = []*SysVar{
 		s.NoopFuncsMode = TiDBOptOnOffWarn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive"}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive", "learner"}, SetSession: func(s *SessionVars, val string) error {
 		if strings.EqualFold(val, "follower") {
 			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader-and-follower") {
@@ -1786,6 +1794,8 @@ var defaultSysVars = []*SysVar{
 			s.SetReplicaRead(kv.ReplicaReadClosest)
 		} else if strings.EqualFold(val, "closest-adaptive") {
 			s.SetReplicaRead(kv.ReplicaReadClosestAdaptive)
+		} else if strings.EqualFold(val, "learner") {
+			s.SetReplicaRead(kv.ReplicaReadLearner)
 		}
 		return nil
 	}},
@@ -1995,6 +2005,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCostModelVersion, Value: strconv.Itoa(DefTiDBCostModelVer), Hidden: false, Type: TypeInt, MinValue: 1, MaxValue: 2,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.CostModelVersion = int(TidbOptInt64(s, 1))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexJoinDoubleReadPenaltyCostRate, Value: strconv.Itoa(0), Hidden: false, Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IndexJoinDoubleReadPenaltyCostRate = tidbOptFloat64(s, 0)
 			return nil
 		},
 	},
@@ -2240,6 +2256,17 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(TTLDeleteWorkerCount.Load())), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableResourceControl, Value: BoolToOnOff(DefTiDBEnableResourceControl), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EnableResourceControl.Store(TiDBOptOn(s))
+		(*SetGlobalResourceControl.Load())(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableResourceControl.Load()), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionAggressiveLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionAggressiveLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PessimisticTransactionAggressiveLocking = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
