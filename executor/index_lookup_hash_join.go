@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/resourcemanager/taskgroup"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/channel"
@@ -176,7 +175,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	e.workerWg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
 		workerID := i
-		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, taskgroup.GetContext(), cancelFunc) }, e.finishJoinWorkers)
+		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, gscheduler.GetContext(), cancelFunc) }, e.finishJoinWorkers)
 	}
 	go e.wait4JoinWorkers()
 }
@@ -481,7 +480,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx, sctx context.Context, cancelFunc co
 		if !ok {
 			break
 		}
-		taskgroup.CheckPoint(sctx)
+		gscheduler.CheckPoint(sctx)
 		// We need to init resultCh before the err is returned.
 		if task.keepOuterOrder {
 			resultCh = task.resultCh

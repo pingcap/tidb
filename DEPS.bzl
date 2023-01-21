@@ -4160,6 +4160,14 @@ def go_deps():
         version = "v1.2.7",
     )
     go_repository(
+        name = "com_github_ugurcsen_gods_generic",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/ugurcsen/gods-generic",
+        sum = "h1:dE/4oQEeO/oMVcWwcVeJhboxYJ0WVIbVVjOGJ32xL90=",
+        version = "v0.10.2",
+    )
+
+    go_repository(
         name = "com_github_ultraware_funlen",
         build_file_proto_mode = "disable",
         importpath = "github.com/ultraware/funlen",

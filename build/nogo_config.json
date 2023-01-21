@@ -183,8 +183,7 @@
       "util/watcher/": "util/watcher/ code",
       "util/gctuner": "util/gctuner",
       "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
-      "ddl/util/": "ddl/util code",
-      "resourcemanger/": "resourcemanger/"
+      "ddl/util/": "ddl/util code"
     }
   },
   "findcall": {
@@ -335,8 +334,7 @@
       "util/memory": "util/memory",
       "ddl/": "ddl",
       "planner/": "planner",
-      "extension/": "extension code",
-      "resourcemanager/": "resourcemanager code"
+      "extension/": "extension code"
     }
   },
   "pkgfact": {
@@ -770,16 +768,7 @@
       "planner/core/plan.go": "planner/core/plan.go",
       "extension/": "extension code",
       "resourcemanager/": "resourcemanager code",
-      "keyspace/": "keyspace code",
-      "server/": "server code",
-      "meta": "meta code"
-    }
-  },
-  "SA1029": {
-    "exclude_files": {
-      "/external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code",
-      ".*_test\\.go$": "ignore test code"
+      "keyspace/": "keyspace code"
     }
   },
   "SA2000": {

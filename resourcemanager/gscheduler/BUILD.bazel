@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "taskgroup",
+    srcs = [
+        "tash_handler.go",
+        "task_group.go",
+        "task_priority.go",
+        "task_queue.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanager/taskgroup",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/grunning",
+        "//util/queue",
+        "@com_github_ugurcsen_gods_generic//trees/redblacktree",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_library(
+    name = "gscheduler",
+    srcs = [
+        "tash_handler.go",
+        "task_group.go",
+        "task_priority.go",
+        "task_queue.go",
+    ],
+    importpath = "github.com/pingcap/tidb/resourcemanager/gscheduler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/grunning",
+        "//util/queue",
+        "@com_github_ugurcsen_gods_generic//trees/redblacktree",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)

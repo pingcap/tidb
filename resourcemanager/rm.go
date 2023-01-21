@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/resourcemanager/gscheduler"
 	"github.com/pingcap/tidb/resourcemanager/scheduler"
-	"github.com/pingcap/tidb/resourcemanager/taskgroup"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpu"
@@ -56,7 +56,7 @@ func NewResourceManger() *ResourceManager {
 
 // Start is to start resource manager
 func (r *ResourceManager) Start() {
-	r.wg.Run(taskgroup.Scheduler)
+	r.wg.Run(gscheduler.Scheduler)
 	r.wg.Run(r.cpuObserver.Start)
 	r.wg.Run(func() {
 		tick := time.NewTicker(100 * time.Millisecond)
@@ -76,7 +76,7 @@ func (r *ResourceManager) Start() {
 func (r *ResourceManager) Stop() {
 	r.cpuObserver.Stop()
 	close(r.exitCh)
-	taskgroup.StopScheduler()
+	gscheduler.StopScheduler()
 	r.wg.Wait()
 }
 
