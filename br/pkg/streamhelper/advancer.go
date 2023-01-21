@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -285,6 +286,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.checkpoints = spans.Sorted(spans.NewFullWith(e.Ranges, 0))
+		c.lastCheckpoint = e.Info.StartTs
 		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
@@ -292,7 +294,10 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.taskRange = nil
 		c.checkpoints = nil
 		// This would be synced by `taskMu`, perhaps we'd better rename that to `tickMu`.
-		c.subscriber.Clear()
+		// Do the null check because some of test cases won't equip the advancer with subscriber.
+		if c.subscriber != nil {
+			c.subscriber.Clear()
+		}
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
 			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
 		}
@@ -303,6 +308,18 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	return nil
 }
 
+func (c *CheckpointAdvancer) setCheckpoint(cp uint64) bool {
+	if cp < c.lastCheckpoint {
+		log.Warn("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
+		return false
+	}
+	if cp <= c.lastCheckpoint {
+		return false
+	}
+	c.lastCheckpoint = cp
+	return true
+}
+
 // advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
 func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpoint func(context.Context) (uint64, error)) error {
 	start := time.Now()
@@ -310,24 +327,15 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	if err != nil {
 		return err
 	}
-	log.Info("get checkpoint", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
-	if cp < c.lastCheckpoint {
-		log.Warn("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
-	}
-	if cp <= c.lastCheckpoint {
-		return nil
-	}
 
-	log.Info("uploading checkpoint for task",
-		zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp)),
-		zap.Uint64("checkpoint", cp),
-		zap.String("task", c.task.Name),
-		zap.Stringer("take", time.Since(start)))
-	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, cp); err != nil {
-		return errors.Annotate(err, "failed to upload global checkpoint")
+	if c.setCheckpoint(cp) {
+		log.Info("uploading checkpoint for task",
+			zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp)),
+			zap.Uint64("checkpoint", cp),
+			zap.String("task", c.task.Name),
+			zap.Stringer("take", time.Since(start)))
+		metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
 	}
-	c.lastCheckpoint = cp
-	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
 	return nil
 }
 
@@ -375,16 +383,17 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 	return c.subscriber.PendingErrors()
 }
 
-func (c *CheckpointAdvancer) tick(ctx context.Context) error {
-	c.taskMu.Lock()
-	defer c.taskMu.Unlock()
-	if c.task == nil {
-		log.Debug("No tasks yet, skipping advancing.")
-		return nil
+func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
+	c.checkpointsMu.Lock()
+	c.setCheckpoint(c.checkpoints.MinValue())
+	c.checkpointsMu.Unlock()
+	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint); err != nil {
+		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
-	cx, cancel := context.WithTimeout(ctx, c.Config().TickTimeout())
-	defer cancel()
+	return nil
+}
 
+func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 	threshold := c.Config().GetDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
 		log.Warn("[log backup advancer] Subscriber meet error, would polling the checkpoint.", logutil.ShortError(err))
@@ -397,6 +406,32 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
 	return nil
+}
+
+func (c *CheckpointAdvancer) tick(ctx context.Context) error {
+	c.taskMu.Lock()
+	defer c.taskMu.Unlock()
+	if c.task == nil {
+		log.Debug("No tasks yet, skipping advancing.")
+		return nil
+	}
+
+	var errs error
+
+	cx, cancel := context.WithTimeout(ctx, c.Config().TickTimeout())
+	defer cancel()
+	err := c.optionalTick(cx)
+	if err != nil {
+		log.Warn("[log backup advancer] option tick failed.", logutil.ShortError(err))
+		errs = multierr.Append(errs, err)
+	}
+
+	err = c.importantTick(ctx)
+	if err != nil {
+		log.Warn("[log backup advancer] important tick failed.", logutil.ShortError(err))
+		errs = multierr.Append(errs, err)
+	}
+
+	return errs
 }

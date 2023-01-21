@@ -1484,7 +1484,7 @@ func TestAuthPlugin2(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestAuthTokenPlugin(t *testing.T) {
+func TestAuthSessionTokenPlugin(t *testing.T) {
 	// create the cert
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "test1_cert.pem")
@@ -1552,6 +1552,13 @@ func TestAuthTokenPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	require.NoError(t, err)
+
+	// login succeeds even if the password expires now
+	tk.MustExec("ALTER USER auth_session_token PASSWORD EXPIRE")
+	err = cc.openSessionAndDoAuth([]byte{}, mysql.AuthNativePassword)
+	require.ErrorContains(t, err, "Your password has expired")
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
 	require.NoError(t, err)
 

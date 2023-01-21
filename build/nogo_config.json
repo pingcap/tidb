@@ -404,7 +404,9 @@
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code",
-      "extension/": "extension code"
+      "extension/": "extension code",
+      "resourcemanager/": "resourcemanager code",
+      "keyspace": "keyspace code"
     }
   },
   "shift": {
@@ -765,7 +767,9 @@
       "server/conn.go": "server/conn.go",
       "server/conn_stmt.go": "server/conn_stmt.go",
       "server/conn_test.go": "server/conn_test.go",
-      "extension/": "extension code"
+      "extension/": "extension code",
+      "resourcemanager/": "resourcemanager code",
+      "keyspace/": "keyspace code"
     }
   },
   "SA2000": {

@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1254,4 +1256,19 @@ func TestIssue31141(t *testing.T) {
 
 	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
 	tk.MustExec("prepare stmt1 from 'do 1'")
+}
+
+func TestMaxPreparedStmtCount(t *testing.T) {
+	oldVal := atomic.LoadInt64(&variable.PreparedStmtCount)
+	atomic.StoreInt64(&variable.PreparedStmtCount, 0)
+	defer func() {
+		atomic.StoreInt64(&variable.PreparedStmtCount, oldVal)
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
+	tk.MustExec("prepare stmt1 from 'select ? as num from dual'")
+	tk.MustExec("prepare stmt2 from 'select ? as num from dual'")
+	err := tk.ExecToErr("prepare stmt3 from 'select ? as num from dual'")
+	require.True(t, terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached))
 }

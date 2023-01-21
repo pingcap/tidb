@@ -381,8 +381,8 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
-func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
-	for _, index := range tbInfo.Indices {
+func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...CIStr) *IndexInfo {
+	for _, index := range indices {
 		if IsIndexPrefixCovered(tbInfo, index, cols...) {
 			return index
 		}
@@ -1419,6 +1419,7 @@ type IndexInfo struct {
 	Primary       bool           `json:"is_primary"`   // Whether the index is primary key.
 	Invisible     bool           `json:"is_invisible"` // Whether the index is invisible.
 	Global        bool           `json:"is_global"`    // Whether the index is global.
+	MVIndex       bool           `json:"mv_index"`     // Whether the index is multivalued index.
 }
 
 // Clone clones IndexInfo.
@@ -1759,6 +1760,8 @@ type TTLInfo struct {
 	// `IntervalTimeUnit` is actually ast.TimeUnitType. Use `int` to avoid cycle dependency
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
+	// JobInterval is the interval between two TTL scan jobs.
+	JobInterval string `json:"job_interval"`
 }
 
 // Clone clones TTLInfo
@@ -1832,6 +1835,62 @@ func (p *PlacementSettings) String() string {
 // Clone clones the placement settings.
 func (p *PlacementSettings) Clone() *PlacementSettings {
 	cloned := *p
+	return &cloned
+}
+
+// ResourceGroupRefInfo is the struct to refer the resource group.
+type ResourceGroupRefInfo struct {
+	ID   int64 `json:"id"`
+	Name CIStr `json:"name"`
+}
+
+// ResourceGroupSettings is the settings of the resource group
+type ResourceGroupSettings struct {
+	RRURate          uint64 `json:"rru_per_sec"`
+	WRURate          uint64 `json:"wru_per_sec"`
+	CPULimiter       string `json:"cpu_limit"`
+	IOReadBandwidth  string `json:"io_read_bandwidth"`
+	IOWriteBandwidth string `json:"io_write_bandwidth"`
+}
+
+func (p *ResourceGroupSettings) String() string {
+	sb := new(strings.Builder)
+	if p.RRURate != 0 {
+		writeSettingIntegerToBuilder(sb, "RRU_PER_SEC", p.RRURate)
+	}
+	if p.WRURate != 0 {
+		writeSettingIntegerToBuilder(sb, "WRU_PER_SEC", p.WRURate)
+	}
+	if len(p.CPULimiter) > 0 {
+		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
+	}
+	if len(p.IOReadBandwidth) > 0 {
+		writeSettingStringToBuilder(sb, "IO_READ_BANDWIDTH", p.IOReadBandwidth)
+	}
+	if len(p.IOWriteBandwidth) > 0 {
+		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth)
+	}
+	return sb.String()
+}
+
+// Clone clones the resource group settings.
+func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
+	cloned := *p
+	return &cloned
+}
+
+// ResourceGroupInfo is the struct to store the placement policy.
+type ResourceGroupInfo struct {
+	*ResourceGroupSettings
+	ID    int64       `json:"id"`
+	Name  CIStr       `json:"name"`
+	State SchemaState `json:"state"`
+}
+
+// Clone clones the ResourceGroupInfo.
+func (p *ResourceGroupInfo) Clone() *ResourceGroupInfo {
+	cloned := *p
+	cloned.ResourceGroupSettings = p.ResourceGroupSettings.Clone()
 	return &cloned
 }
 

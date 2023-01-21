@@ -21,9 +21,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -156,56 +154,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
-	if c.Ctx.GetSessionVars().EnablePlanReplayerCapture && !c.Ctx.GetSessionVars().InRestrictedSQL {
-		startTS, err := sessiontxn.GetTxnManager(c.Ctx).GetStmtReadTS()
-		if err != nil {
-			return nil, err
-		}
-		checkPlanReplayerCaptureTask(c.Ctx, stmtNode, startTS)
+	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
+		return nil, err
 	}
-
 	return stmt, nil
-}
-
-func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
-	dom := domain.GetDomain(sctx)
-	if dom == nil {
-		return
-	}
-	handle := dom.GetPlanReplayerHandle()
-	if handle == nil {
-		return
-	}
-	tasks := handle.GetTasks()
-	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
-	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
-	for _, task := range tasks {
-		if task.SQLDigest == sqlDigest.String() {
-			if task.PlanDigest == "*" || task.PlanDigest == planDigest.String() {
-				sendPlanReplayerDumpTask(sqlDigest.String(), planDigest.String(), sctx, stmtNode, startTS)
-				return
-			}
-		}
-	}
-}
-
-func sendPlanReplayerDumpTask(sqlDigest, planDigest string, sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	dumpTask := &domain.PlanReplayerDumpTask{
-		PlanReplayerTaskKey: domain.PlanReplayerTaskKey{
-			SQLDigest:  sqlDigest,
-			PlanDigest: planDigest,
-		},
-		StartTS:         startTS,
-		EncodePlan:      GetEncodedPlan,
-		TblStats:        stmtCtx.TableStats,
-		SessionBindings: handle.GetAllBindRecord(),
-		SessionVars:     sctx.GetSessionVars(),
-		ExecStmts:       []ast.StmtNode{stmtNode},
-		Analyze:         false,
-	}
-	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }
 
 // needLowerPriority checks whether it's needed to lower the execution priority

@@ -16,7 +16,6 @@ package ttlworker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -72,26 +71,12 @@ func (s *ttlStatistics) String() string {
 	return fmt.Sprintf("Total Rows: %d, Success Rows: %d, Error Rows: %d", s.TotalRows.Load(), s.SuccessRows.Load(), s.ErrorRows.Load())
 }
 
-func (s *ttlStatistics) MarshalJSON() ([]byte, error) {
-	type jsonStatistics struct {
-		TotalRows   uint64 `json:"total_rows"`
-		SuccessRows uint64 `json:"success_rows"`
-		ErrorRows   uint64 `json:"error_rows"`
-	}
-
-	return json.Marshal(jsonStatistics{
-		TotalRows:   s.TotalRows.Load(),
-		SuccessRows: s.SuccessRows.Load(),
-		ErrorRows:   s.ErrorRows.Load(),
-	})
-}
-
 type ttlScanTask struct {
 	ctx context.Context
 
+	*cache.TTLTask
+
 	tbl        *cache.PhysicalTable
-	expire     time.Time
-	scanRange  cache.ScanRange
 	statistics *ttlStatistics
 }
 
@@ -136,8 +121,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		terror.Log(err)
 	}()
 
-	sess := newTableSession(rawSess, t.tbl, t.expire)
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.expire, t.scanRange.Start, t.scanRange.End)
+	sess := newTableSession(rawSess, t.tbl, t.ExpireTime)
+	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
 	if err != nil {
 		return t.result(err)
 	}
@@ -210,7 +195,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 
 		delTask := &ttlDeleteTask{
 			tbl:        t.tbl,
-			expire:     t.expire,
+			expire:     t.ExpireTime,
 			rows:       lastResult,
 			statistics: t.statistics,
 		}
@@ -249,10 +234,11 @@ func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- interface{}
 	return w
 }
 
-func (w *ttlScanWorker) Idle() bool {
+func (w *ttlScanWorker) CouldSchedule() bool {
 	w.Lock()
 	defer w.Unlock()
-	return w.status == workerStatusRunning && w.curTask == nil
+	// see `Schedule`. If a `worker.CouldSchedule()` is true, `worker.Schedule` must success
+	return w.status == workerStatusRunning && w.curTask == nil && w.curTaskResult == nil
 }
 
 func (w *ttlScanWorker) Schedule(task *ttlScanTask) error {
@@ -299,7 +285,10 @@ func (w *ttlScanWorker) PollTaskResult() *ttlScanTaskExecResult {
 func (w *ttlScanWorker) loop() error {
 	ctx := w.baseWorker.ctx
 	tracer := metrics.NewScanWorkerPhaseTracer()
-	defer tracer.EndPhase()
+	defer func() {
+		tracer.EndPhase()
+		logutil.BgLogger().Info("ttlScanWorker loop exited.")
+	}()
 
 	ticker := time.Tick(time.Second * 5)
 	for w.Status() == workerStatusRunning {
@@ -347,7 +336,7 @@ func (w *ttlScanWorker) handleScanTask(tracer *metrics.PhaseTracer, task *ttlSca
 type scanWorker interface {
 	worker
 
-	Idle() bool
+	CouldSchedule() bool
 	Schedule(*ttlScanTask) error
 	PollTaskResult() *ttlScanTaskExecResult
 	CurrentTask() *ttlScanTask

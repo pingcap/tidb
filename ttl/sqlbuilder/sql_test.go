@@ -26,10 +26,12 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -159,11 +161,66 @@ func TestEscape(t *testing.T) {
 }
 
 func TestFormatSQLDatum(t *testing.T) {
+	// invalid pk types contains the types that should not exist in primary keys of a TTL table.
+	// We do not need to check sqlbuilder.FormatSQLDatum for these types
+	invalidPKTypes := []struct {
+		types []string
+		err   *terror.Error
+	}{
+		{
+			types: []string{"json"},
+			err:   dbterror.ErrJSONUsedAsKey,
+		},
+		{
+			types: []string{"blob"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
+		},
+		{
+			types: []string{"blob(8)"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
+		},
+		{
+			types: []string{"text"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
+		},
+		{
+			types: []string{"text(8)"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
+		},
+		{
+			types: []string{"int", "json"},
+			err:   dbterror.ErrJSONUsedAsKey,
+		},
+		{
+			types: []string{"int", "blob"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
+		},
+		{
+			types: []string{"int", "text"},
+			err:   dbterror.ErrBlobKeyWithoutLength,
+		},
+		{
+			types: []string{"float"},
+			err:   dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL,
+		},
+		{
+			types: []string{"double"},
+			err:   dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL,
+		},
+		{
+			types: []string{"int", "float"},
+			err:   dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL,
+		},
+		{
+			types: []string{"int", "double"},
+			err:   dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL,
+		},
+	}
+
 	cases := []struct {
-		ft         string
-		values     []interface{}
-		hex        bool
-		notSupport bool
+		ft     string
+		values []interface{}
+		hex    bool
 	}{
 		{
 			ft:     "int",
@@ -241,19 +298,49 @@ func TestFormatSQLDatum(t *testing.T) {
 			values: []interface{}{"2022-01-02 12:11:11", "2022-01-02"},
 		},
 		{
+			ft:     "datetime(6)",
+			values: []interface{}{"2022-01-02 12:11:11.123456"},
+		},
+		{
 			ft:     "timestamp",
 			values: []interface{}{"2022-01-02 12:11:11", "2022-01-02"},
 		},
 		{
-			ft:         "json",
-			values:     []interface{}{"{}"},
-			notSupport: true,
+			ft:     "timestamp(6)",
+			values: []interface{}{"2022-01-02 12:11:11.123456"},
+		},
+		{
+			ft:     "enum('e1', 'e2', \"e3'\", 'e4\"', ';你好👋')",
+			values: []interface{}{"e1", "e2", "e3'", "e4\"", ";你好👋"},
+		},
+		{
+			ft:     "set('e1', 'e2', \"e3'\", 'e4\"', ';你好👋')",
+			values: []interface{}{"", "e1", "e2", "e3'", "e4\"", ";你好👋"},
 		},
 	}
 
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	for _, c := range invalidPKTypes {
+		var sb strings.Builder
+		sb.WriteString("create table t(")
+		cols := make([]string, 0, len(invalidPKTypes))
+		for i, tp := range c.types {
+			colName := fmt.Sprintf("pk%d", i)
+			cols = append(cols, colName)
+			sb.WriteString(colName)
+			sb.WriteString(" ")
+			sb.WriteString(tp)
+			sb.WriteString(", ")
+		}
+		sb.WriteString("t timestamp, ")
+		sb.WriteString("primary key (")
+		sb.WriteString(strings.Join(cols, ", "))
+		sb.WriteString(")) TTL=`t` + INTERVAL 1 DAY")
+		tk.MustGetDBError(sb.String(), c.err)
+	}
 
 	// create a table with n columns
 	var sb strings.Builder
@@ -290,13 +377,8 @@ func TestFormatSQLDatum(t *testing.T) {
 			col := tbl.Meta().FindPublicColumnByName(colName)
 			d := rows[0].GetDatum(0, &col.FieldType)
 			s, err := sqlbuilder.FormatSQLDatum(d, &col.FieldType)
-			if c.notSupport {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				//fmt.Printf("%s: %s\n", c.ft, s)
-				tk.MustQuery("select id from t where " + colName + "=" + s).Check(testkit.Rows(rowID))
-			}
+			require.NoError(t, err)
+			tk.MustQuery("select id from t where " + colName + "=" + s).Check(testkit.Rows(rowID))
 			if c.hex {
 				require.True(t, strings.HasPrefix(s, "x'"), "ft: %s, got: %s", c.ft, s)
 			}
@@ -699,6 +781,54 @@ func TestScanQueryGenerator(t *testing.T) {
 				},
 				{
 					result(d(5, "e", []byte{0xa1}), 4), 5, "",
+				},
+			},
+		},
+		{
+			tbl:        t2,
+			expire:     time.UnixMilli(0).In(time.UTC),
+			rangeStart: d(1),
+			rangeEnd:   d(100),
+			path: [][]interface{}{
+				{
+					nil, 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` >= 1 AND `a` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "x", []byte{0x1a}), 5), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND `a` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "x", []byte{0x20}), 4), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND `a` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "y", []byte{0x0a}), 4), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND `a` < 100 AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+			},
+		},
+		{
+			tbl:        t2,
+			expire:     time.UnixMilli(0).In(time.UTC),
+			rangeStart: d(1, "x"),
+			rangeEnd:   d(100, "z"),
+			path: [][]interface{}{
+				{
+					nil, 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` >= 'x' AND (`a`, `b`) < (100, 'z') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "x", []byte{0x1a}), 5), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`) < (100, 'z') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "x", []byte{0x20}), 4), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`) < (100, 'z') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+				},
+				{
+					result(d(1, "y", []byte{0x0a}), 4), 5,
+					"SELECT LOW_PRIORITY `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND (`a`, `b`) < (100, 'z') AND `time` < '1970-01-01 00:00:00' ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 			},
 		},

@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
@@ -65,11 +66,19 @@ const (
 
 // Handle can update stats info periodically.
 type Handle struct {
+
+	// initStatsCtx is the ctx only used for initStats
+	initStatsCtx sessionctx.Context
+
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
+	}
+
+	schemaMu struct {
+		sync.RWMutex
 		// pid2tid is the map from partition ID to table ID.
 		pid2tid map[int64]int64
 		// schemaVersion is the version of information schema when `pid2tid` is built.
@@ -353,8 +362,15 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	return "", err
 }
 
-// IsTableLocked check whether table is locked in handle
+// IsTableLocked check whether table is locked in handle with Handle.Mutex
 func (h *Handle) IsTableLocked(tableID int64) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.isTableLocked(tableID)
+}
+
+// IsTableLocked check whether table is locked in handle without Handle.Mutex
+func (h *Handle) isTableLocked(tableID int64) bool {
 	return isTableLocked(h.tableLocked, tableID)
 }
 
@@ -460,7 +476,7 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
+func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, serverIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
 		ddlEventCh:       make(chan *ddlUtil.Event, 1000),
@@ -470,6 +486,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tr
 		sysProcTracker:   tracker,
 		serverIDGetter:   serverIDGetter,
 	}
+	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
@@ -523,42 +540,32 @@ var statsHealthyGauges = []prometheus.Gauge{
 	metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
 }
 
-type statsHealthyChange struct {
-	bucketDelta [5]int
-}
-
-func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
-	var idx int
-	if statsHealthy < 50 {
-		idx = 0
-	} else if statsHealthy < 80 {
-		idx = 1
-	} else if statsHealthy < 100 {
-		idx = 2
-	} else {
-		idx = 3
+// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
+func (h *Handle) UpdateStatsHealthyMetrics() {
+	v := h.statsCache.Load()
+	if v == nil {
+		return
 	}
-	lastIDX := len(c.bucketDelta) - 1
-	if add {
-		c.bucketDelta[idx]++
-		c.bucketDelta[lastIDX]++
-	} else {
-		c.bucketDelta[idx]--
-		c.bucketDelta[lastIDX]--
+
+	distribution := make([]int64, 5)
+	for _, tbl := range v.(statsCache).Values() {
+		healthy, ok := tbl.GetStatsHealthy()
+		if !ok {
+			continue
+		}
+		if healthy < 50 {
+			distribution[0] += 1
+		} else if healthy < 80 {
+			distribution[1] += 1
+		} else if healthy < 100 {
+			distribution[2] += 1
+		} else {
+			distribution[3] += 1
+		}
+		distribution[4] += 1
 	}
-}
-
-func (c *statsHealthyChange) drop(statsHealthy int64) {
-	c.update(false, statsHealthy)
-}
-
-func (c *statsHealthyChange) add(statsHealthy int64) {
-	c.update(true, statsHealthy)
-}
-
-func (c *statsHealthyChange) apply() {
-	for i, val := range c.bucketDelta {
-		statsHealthyGauges[i].Add(float64(val))
+	for i, val := range distribution {
+		statsHealthyGauges[i].Set(float64(val))
 	}
 }
 
@@ -582,7 +589,6 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	healthyChange := &statsHealthyChange{}
 	option := &tableStatsOption{}
 	for _, opt := range opts {
 		opt(option)
@@ -604,8 +610,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		oldTbl, ok := oldCache.Get(physicalID)
-		if ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -613,9 +618,6 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		if err != nil {
 			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
-		}
-		if oldHealthy, ok := oldTbl.GetStatsHealthy(); ok {
-			healthyChange.drop(oldHealthy)
 		}
 		if tbl == nil {
 			deletedTableIDs = append(deletedTableIDs, physicalID)
@@ -626,15 +628,9 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		if newHealthy, ok := tbl.GetStatsHealthy(); ok {
-			healthyChange.add(newHealthy)
-		}
 		tables = append(tables, tbl)
 	}
-	updated := h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
-	if updated {
-		healthyChange.apply()
-	}
+	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
 	return nil
 }
 
@@ -954,11 +950,13 @@ func (h *Handle) mergeGlobalStatsTopNByConcurrency(mergeConcurrency, mergeBatchS
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	if is.SchemaMetaVersion() != h.mu.schemaVersion {
-		h.mu.schemaVersion = is.SchemaMetaVersion()
-		h.mu.pid2tid = buildPartitionID2TableID(is)
+	h.schemaMu.Lock()
+	defer h.schemaMu.Unlock()
+	if is.SchemaMetaVersion() != h.schemaMu.schemaVersion {
+		h.schemaMu.schemaVersion = is.SchemaMetaVersion()
+		h.schemaMu.pid2tid = buildPartitionID2TableID(is)
 	}
-	if id, ok := h.mu.pid2tid[physicalID]; ok {
+	if id, ok := h.schemaMu.pid2tid[physicalID]; ok {
 		return is.TableByID(id)
 	}
 	return is.TableByID(physicalID)
@@ -994,8 +992,13 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...TableStatsOpt) 
 
 // GetPartitionStats retrieves the partition stats from cache.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...TableStatsOpt) *statistics.Table {
-	statsCache := h.statsCache.Load().(statsCache)
 	var tbl *statistics.Table
+	if h == nil {
+		tbl = statistics.PseudoTable(tblInfo)
+		tbl.PhysicalID = pid
+		return tbl
+	}
+	statsCache := h.statsCache.Load().(statsCache)
 	var ok bool
 	option := &tableStatsOption{}
 	for _, opt := range opts {
@@ -1614,27 +1617,20 @@ func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stm
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
-func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
-	tableID := results.TableID.GetStatisticsID()
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
-		}
-	}()
+func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return SaveTableStatsToStorage(h.mu.ctx, results, analyzeSnapshot)
+	return SaveTableStatsToStorage(h.mu.ctx, results, analyzeSnapshot, source)
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
-func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
+func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			if err1 := recordHistoricalStatsMeta(sctx, tableID, statsVer); err1 != nil {
+			if err1 := recordHistoricalStatsMeta(sctx, tableID, statsVer, source); err1 != nil {
 				logutil.BgLogger().Error("record historical stats meta failed",
 					zap.Int64("table-id", tableID),
 					zap.Uint64("version", statsVer),
@@ -1809,11 +1805,12 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
 	h.mu.Lock()
@@ -1888,11 +1885,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
-func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error) {
+func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
 	h.mu.Lock()
@@ -1933,7 +1930,9 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 		} else {
-			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+			// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+			// Hence, when reading statistics, we should skip invalid date check. See #39336.
+			sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 			// original value.
@@ -2098,7 +2097,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
 	slices.Sort(colIDs)
@@ -2169,7 +2168,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -2382,7 +2381,7 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(tableID, statsVer)
+			h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
 	if extStats == nil || len(extStats.Stats) == 0 {
@@ -2590,17 +2589,27 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 const maxColumnSize = 6 << 20
 
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
-func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
+func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil, true)
+	var js *JSONTable
+	var err error
+	if isPartition {
+		js, err = h.tableStatsToJSON(dbName, tableInfo, physicalID, 0)
+	} else {
+		js, err = h.DumpStatsToJSON(dbName, tableInfo, nil, true)
+	}
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	version := uint64(0)
-	for _, value := range js.Columns {
-		version = uint64(*value.StatsVer)
-		if version != 0 {
-			break
+	if len(js.Partitions) == 0 {
+		version = js.Version
+	} else {
+		for _, p := range js.Partitions {
+			version = p.Version
+			if version != 0 {
+				break
+			}
 		}
 	}
 	blocks, err := JSONTableToBlocks(js, maxColumnSize)
@@ -2621,7 +2630,7 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 
 	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
 	for i := 0; i < len(blocks); i++ {
-		if _, err := exec.ExecuteInternal(ctx, sql, tableInfo.ID, blocks[i], i, version, ts); err != nil {
+		if _, err := exec.ExecuteInternal(ctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
 			return version, errors.Trace(err)
 		}
 	}
@@ -2641,56 +2650,6 @@ func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return checkHistoricalStatsEnable(h.mu.ctx)
-}
-
-func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64) error {
-	if tableID == 0 || version == 0 {
-		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
-	}
-	historicalStatsEnabled, err := checkHistoricalStatsEnable(sctx)
-	if err != nil {
-		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
-	}
-	if !historicalStatsEnabled {
-		return nil
-	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := sctx.(sqlexec.SQLExecutor)
-	rexec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := rexec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return errors.New("no historical meta stats can be recorded")
-	}
-	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
-
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-
-	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, create_time) VALUES (%?, %?, %?, %?, NOW())"
-	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	err := recordHistoricalStatsMeta(h.mu.ctx, tableID, version)
-	if err != nil {
-		logutil.BgLogger().Error("record historical stats meta failed",
-			zap.Int64("table-id", tableID),
-			zap.Uint64("version", version),
-			zap.Error(err))
-	}
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.

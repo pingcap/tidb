@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
@@ -142,7 +143,8 @@ func TestShowCreateTable(t *testing.T) {
 		"`d` datetime(4) default current_timestamp(4),\n" +
 		"`e` varchar(20) default 'cUrrent_tImestamp',\n" +
 		"`f` datetime(2) default current_timestamp(2) on update current_timestamp(2),\n" +
-		"`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2))")
+		"`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2),\n" +
+		"`h` date default current_date )")
 	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
@@ -152,7 +154,8 @@ func TestShowCreateTable(t *testing.T) {
 			"  `d` datetime(4) DEFAULT CURRENT_TIMESTAMP(4),\n"+
 			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp',\n"+
 			"  `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
-			"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2)\n"+
+			"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
+			"  `h` date DEFAULT CURRENT_DATE\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table t")
@@ -965,6 +968,8 @@ func TestShow2(t *testing.T) {
 					c_timestamp_default timestamp default current_timestamp,
 					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
 					c_timestamp_default_4 timestamp(3) default current_timestamp(3) on update current_timestamp(3),
+					c_date_default date default current_date,
+					c_date_default_2 date default (curdate()),
 					c_blob blob,
 					c_tinyblob tinyblob,
 					c_mediumblob mediumblob,
@@ -1001,6 +1006,8 @@ func TestShow2(t *testing.T) {
 			"[c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
 			"[c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ]\n" +
 			"[c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ]\n" +
+			"[c_date_default date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
+			"[c_date_default_2 date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
 			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
@@ -1515,7 +1522,7 @@ func TestShowBuiltin(t *testing.T) {
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 283
+	const builtinFuncNum = 285
 	require.Equal(t, builtinFuncNum, len(rows))
 	require.Equal(t, rows[0][0].(string), "abs")
 	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")
@@ -2027,18 +2034,22 @@ func TestShowTTLOption(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR ttl_enable = 'OFF'")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL 3.14159 HOUR_MINUTE")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL \"15:20\" HOUR_MINUTE")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JOB_INTERVAL = '1d'")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 }
 
 func TestShowBindingDigestField(t *testing.T) {

@@ -16,7 +16,7 @@ const (
 	flagTryAdvanceThreshold = "try-advance-threshold"
 
 	DefaultConsistencyCheckTick = 5
-	DefaultTryAdvanceThreshold  = 9 * time.Minute
+	DefaultTryAdvanceThreshold  = 4 * time.Minute
 	DefaultBackOffTime          = 5 * time.Second
 	DefaultTickInterval         = 12 * time.Second
 	DefaultFullScanTick         = 4
@@ -76,11 +76,18 @@ func (conf Config) GetDefaultStartPollThreshold() time.Duration {
 // GetSubscriberErrorStartPollThreshold returns the threshold of begin polling the checkpoint
 // when the subscriber meets error.
 func (conf Config) GetSubscriberErrorStartPollThreshold() time.Duration {
-	return conf.TryAdvanceThreshold / 5
+	// 0.45x of the origin threshold.
+	// The origin threshold is 0.8x the target RPO,
+	// and the default flush interval is about 0.5x the target RPO.
+	// So the relationship between the RPO and the threshold is:
+	// When subscription is all available, it is 1.7x of the flush interval (which allow us to save in abnormal condition).
+	// When some of subscriptions are not available, it is 0.75x of the flush interval.
+	// NOTE: can we make subscription better and give up the poll model?
+	return conf.TryAdvanceThreshold * 9 / 20
 }
 
 // TickTimeout returns the max duration for each tick.
 func (conf Config) TickTimeout() time.Duration {
-	// If a tick blocks 10x the interval of ticking, we may need to break it and retry.
-	return 10 * conf.TickDuration
+	// If a tick blocks longer than the interval of ticking, we may need to break it and retry.
+	return conf.TickDuration
 }

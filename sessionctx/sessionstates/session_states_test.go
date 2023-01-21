@@ -20,9 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -133,7 +131,7 @@ func TestSystemVars(t *testing.T) {
 		{
 			// sem invisible variable
 			inSessionStates: false,
-			varName:         variable.TiDBAllowRemoveAutoInc,
+			varName:         variable.TiDBConfig,
 		},
 		{
 			// noop variables
@@ -376,23 +374,6 @@ func TestSessionCtx(t *testing.T) {
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery("select lastval(test.s)").Check(testkit.Rows("1"))
 				tk.MustQuery("select nextval(test.s)").Check(testkit.Rows("2"))
-			},
-		},
-		{
-			// check MPPStoreLastFailTime
-			setFunc: func(tk *testkit.TestKit) any {
-				m := sync.Map{}
-				m.Store("store1", time.Now())
-				tk.Session().GetSessionVars().MPPStoreLastFailTime = &m
-				return tk.Session().GetSessionVars().MPPStoreLastFailTime
-			},
-			checkFunc: func(tk *testkit.TestKit, param any) {
-				failTime := tk.Session().GetSessionVars().MPPStoreLastFailTime
-				tm, ok := failTime.Load("store1")
-				require.True(t, ok)
-				v, ok := (param.(*sync.Map)).Load("store1")
-				require.True(t, ok)
-				require.True(t, tm.(time.Time).Equal(v.(time.Time)))
 			},
 		},
 		{
@@ -1269,6 +1250,16 @@ func TestShowStateFail(t *testing.T) {
 			},
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("drop table test.t1")
+			},
+		},
+		{
+			// enable sandbox mode
+			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
+				tk.Session().EnableSandBoxMode()
+			},
+			showErr: errno.ErrCannotMigrateSession,
+			cleanFunc: func(tk *testkit.TestKit) {
+				tk.Session().DisableSandBoxMode()
 			},
 		},
 		{

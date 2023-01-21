@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
@@ -593,9 +592,6 @@ const (
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
-	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
-	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
-
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
@@ -701,6 +697,12 @@ const (
 	// TiDBCostModelVersion is a internal switch to indicates the cost model version.
 	TiDBCostModelVersion = "tidb_cost_model_version"
 
+	// TiDBIndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
+	// IndexJoin can cause plenty of extra double read tasks, which consume lots of resources and take a long time.
+	// Since the number of double read tasks is hard to estimated accurately, we leave this variable to let us can adjust this
+	// part of cost manually.
+	TiDBIndexJoinDoubleReadPenaltyCostRate = "tidb_index_join_double_read_penalty_cost_rate"
+
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 
@@ -782,11 +784,18 @@ const (
 
 	// TiDBEnablePlanReplayerCapture indicates whether to enable plan replayer capture
 	TiDBEnablePlanReplayerCapture = "tidb_enable_plan_replayer_capture"
+
+	// TiDBEnablePlanReplayerContinuesCapture indicates whether to enable continues capture
+	TiDBEnablePlanReplayerContinuesCapture = "tidb_enable_plan_replayer_continues_capture"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
+
+	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// is enabled.
+	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
 )
 
 // TiDB vars that have only global scope
@@ -842,8 +851,6 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
-	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
-	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
 	// TiDBDDLEnableDistributeReorg indicates whether to enable the new Reorg framework.
 	TiDBDDLEnableDistributeReorg = "tidb_ddl_distribute_reorg"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
@@ -881,8 +888,6 @@ const (
 	TiDBTTLDeleteBatchSize = "tidb_ttl_delete_batch_size"
 	// TiDBTTLDeleteRateLimit is used to control the delete rate limit for TTL jobs in each node
 	TiDBTTLDeleteRateLimit = "tidb_ttl_delete_rate_limit"
-	// TiDBTTLJobRunInterval represents the schedule interval between two jobs for one TTL table
-	TiDBTTLJobRunInterval = "tidb_ttl_job_run_interval"
 	// TiDBTTLJobScheduleWindowStartTime is used to restrict the start time of the time window of scheduling the ttl jobs.
 	TiDBTTLJobScheduleWindowStartTime = "tidb_ttl_job_schedule_window_start_time"
 	// TiDBTTLJobScheduleWindowEndTime is used to restrict the end time of the time window of scheduling the ttl jobs.
@@ -897,6 +902,10 @@ const (
 	PasswordReuseTime = "password_reuse_interval"
 	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
 	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
+	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
+	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
+	// TiDBEnableResourceControl indicates whether resource control feature is enabled
+	TiDBEnableResourceControl = "tidb_enable_resource_control"
 )
 
 // TiDB intentional limits
@@ -1030,7 +1039,6 @@ const (
 	DefTiDBShardAllocateStep                       = math.MaxInt64
 	DefTiDBEnableTelemetry                         = true
 	DefTiDBEnableParallelApply                     = false
-	DefTiDBEnableAmendPessimisticTxn               = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
 	DefTiDBEnableRateLimitAction                   = false
 	DefTiDBEnableAsyncCommit                       = false
@@ -1094,7 +1102,6 @@ const (
 	DefTiDBPrepPlanCacheSize                       = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBDDLEnableDistributeReorg                = distributereorg.TiDBEnableDistributeReorg
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
@@ -1104,7 +1111,7 @@ const (
 	DefAdaptiveClosestReadThreshold                = 4096
 	DefTiDBEnableAnalyzeSnapshot                   = false
 	DefTiDBGenerateBinaryPlan                      = true
-	DefEnableTiDBGCAwareMemoryTrack                = true
+	DefEnableTiDBGCAwareMemoryTrack                = false
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
 	DefTiDBEnableTmpStorageOnOOM                   = true
 	DefTiDBEnableMDL                               = true
@@ -1133,31 +1140,33 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold                float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan                  = true
-	DefTiDBExternalTS                                = 0
-	DefTiDBEnableExternalTSRead                      = false
-	DefTiDBEnableReusechunk                          = true
-	DefTiDBUseAlloc                                  = false
-	DefTiDBEnablePlanReplayerCapture                 = false
-	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
-	DefTiDBTTLJobEnable                              = true
-	DefTiDBTTLScanBatchSize                          = 500
-	DefTiDBTTLScanBatchMaxSize                       = 10240
-	DefTiDBTTLScanBatchMinSize                       = 1
-	DefTiDBTTLDeleteBatchSize                        = 100
-	DefTiDBTTLDeleteBatchMaxSize                     = 10240
-	DefTiDBTTLDeleteBatchMinSize                     = 1
-	DefTiDBTTLDeleteRateLimit                        = 0
-	DefPasswordReuseHistory                          = 0
-	DefPasswordReuseTime                             = 0
-	DefTiDBStoreBatchSize                            = 0
-	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
-	DefTiDBTTLJobRunInterval                         = "1h0m0s"
-	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount                        = 4
-	DefTiDBTTLDeleteWorkerCount                      = 4
+	DefTiDBGOGCTunerThreshold                      float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                        = true
+	DefTiDBExternalTS                                      = 0
+	DefTiDBEnableExternalTSRead                            = false
+	DefTiDBEnableReusechunk                                = true
+	DefTiDBUseAlloc                                        = false
+	DefTiDBEnablePlanReplayerCapture                       = false
+	DefTiDBIndexMergeIntersectionConcurrency               = ConcurrencyUnset
+	DefTiDBTTLJobEnable                                    = true
+	DefTiDBTTLScanBatchSize                                = 500
+	DefTiDBTTLScanBatchMaxSize                             = 10240
+	DefTiDBTTLScanBatchMinSize                             = 1
+	DefTiDBTTLDeleteBatchSize                              = 100
+	DefTiDBTTLDeleteBatchMaxSize                           = 10240
+	DefTiDBTTLDeleteBatchMinSize                           = 1
+	DefTiDBTTLDeleteRateLimit                              = 0
+	DefPasswordReuseHistory                                = 0
+	DefPasswordReuseTime                                   = 0
+	DefTiDBStoreBatchSize                                  = 0
+	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture                 = false
+	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                              = 4
+	DefTiDBTTLDeleteWorkerCount                            = 4
+	DefTiDBEnableResourceControl                           = false
+	DefTiDBPessimisticTransactionAggressiveLocking         = false
 )
 
 // Process global variables.
@@ -1199,7 +1208,6 @@ var (
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
-	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	DDLEnableDistributeReorg          = atomic.NewBool(DefTiDBDDLEnableDistributeReorg)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
@@ -1225,7 +1233,6 @@ var (
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)
-	TTLJobRunInterval                  = atomic.NewDuration(mustParseDuration(DefTiDBTTLJobRunInterval))
 	TTLJobScheduleWindowStartTime      = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowStartTime))
 	TTLJobScheduleWindowEndTime        = atomic.NewTime(mustParseTime(FullDayTimeFormat, DefTiDBTTLJobScheduleWindowEndTime))
 	TTLScanWorkerCount                 = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
@@ -1233,7 +1240,10 @@ var (
 	PasswordHistory                    = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval              = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
+	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
 )
 
 var (
@@ -1245,8 +1255,6 @@ var (
 	SetStatsCacheCapacity atomic.Value
 	// SetPDClientDynamicOption is the func registered by domain
 	SetPDClientDynamicOption atomic.Pointer[func(string, string)]
-	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
-	SwitchConcurrentDDL func(bool) error = nil
 	// SwitchMDL is the func registered by DDL to switch MDL.
 	SwitchMDL func(bool2 bool) error = nil
 	// EnableDDL is the func registered by ddl to enable running ddl in this instance.
@@ -1257,6 +1265,16 @@ var (
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
+	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
+	SetGlobalResourceControl atomic.Pointer[func(bool)]
+)
+
+// Hooks functions for Cluster Resource Control.
+var (
+	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
+	EnableGlobalResourceControlFunc func() = func() {}
+	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
+	DisableGlobalResourceControlFunc func() = func() {}
 )
 
 func serverMemoryLimitDefaultValue() string {

@@ -43,7 +43,7 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 	switch ft.GetType() {
 	case mysql.TypeBit, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeTinyBlob:
 		return writeHex(restoreCtx.In, d)
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeEnum, mysql.TypeSet:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
 			return writeHex(restoreCtx.In, d)
 		}
@@ -319,16 +319,12 @@ type ScanQueryGenerator struct {
 
 // NewScanQueryGenerator creates a new ScanQueryGenerator
 func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time, rangeStart []types.Datum, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
-	if len(rangeStart) > 0 {
-		if err := tbl.ValidateKey(rangeStart); err != nil {
-			return nil, err
-		}
+	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
+		return nil, err
 	}
 
-	if len(rangeEnd) > 0 {
-		if err := tbl.ValidateKey(rangeEnd); err != nil {
-			return nil, err
-		}
+	if err := tbl.ValidateKeyPrefix(rangeEnd); err != nil {
+		return nil, err
 	}
 
 	return &ScanQueryGenerator{
@@ -393,11 +389,11 @@ func (g *ScanQueryGenerator) setStack(key []types.Datum) error {
 		return nil
 	}
 
-	if err := g.tbl.ValidateKey(key); err != nil {
+	if err := g.tbl.ValidateKeyPrefix(key); err != nil {
 		return err
 	}
 
-	g.stack = g.stack[:cap(g.stack)]
+	g.stack = g.stack[:len(key)]
 	for i := 0; i < len(key); i++ {
 		g.stack[i] = key[0 : i+1]
 	}
@@ -440,7 +436,7 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	if len(g.keyRangeEnd) > 0 {
-		if err := b.WriteCommonCondition(g.tbl.KeyColumns, "<", g.keyRangeEnd); err != nil {
+		if err := b.WriteCommonCondition(g.tbl.KeyColumns[0:len(g.keyRangeEnd)], "<", g.keyRangeEnd); err != nil {
 			return "", err
 		}
 	}

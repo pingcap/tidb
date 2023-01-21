@@ -184,6 +184,7 @@ go_library(
         "//util/plancodec",
         "//util/printer",
         "//util/ranger",
+        "//util/replayer",
         "//util/resourcegrouptag",
         "//util/rowDecoder",
         "//util/rowcodec",
@@ -191,6 +192,7 @@ go_library(
         "//util/servermemorylimit",
         "//util/set",
         "//util/size",
+        "//util/slice",
         "//util/sqlexec",
         "//util/stmtsummary",
         "//util/stringutil",
@@ -248,7 +250,7 @@ go_library(
 
 go_test(
     name = "executor_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "adapter_test.go",
         "admin_test.go",
@@ -331,7 +333,6 @@ go_test(
         "utils_test.go",
         "window_test.go",
         "write_concurrent_test.go",
-        "write_test.go",
     ],
     data = glob(["testdata/**"]),
     embed = [":executor"],
@@ -372,6 +373,7 @@ go_test(
         "//sessionctx/binloginfo",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
+        "//sessionctx/variable/featuretag/distributereorg",
         "//sessiontxn",
         "//sessiontxn/staleread",
         "//statistics",
@@ -411,6 +413,7 @@ go_test(
         "//util/pdapi",
         "//util/plancodec",
         "//util/ranger",
+        "//util/replayer",
         "//util/rowcodec",
         "//util/set",
         "//util/sqlexec",

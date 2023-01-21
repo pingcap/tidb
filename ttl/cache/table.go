@@ -166,9 +166,9 @@ func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.
 	}, nil
 }
 
-// ValidateKey validates a key
-func (t *PhysicalTable) ValidateKey(key []types.Datum) error {
-	if len(t.KeyColumns) != len(key) {
+// ValidateKeyPrefix validates a key prefix
+func (t *PhysicalTable) ValidateKeyPrefix(key []types.Datum) error {
+	if len(key) > len(t.KeyColumns) {
 		return errors.Errorf("invalid key length: %d, expected %d", len(key), len(t.KeyColumns))
 	}
 	return nil
@@ -198,7 +198,7 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session, 
 
 // SplitScanRanges split ranges for TTL scan
 func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, splitCnt int) ([]ScanRange, error) {
-	if len(t.KeyColumns) != 1 || splitCnt <= 1 {
+	if len(t.KeyColumns) < 1 || splitCnt <= 1 {
 		return []ScanRange{newFullRange()}, nil
 	}
 
@@ -431,7 +431,10 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 		return d
 	}
 
-	if _, v, err := codec.DecodeOne(encodedVal); err == nil {
+	if remain, v, err := codec.DecodeOne(encodedVal); err == nil {
+		if len(remain) > 0 {
+			v.SetBytes(kv.Key(v.GetBytes()).Next())
+		}
 		return v
 	}
 

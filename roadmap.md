@@ -21,7 +21,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <tbody>
   <tr>
     <td rowspan="3">Scalability &amp; Stability</td>
-    <td><ul><li>✅ Optimize resource isolation in heavy read scenarios.</li><li>Optimize resource isolation in heavy (batch) write scenarios.</li><li>Provide resource management capability for background process.</li><li>Support resource management framework.</ul></td>
+    <td><ul><li>✅ Optimize resource isolation in heavy read scenarios.</li><li>✅ Optimize resource isolation in heavy (batch) write scenarios.</li><li>Provide resource management capability for background process.</li><li>Support resource management framework.</ul></td>
     <td><ul><li>Provide a basic resource management and control framework to effectively control the resource squeeze of background tasks on front-end tasks (user operations), and improve cluster stability.</li><li>Refine resource management in the multi-service aggregation scenario.</li></ul></td>
   </tr>
   <tr>
@@ -34,7 +34,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   </tr>
   <tr>
     <td rowspan="6">SQL</td>
-    <td>Support the JSON function.<ul><li>✅ Expression index</li><li>Multi-value index</li><li>TiFlash supports JSON function pushdown</li></ul></td>
+    <td>Support the JSON function.<ul><li>✅ Expression index</li><li>Multi-value index</li><li>✅ TiFlash supports JSON function pushdown</li></ul></td>
     <td>In business scenarios that require flexible schema definitions, the application can use JSON to store information for ODS, transaction indicators, commodities, game characters, and props.</td>
   </tr>
   <tr>
@@ -42,7 +42,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>In game rollback scenarios, the flashback can be used to achieve a fast rollback of the current cluster. This solves the common problems in the gaming industry such as version errors and bugs.</td>
   </tr>
   <tr>
-    <td>Support time to live (TTL).</td>
+    <td>✅ Support time to live (TTL).</td>
     <td>This feature enables automatic data cleanup in limited data archiving scenarios.</td>
   </tr>
   <tr>
@@ -50,7 +50,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>Supports foreign key constraints compatible with MySQL syntax, and provides DB-level referential integrity check capabilities.</td>
   </tr>
   <tr>
-    <td>Support non-transactional DML for insert and update operations.</td>
+    <td>✅ Support non-transactional DML for insert and update operations.</td>
     <td></td>
   </tr>
   <tr>
@@ -59,7 +59,7 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
   </tr>
   <tr>
     <td rowspan="2">Hybrid Transactional and Analytical Processing (HTAP)</td>
-    <td>Support TiFlash result write-back.</td>
+    <td>✅ Support TiFlash result write-back.</td>
     <td><p>Support <code>INSERT INTO SELECT</code>.</p><ul><li>Easily write analysis results in TiFlash back to TiDB.</li><li>Provide complete ACID transactions, more convenient and reliable than general ETL solutions.</li><li>Set a hard limit on the threshold of intermediate result size, and report an error if the threshold is exceeded.</li><li>Support fully distributed transactions, and remove or relax the limit on the intermediate result size.</li></ul><p>These features combined enable a way to materialize intermediate results. The analysis results can be easily reused, which reduces unnecessary ad-hoc queries, improves the performance of BI and other applications (by pulling results directly) and reduces system load (by avoiding duplicated computation), thereby improving the overall data pipeline efficiency and reducing costs. It will make TiFlash an online service.</p></td>
   </tr>
   <tr>
@@ -124,12 +124,12 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
     <td>Increase TiCDC's scalability by spanning data changes for single table to multiple TiCDC nodes and reduce replication latency by removing sorting stage.</td>
   </tr>
   <tr>
-    <td>Support replicating data to object storage such as S3.</td>
+    <td>✅ Support replicating data to object storage such as S3.</td>
     <td>TiCDC supports replicating data changes to common object storage services.</td>
   </tr>
   <tr>
     <td>Data migration</td>
-    <td>Continuous data verification during data migration.</td>
+    <td>✅ Continuous data verification during data migration.</td>
     <td>DM supports online data verification during migration from MySQL compatible database to TiDB.</td>
   </tr>
 </tbody>
@@ -148,22 +148,22 @@ This roadmap brings you what's coming in the 1-year future, so you can see the n
 <tbody>
   <tr>
     <td>Password complexity check</td>
-    <td>A strong password is required.</td>
+    <td>✅ A strong password is required.</td>
     <td>To improve security, empty passwords and weak passwords are not allowed.<br>The required password length is not less than 8. The password must contain an uppercase letter, a lowercase letter, a number, and a character.</td>
   </tr>
   <tr>
     <td>Password expiration</td>
-    <td>TiDB provides password expiration management and requires users to change passwords regularly.</td>
+    <td>✅ TiDB provides password expiration management and requires users to change passwords regularly.</td>
     <td>Reduce the security risk of password cracking or leakage caused by using the same password for a long time.</td>
   </tr>
   <tr>
     <td>Password reuse policy</td>
-    <td>TiDB provides a password reuse policy.</td>
+    <td>✅ TiDB provides a password reuse policy.</td>
     <td>Restrict password reuse and improve password security.</td>
   </tr>
   <tr>
     <td>Password anti-brute force cracking</td>
-    <td>Accounts will be locked in case of consecutive incorrect passwords.</td>
+    <td>✅ Accounts will be locked in case of consecutive incorrect passwords.</td>
     <td>Lock the account under continuous wrong passwords to prevent the password from being cracked by brute force.</td>
   </tr>
   <tr>
