@@ -28,6 +28,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type TLS struct {
