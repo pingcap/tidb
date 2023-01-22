@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "split",
@@ -6,6 +6,7 @@ go_library(
         "client.go",
         "region.go",
         "split.go",
+        "sum_sorted.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/restore/split",
     visibility = ["//visibility:public"],
@@ -16,7 +17,9 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/redact",
         "//br/pkg/utils",
+        "//kv",
         "//store/pdtypes",
+        "@com_github_google_btree//:btree",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/errorpb",
@@ -32,5 +35,14 @@ go_library(
         "@org_golang_google_grpc//status",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "split_test",
+    srcs = ["sum_sorted_test.go"],
+    deps = [
+        ":split",
+        "@com_github_stretchr_testify//require",
     ],
 )
