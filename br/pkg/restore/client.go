@@ -1411,7 +1411,7 @@ func (rc *Client) execChecksum(
 	concurrency uint,
 	loadStatCh chan<- *CreatedTable,
 ) error {
-	logger := log.With(
+	logger := log.L().With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
