@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
