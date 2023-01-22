@@ -241,7 +241,7 @@ func TestTopSQLPubSub(t *testing.T) {
 	conn, err := grpc.Dial(
 		server.Address(),
 		grpc.WithBlock(),
-		grpc.WithInsecure(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    10 * time.Second,
 			Timeout: 3 * time.Second,
@@ -363,7 +363,7 @@ func TestPubSubWhenReporterIsStopped(t *testing.T) {
 	conn, err := grpc.Dial(
 		server.Address(),
 		grpc.WithBlock(),
-		grpc.WithInsecure(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    10 * time.Second,
 			Timeout: 3 * time.Second,

@@ -84,7 +84,7 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 }
 
 func GRPCConn(ctx context.Context, storeAddr string, tlsConf *tls.Config, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	secureOpt := grpc.WithInsecure()
+	secureOpt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if tlsConf != nil {
 		secureOpt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConf))
 	}

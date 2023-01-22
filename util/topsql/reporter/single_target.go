@@ -357,7 +357,7 @@ func (*SingleTargetDataSink) dial(ctx context.Context, targetRPCAddr string) (*g
 		dialCtx,
 		targetRPCAddr,
 		grpc.WithBlock(),
-		grpc.WithInsecure(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithInitialWindowSize(grpcInitialWindowSize),
 		grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 		grpc.WithDefaultCallOptions(

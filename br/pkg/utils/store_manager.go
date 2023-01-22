@@ -136,7 +136,7 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if mgr.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(mgr.tlsConf))
 	}

@@ -148,7 +148,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if f.tls.TLSConfig() != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
 	}

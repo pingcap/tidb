@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -336,7 +337,7 @@ func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *Region
 	if err != nil {
 		return false, nil, err
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if c.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
 	}

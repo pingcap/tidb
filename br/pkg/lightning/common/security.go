@@ -104,7 +104,7 @@ func (tc *TLS) ToGRPCDialOption() grpc.DialOption {
 	if tc.inner != nil {
 		return grpc.WithTransportCredentials(credentials.NewTLS(tc.inner))
 	}
-	return grpc.WithInsecure()
+	return grpc.WithTransportCredentials(insecure.NewCredentials())
 }
 
 // WrapListener places a TLS layer on top of the existing listener.

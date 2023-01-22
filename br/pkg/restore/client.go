@@ -1298,7 +1298,7 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 		finalStore := store
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
-				opt := grpc.WithInsecure()
+				opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 				if rc.tlsConf != nil {
 					opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
 				}
