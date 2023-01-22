@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/duration"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
@@ -137,16 +138,12 @@ func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
 
 var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statistics,last_job_id,last_job_start_time,last_job_finish_time,last_job_ttl_expire,last_job_summary,current_job_id,current_job_owner_id,current_job_owner_addr,current_job_owner_hb_time,current_job_start_time,current_job_ttl_expire,current_job_state,current_job_status,current_job_status_update_time FROM mysql.tidb_ttl_table_status"
 
-func (m *JobManager) SetScanWorkers4Test(workers []worker) {
-	m.scanWorkers = workers
-}
-
 // TTLJob exports the ttlJob for test
 type TTLJob = ttlJob
 
 // LockNewJob is an exported version of lockNewJob for test
-func (m *JobManager) LockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time) (*TTLJob, error) {
-	return m.lockNewJob(ctx, se, table, now)
+func (m *JobManager) LockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, ignoreScheduleInterval bool) (*TTLJob, error) {
+	return m.lockNewJob(ctx, se, table, now, ignoreScheduleInterval)
 }
 
 // RunningJobs returns the running jobs inside ttl job manager
@@ -159,31 +156,41 @@ func (m *JobManager) InfoSchemaCache() *cache.InfoSchemaCache {
 	return m.infoSchemaCache
 }
 
-func (j *ttlJob) Finish(se session.Session, now time.Time) {
-	j.finish(se, now)
+// RescheduleJobs is an exported version of rescheduleJobs for test
+func (m *JobManager) RescheduleJobs(se session.Session, now time.Time) {
+	m.rescheduleJobs(se, now)
+}
+
+// TaskManager is an exported getter of task manager for test
+func (m *JobManager) TaskManager() *taskManager {
+	return m.taskManager
+}
+
+// UpdateHeartBeat is an exported version of updateHeartBeat for test
+func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
+	return m.updateHeartBeat(ctx, se, now)
+}
+
+func (j *ttlJob) Finish(se session.Session, now time.Time, summary string) {
+	j.finish(se, now, summary)
 }
 
 func (j *ttlJob) ID() string {
 	return j.id
 }
 
-func (j *ttlJob) SetScanErr(err error) {
-	j.scanTaskErr = err
-}
-
 func newMockTTLJob(tbl *cache.PhysicalTable, status cache.JobStatus) *ttlJob {
-	statistics := &ttlStatistics{}
-	return &ttlJob{tbl: tbl, ctx: context.Background(), statistics: statistics, status: status, tasks: []*ttlScanTask{{ctx: context.Background(), tbl: tbl, statistics: statistics}}}
+	return &ttlJob{tbl: tbl, status: status}
 }
 
 func TestReadyForNewJobTables(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
-	m := NewJobManager("test-id", nil, nil)
+	m := NewJobManager("test-id", nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl)
 	se := newMockSession(t, tbl)
 
 	tblWithDailyInterval := newMockTTLTbl(t, "t2")
-	tblWithDailyInterval.TTLInfo.JobInterval = duration.Duration{Day: 1}
+	tblWithDailyInterval.TTLInfo.JobInterval = "1d"
 
 	cases := []struct {
 		name             string
@@ -237,7 +244,7 @@ func TestLockNewTable(t *testing.T) {
 	assert.NoError(t, err)
 	expireTime := now
 
-	testPhysicalTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year", JobInterval: duration.Duration{Hour: 1}}}}
+	testPhysicalTable := &cache.PhysicalTable{ID: 1, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "5 Year", JobInterval: "1h"}}}
 
 	type executeInfo struct {
 		sql  string
@@ -249,6 +256,22 @@ func TestLockNewTable(t *testing.T) {
 			args,
 		}
 	}
+	getExecuteInfoForUpdate := func(sql string, args []interface{}) executeInfo {
+		return executeInfo{
+			sql + " FOR UPDATE NOWAIT",
+			args,
+		}
+	}
+	getExecuteInfoWithErr := func(sql string, args []interface{}, err error) executeInfo {
+		require.NoError(t, err)
+		return executeInfo{
+			sql,
+			args,
+		}
+	}
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/set-job-uuid", `return("test-job-id")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/set-job-uuid")
+
 	type sqlExecute struct {
 		executeInfo
 
@@ -264,11 +287,15 @@ func TestLockNewTable(t *testing.T) {
 	}{
 		{"normal lock table", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfo(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL(1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
+				nil, nil,
+			},
+			{
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -278,7 +305,7 @@ func TestLockNewTable(t *testing.T) {
 		}, true, false},
 		{"select nothing", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfo(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
 				nil, nil,
 			},
 			{
@@ -286,11 +313,15 @@ func TestLockNewTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfo(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL(1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
+				nil, nil,
+			},
+			{
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
 				nil, nil,
 			},
 			{
@@ -300,27 +331,30 @@ func TestLockNewTable(t *testing.T) {
 		}, true, false},
 		{"return error", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfo(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL(1, now, expireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL("test-job-id", 1, now, expireTime, "test-id")),
 				nil, errors.New("test error message"),
+			},
+			{
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "test-job-id", 1, 0, nil, nil, expireTime, now)),
+				nil, nil,
 			},
 		}, false, true},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := NewJobManager("test-id", newMockSessionPool(t), nil)
+			m := NewJobManager("test-id", newMockSessionPool(t), nil, nil)
 			m.infoSchemaCache.Tables[c.table.ID] = c.table
-
 			sqlCounter := 0
 			se := newMockSession(t)
 			se.executeSQL = func(ctx context.Context, sql string, args ...interface{}) (rows []chunk.Row, err error) {
 				assert.Less(t, sqlCounter, len(c.sqls))
-				assert.Equal(t, sql, c.sqls[sqlCounter].sql)
-				assert.Equal(t, args, c.sqls[sqlCounter].args)
+				assert.Equal(t, c.sqls[sqlCounter].sql, sql)
+				assert.Equal(t, c.sqls[sqlCounter].args, args)
 
 				rows = c.sqls[sqlCounter].rows
 				err = c.sqls[sqlCounter].err
@@ -329,7 +363,7 @@ func TestLockNewTable(t *testing.T) {
 			}
 			se.evalExpire = now
 
-			job, err := m.lockNewJob(context.Background(), se, c.table, now)
+			job, err := m.lockNewJob(context.Background(), se, c.table, now, false)
 			if c.hasJob {
 				assert.NotNil(t, job)
 			} else {
@@ -344,72 +378,15 @@ func TestLockNewTable(t *testing.T) {
 	}
 }
 
-func TestResizeWorkers(t *testing.T) {
-	tbl := newMockTTLTbl(t, "t1")
-
-	// scale workers
-	scanWorker1 := newMockScanWorker(t)
-	scanWorker1.Start()
-	scanWorker2 := newMockScanWorker(t)
-
-	m := NewJobManager("test-id", nil, nil)
-	m.sessPool = newMockSessionPool(t, tbl)
-	m.SetScanWorkers4Test([]worker{
-		scanWorker1,
-	})
-	newWorkers, _, err := m.resizeWorkers(m.scanWorkers, 2, func() worker {
-		return scanWorker2
-	})
-	assert.NoError(t, err)
-	assert.Len(t, newWorkers, 2)
-	scanWorker1.checkWorkerStatus(workerStatusRunning, true, nil)
-	scanWorker2.checkWorkerStatus(workerStatusRunning, true, nil)
-
-	// shrink scan workers
-	scanWorker1 = newMockScanWorker(t)
-	scanWorker1.Start()
-	scanWorker2 = newMockScanWorker(t)
-	scanWorker2.Start()
-
-	m = NewJobManager("test-id", nil, nil)
-	m.sessPool = newMockSessionPool(t, tbl)
-	m.SetScanWorkers4Test([]worker{
-		scanWorker1,
-		scanWorker2,
-	})
-
-	assert.NoError(t, m.resizeScanWorkers(1))
-	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
-
-	// shrink scan workers after job is run
-	scanWorker1 = newMockScanWorker(t)
-	scanWorker1.Start()
-	scanWorker2 = newMockScanWorker(t)
-	scanWorker2.Start()
-
-	m = NewJobManager("test-id", nil, nil)
-	m.sessPool = newMockSessionPool(t, tbl)
-	m.SetScanWorkers4Test([]worker{
-		scanWorker1,
-		scanWorker2,
-	})
-	m.runningJobs = append(m.runningJobs, &ttlJob{tbl: tbl})
-
-	scanWorker2.curTaskResult = &ttlScanTaskExecResult{task: &ttlScanTask{tbl: tbl}}
-	assert.NoError(t, m.resizeScanWorkers(1))
-	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
-	assert.Equal(t, m.runningJobs[0].finishedScanTaskCounter, 1)
-}
-
 func TestLocalJobs(t *testing.T) {
 	tbl1 := newMockTTLTbl(t, "t1")
 	tbl1.ID = 1
 	tbl2 := newMockTTLTbl(t, "t2")
 	tbl2.ID = 2
-	m := NewJobManager("test-id", nil, nil)
+	m := NewJobManager("test-id", nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl1, tbl2)
 
-	m.runningJobs = []*ttlJob{{tbl: tbl1, id: "1", ctx: context.Background()}, {tbl: tbl2, id: "2", ctx: context.Background()}}
+	m.runningJobs = []*ttlJob{{tbl: tbl1, id: "1"}, {tbl: tbl2, id: "2"}}
 	m.tableStatusCache.Tables = map[int64]*cache.TableStatus{
 		tbl1.ID: {
 			CurrentJobOwnerID: m.id,
@@ -422,74 +399,22 @@ func TestLocalJobs(t *testing.T) {
 	assert.Equal(t, m.localJobs()[0].id, "1")
 }
 
-func TestRescheduleJobs(t *testing.T) {
-	tbl := newMockTTLTbl(t, "t1")
-	se := newMockSession(t, tbl)
-
-	scanWorker1 := newMockScanWorker(t)
-	scanWorker1.Start()
-	scanWorker1.setOneRowResult(tbl, 2022)
-	scanWorker2 := newMockScanWorker(t)
-	scanWorker2.Start()
-	scanWorker2.setOneRowResult(tbl, 2022)
-
-	m := NewJobManager("test-id", nil, nil)
-	m.sessPool = newMockSessionPool(t, tbl)
-	m.SetScanWorkers4Test([]worker{
-		scanWorker1,
-		scanWorker2,
-	})
-
-	// schedule local running job
-	m.tableStatusCache.Tables = map[int64]*cache.TableStatus{
-		tbl.ID: {
-			CurrentJobOwnerID: m.id,
-		},
-	}
-	m.runningJobs = []*ttlJob{newMockTTLJob(tbl, cache.JobStatusWaiting)}
-	m.rescheduleJobs(se, se.Now())
-	scanWorker1.checkWorkerStatus(workerStatusRunning, false, m.runningJobs[0].tasks[0])
-	scanWorker1.checkPollResult(false, "")
-	scanWorker2.checkWorkerStatus(workerStatusRunning, true, nil)
-	scanWorker2.checkPollResult(false, "")
-
-	// then run reschedule multiple times, no job will be scheduled
-	m.rescheduleJobs(se, se.Now())
-	m.rescheduleJobs(se, se.Now())
-	scanWorker1.checkWorkerStatus(workerStatusRunning, false, m.runningJobs[0].tasks[0])
-	scanWorker1.checkPollResult(false, "")
-	scanWorker2.checkWorkerStatus(workerStatusRunning, true, nil)
-	scanWorker2.checkPollResult(false, "")
-
-	del := scanWorker1.pollDelTask()
-	assert.Equal(t, 1, len(del.rows))
-	assert.Equal(t, 1, len(del.rows[0]))
-	assert.Equal(t, int64(2022), del.rows[0][0].GetInt64())
-
-	// then the task ends
-	msg := scanWorker1.waitNotifyScanTaskEnd()
-	assert.Same(t, m.runningJobs[0].tasks[0], msg.result.task)
-	assert.NoError(t, msg.result.err)
-	scanWorker1.checkWorkerStatus(workerStatusRunning, false, m.runningJobs[0].tasks[0])
-	scanWorker1.checkPollResult(true, "")
-	scanWorker2.checkWorkerStatus(workerStatusRunning, true, nil)
-	scanWorker2.checkPollResult(false, "")
-}
-
 func TestRescheduleJobsOutOfWindow(t *testing.T) {
+	// TODO: use failpoint to mock return job, and schedule
+
 	tbl := newMockTTLTbl(t, "t1")
 	se := newMockSession(t, tbl)
 
-	scanWorker1 := newMockScanWorker(t)
+	scanWorker1 := NewMockScanWorker(t)
 	scanWorker1.Start()
 	scanWorker1.setOneRowResult(tbl, 2022)
-	scanWorker2 := newMockScanWorker(t)
+	scanWorker2 := NewMockScanWorker(t)
 	scanWorker2.Start()
 	scanWorker2.setOneRowResult(tbl, 2022)
 
-	m := NewJobManager("test-id", nil, nil)
+	m := NewJobManager("test-id", nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl)
-	m.SetScanWorkers4Test([]worker{
+	m.taskManager.SetScanWorkers4Test([]worker{
 		scanWorker1,
 		scanWorker2,
 	})
@@ -522,68 +447,8 @@ func TestRescheduleJobsOutOfWindow(t *testing.T) {
 	// jobs will be scheduled within the time window
 	now, _ = time.ParseInLocation(variable.FullDayTimeFormat, "12:02 +0000", time.UTC)
 	m.rescheduleJobs(se, now)
-	scanWorker1.checkWorkerStatus(workerStatusRunning, false, m.runningJobs[0].tasks[0])
+	//scanWorker1.checkWorkerStatus(workerStatusRunning, false, m.runningJobs[0].tasks[0])
 	scanWorker1.checkPollResult(false, "")
 	scanWorker2.checkWorkerStatus(workerStatusRunning, true, nil)
 	scanWorker2.checkPollResult(false, "")
-}
-
-func TestCheckFinishedJob(t *testing.T) {
-	tbl := newMockTTLTbl(t, "t1")
-	se := newMockSession(t, tbl)
-
-	// cancelled job will be regarded as finished
-	m := NewJobManager("test-id", nil, nil)
-	m.sessPool = newMockSessionPool(t, tbl)
-	m.runningJobs = []*ttlJob{newMockTTLJob(tbl, cache.JobStatusCancelled)}
-	m.checkFinishedJob(se, se.Now())
-	assert.Len(t, m.runningJobs, 0)
-
-	// a real finished job
-	finishedStatistics := &ttlStatistics{}
-	finishedStatistics.TotalRows.Store(1)
-	finishedStatistics.SuccessRows.Store(1)
-	m = NewJobManager("test-id", nil, nil)
-	m.sessPool = newMockSessionPool(t, tbl)
-	m.runningJobs = []*ttlJob{newMockTTLJob(tbl, cache.JobStatusRunning)}
-	m.runningJobs[0].statistics = finishedStatistics
-	m.runningJobs[0].tasks[0].statistics = finishedStatistics
-	m.runningJobs[0].taskIter = 1
-	m.runningJobs[0].finishedScanTaskCounter = 1
-
-	// meetArg records whether the sql statement uses the arg
-	meetArg := false
-	now := se.Now()
-	jobID := m.runningJobs[0].id
-	se.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-		if len(args) > 0 {
-			meetArg = true
-			expectedSQL, expectedArgs := finishJobSQL(tbl.ID, now, "{\"total_rows\":1,\"success_rows\":1,\"error_rows\":0,\"total_scan_task\":1,\"scheduled_scan_task\":1,\"finished_scan_task\":1}", jobID)
-			assert.Equal(t, expectedSQL, sql)
-			assert.Equal(t, expectedArgs, args)
-		}
-		return nil, nil
-	}
-	m.checkFinishedJob(se, now)
-	assert.Len(t, m.runningJobs, 0)
-	assert.Equal(t, true, meetArg)
-	se.executeSQL = nil
-
-	// check timeout job
-	now = se.Now()
-	createTime := now.Add(-20 * time.Hour)
-	m = NewJobManager("test-id", nil, nil)
-	m.sessPool = newMockSessionPool(t, tbl)
-	m.runningJobs = []*ttlJob{
-		{
-			ctx:        context.Background(),
-			tbl:        tbl,
-			status:     cache.JobStatusRunning,
-			statistics: &ttlStatistics{},
-
-			createTime: createTime,
-		},
-	}
-	m.checkFinishedJob(se, now)
-	assert.Len(t, m.runningJobs, 0)
 }

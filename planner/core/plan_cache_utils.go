@@ -251,6 +251,14 @@ func (key *planCacheKey) MemoryUsage() (sum int64) {
 	return
 }
 
+type planCacheMatchOpts struct {
+	// paramTypes stores all parameters' FieldType, some different parameters may share same plan
+	paramTypes FieldSlice
+	// limitOffsetAndCount stores all the offset and key parameters extract from limit statement
+	// only used for cache and pick plan with parameters in limit
+	limitOffsetAndCount []uint64
+}
+
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
 func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
@@ -341,12 +349,14 @@ type PlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
-	ParamTypes        FieldSlice
 	memoryUsage       int64
+
+	// matchOpts stores some fields help to choose a suitable plan
+	matchOpts planCacheMatchOpts
 }
 
 func (v *PlanCacheValue) varTypesUnchanged(txtVarTps []*types.FieldType) bool {
-	return v.ParamTypes.CheckTypesCompatibility4PC(txtVarTps)
+	return v.matchOpts.paramTypes.CheckTypesCompatibility4PC(txtVarTps)
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
@@ -375,13 +385,13 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		sum = unKnownMemoryUsage
 	}
 
-	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.ParamTypes))*size.SizeOfPointer +
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames)+cap(v.matchOpts.paramTypes))*size.SizeOfPointer +
 		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
 
 	for _, name := range v.OutPutNames {
 		sum += name.MemoryUsage()
 	}
-	for _, ft := range v.ParamTypes {
+	for _, ft := range v.matchOpts.paramTypes {
 		sum += ft.MemoryUsage()
 	}
 	v.memoryUsage = sum
@@ -390,7 +400,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	paramTypes []*types.FieldType) *PlanCacheValue {
+	paramTypes []*types.FieldType, limitParams []uint64) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -403,7 +413,10 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
-		ParamTypes:        userParamTypes,
+		matchOpts: planCacheMatchOpts{
+			paramTypes:          userParamTypes,
+			limitOffsetAndCount: limitParams,
+		},
 	}
 }
 
@@ -452,4 +465,70 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, ErrStmtNotFound
+}
+
+type limitExtractor struct {
+	cacheable         bool // For safety considerations, check if limit count less than 10000
+	offsetAndCount    []uint64
+	unCacheableReason string
+	paramTypeErr      error
+}
+
+// Enter implements Visitor interface.
+func (checker *limitExtractor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.Limit:
+		if node.Count != nil {
+			if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(count)
+				if typeExpected {
+					if val > 10000 {
+						checker.cacheable = false
+						checker.unCacheableReason = "limit count more than 10000"
+						return in, true
+					}
+					checker.offsetAndCount = append(checker.offsetAndCount, val)
+				} else {
+					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
+					return in, true
+				}
+			}
+		}
+		if node.Offset != nil {
+			if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+				typeExpected, val := CheckParamTypeInt64orUint64(offset)
+				if typeExpected {
+					checker.offsetAndCount = append(checker.offsetAndCount, val)
+				} else {
+					checker.paramTypeErr = ErrWrongArguments.GenWithStackByArgs("LIMIT")
+					return in, true
+				}
+			}
+		}
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (checker *limitExtractor) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.cacheable
+}
+
+// ExtractLimitFromAst extract limit offset and count from ast for plan cache key encode
+func ExtractLimitFromAst(node ast.Node, sctx sessionctx.Context) ([]uint64, error) {
+	if node == nil {
+		return nil, nil
+	}
+	checker := limitExtractor{
+		cacheable:      true,
+		offsetAndCount: []uint64{},
+	}
+	node.Accept(&checker)
+	if checker.paramTypeErr != nil {
+		return nil, checker.paramTypeErr
+	}
+	if sctx != nil && !checker.cacheable {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: " + checker.unCacheableReason))
+	}
+	return checker.offsetAndCount, nil
 }

@@ -1564,7 +1564,7 @@ func TestCreateTableWithTTL(t *testing.T) {
 
 	tk.MustGetErrMsg("CREATE TABLE t (id int) TTL_JOB_INTERVAL = '1h'", "[ddl:8150]Cannot set TTL_JOB_INTERVAL on a table without TTL config")
 
-	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '24h'")
+	tk.MustExec("CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1d'")
 	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 	tk.MustExec("DROP TABLE t")
 
@@ -1586,7 +1586,7 @@ func TestAlterTTLInfo(t *testing.T) {
 	tk.MustExec("ALTER TABLE t TTL_ENABLE = 'OFF'")
 	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
-	tk.MustExec("ALTER TABLE t TTL_JOB_INTERVAL = '24h'")
+	tk.MustExec("ALTER TABLE t TTL_JOB_INTERVAL = '1d'")
 	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL,\n  `updated_at` datetime DEFAULT NULL,\n  `wrong_type` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 
 	tk.MustGetErrMsg("ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR", "[ddl:1054]Unknown column 'not_exist' in 'TTL config'")
@@ -1645,4 +1645,41 @@ func TestDisableTTLForFKParentTable(t *testing.T) {
 	tk.MustExec("CREATE TABLE t_1 (t_id int)")
 	tk.MustGetDBError("ALTER TABLE t_1 ADD FOREIGN KEY fk_t_id(t_id) references t(id)", dbterror.ErrUnsupportedTTLReferencedByFK)
 	tk.MustExec("drop table t,t_1")
+}
+
+func TestCheckPrimaryKeyForTTLTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// create table should fail when pk contains double/float
+	tk.MustGetDBError("create table t1(id float primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id double primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id1 int, id2 float, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("create table t1(id1 int, id2 double, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+
+	// alter table should fail when pk contains double/float
+	tk.MustExec("create table t1(id float primary key, t timestamp)")
+	tk.MustExec("create table t2(id double primary key, t timestamp)")
+	tk.MustExec("create table t3(id1 int, id2 float, primary key(id1, id2), t timestamp)")
+	tk.MustExec("create table t4(id1 int, id2 double, primary key(id1, id2), t timestamp)")
+	tk.MustGetDBError("alter table t1 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("alter table t2 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("alter table t3 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	tk.MustGetDBError("alter table t4 TTL=`t`+INTERVAL 1 DAY", dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL)
+
+	// create table should not fail when the pk is not clustered
+	tk.MustExec("create table t11(id float primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("create table t12(id double primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("create table t13(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered) TTL=`t`+INTERVAL 1 DAY")
+
+	// alter table should not fail when the pk is not clustered
+	tk.MustExec("create table t21(id float primary key nonclustered, t timestamp)")
+	tk.MustExec("create table t22(id double primary key nonclustered, t timestamp)")
+	tk.MustExec("create table t23(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered)")
+	tk.MustExec("alter table t21 TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("alter table t22 TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("alter table t23 TTL=`t`+INTERVAL 1 DAY")
 }

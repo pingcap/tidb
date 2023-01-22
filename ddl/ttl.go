@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
@@ -51,7 +51,7 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 	// at least one for them is not nil
 	var ttlInfo *model.TTLInfo
 	var ttlInfoEnable *bool
-	var ttlInfoJobInterval *duration.Duration
+	var ttlInfoJobInterval *string
 
 	if err := job.DecodeArgs(&ttlInfo, &ttlInfoEnable, &ttlInfoJobInterval); err != nil {
 		job.State = model.JobStateCancelled
@@ -143,6 +143,10 @@ func checkTTLTableSuitable(ctx sessionctx.Context, schema model.CIStr, tblInfo *
 		return dbterror.ErrTempTableNotAllowedWithTTL
 	}
 
+	if err := checkPrimaryKeyForTTLTable(tblInfo); err != nil {
+		return err
+	}
+
 	// checks even when the foreign key check is not enabled, to keep safe
 	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tblInfo.Name.L, nil, true); referredFK != nil {
@@ -162,11 +166,36 @@ func checkDropColumnWithTTLConfig(tblInfo *model.TableInfo, colName string) erro
 	return nil
 }
 
+// We should forbid creating a TTL table with clustered primary key that contains a column with type float/double.
+// This is because currently we are using SQL to delete expired rows and when the primary key contains float/double column,
+// it is hard to use condition `WHERE PK in (...)` to delete specified rows because some precision will be lost when comparing.
+func checkPrimaryKeyForTTLTable(tblInfo *model.TableInfo) error {
+	if !tblInfo.IsCommonHandle {
+		// only check the primary keys when it is common handle
+		return nil
+	}
+
+	pk := tblInfo.GetPrimaryKey()
+	if pk == nil {
+		return nil
+	}
+
+	for _, colDef := range pk.Columns {
+		col := tblInfo.Columns[colDef.Offset]
+		switch col.GetType() {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			return dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL
+		}
+	}
+
+	return nil
+}
+
 // getTTLInfoInOptions returns the aggregated ttlInfo, the ttlEnable, or an error.
 // if TTL, TTL_ENABLE or TTL_JOB_INTERVAL is not set in the config, the corresponding return value will be nil.
 // if both of TTL and TTL_ENABLE are set, the `ttlInfo.Enable` will be equal with `ttlEnable`.
 // if both of TTL and TTL_JOB_INTERVAL are set, the `ttlInfo.JobInterval` will be equal with `ttlCronJobSchedule`.
-func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *duration.Duration, err error) {
+func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, ttlEnable *bool, ttlCronJobSchedule *string, err error) {
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionTTL:
@@ -184,17 +213,12 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
-				JobInterval:      duration.Duration{Hour: 1},
+				JobInterval:      "1h",
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue
 		case ast.TableOptionTTLJobInterval:
-			schedule, err := duration.ParseDuration(op.StrValue)
-			if err != nil {
-				// this branch is actually unreachable, as the value has been validated in parser
-				return nil, nil, nil, err
-			}
-			ttlCronJobSchedule = &schedule
+			ttlCronJobSchedule = &op.StrValue
 		}
 	}
 
