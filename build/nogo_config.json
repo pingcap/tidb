@@ -751,7 +751,8 @@
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_test\\.go$": "ignore test code",
-      "br/pkg/restore/split/client.go": "br/pkg/restore/split/client.go"
+      "br/pkg/restore/split/client.go": "github.com/golang/protobuf deprecated",
+      "br/pkg/streamhelper/advancer_cliext.go", "github.com/golang/protobuf deprecated"
     },
     "only_files": {
       "util/gctuner": "util/gctuner",
