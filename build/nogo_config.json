@@ -756,7 +756,7 @@
       "util/gctuner": "util/gctuner",
       "util/cgroup": "util/cgroup code",
       "util/watcher": "util/watcher",
-      "br/pkg/": "br/pkg/lightning/",
+      "br/pkg/": "br/pkg/",
       "executor/aggregate.go": "executor/aggregate.go",
       "types/": "types",
       "ddl/": "enable to ddl",
