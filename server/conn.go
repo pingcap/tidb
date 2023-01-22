@@ -2089,12 +2089,6 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.clean()
 	for _, column := range columns {
-		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
-		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
-		// TODO: fill the right DefaultValues.
-		column.DefaultValueLength = 0
-		column.DefaultValue = []byte{}
-
 		data = data[0:4]
 		data = column.Dump(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
