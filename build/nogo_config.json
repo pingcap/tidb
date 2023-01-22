@@ -750,13 +750,14 @@
       "/build/": "no need to linter code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*_test\\.go$": "ignore test code"
+      ".*_test\\.go$": "ignore test code",
+      "br/pkg/restore/split/client.go": "br/pkg/restore/split/client.go"
     },
     "only_files": {
       "util/gctuner": "util/gctuner",
       "util/cgroup": "util/cgroup code",
       "util/watcher": "util/watcher",
-      "br/pkg/": "br/pkg/",
+      "br/pkg/": "br/pkg",
       "executor/aggregate.go": "executor/aggregate.go",
       "types/": "types",
       "ddl/": "enable to ddl",
