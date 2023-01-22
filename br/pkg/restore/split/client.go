@@ -201,7 +201,7 @@ func (c *pdClient) SplitRegion(ctx context.Context, regionInfo *RegionInfo, key 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	conn, err := grpc.Dial(store.GetAddress(), grpc.WithInsecure())
+	conn, err := grpc.Dial(store.GetAddress(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
