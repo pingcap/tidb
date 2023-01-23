@@ -1180,7 +1180,7 @@
         "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))"
       },
       {
-        "SQL": "select f from t use index() where f = 1",
+        "SQL": "select f from t use index() where f = 2",
         "Best": "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))"
       },
       {
@@ -7499,6 +7499,55 @@
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestRemoveRedundantPredicates",
+    "Cases": [
+      {
+        "SQL": "select f from t use index() where f = 1 and f = 1 -- simple redundancy of exact condition",
+        "Best": "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))"
+      },
+      {
+        "SQL": "select f from t use index() where f = 1 and f = 2 -- unsatisfiable condition",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select f from t use index() where f = 1 and f in (1,2,3)  -- intersection of in and =",
+        "Best": "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))"
+      },
+      {
+        "SQL": "select f from t use index() where f = 1 and f <> 1  -- intersection of = and <>",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select f from t use index() where f not in (1,2,3) and f = 3 -- intersection of not in list and =",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select f from t use index() where f <> 3 and f <> 3 -- intersection of two not in values.",
+        "Best": "TableReader(Table(t)->Sel([ne(test.t.f, 3)]))"
+      },
+      {
+        "SQL": "select t1.f /* merge_join(t1, t2) */ from t t1, t t2 where t1.a=t2.a and t1.a=t2.a -- exact redundancy in joins",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select f from t use index() where f in (1,2,3) and f <> 2 -- intersection of in and <>. Not done yet see issue 39676",
+        "Best": "TableReader(Table(t)->Sel([in(test.t.f, 1, 2, 3) ne(test.t.f, 2)]))"
+      },
+      {
+        "SQL": "select f from t use index() where f in (1,2,3) and f in (3,4,5) -- intersection of two in. Not done yet",
+        "Best": "TableReader(Table(t)->Sel([in(test.t.f, 1, 2, 3) in(test.t.f, 3, 4, 5)]))"
+      },
+      {
+        "SQL": "select f from t use index() where f not in (1,2,3) and f not in (3,4,5) -- intersection of two not in. Not done yet",
+        "Best": "TableReader(Table(t)->Sel([not(in(test.t.f, 1, 2, 3)) not(in(test.t.f, 3, 4, 5))]))"
+      },
+      {
+        "SQL": "select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet",
+        "Best": "TableReader(Table(t)->Sel([not(in(test.t.f, 1, 2, 3)) in(test.t.f, 1, 2, 3)]))"
       }
     ]
   }
