@@ -35,7 +35,7 @@ type ColumnInfo struct {
 	Flag         uint16
 	Decimal      uint8
 	Type         uint8
-	DefaultValue interface{}
+	DefaultValue any
 }
 
 // Dump dumps ColumnInfo to bytes.
