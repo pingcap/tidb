@@ -46,6 +46,8 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// MaxTxnEntrySize is the max value of TxnEntrySizeLimit.
+	MaxTxnEntrySizeLimit = 120 * 1024 * 1024 // 120MB
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
@@ -290,6 +292,8 @@ type Config struct {
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
 	TiDBMaxReuseColumn uint32 `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
+	// TiDBEnableExitCheck indicates whether exit-checking in domain for background process
+	TiDBEnableExitCheck bool `toml:"tidb-enable-exit-check" json:"tidb-enable-exit-check"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -998,6 +1002,7 @@ var defaultConf = Config{
 	DisaggregatedTiFlash:                 false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
+	TiDBEnableExitCheck:                  false,
 }
 
 var (
