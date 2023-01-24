@@ -772,6 +772,12 @@
       "keyspace/": "keyspace code"
     }
   },
+  "SA1029": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "SA2000": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
