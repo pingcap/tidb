@@ -65,7 +65,7 @@ Example:
 
 The WKB format is defined in "OpenGIS Implementation Specification for Geographic information - Simple feature access - Part 1: Common architecture" as part of the [Simple Feature Access](https://www.ogc.org/standards/sfa) from OGC.
 
-This format (`<srid><wkb`) is often refered to EWKB, but there is no official standard for this. This is chosen as this is what MySQL uses.
+This format (`<srid><wkb>`) is often referred to EWKB, but there is no official standard for this. This is chosen as this is what MySQL uses.
 
 Besides these data types [Simple Feature Access - Part 2: SQL Option](https://www.ogc.org/standards/sfs) lists more types like, `POINTZ` and other types with a Z-suffix, these are 3D points with three coordinates instead of two. There are a few 2D types that are also not on the list with types we should implement like `CURVE` and `SURFACE`. MySQL doesn't include these types and they are not needed for compatibility and can be implemented later if needed.
 
