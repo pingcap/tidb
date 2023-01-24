@@ -40,6 +40,15 @@ type ColumnInfo struct {
 
 // Dump dumps ColumnInfo to bytes.
 func (column *ColumnInfo) Dump(buffer []byte, d *resultEncoder) []byte {
+	return column.dump(buffer, d, false)
+}
+
+// DumpWithDefault dumps ColumnInfo to bytes, including column defaults. This is used for ComFieldList responses.
+func (column *ColumnInfo) DumpWithDefault(buffer []byte, d *resultEncoder) []byte {
+	return column.dump(buffer, d, true)
+}
+
+func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool) []byte {
 	if d == nil {
 		d = newResultEncoder(charset.CharsetUTF8MB4)
 	}
@@ -65,12 +74,14 @@ func (column *ColumnInfo) Dump(buffer []byte, d *resultEncoder) []byte {
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
 
-	switch column.DefaultValue {
-	case "CURRENT_TIMESTAMP", "CURRENT_DATE", nil:
-		buffer = append(buffer, 251) // NULL
-	default:
-		defaultValStr := fmt.Sprintf("%v", column.DefaultValue)
-		buffer = dumpLengthEncodedString(buffer, []byte(defaultValStr))
+	if withDefault {
+		switch column.DefaultValue {
+		case "CURRENT_TIMESTAMP", "CURRENT_DATE", nil:
+			buffer = append(buffer, 251) // NULL
+		default:
+			defaultValStr := fmt.Sprintf("%v", column.DefaultValue)
+			buffer = dumpLengthEncodedString(buffer, []byte(defaultValStr))
+		}
 	}
 
 	return buffer

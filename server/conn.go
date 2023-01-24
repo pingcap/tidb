@@ -2090,7 +2090,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	defer cc.rsEncoder.clean()
 	for _, column := range columns {
 		data = data[0:4]
-		data = column.Dump(data, cc.rsEncoder)
+		data = column.DumpWithDefault(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
