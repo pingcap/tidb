@@ -2165,6 +2165,11 @@ func (it *infoschemaTable) Type() table.Type {
 	return it.tp
 }
 
+// GetPartitionedTable implements table.Table GetPartitionedTable interface.
+func (it *infoschemaTable) GetPartitionedTable() table.PartitionedTable {
+	return nil
+}
+
 // VirtualTable is a dummy table.Table implementation.
 type VirtualTable struct{}
 
