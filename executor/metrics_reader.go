@@ -89,6 +89,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	return totalRows, nil
 }
 
+// MockMetricsPromDataKey is for test
 type MockMetricsPromDataKey struct{}
 
 func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (result pmodel.Value, err error) {
