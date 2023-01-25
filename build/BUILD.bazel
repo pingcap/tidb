@@ -77,6 +77,8 @@ STATICHECK_ANALYZERS = [
     "SA6001",
     "SA6005",
     "U1000",
+    "SA9001",
+    "SA9008",
 ]
 
 nogo(
