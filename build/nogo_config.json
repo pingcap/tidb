@@ -775,7 +775,8 @@
   "SA1029": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code"
     }
   },
   "SA2000": {
