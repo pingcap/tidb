@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test redundant condition in select.
+// Test redundant condition in single table and join predicates.
 func TestRemoveRedundantPredicates(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

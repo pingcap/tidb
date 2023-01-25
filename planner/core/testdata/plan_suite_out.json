@@ -1180,7 +1180,7 @@
         "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))"
       },
       {
-        "SQL": "select f from t use index() where f = 2",
+        "SQL": "select f from t use index() where f = 1",
         "Best": "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))"
       },
       {
