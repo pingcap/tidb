@@ -769,7 +769,8 @@
       "extension/": "extension code",
       "resourcemanager/": "resourcemanager code",
       "keyspace/": "keyspace code",
-      "server/": "server code"
+      "server/": "server code",
+      "meta": "meta code"
     }
   },
   "SA2000": {
