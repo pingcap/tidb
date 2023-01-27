@@ -65,7 +65,7 @@ var (
 func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
 	slowQueryBucket, err := getSlowQueryBucket(ctx)
 	if err != nil {
-		logutil.BgLogger().Info(err.Error())
+		logutil.BgLogger().Info("Failed to get Slow Query Stats", zap.Error(err))
 		return nil, err
 	}
 
