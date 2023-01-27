@@ -255,7 +255,7 @@ func RotateSubWindow() {
 	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
 	if err != nil {
 		logutil.BgLogger().Info("Error exists when getting the SQL Metric.",
-			zap.String("error", err.Error()))
+			zap.Error(err))
 	}
 
 	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
