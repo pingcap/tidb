@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ask PingCAP
+    url: https://ask.pingcap.com/
+    about: Ask a question on the TiDB Forum
+  - name: Ask TUG
+    url: https://asktug.com/
+    about: Ask a question on the TiDB user group (Chinese)
