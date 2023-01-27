@@ -8,4 +8,5 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/util/syncutil",
     visibility = ["//visibility:public"],
+    deps = ["@com_github_sasha_s_go_deadlock//:go-deadlock"],  #keep
 )
