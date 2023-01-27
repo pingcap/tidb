@@ -30,8 +30,6 @@ func TestIndexMergeJSONMemberOf(t *testing.T) {
 a int, j0 json, j1 json,
 index j0_0((cast(j0->'$.path0' as signed array))),
 index j0_1((cast(j0->'$.path1' as signed array))),
-index j0_double((cast(j0->'$.path_double' as double array))),
-index j0_decimal((cast(j0->'$.path_decimal' as decimal(10, 2) array))),
 index j0_string((cast(j0->'$.path_string' as char(10) array))),
 index j0_date((cast(j0->'$.path_date' as date array))),
 index j1((cast(j1 as signed array))))`)
@@ -137,4 +135,17 @@ index i_int((cast(j->'$.int' as signed array))))`)
 		})
 		result.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func TestMVIndexIndexMergePlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(j json, index kj((cast(j as signed array))))`)
+
+	tk.MustExec("prepare st from 'select /*+ use_index_merge(t, kj) */ * from t where (1 member of (j))'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query accesses generated columns is un-cacheable"))
+	tk.MustExec("execute st")
+	tk.MustExec("execute st")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }

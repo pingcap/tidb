@@ -35,10 +35,10 @@ func (*CPUScheduler) Tune(_ util.Component, pool util.GorotinuePool) Command {
 		return Hold
 	}
 	if cpu.GetCPUUsage() < 0.5 {
-		return Downclock
+		return Overclock
 	}
 	if cpu.GetCPUUsage() > 0.7 {
-		return Overclock
+		return Downclock
 	}
 	return Hold
 }

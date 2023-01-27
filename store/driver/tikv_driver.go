@@ -28,6 +28,7 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
@@ -38,6 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	rmclient "github.com/tikv/pd/pkg/mcs/resource_manager/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -53,6 +55,10 @@ var mc storeCache
 func init() {
 	mc.cache = make(map[string]*tikvStore)
 	rand.Seed(time.Now().UnixNano())
+
+	// Setup the Hooks to dynamic control global resource controller.
+	variable.EnableGlobalResourceControlFunc = tikv.EnableResourceControl
+	variable.DisableGlobalResourceControlFunc = tikv.DisableResourceControl
 }
 
 // Option is a function that changes some config of Driver
@@ -84,6 +90,25 @@ func WithPDClientConfig(client config.PDClient) Option {
 	return func(c *TiKVDriver) {
 		c.pdConfig = client
 	}
+}
+
+// TrySetupGlobalResourceController tries to setup global resource controller.
+func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv.Storage) error {
+	var (
+		store *tikvStore
+		ok    bool
+	)
+	if store, ok = s.(*tikvStore); !ok {
+		return errors.New("cannot setup up resource controller, should use tikv storage")
+	}
+
+	control, err := rmclient.NewResourceGroupController(serverID, store.GetPDClient(), rmclient.DefaultRequestUnitConfig())
+	if err != nil {
+		return err
+	}
+	tikv.SetResourceControlInterceptor(control)
+	control.Start(ctx)
+	return nil
 }
 
 // TiKVDriver implements engine TiKV.
