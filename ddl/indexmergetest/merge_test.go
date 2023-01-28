@@ -563,14 +563,15 @@ func TestAddIndexMergeInsertOnMerging(t *testing.T) {
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(callback)
 
-	var mockDMLExecErr error
 	ddl.MockDMLExecution = func() {
-		_, mockDMLExecErr = tk1.Exec("insert into t values (5, 8);")
+		_, err := tk1.Exec("insert into t values (5, 8);")
+		assert.Error(t, err) // [kv:1062]Duplicate entry '5' for key 't.idx'
+		_, err = tk1.Exec("insert into t values (5, 8) on duplicate key update a = 6;")
+		assert.NoError(t, err) // The row should be normally updated to (6, 5).
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionMerging", "1*return(true)->return(false)"))
 	tk.MustExec("alter table t add unique index idx(a);")
-	require.Error(t, mockDMLExecErr) // [kv:1062]Duplicate entry '5' for key 't.idx'
-	tk.MustQuery("select count(1) from t;").Check(testkit.Rows("1"))
 	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("6 5"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionMerging"))
 }
