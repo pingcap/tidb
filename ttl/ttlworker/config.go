@@ -33,6 +33,8 @@ const ttlJobTimeout = 6 * time.Hour
 const taskManagerLoopTickerInterval = time.Minute
 const ttlTaskHeartBeatTickerInterval = time.Minute
 
+const ttlGCInterval = time.Hour
+
 func getUpdateInfoSchemaCacheInterval() time.Duration {
 	failpoint.Inject("update-info-schema-cache-interval", func(val failpoint.Value) time.Duration {
 		return time.Duration(val.(int))
