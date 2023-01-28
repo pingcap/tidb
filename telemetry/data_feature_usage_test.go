@@ -700,16 +700,19 @@ func TestTTLTelemetry(t *testing.T) {
 	times31 := []time.Time{oneDayAgoDate, oneDayAgoDate.Add(time.Hour), oneDayAgoDate.Add(-time.Hour)}
 	times32 := []time.Time{oneDayAgoDate.Add(2 * time.Hour), oneDayAgoDate.Add(3 * time.Hour), oneDayAgoDate.Add(time.Hour)}
 	times33 := []time.Time{oneDayAgoDate.Add(4 * time.Hour), oneDayAgoDate.Add(5 * time.Hour), oneDayAgoDate.Add(3 * time.Hour)}
-	// start 2 day ago, end yesterday
-	times41 := []time.Time{oneDayAgoDate.Add(-2 * time.Hour), oneDayAgoDate.Add(-time.Hour), oneDayAgoDate.Add(-3 * time.Hour)}
+	// start 2 days ago, end yesterday
+	times41 := []time.Time{oneDayAgoDate.Add(-2 * time.Hour), oneDayAgoDate.Add(time.Hour), oneDayAgoDate.Add(-3 * time.Hour)}
+	// start two days ago, end two days ago
+	times51 := []time.Time{oneDayAgoDate.Add(-5 * time.Hour), oneDayAgoDate.Add(-4 * time.Hour), oneDayAgoDate.Add(-6 * time.Hour)}
 
 	tk.MustExec("create table t1 (t timestamp) TTL=`t` + interval 1 hour")
 	insertTTLHistory("t1", "", times11[0], times11[1], times11[2], "", 100000000, 0, "finished")
 	insertTTLHistory("t1", "", times21[0], times21[1], times21[2], "", 100000000, 0, "finished")
-	insertTTLHistory("t1", "", times31[0], times31[1], times31[2], "err1", 100, 1, "finished")
-	insertTTLHistory("t1", "", times32[0], times32[1], times32[2], "", 100, 1, "timeout")
-	insertTTLHistory("t1", "", times33[0], times33[1], times33[2], "", 100, 1, "finished")
-	insertTTLHistory("t1", "", times41[0], times41[1], times41[2], "", 100, 1, "finished")
+	insertTTLHistory("t1", "", times31[0], times31[1], times31[2], "err1", 112600, 110000, "finished")
+	insertTTLHistory("t1", "", times32[0], times32[1], times32[2], "", 2600, 0, "timeout")
+	insertTTLHistory("t1", "", times33[0], times33[1], times33[2], "", 2600, 0, "finished")
+	insertTTLHistory("t1", "", times41[0], times41[1], times41[2], "", 2600, 0, "finished")
+	insertTTLHistory("t1", "", times51[0], times51[1], times51[2], "", 100000000, 1, "finished")
 
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
@@ -749,6 +752,28 @@ func TestTTLTelemetry(t *testing.T) {
 	require.Equal(t, int64(1), usage.TTLUsage.TTLTables)
 	require.Equal(t, int64(1), usage.TTLUsage.TTLJobEnabledTables)
 	require.Equal(t, oneDayAgoDate.Format(dateFormat), usage.TTLUsage.TTLHistDate)
-	checkTableHistWithDeleteRows(1, 0, 0, 0, 0)
+	checkTableHistWithDeleteRows(0, 1, 0, 0, 0)
 	checkTableHistWithDelay(0, 0, 1, 0, 0)
+
+	tk.MustExec("create table t2 (t timestamp) TTL=`t` + interval 20 hour")
+	tk.MustExec("set @@global.tidb_ttl_job_enable=1")
+	insertTTLHistory("t2", "", times31[0], times31[1], times31[2], "", 9999, 0, "finished")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.TTLUsage.TTLJobEnabled)
+	require.Equal(t, int64(2), usage.TTLUsage.TTLTables)
+	require.Equal(t, int64(2), usage.TTLUsage.TTLJobEnabledTables)
+	require.Equal(t, oneDayAgoDate.Format(dateFormat), usage.TTLUsage.TTLHistDate)
+	checkTableHistWithDeleteRows(1, 1, 0, 0, 0)
+	checkTableHistWithDelay(0, 1, 1, 0, 0)
+
+	tk.MustExec("create table t3 (t timestamp) TTL=`t` + interval 1 hour TTL_ENABLE='OFF'")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.TTLUsage.TTLJobEnabled)
+	require.Equal(t, int64(3), usage.TTLUsage.TTLTables)
+	require.Equal(t, int64(2), usage.TTLUsage.TTLJobEnabledTables)
+	require.Equal(t, oneDayAgoDate.Format(dateFormat), usage.TTLUsage.TTLHistDate)
+	checkTableHistWithDeleteRows(1, 1, 0, 0, 0)
+	checkTableHistWithDelay(0, 1, 1, 0, 1)
 }

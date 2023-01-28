@@ -31,13 +31,16 @@ import (
 )
 
 const (
+	// selectDeletedRowsOneDaySQL selects the deleted rows for each table of last day
 	selectDeletedRowsOneDaySQL = `SELECT parent_table_id, CAST(SUM(deleted_rows) AS SIGNED)
 		FROM
 		    mysql.tidb_ttl_job_history
 		WHERE
-		    create_time >= CURDATE() - INTERVAL 1 DAY
+		    create_time >= CURDATE() - INTERVAL 7 DAY
+			AND finish_time >= CURDATE() - INTERVAL 1 DAY
 			AND finish_time < CURDATE()
 		GROUP BY parent_table_id;`
+	// selectDelaySQL selects the deletion delay in minute for each table at the end of last day
 	selectDelaySQL = `SELECT
     		parent_table_id, TIMESTAMPDIFF(MINUTE, MIN(tm), CURDATE()) AS ttl_minutes
 		FROM
@@ -49,8 +52,7 @@ const (
 				FROM
 					mysql.tidb_ttl_job_history
 				WHERE
-					create_time < CURDATE()
-					AND create_time > CURDATE() - INTERVAL 7 DAY
+					create_time > CURDATE() - INTERVAL 7 DAY
 					AND finish_time < CURDATE()
 					AND status = 'finished'
 					AND JSON_VALID(summary_text)
@@ -176,14 +178,15 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 	if err != nil {
 		logutil.BgLogger().Error("exec sql error", zap.String("SQL", selectDelaySQL), zap.Error(err))
 	} else {
+		noHistoryTables := len(ttlTables)
 		for _, row := range rows {
 			tblID := row.GetInt64(0)
 			tbl, ok := ttlTables[tblID]
 			if !ok {
-				// table not exist, truncated for deleted
+				// table not exist, maybe truncated or deleted
 				continue
 			}
-			delete(ttlTables, tblID)
+			noHistoryTables--
 
 			evalIntervalSQL := fmt.Sprintf(
 				"SELECT TIMESTAMPDIFF(HOUR, CURDATE() - INTERVAL %d MINUTE, CURDATE() - INTERVAL %s %s)",
@@ -201,7 +204,7 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 		}
 
 		// When no history found for a table, use max delay
-		counter.UpdateTableHistWithDelayTime(len(ttlTables), math.MaxInt64)
+		counter.UpdateTableHistWithDelayTime(noHistoryTables, math.MaxInt64)
 	}
 	return
 }
