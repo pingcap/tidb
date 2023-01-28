@@ -300,7 +300,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			if lazyCheck {
 				flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 				if keyIsTempIdxKey && needPresumeKey == KeyInTempIndexIsDeleted {
-					// The writes temp index should check if the key is deleted.
+					// Only writing to temp index should check if the key is deleted.
 					flags = flags[:0]
 				}
 				if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() &&
