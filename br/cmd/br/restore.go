@@ -103,6 +103,26 @@ func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
+func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
+	cfg := task.Config{}
+	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
+		command.SilenceUsage = false
+		return errors.Trace(err)
+	}
+
+	ctx := GetDefaultContext()
+	if cfg.EnableOpenTracing {
+		var store *appdash.MemoryStore
+		ctx, store = trace.TracerStartSpan(ctx)
+		defer trace.TracerFinishSpan(ctx, store)
+	}
+	if err := task.RunRestoreTxn(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
+		log.Error("failed to restore raw kv", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // NewRestoreCommand returns a restore subcommand.
 func NewRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
@@ -127,6 +147,7 @@ func NewRestoreCommand() *cobra.Command {
 		newDBRestoreCommand(),
 		newTableRestoreCommand(),
 		newRawRestoreCommand(),
+		newTxnRestoreCommand(),
 		newStreamRestoreCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
@@ -181,6 +202,20 @@ func newRawRestoreCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runRestoreRawCommand(cmd, task.RawRestoreCmd)
+		},
+	}
+
+	task.DefineRawRestoreFlags(command)
+	return command
+}
+
+func newTxnRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "txn",
+		Short: "(experimental) restore txn kv to TiKV cluster",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runRestoreTxnCommand(cmd, task.RawRestoreCmd)
 		},
 	}
 

@@ -1183,6 +1183,29 @@ func (rc *Client) RestoreSSTFiles(
 	return nil
 }
 
+func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.File, updateCh glue.Progress) error {
+	errCh := make(chan error, len(files))
+	eg, ectx := errgroup.WithContext(ctx)
+	defer close(errCh)
+
+	for _, file := range files {
+		fileReplica := file
+		rc.workerPool.ApplyOnErrorGroup(eg,
+			func() error {
+				defer updateCh.Inc()
+				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+			})
+	}
+	if err := eg.Wait(); err != nil {
+		log.Error(
+			"restore files failed",
+			zap.Error(err),
+		)
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RestoreRaw tries to restore raw keys in the specified range.
 func (rc *Client) RestoreRaw(
 	ctx context.Context, startKey []byte, endKey []byte, files []*backuppb.File, updateCh glue.Progress,
@@ -1195,30 +1218,13 @@ func (rc *Client) RestoreRaw(
 			logutil.Key("endKey", endKey),
 			zap.Duration("take", elapsed))
 	}()
-	errCh := make(chan error, len(files))
-	eg, ectx := errgroup.WithContext(ctx)
-	defer close(errCh)
-
 	err := rc.fileImporter.SetRawRange(startKey, endKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, file := range files {
-		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
-				defer updateCh.Inc()
-				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
-			})
-	}
-	if err := eg.Wait(); err != nil {
-		log.Error(
-			"restore raw range failed",
-			logutil.Key("startKey", startKey),
-			logutil.Key("endKey", endKey),
-			zap.Error(err),
-		)
+	err = rc.WaitForFilesRestored(ctx, files, updateCh)
+	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Info(
