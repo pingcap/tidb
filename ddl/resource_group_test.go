@@ -156,9 +156,14 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'y'").Check(testkit.Rows(strconv.FormatInt(g2.ID, 10) + " y 4000 2000"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RRU_PER_SEC=4000 WRU_PER_SEC=2000"))
 
+	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("2"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustExec("create user user2")
 	tk.MustGetErrCode("alter user user2 resource group nil_group", mysql.ErrResourceGroupNotExists)
+
+	tk.MustExec("create resource group do_not_delete_rg rru_per_sec=100 wru_per_sec=200")
+	tk.MustExec("create user usr3 resource group do_not_delete_rg")
+	tk.MustContainErrMsg("drop resource group do_not_delete_rg", "user [usr3] depends on the resource group to drop")
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
