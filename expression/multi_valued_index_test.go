@@ -260,6 +260,7 @@ func TestWriteMultiValuedIndex(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, '[\"abc\", \"abc \"]')")
 	tk.MustExec("insert into t1 values (2, '[\"b\"]')")
 	tk.MustExec("insert into t1 values (3, '[\"b   \"]')")
+	tk.MustQuery("select pk from t1 where 'b   ' member of (a)").Check(testkit.Rows("3"))
 
 	t1, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
