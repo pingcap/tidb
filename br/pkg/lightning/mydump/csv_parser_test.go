@@ -1128,7 +1128,7 @@ func TestIgnoreLines(t *testing.T) {
 			expected: [][]types.Datum{},
 		},
 	}
-	//runTestCasesCSV(t, &cfg, 1, testCases)
+	runTestCasesCSV(t, &cfg, 1, testCases)
 }
 
 func TestCharsetConversion(t *testing.T) {
