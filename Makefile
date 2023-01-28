@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive
 
-check: parser_yacc check-parallel lint tidy testSuite errdoc check-bazel-prepare
+check: parser_yacc check-parallel lint tidy testSuite errdoc license check-bazel-prepare
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -55,6 +55,12 @@ errdoc:tools/bin/errdoc-gen
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+
+license:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
+		--run_under="cd $(CURDIR) && " \
+		 @com_github_apache_skywalking_eyes//cmd/license-eye:license-eye --run_under="cd $(CURDIR) && "  -- -c .licenserc.yaml  header check
+
 
 tidy:
 	@echo "go mod tidy"
