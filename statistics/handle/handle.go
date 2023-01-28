@@ -503,6 +503,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	if err != nil {
 		return nil, err
 	}
+	handle.mu.ctx.GetSessionVars().InRestrictedSQL = true
 	return handle, nil
 }
 
@@ -1634,6 +1635,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 				logutil.BgLogger().Error("record historical stats meta failed",
 					zap.Int64("table-id", tableID),
 					zap.Uint64("version", statsVer),
+					zap.String("source", source),
 					zap.Error(err1))
 			}
 		}
