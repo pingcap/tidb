@@ -27,6 +27,7 @@ go_library(
         "@com_github_wangjohn_quickselect//:quickselect",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//backoff",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
