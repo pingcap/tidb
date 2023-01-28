@@ -2842,7 +2842,7 @@ func TestCachedTable(t *testing.T) {
 	tk.MustExec("prepare indexScan from 'select b from t use index(i_b) where b>?'")
 	tk.MustExec("prepare indexLookup from 'select a from t use index(i_b) where b>? and b<?'")
 	tk.MustExec("prepare pointGet from 'select b from t use index(i_b) where b=?'")
-	tk.MustExec("set @a=1, @b=3")
+	tk.MustExec("set @a=1, @b=10")
 
 	lastReadFromCache := func(tk *testkit.TestKit) bool {
 		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
