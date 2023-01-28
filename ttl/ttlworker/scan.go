@@ -74,9 +74,9 @@ func (s *ttlStatistics) String() string {
 type ttlScanTask struct {
 	ctx context.Context
 
+	*cache.TTLTask
+
 	tbl        *cache.PhysicalTable
-	expire     time.Time
-	scanRange  cache.ScanRange
 	statistics *ttlStatistics
 }
 
@@ -121,8 +121,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		terror.Log(err)
 	}()
 
-	sess := newTableSession(rawSess, t.tbl, t.expire)
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.expire, t.scanRange.Start, t.scanRange.End)
+	sess := newTableSession(rawSess, t.tbl, t.ExpireTime)
+	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
 	if err != nil {
 		return t.result(err)
 	}
@@ -195,7 +195,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 
 		delTask := &ttlDeleteTask{
 			tbl:        t.tbl,
-			expire:     t.expire,
+			expire:     t.ExpireTime,
 			rows:       lastResult,
 			statistics: t.statistics,
 		}
@@ -234,10 +234,11 @@ func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- interface{}
 	return w
 }
 
-func (w *ttlScanWorker) Idle() bool {
+func (w *ttlScanWorker) CouldSchedule() bool {
 	w.Lock()
 	defer w.Unlock()
-	return w.status == workerStatusRunning && w.curTask == nil
+	// see `Schedule`. If a `worker.CouldSchedule()` is true, `worker.Schedule` must success
+	return w.status == workerStatusRunning && w.curTask == nil && w.curTaskResult == nil
 }
 
 func (w *ttlScanWorker) Schedule(task *ttlScanTask) error {
@@ -335,7 +336,7 @@ func (w *ttlScanWorker) handleScanTask(tracer *metrics.PhaseTracer, task *ttlSca
 type scanWorker interface {
 	worker
 
-	Idle() bool
+	CouldSchedule() bool
 	Schedule(*ttlScanTask) error
 	PollTaskResult() *ttlScanTaskExecResult
 	CurrentTask() *ttlScanTask

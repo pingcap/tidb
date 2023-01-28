@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -117,16 +118,17 @@ type Domain struct {
 	expensiveQueryHandle    *expensivequery.Handle
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
-	wg                      util.WaitGroupWrapper
-	statsUpdating           atomicutil.Int32
-	cancel                  context.CancelFunc
-	indexUsageSyncLease     time.Duration
-	dumpFileGcChecker       *dumpFileGcChecker
-	planReplayerHandle      *planReplayerHandle
-	expiredTimeStamp4PC     types.Time
-	logBackupAdvancer       *daemon.OwnerDaemon
-	historicalStatsWorker   *HistoricalStatsWorker
-	ttlJobManager           *ttlworker.JobManager
+	// TODO: use Run for each process in future pr
+	wg                    *util.WaitGroupEnhancedWrapper
+	statsUpdating         atomicutil.Int32
+	cancel                context.CancelFunc
+	indexUsageSyncLease   time.Duration
+	dumpFileGcChecker     *dumpFileGcChecker
+	planReplayerHandle    *planReplayerHandle
+	expiredTimeStamp4PC   types.Time
+	logBackupAdvancer     *daemon.OwnerDaemon
+	historicalStatsWorker *HistoricalStatsWorker
+	ttlJobManager         *ttlworker.JobManager
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -445,7 +447,7 @@ func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 
 // NotifyGlobalConfigChange notify global config syncer to store the global config into PD.
 func (do *Domain) NotifyGlobalConfigChange(name, value string) {
-	do.globalCfgSyncer.Notify(pd.GlobalConfigItem{Name: name, Value: value})
+	do.globalCfgSyncer.Notify(pd.GlobalConfigItem{Name: name, Value: value, EventType: pdpb.EventType_PUT})
 }
 
 // GetGlobalConfigSyncer exports for testing.
@@ -554,7 +556,6 @@ func (do *Domain) topNSlowQueryLoop() {
 	ticker := time.NewTicker(time.Minute * 10)
 	defer func() {
 		ticker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("topNSlowQueryLoop exited.")
 	}()
 	for {
@@ -583,7 +584,6 @@ func (do *Domain) topNSlowQueryLoop() {
 
 func (do *Domain) infoSyncerKeeper() {
 	defer func() {
-		do.wg.Done()
 		logutil.BgLogger().Info("infoSyncerKeeper exited.")
 		util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
 	}()
@@ -608,7 +608,6 @@ func (do *Domain) infoSyncerKeeper() {
 
 func (do *Domain) globalConfigSyncerKeeper() {
 	defer func() {
-		do.wg.Done()
 		logutil.BgLogger().Info("globalConfigSyncerKeeper exited.")
 		util.Recover(metrics.LabelDomain, "globalConfigSyncerKeeper", nil, false)
 	}()
@@ -631,7 +630,6 @@ func (do *Domain) topologySyncerKeeper() {
 	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
 	defer func() {
 		ticker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("topologySyncerKeeper exited.")
 	}()
 
@@ -766,7 +764,6 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	ticker := time.NewTicker(lease / 2)
 	defer func() {
 		ticker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("loadSchemaInLoop exited.")
 	}()
 	syncer := do.ddl.SchemaSyncer()
@@ -919,7 +916,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsIdsMap: make(map[int64]string),
 		},
 	}
-
+	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
@@ -1071,22 +1068,22 @@ func (do *Domain) Init(
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
-		do.wg.Add(1)
 		// Local store needs to get the change information for every DDL state in each session.
-		go do.loadSchemaInLoop(ctx, ddlLease)
+		do.wg.Run(func() {
+			do.loadSchemaInLoop(ctx, ddlLease)
+		}, "loadSchemaInLoop")
 	}
-	do.wg.Run(do.mdlCheckLoop)
-	do.wg.Add(3)
-	go do.topNSlowQueryLoop()
-	go do.infoSyncerKeeper()
-	go do.globalConfigSyncerKeeper()
+	do.wg.Run(do.mdlCheckLoop, "mdlCheckLoop")
+	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
+	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
+	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	if !skipRegisterToDashboard {
-		do.wg.Add(1)
-		go do.topologySyncerKeeper()
+		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
 	if pdClient != nil {
-		do.wg.Add(1)
-		go do.closestReplicaReadCheckLoop(ctx, pdClient)
+		do.wg.Run(func() {
+			do.closestReplicaReadCheckLoop(ctx, pdClient)
+		}, "closestReplicaReadCheckLoop")
 	}
 	err = do.initLogBackup(ctx, pdClient)
 	if err != nil {
@@ -1117,7 +1114,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
-	do.wg.Run(loop)
+	do.wg.Run(loop, "logBackupAdvancer")
 	return nil
 }
 
@@ -1134,7 +1131,6 @@ func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.C
 	ticker := time.NewTicker(time.Minute)
 	defer func() {
 		ticker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("closestReplicaReadCheckLoop exited.")
 	}()
 	for {
@@ -1356,10 +1352,8 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		duration = 10 * time.Minute
 	}
 
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("loadPrivilegeInLoop exited.")
 			util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 		}()
@@ -1389,7 +1383,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
 			}
 		}
-	}()
+	}, "loadPrivilegeInLoop")
 	return nil
 }
 
@@ -1406,10 +1400,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
 	}
-	do.wg.Add(1)
-	go func() {
+
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("LoadSysVarCacheLoop exited.")
 			util.Recover(metrics.LabelDomain, "LoadSysVarCacheLoop", nil, false)
 		}()
@@ -1452,7 +1445,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
 			}
 		}
-	}()
+	}, "LoadSysVarCacheLoop")
 	return nil
 }
 
@@ -1465,11 +1458,9 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeNodeKey)
 	}
-	do.wg.Add(1)
 	duration := 10 * time.Second
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("WatchTiFlashComputeNodeChange exit")
 			util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
 		}()
@@ -1510,7 +1501,7 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 				return
 			}
 		}
-	}()
+	}, "WatchTiFlashComputeNodeChange")
 	return nil
 }
 
@@ -1545,10 +1536,8 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 }
 
 func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
 			util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
 		}()
@@ -1585,14 +1574,12 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				}
 			}
 		}
-	}()
+	}, "globalBindHandleWorkerLoop")
 }
 
 func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.Manager) {
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
 			util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
 		}()
@@ -1610,7 +1597,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 				}
 			}
 		}
-	}()
+	}, "handleEvolvePlanTasksLoop")
 }
 
 // TelemetryReportLoop create a goroutine that reports usage data in a loop, it should be called only once
@@ -1622,10 +1609,8 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
 	}
 
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("TelemetryReportLoop exited.")
 			util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
 		}()
@@ -1646,16 +1631,14 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 				}
 			}
 		}
-	}()
+	}, "TelemetryReportLoop")
 }
 
 // TelemetryRotateSubWindowLoop create a goroutine that rotates the telemetry window regularly.
 func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Info("TelemetryRotateSubWindowLoop exited.")
 			util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
 		}()
@@ -1667,7 +1650,7 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 				telemetry.RotateSubWindow()
 			}
 		}
-	}()
+	}, "TelemetryRotateSubWindowLoop")
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
@@ -1736,13 +1719,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 	if lease < 1 {
 		return
 	}
-	do.wg.Add(2)
-	go func() {
+	do.wg.Run(func() {
 		logutil.BgLogger().Info("PlanReplayerTaskCollectHandle started")
 		tikcer := time.NewTicker(time.Duration(lease))
 		defer func() {
 			tikcer.Stop()
-			do.wg.Done()
 			util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
 			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
 		}()
@@ -1757,11 +1738,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 				}
 			}
 		}
-	}()
-	go func() {
-		logutil.BgLogger().Info("PlanReplayerTaskCollectHandle started")
+	}, "PlanReplayerTaskCollectHandle")
+
+	do.wg.Run(func() {
+		logutil.BgLogger().Info("PlanReplayerTaskDumpHandle started")
 		defer func() {
-			do.wg.Done()
 			util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
 			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
 		}()
@@ -1770,7 +1751,7 @@ func (do *Domain) StartPlanReplayerHandle() {
 		}
 		<-do.exit
 		do.planReplayerHandle.planReplayerTaskDumpHandle.Close()
-	}()
+	}, "PlanReplayerTaskDumpHandle")
 }
 
 // GetPlanReplayerHandle returns plan replayer handle
@@ -1780,13 +1761,11 @@ func (do *Domain) GetPlanReplayerHandle() *planReplayerHandle {
 
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		logutil.BgLogger().Info("dumpFileGcChecker started")
 		gcTicker := time.NewTicker(do.dumpFileGcChecker.gcLease)
 		defer func() {
 			gcTicker.Stop()
-			do.wg.Done()
 			util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
 			logutil.BgLogger().Info("dumpFileGcChecker exited.")
 		}()
@@ -1798,7 +1777,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 				do.dumpFileGcChecker.gcDumpFiles(time.Hour)
 			}
 		}
-	}()
+	}, "dumpFileGcChecker")
 }
 
 // GetHistoricalStatsWorker gets historical workers
@@ -1814,11 +1793,9 @@ func (do *Domain) StartHistoricalStatsWorker() {
 	if !enableDumpHistoricalStats.Load() {
 		return
 	}
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		logutil.BgLogger().Info("HistoricalStatsWorker started")
 		defer func() {
-			do.wg.Done()
 			util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
 			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
 		}()
@@ -1837,7 +1814,7 @@ func (do *Domain) StartHistoricalStatsWorker() {
 				}
 			}
 		}
-	}()
+	}, "HistoricalStatsWorker")
 }
 
 // StatsHandle returns the statistic handle.
@@ -1931,20 +1908,21 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
-		do.wg.Run(do.loadStatsWorker)
+		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
-		do.wg.Add(1)
-		go do.syncIndexUsageWorker(owner)
+		do.wg.Run(func() {
+			do.syncIndexUsageWorker(owner)
+		}, "syncIndexUsageWorker")
 	}
 	if do.statsLease <= 0 {
 		return nil
 	}
 	do.SetStatsUpdating(true)
-	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
-	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
-	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
+	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
+	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
+	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
 	return nil
 }
 
@@ -1954,7 +1932,7 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	for i, ctx := range ctxList {
 		statsHandle.StatsLoad.SubCtxs[i] = ctx
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(ctx, do.exit, &do.wg)
+		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
 	}
 }
 
@@ -2025,7 +2003,6 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	handle := do.StatsHandle()
 	defer func() {
 		idxUsageSyncTicker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("syncIndexUsageWorker exited.")
 	}()
 	for {
@@ -2270,10 +2247,8 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 	sessionstates.SetCertPath(signingCert)
 	sessionstates.SetKeyPath(signingKey)
 
-	do.wg.Add(1)
-	go func() {
+	do.wg.Run(func() {
 		defer func() {
-			do.wg.Done()
 			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
 			util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
 		}()
@@ -2285,7 +2260,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 				return
 			}
 		}
-	}()
+	}, "loadSigningCertLoop")
 }
 
 // ServerID gets serverID.
@@ -2539,7 +2514,7 @@ func (do *Domain) StartTTLJobManager() {
 		if err != nil {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
-	})
+	}, "ttlJobManager")
 }
 
 // TTLJobManager returns the ttl job manager on this domain

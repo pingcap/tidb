@@ -53,6 +53,7 @@ go_library(
         ":ddl_friend",
     ],
     deps = [
+        "//br/pkg/lightning/common",
         "//br/pkg/utils",
         "//config",
         "//ddl/ingest",
@@ -79,6 +80,7 @@ go_library(
         "//parser/opcode",
         "//parser/terror",
         "//parser/types",
+        "//privilege",
         "//sessionctx",
         "//sessionctx/binloginfo",
         "//sessionctx/stmtctx",
