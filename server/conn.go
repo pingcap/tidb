@@ -1617,6 +1617,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
 		}
 		// drain the data from client conn util empty packet received, otherwise the connection will be reset
+		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 		for !loadDataInfo.Drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
 			if atomic.CompareAndSwapUint32(&loadDataInfo.Ctx.GetSessionVars().Killed, 1, 0) {
@@ -2009,7 +2010,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		return false, nil
 	}
 
-	handled, err := cc.handleQuerySpecial(ctx, status)
+	handled, err := cc.handleFileTransInConn(ctx, status)
 	if handled {
 		if execStmt := cc.ctx.Value(session.ExecStmtVarKey); execStmt != nil {
 			//nolint:forcetypeassert
@@ -2023,7 +2024,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	return false, nil
 }
 
-func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
+func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
 	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 	if loadDataInfo != nil {

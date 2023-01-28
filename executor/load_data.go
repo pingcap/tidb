@@ -149,8 +149,8 @@ func (e *LoadDataExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// CommitTask is used for fetching data from data preparing routine into committing routine.
-type CommitTask struct {
+// commitTask is used for fetching data from data preparing routine into committing routine.
+type commitTask struct {
 	cnt  uint64
 	rows [][]types.Datum
 }
@@ -174,7 +174,7 @@ type LoadDataInfo struct {
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	FieldMappings      []*FieldMapping
 
-	commitTaskQueue chan CommitTask
+	commitTaskQueue chan commitTask
 	StopCh          chan struct{}
 	QuitCh          chan struct{}
 	OnDuplicate     ast.OnDuplicateKeyHandlingType
@@ -188,11 +188,11 @@ type FieldMapping struct {
 
 // Load reads from readerFn and do load data job.
 func (e *LoadDataInfo) Load(ctx context.Context, readerFn func() ([]byte, error)) error {
-	e.InitQueues()
+	e.initQueues()
 	e.SetMaxRowsInBatch(uint64(e.Ctx.GetSessionVars().DMLBatchSize))
-	e.StartStopWatcher()
+	e.startStopWatcher()
 	// let stop watcher goroutine quit
-	defer e.ForceQuit()
+	defer e.forceQuit()
 	err := sessiontxn.NewTxn(ctx, e.Ctx)
 	if err != nil {
 		return err
@@ -201,7 +201,7 @@ func (e *LoadDataInfo) Load(ctx context.Context, readerFn func() ([]byte, error)
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go processStream(ctx, readerFn, e, wg)
-	err = e.CommitWork(ctx)
+	err = e.commitWork(ctx)
 	wg.Wait()
 	return err
 }
@@ -219,13 +219,14 @@ func processStream(ctx context.Context, readerFn func() ([]byte, error), loadDat
 				zap.Stack("stack"))
 		}
 		if err != nil || r != nil {
-			loadDataInfo.ForceQuit()
+			loadDataInfo.forceQuit()
 		} else {
 			loadDataInfo.CloseTaskQueue()
 		}
 		wg.Done()
 	}()
 	for {
+		// here
 		curData, err = readerFn()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
@@ -262,7 +263,7 @@ func processStream(ctx context.Context, readerFn func() ([]byte, error), loadDat
 		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
 		return
 	}
-	if err = loadDataInfo.EnqOneTask(ctx); err != nil {
+	if err = loadDataInfo.enqOneTask(ctx); err != nil {
 		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
 		return
 	}
@@ -281,7 +282,7 @@ func insertDataWithCommit(ctx context.Context, prevData,
 			break
 		}
 		// push into commit task queue
-		err = loadDataInfo.EnqOneTask(ctx)
+		err = loadDataInfo.enqOneTask(ctx)
 		if err != nil {
 			return prevData, err
 		}
@@ -424,43 +425,43 @@ func (e *LoadDataInfo) CloseTaskQueue() {
 	close(e.commitTaskQueue)
 }
 
-// InitQueues initialize task queue and error report queue
-func (e *LoadDataInfo) InitQueues() {
-	e.commitTaskQueue = make(chan CommitTask, taskQueueSize)
+// initQueues initialize task queue and error report queue
+func (e *LoadDataInfo) initQueues() {
+	e.commitTaskQueue = make(chan commitTask, taskQueueSize)
 	e.StopCh = make(chan struct{}, 2)
 	e.QuitCh = make(chan struct{})
 }
 
-// StartStopWatcher monitor StopCh to force quit
-func (e *LoadDataInfo) StartStopWatcher() {
+// startStopWatcher monitor StopCh to force quit
+func (e *LoadDataInfo) startStopWatcher() {
 	go func() {
 		<-e.StopCh
 		close(e.QuitCh)
 	}()
 }
 
-// ForceQuit let commit quit directly
-func (e *LoadDataInfo) ForceQuit() {
+// forceQuit let commit quit directly
+func (e *LoadDataInfo) forceQuit() {
 	e.StopCh <- struct{}{}
 }
 
-// MakeCommitTask produce commit task with data in LoadDataInfo.rows LoadDataInfo.curBatchCnt
-func (e *LoadDataInfo) MakeCommitTask() CommitTask {
-	return CommitTask{e.curBatchCnt, e.rows}
+// makeCommitTask produce commit task with data in LoadDataInfo.rows LoadDataInfo.curBatchCnt
+func (e *LoadDataInfo) makeCommitTask() commitTask {
+	return commitTask{e.curBatchCnt, e.rows}
 }
 
-// EnqOneTask feed one batch commit task to commit work
-func (e *LoadDataInfo) EnqOneTask(ctx context.Context) error {
+// enqOneTask feed one batch commit task to commit work
+func (e *LoadDataInfo) enqOneTask(ctx context.Context) error {
 	var err error
 	if e.curBatchCnt > 0 {
 		sendOk := false
 		for !sendOk {
 			select {
-			case e.commitTaskQueue <- e.MakeCommitTask():
+			case e.commitTaskQueue <- e.makeCommitTask():
 				sendOk = true
 			case <-e.QuitCh:
-				err = errors.New("EnqOneTask forced to quit")
-				logutil.Logger(ctx).Error("EnqOneTask forced to quit, possible commitWork error")
+				err = errors.New("enqOneTask forced to quit")
+				logutil.Logger(ctx).Error("enqOneTask forced to quit, possible commitWork error")
 				return err
 			}
 		}
@@ -471,7 +472,7 @@ func (e *LoadDataInfo) EnqOneTask(ctx context.Context) error {
 }
 
 // CommitOneTask insert Data from LoadDataInfo.rows, then make commit and refresh txn
-func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error {
+func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task commitTask) error {
 	var err error
 	defer func() {
 		if err != nil {
@@ -498,18 +499,18 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 	return err
 }
 
-// CommitWork commit batch sequentially
-func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
+// commitWork commit batch sequentially
+func (e *LoadDataInfo) commitWork(ctx context.Context) error {
 	var err error
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.Logger(ctx).Error("CommitWork panicked",
+			logutil.Logger(ctx).Error("commitWork panicked",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
 		}
 		if err != nil || r != nil {
-			e.ForceQuit()
+			e.forceQuit()
 		}
 		if err != nil {
 			e.ctx.StmtRollback(ctx, false)
@@ -698,9 +699,10 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 	var isEOF, hasStarting, reachLimit bool
 	if len(prevData) > 0 && len(curData) == 0 {
 		isEOF = true
-		prevData, curData = curData, prevData
+		prevData, curData = nil, prevData
 	}
 	for len(curData) > 0 {
+		// here
 		line, curData, hasStarting = e.getLine(prevData, curData, e.IgnoreLines > 0)
 		prevData = nil
 		// If it doesn't find the terminated symbol and this data isn't the last data,
