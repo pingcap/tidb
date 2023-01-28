@@ -464,7 +464,7 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context,
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor, 0)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -616,7 +616,7 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}
-		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor, 0)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}
