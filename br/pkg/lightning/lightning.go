@@ -433,11 +433,12 @@ func getKeyspaceName(g glue.Glue) (string, error) {
 	)
 	if rows.Next() {
 		err = rows.Scan(&_type, &_instance, &_name, &value)
+		if err != nil {
+			return "", err
+		}
 	}
-	if err != nil {
-		return "", err
-	}
-	return value, nil
+
+	return value, rows.Err()
 }
 
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
