@@ -2029,7 +2029,7 @@ func (h *Handle) getGlobalStatsReader(snapshot uint64) (reader *statistics.Stats
 
 func (h *Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
 	defer h.mu.Unlock()
-	return statistics.ReleaseStatsReader(reader)
+	return reader.Close()
 }
 
 const (

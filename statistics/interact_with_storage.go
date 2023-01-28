@@ -26,25 +26,15 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// StatsReader is used for simplify code that needs to read system tables in different sqls
+// StatsReader is used for simplifying code that needs to read statistics from system tables(mysql.stats_xxx) in different sqls
 // but requires the same transactions.
+//
+// Note that:
+// 1. Remember to call (*StatsReader).Close after reading all statistics.
+// 2. StatsReader is not thread-safe. Different goroutines cannot call (*StatsReader).Read concurrently.
 type StatsReader struct {
 	ctx      sqlexec.RestrictedSQLExecutor
 	snapshot uint64
-}
-
-// Read is a thin wrapper reading statistics from storage by sql command.
-func (sr *StatsReader) Read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	if sr.snapshot > 0 {
-		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool, sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
-	}
-	return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
-}
-
-// IsHistory indicates whether to read history statistics.
-func (sr *StatsReader) IsHistory() bool {
-	return sr.snapshot > 0
 }
 
 // GetStatsReader returns a StatsReader.
@@ -71,12 +61,25 @@ func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader
 	return &StatsReader{ctx: exec}, nil
 }
 
-// ReleaseStatsReader releases the reader.
-func ReleaseStatsReader(reader *StatsReader) error {
-	if reader.IsHistory() || reader.ctx == nil {
+// Read is a thin wrapper reading statistics from storage by sql command.
+func (sr *StatsReader) Read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	if sr.snapshot > 0 {
+		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool, sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
+	}
+	return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
+}
+
+// IsHistory indicates whether to read history statistics.
+func (sr *StatsReader) IsHistory() bool {
+	return sr.snapshot > 0
+}
+
+func (sr *StatsReader) Close() error {
+	if sr.IsHistory() || sr.ctx == nil {
 		return nil
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, err := reader.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
+	_, err := sr.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
 	return err
 }

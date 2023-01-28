@@ -188,7 +188,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
 		if readerCtx.reader != nil {
-			err := statistics.ReleaseStatsReader(readerCtx.reader)
+			err := readerCtx.reader.Close()
 			if err != nil {
 				logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err))
 			}
@@ -295,7 +295,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
 	if readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now()) {
 		if readerCtx.reader != nil {
-			err := statistics.ReleaseStatsReader(readerCtx.reader)
+			err := readerCtx.reader.Close()
 			if err != nil {
 				logutil.BgLogger().Warn("Fail to release stats loader: ", zap.Error(err))
 			}
