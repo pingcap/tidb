@@ -47,18 +47,20 @@ type CSVParser struct {
 	blockParser
 	cfg *config.CSVConfig
 
-	comma   []byte
-	quote   []byte
-	newLine []byte
+	comma       []byte
+	quote       []byte
+	newLine     []byte
+	startingBy  []byte
+	ignoreLines int
 
 	charsetConvertor *CharsetConvertor
 	// These variables are used with IndexAnyByte to search a byte slice for the
 	// first index which some special character may appear.
 	// quoteByteSet is used inside quoted fields (so the first characters of
-	// the closing delimiter and backslash are special).
+	// the closing delimiter, startingBy and backslash are special).
 	// unquoteByteSet is used outside quoted fields (so the first characters
-	// of the opening delimiter, separator, terminator and backslash are
-	// special).
+	// of the opening delimiter, separator, terminator, startingBy and backslash
+	// are special).
 	// newLineByteSet is used in strict-format CSV dividing (so the first
 	// characters of the terminator are special).
 	quoteByteSet   byteSet
@@ -91,16 +93,18 @@ func NewCSVParser(
 	ioWorkers *worker.Pool,
 	shouldParseHeader bool,
 	charsetConvertor *CharsetConvertor,
+	ignoreLines int,
 ) (*CSVParser, error) {
 	var err error
-	var separator, delimiter, terminator string
+	var separator, delimiter, terminator, startingBy string
 	// Do not do the conversion if the charsetConvertor is nil.
 	if charsetConvertor == nil {
 		separator = cfg.Separator
 		delimiter = cfg.Delimiter
 		terminator = cfg.Terminator
+		startingBy = cfg.StartingBy
 	} else {
-		separator, delimiter, terminator, err = encodeSpecialSymbols(cfg, charsetConvertor)
+		separator, delimiter, terminator, startingBy, err = encodeSpecialSymbols(cfg, charsetConvertor)
 		if err != nil {
 			return nil, err
 		}
@@ -117,6 +121,10 @@ func NewCSVParser(
 	} else {
 		// The character set encoding of '\r' and '\n' is the same in UTF-8 and GBK.
 		newLineStopSet = []byte{'\r', '\n'}
+	}
+	if len(startingBy) > 0 {
+		quoteStopSet = append(quoteStopSet, startingBy[0])
+		unquoteStopSet = append(unquoteStopSet, startingBy[0])
 	}
 	unquoteStopSet = append(unquoteStopSet, newLineStopSet...)
 
@@ -138,6 +146,8 @@ func NewCSVParser(
 		comma:             []byte(separator),
 		quote:             []byte(delimiter),
 		newLine:           []byte(terminator),
+		startingBy:        []byte(startingBy),
+		ignoreLines:       ignoreLines,
 		escFlavor:         escFlavor,
 		quoteByteSet:      makeByteSet(quoteStopSet),
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
@@ -148,7 +158,10 @@ func NewCSVParser(
 
 // encodeSpecialSymbols will encode the special symbols, e,g, separator, delimiter and terminator
 // with the given charset according to the charset convertor.
-func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (separator, delimiter, terminator string, err error) {
+func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (
+	separator, delimiter, terminator, startingBy string,
+	err error,
+) {
 	// Separator
 	separator, err = cc.Encode(cfg.Separator)
 	if err != nil {
@@ -164,6 +177,8 @@ func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (separato
 	if err != nil {
 		return
 	}
+	// StartingBy
+	startingBy, err = cc.Encode(cfg.StartingBy)
 	return
 }
 
@@ -199,6 +214,8 @@ const (
 	csvTokenNewLine csvToken = 0x400
 	// csvTokenDelimiter is the CSV delimiter token.
 	csvTokenDelimiter csvToken = 0x800
+	// csvTokenStartingBy is the CSV startingBy token.
+	csvTokenStartingBy csvToken = 0x1000
 )
 
 func (parser *CSVParser) readByte() (byte, error) {
@@ -285,6 +302,13 @@ func (parser *CSVParser) tryReadComma(b byte) (bool, error) {
 	return parser.tryReadExact(parser.comma[1:])
 }
 
+func (parser *CSVParser) tryReadStartingBy(b byte) (bool, error) {
+	if len(parser.startingBy) == 0 || parser.startingBy[0] != b {
+		return false, nil
+	}
+	return parser.tryReadExact(parser.startingBy[1:])
+}
+
 func (parser *CSVParser) tryReadBackslashed(bs byte) (bool, byte, error) {
 	if bs != '\\' || parser.escFlavor == backslashEscapeFlavorNone {
 		return false, 0, nil
@@ -295,6 +319,9 @@ func (parser *CSVParser) tryReadBackslashed(bs byte) (bool, byte, error) {
 
 // readQuoteToken reads a token inside quoted fields.
 func (parser *CSVParser) readQuotedToken(b byte) (csvToken, error) {
+	if ok, err := parser.tryReadStartingBy(b); ok || err != nil {
+		return csvTokenStartingBy, err
+	}
 	if ok, err := parser.tryReadCloseDelimiter(b); ok || err != nil {
 		return csvTokenDelimiter, err
 	}
@@ -306,6 +333,9 @@ func (parser *CSVParser) readQuotedToken(b byte) (csvToken, error) {
 
 // readUnquoteToken reads a token outside quoted fields.
 func (parser *CSVParser) readUnquoteToken(b byte) (csvToken, error) {
+	if ok, err := parser.tryReadStartingBy(b); ok || err != nil {
+		return csvTokenStartingBy, err
+	}
 	if ok, err := parser.tryReadNewLine(b); ok || err != nil {
 		return csvTokenNewLine, err
 	}
@@ -364,14 +394,27 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	}
 }
 
-func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
-	parser.recordBuffer = parser.recordBuffer[:0]
-	parser.fieldIndexes = parser.fieldIndexes[:0]
+func (parser *CSVParser) readRecords(dst []string) ([]string, error) {
+	var (
+		isEmptyLine    bool
+		whitespaceLine bool
+		prevToken      csvToken
+		firstToken     csvToken
+		firstError     error
+	)
 
-	isEmptyLine := true
-	whitespaceLine := true
-	prevToken := csvTokenNewLine
-	var firstToken csvToken
+	// reset is used to clean state of parser when we meet startingBy
+	reset := func() {
+		parser.recordBuffer = parser.recordBuffer[:0]
+		parser.fieldIndexes = parser.fieldIndexes[:0]
+		isEmptyLine = true
+		whitespaceLine = true
+		prevToken = csvTokenNewLine
+		firstError = nil
+	}
+
+	reset()
+	foundStartingBy := false
 
 outside:
 	for {
@@ -381,10 +424,17 @@ outside:
 			isEmptyLine = false
 			if prevToken == csvTokenDelimiter {
 				parser.logSyntaxError()
-				return nil, errors.AddStack(errUnexpectedQuoteField)
+				if firstError == nil {
+					firstError = errors.AddStack(errUnexpectedQuoteField)
+				}
+				if len(parser.startingBy) == 0 || foundStartingBy {
+					return nil, firstError
+				}
+				// we hope this bad content can be reset by startingBy.
+			} else {
+				parser.recordBuffer = append(parser.recordBuffer, content...)
+				prevToken = csvTokenAnyUnquoted
 			}
-			parser.recordBuffer = append(parser.recordBuffer, content...)
-			prevToken = csvTokenAnyUnquoted
 		}
 
 		if err != nil {
@@ -402,16 +452,36 @@ outside:
 		}
 
 		switch firstToken {
+		case csvTokenStartingBy:
+			if foundStartingBy {
+				parser.recordBuffer = append(parser.recordBuffer, parser.startingBy...)
+			} else {
+				foundStartingBy = true
+				reset()
+				goto outside
+			}
 		case csvTokenComma:
 			whitespaceLine = false
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
 		case csvTokenDelimiter:
 			if prevToken != csvTokenComma && prevToken != csvTokenNewLine {
 				parser.logSyntaxError()
-				return nil, errors.AddStack(errUnexpectedQuoteField)
+				if firstError == nil {
+					firstError = errors.AddStack(errUnexpectedQuoteField)
+				}
+				if len(parser.startingBy) == 0 || foundStartingBy {
+					return nil, firstError
+				}
+				// we hope this bad content can be reset by startingBy.
 			}
-			if err = parser.readQuotedField(); err != nil {
-				return nil, err
+			newFoundStartingBy, err2 := parser.readQuotedField(foundStartingBy)
+			if err2 != nil {
+				return nil, err2
+			}
+			if newFoundStartingBy {
+				foundStartingBy = true
+				reset()
+				goto outside
 			}
 			whitespaceLine = false
 		case csvTokenNewLine:
@@ -425,12 +495,19 @@ outside:
 				parser.recordBuffer = parser.recordBuffer[:0]
 				continue
 			}
+			if len(parser.startingBy) > 0 && !foundStartingBy {
+				reset()
+				continue
+			}
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
 			break outside
 		default:
 			if prevToken == csvTokenDelimiter {
 				parser.logSyntaxError()
-				return nil, errors.AddStack(errUnexpectedQuoteField)
+				if len(parser.startingBy) == 0 || foundStartingBy {
+					return nil, firstError
+				}
+				// we hope this bad content can be reset by startingBy.
 			}
 			parser.appendCSVTokenToRecordBuffer(firstToken)
 		}
@@ -455,10 +532,12 @@ outside:
 	return dst, nil
 }
 
-func (parser *CSVParser) readQuotedField() error {
+// readQuotedField reads a quoted field from the input. When not foundStartingBy
+// and meet startingBy, it will return (true, nil).
+func (parser *CSVParser) readQuotedField(foundStartingBy bool) (bool, error) {
 	for {
 		prevPos := parser.pos
-		content, terminator, err := parser.readUntil(&parser.quoteByteSet)
+		content, firstByte, err := parser.readUntil(&parser.quoteByteSet)
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				// return the position of quote to the caller.
@@ -469,29 +548,35 @@ func (parser *CSVParser) readQuotedField() error {
 				parser.buf = content
 				err = parser.replaceEOF(err, errUnterminatedQuotedField)
 			}
-			return err
+			return false, err
 		}
 		parser.recordBuffer = append(parser.recordBuffer, content...)
 		parser.skipBytes(1)
 
-		token, err := parser.readQuotedToken(terminator)
+		token, err := parser.readQuotedToken(firstByte)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		switch token {
+		case csvTokenStartingBy:
+			if foundStartingBy {
+				parser.recordBuffer = append(parser.recordBuffer, parser.startingBy...)
+			} else {
+				return true, nil
+			}
 		case csvTokenDelimiter:
 			// encountered '"' -> continue if we're seeing '""'.
 			doubledDelimiter, err := parser.tryReadExact(parser.quote)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if doubledDelimiter {
 				// consume the double quotation mark and continue
 				parser.recordBuffer = append(parser.recordBuffer, parser.quote...)
 			} else {
 				// the field is completed, exit.
-				return nil
+				return false, nil
 			}
 		default:
 			parser.appendCSVTokenToRecordBuffer(token)
@@ -516,7 +601,15 @@ func (parser *CSVParser) ReadRow() error {
 	row.Length = 0
 	row.RowID++
 
-	// skip the header first
+	for parser.ignoreLines > 0 {
+		_, err := parser.readRecords(parser.lastRecord)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		parser.ignoreLines--
+	}
+
+	// read the header first
 	if parser.shouldParseHeader {
 		err := parser.ReadColumns()
 		if err != nil {
@@ -525,7 +618,7 @@ func (parser *CSVParser) ReadRow() error {
 		parser.shouldParseHeader = false
 	}
 
-	records, err := parser.readRecord(parser.lastRecord)
+	records, err := parser.readRecords(parser.lastRecord)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -562,7 +655,7 @@ func (parser *CSVParser) ReadRow() error {
 
 // ReadColumns reads the columns of this CSV file.
 func (parser *CSVParser) ReadColumns() error {
-	columns, err := parser.readRecord(nil)
+	columns, err := parser.readRecords(nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -404,7 +404,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	reader, err := store.Open(ctx, fileName)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 1, "io")
-	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil, 0)
 	require.NoError(s.T(), err)
 	s.cr.parser = p
 
@@ -479,7 +479,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	reader, err := store.Open(ctx, fileName)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil, 0)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()
@@ -574,7 +574,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	reader, err := store.Open(ctx, fileName)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil, 0)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()

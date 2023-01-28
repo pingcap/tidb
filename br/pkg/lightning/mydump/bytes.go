@@ -28,7 +28,7 @@ func (as *byteSet) contains(c byte) bool {
 }
 
 // IndexAnyByte returns the byte index of the first occurrence in s of any of the byte
-// points in chars. It returns -1 if  there is no code point in common.
+// points in chars. It returns -1 if there is no code point in common.
 func IndexAnyByte(s []byte, as *byteSet) int {
 	for i, c := range s {
 		if as.contains(c) {

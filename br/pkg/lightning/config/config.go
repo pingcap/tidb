@@ -455,6 +455,9 @@ type CSVConfig struct {
 	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	// hide these options for lightning configuration file, they can only be used lu LOAD DATA
+	StartingBy  string `toml:"-" json:"-"`
+	IgnoreLines int    `toml:"-" json:"-"`
 }
 
 type MydumperRuntime struct {

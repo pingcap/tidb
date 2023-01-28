@@ -2222,7 +2222,20 @@ func newChunkRestore(
 		if err != nil {
 			return nil, err
 		}
-		parser, err = mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
+		ignoreLines := 0
+		if chunk.Chunk.Offset == 0 {
+			ignoreLines = cfg.Mydumper.CSV.IgnoreLines
+		}
+		parser, err = mydump.NewCSVParser(
+			ctx,
+			&cfg.Mydumper.CSV,
+			reader,
+			blockBufSize,
+			ioWorkers,
+			hasHeader,
+			charsetConvertor,
+			ignoreLines,
+		)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
