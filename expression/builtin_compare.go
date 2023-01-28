@@ -1626,7 +1626,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// int constant [cmp] year type
 	if arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear && !arg0.Value.IsNull() {
 		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String()))
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to YEAR", arg0.String()))
 			RemoveMutableConst(ctx, args)
 		}
 
@@ -1639,7 +1639,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// year type [cmp] int constant
 	if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1.Value.IsNull() {
 		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String()))
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to YEAR", arg1.String()))
 			RemoveMutableConst(ctx, args)
 		}
 
