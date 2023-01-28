@@ -38,6 +38,7 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
@@ -208,7 +209,7 @@ func (ic *importClient) GetImportClient(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if ic.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(ic.tlsConf))
 	}
