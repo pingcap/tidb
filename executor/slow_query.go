@@ -52,6 +52,8 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+type signalsKey struct{}
+
 // ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
 var ParseSlowLogBatchSize = 64
 
@@ -474,7 +476,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		}
 		failpoint.Inject("mockReadSlowLogSlow", func(val failpoint.Value) {
 			if val.(bool) {
-				signals := ctx.Value("signals").([]chan int)
+				signals := ctx.Value(signalsKey{}).([]chan int)
 				signals[0] <- 1
 				<-signals[1]
 			}
