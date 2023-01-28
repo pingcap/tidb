@@ -16,13 +16,13 @@ package local_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/keyspace"
 	"testing"
 
 	lkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
