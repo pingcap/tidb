@@ -161,7 +161,8 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `DISK` bigint(21) unsigned DEFAULT NULL,\n" +
-			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
+			"  `TxnStart` varchar(64) NOT NULL DEFAULT '',\n" +
+			"  `RESOURCE_GROUP_NAME` varchar(32) NOT NULL DEFAULT ''\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table information_schema.cluster_log").Check(
 		testkit.Rows("" +
