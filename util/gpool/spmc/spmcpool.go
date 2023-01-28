@@ -52,7 +52,7 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	capacity      atomic.Int32
 	running       atomic.Int32
 	state         atomic.Int32
-	waiting       atomic.Int32
+	waiting       atomic.Int32 // waiting is the number of goroutines that are waiting for the pool to be available.
 	heartbeatDone atomic.Bool
 }
 
