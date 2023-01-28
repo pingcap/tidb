@@ -812,9 +812,11 @@ func (tr *TableRestore) postProcess(
 			}
 			hasDupe = hasDupe || hasRemoteDupe
 
-			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
-				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
-				return false, err
+			if hasDupe {
+				if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
+					return false, err
+				}
 			}
 		}
 
