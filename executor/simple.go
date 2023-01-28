@@ -1102,7 +1102,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if resourceGroupName != "default" && resourceGroupName != "" {
 			_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
 			if !exists {
-				return infoschema.ErrResourceGroupNotExists
+				return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
 			}
 		}
 		userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
@@ -1912,7 +1912,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if s.ResourceGroupNameOption.Value != "default" && s.ResourceGroupNameOption.Value != "" {
 				_, exists := e.is.ResourceGroupByName(model.NewCIStr(s.ResourceGroupNameOption.Value))
 				if !exists {
-					return infoschema.ErrResourceGroupNotExists
+					return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.ResourceGroupNameOption.Value)
 				}
 			}
 
