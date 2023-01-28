@@ -556,7 +556,7 @@ func BuildBackupRangeAndSchema(
 				continue
 			}
 
-			logger := log.With(
+			logger := log.L().With(
 				zap.String("db", dbInfo.Name.O),
 				zap.String("table", tableInfo.Name.O),
 			)

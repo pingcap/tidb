@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -200,7 +201,7 @@ func (c *pdClient) SplitRegion(ctx context.Context, regionInfo *RegionInfo, key 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	conn, err := grpc.Dial(store.GetAddress(), grpc.WithInsecure())
+	conn, err := grpc.Dial(store.GetAddress(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -336,7 +337,7 @@ func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *Region
 	if err != nil {
 		return false, nil, err
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if c.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
 	}

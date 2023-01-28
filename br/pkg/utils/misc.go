@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
@@ -84,7 +85,7 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 }
 
 func GRPCConn(ctx context.Context, storeAddr string, tlsConf *tls.Config, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	secureOpt := grpc.WithInsecure()
+	secureOpt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if tlsConf != nil {
 		secureOpt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConf))
 	}

@@ -30,6 +30,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var _ Allocator = &singlePointAlloc{}
@@ -83,7 +84,7 @@ func (d *clientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 	}
 
 	addr := string(resp.Kvs[0].Value)
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()
