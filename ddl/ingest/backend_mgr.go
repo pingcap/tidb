@@ -87,7 +87,7 @@ func createLocalBackend(ctx context.Context, cfg *Config, glue glue.Glue) (backe
 		return backend.Backend{}, err
 	}
 
-	logutil.BgLogger().Info("[ddl] create local backend for adding index", zap.String("keyspaceName", cfg.KeyspaceName))
+	logutil.BgLogger().Info("[ddl-ingest] create local backend for adding index", zap.String("keyspaceName", cfg.KeyspaceName))
 	errorMgr := errormanager.New(nil, cfg.Lightning, log.Logger{Logger: logutil.BgLogger()})
 	return local.NewLocalBackend(ctx, tls, cfg.Lightning, glue, int(LitRLimit), errorMgr, cfg.KeyspaceName)
 }
