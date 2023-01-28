@@ -15,13 +15,13 @@
 package core_test
 
 import (
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIndexMergeJSONMemberOf(t *testing.T) {
