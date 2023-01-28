@@ -59,7 +59,7 @@ lint:tools/bin/revive
 license:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
 		--run_under="cd $(CURDIR) && " \
-		 @com_github_apache_skywalking_eyes//cmd/license-eye:license-eye --run_under="cd $(CURDIR) && "  -- -c .licenserc.yaml  header check
+		 @com_github_apache_skywalking_eyes//cmd/license-eye:license-eye --run_under="cd $(CURDIR) && "  -- -c ./.github/.licenserc.yaml  header check
 
 
 tidy:
