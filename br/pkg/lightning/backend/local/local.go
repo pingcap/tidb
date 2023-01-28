@@ -71,6 +71,7 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
@@ -145,7 +146,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if f.tls.TLSConfig() != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
 	}
@@ -367,6 +368,7 @@ type local struct {
 
 	checkTiKVAvaliable  bool
 	duplicateDetection  bool
+	duplicateDetectOpt  dupDetectOpt
 	duplicateDB         *pebble.DB
 	keyAdapter          KeyAdapter
 	errorMgr            *errormanager.ErrorManager
@@ -496,6 +498,7 @@ func NewLocalBackend(
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
 		duplicateDetection:      duplicateDetection,
+		duplicateDetectOpt:      dupDetectOpt{duplicateDetection && cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		keyAdapter:              keyAdapter,
@@ -800,6 +803,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		config:             engineCfg,
 		tableInfo:          cfg.TableInfo,
 		duplicateDetection: local.duplicateDetection,
+		dupDetectOpt:       local.duplicateDetectOpt,
 		duplicateDB:        local.duplicateDB,
 		errorMgr:           local.errorMgr,
 		keyAdapter:         local.keyAdapter,
@@ -850,6 +854,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			tableInfo:          cfg.TableInfo,
 			keyAdapter:         local.keyAdapter,
 			duplicateDetection: local.duplicateDetection,
+			dupDetectOpt:       local.duplicateDetectOpt,
 			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 			logger:             log.FromContext(ctx),
