@@ -75,6 +75,7 @@ func (sr *StatsReader) IsHistory() bool {
 	return sr.snapshot > 0
 }
 
+// Close closes the StatsReader.
 func (sr *StatsReader) Close() error {
 	if sr.IsHistory() || sr.ctx == nil {
 		return nil
