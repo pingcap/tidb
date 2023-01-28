@@ -16,6 +16,7 @@ package local_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/keyspace"
 	"testing"
 
 	lkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -52,7 +53,7 @@ func TestBuildDupTask(t *testing.T) {
 		{&lkv.SessionOptions{IndexID: info.Indices[1].ID}, false},
 	}
 	for _, tc := range testCases {
-		dupMgr, err := local.NewDuplicateManager(tbl, "t", nil, nil, nil,
+		dupMgr, err := local.NewDuplicateManager(tbl, "t", nil, nil, keyspace.CodecV1, nil,
 			tc.sessOpt, 4, atomic.NewBool(false), log.FromContext(context.Background()))
 		require.NoError(t, err)
 		tasks, err := local.BuildDuplicateTaskForTest(dupMgr)

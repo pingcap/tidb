@@ -422,6 +422,7 @@ func getKeyspaceName(g glue.Glue) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	//nolint: errcheck
 	defer rows.Close()
 
 	var (
