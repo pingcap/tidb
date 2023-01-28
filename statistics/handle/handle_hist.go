@@ -177,7 +177,7 @@ var errExit = errors.New("Stop loading since domain is closed")
 
 // StatsReaderContext exported for testing
 type StatsReaderContext struct {
-	reader      *statsReader
+	reader      *statistics.StatsReader
 	createdTime time.Time
 }
 
@@ -317,7 +317,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statsReader) (*statsWrapper, error) {
+func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statistics.StatsReader) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
@@ -357,7 +357,7 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 			return nil, errors.Trace(err)
 		}
 	}
-	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
+	rows, _, err := reader.Read("select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
