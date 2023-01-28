@@ -1136,6 +1136,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.idxMergeIsIntersection = path.IndexMergeIsIntersection
+	cop.idxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
 	if remainingFilters != nil {
 		cop.rootTaskConds = remainingFilters
 	}

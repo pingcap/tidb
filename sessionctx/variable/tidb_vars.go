@@ -697,6 +697,12 @@ const (
 	// TiDBCostModelVersion is a internal switch to indicates the cost model version.
 	TiDBCostModelVersion = "tidb_cost_model_version"
 
+	// TiDBIndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
+	// IndexJoin can cause plenty of extra double read tasks, which consume lots of resources and take a long time.
+	// Since the number of double read tasks is hard to estimated accurately, we leave this variable to let us can adjust this
+	// part of cost manually.
+	TiDBIndexJoinDoubleReadPenaltyCostRate = "tidb_index_join_double_read_penalty_cost_rate"
+
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 
@@ -1259,6 +1265,16 @@ var (
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
+	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
+	SetGlobalResourceControl atomic.Pointer[func(bool)]
+)
+
+// Hooks functions for Cluster Resource Control.
+var (
+	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
+	EnableGlobalResourceControlFunc func() = func() {}
+	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
+	DisableGlobalResourceControlFunc func() = func() {}
 )
 
 func serverMemoryLimitDefaultValue() string {
