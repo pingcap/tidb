@@ -394,7 +394,7 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	}
 }
 
-func (parser *CSVParser) readRecords(dst []string) ([]string, error) {
+func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
 	var (
 		isEmptyLine    bool
 		whitespaceLine bool
@@ -602,7 +602,7 @@ func (parser *CSVParser) ReadRow() error {
 	row.RowID++
 
 	for parser.ignoreLines > 0 {
-		_, err := parser.readRecords(parser.lastRecord)
+		_, err := parser.readRecord(parser.lastRecord)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -618,26 +618,26 @@ func (parser *CSVParser) ReadRow() error {
 		parser.shouldParseHeader = false
 	}
 
-	records, err := parser.readRecords(parser.lastRecord)
+	record, err := parser.readRecord(parser.lastRecord)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	parser.lastRecord = records
+	parser.lastRecord = record
 	// remove the last empty value
 	if parser.cfg.TrimLastSep {
-		i := len(records) - 1
-		if i >= 0 && len(records[i]) == 0 {
-			records = records[:i]
+		i := len(record) - 1
+		if i >= 0 && len(record[i]) == 0 {
+			record = record[:i]
 		}
 	}
 
 	row.Row = parser.acquireDatumSlice()
-	if cap(row.Row) >= len(records) {
-		row.Row = row.Row[:len(records)]
+	if cap(row.Row) >= len(record) {
+		row.Row = row.Row[:len(record)]
 	} else {
-		row.Row = make([]types.Datum, len(records))
+		row.Row = make([]types.Datum, len(record))
 	}
-	for i, record := range records {
+	for i, record := range record {
 		row.Length += len(record)
 		unescaped, isNull, err := parser.unescapeString(record)
 		if err != nil {
@@ -655,7 +655,7 @@ func (parser *CSVParser) ReadRow() error {
 
 // ReadColumns reads the columns of this CSV file.
 func (parser *CSVParser) ReadColumns() error {
-	columns, err := parser.readRecords(nil)
+	columns, err := parser.readRecord(nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
