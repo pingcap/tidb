@@ -226,4 +226,6 @@ func TestTopoFetcherBackoff(t *testing.T) {
 	dura := time.Since(start)
 	// fetchTopoMaxBackoff is milliseconds.
 	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
+	require.GreaterOrEqual(t, dura, 30*time.Second)
+	require.LessOrEqual(t, dura, 50*time.Second)
 }

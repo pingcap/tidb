@@ -289,7 +289,7 @@ type Config struct {
 	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
 	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
 
-	// These config is related to disaggregated-tiflash mode.
+	// These configs are related to disaggregated-tiflash mode.
 	DisaggregatedTiFlash         bool   `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
 	TiFlashComputeAutoScalerType string `toml:"autoscaler-type" json:"autoscaler-type"`
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
@@ -1040,7 +1040,7 @@ func StoreGlobalConfig(config *Config) {
 	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
-// GetClusterName returns clusterName, which is KeyspaceName or ClusterName.
+// GetClusterName returns KeyspaceName or ClusterName.
 func GetClusterName() (string, error) {
 	c := GetGlobalConfig()
 	keyspaceName := c.KeyspaceName

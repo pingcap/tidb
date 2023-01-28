@@ -65,11 +65,8 @@ const (
 	// DefASStr default AutoScaler.
 	DefASStr = AWSASStr
 
-	awsFixedPoolHTTPPath = "sharedfixedpool"
-	awsFetchHTTPPath     = "resume-and-get-topology"
-)
-
-const (
+	awsFixedPoolHTTPPath    = "sharedfixedpool"
+	awsFetchHTTPPath        = "resume-and-get-topology"
 	httpGetFailedErrMsg     = "get tiflash_compute topology failed"
 	parseTopoTSFailedErrMsg = "parse timestamp of tiflash_compute topology failed"
 )
