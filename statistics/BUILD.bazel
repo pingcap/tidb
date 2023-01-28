@@ -13,6 +13,7 @@ go_library(
         "fmsketch.go",
         "histogram.go",
         "index.go",
+        "interact_with_storage.go",
         "merge_worker.go",
         "row_sampler.go",
         "sample.go",
