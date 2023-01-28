@@ -7695,8 +7695,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 	// check in cluster to see if any active thread is using the group, we have to use internal SQL here
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	sql := "select id, instance, user FROM information_schema.cluster_processlist where ResourceGroupName = \"" + groupName.L + "\" limit 1"
-	rows, _, err := exec.ExecRestrictedSQL(internalCtx, nil, sql)
+	rows, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "select id, instance, user FROM information_schema.cluster_processlist where ResourceGroupName = \"%?\" limit 1", groupName.L)
 	if err != nil {
 		err = errors.Errorf("system table information_schema.cluster_processlist access failed")
 		return err

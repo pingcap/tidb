@@ -64,17 +64,17 @@ type ProcessInfo struct {
 	User                  string
 	Info                  string
 	Port                  string
+	ResourceGroupName     string
 	PlanExplainRows       [][]string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
-	MaxExecutionTime  uint64
-	State             uint16
-	Command           byte
-	RedactSQL         bool
-	ResourceGroupName string
+	MaxExecutionTime uint64
+	State            uint16
+	Command          byte
+	RedactSQL        bool
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
