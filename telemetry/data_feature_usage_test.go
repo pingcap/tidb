@@ -337,6 +337,45 @@ func TestPlacementPolicies(t *testing.T) {
 	require.Equal(t, uint64(1), usage.PlacementPolicyUsage.NumPartitionWithExplicitPolicies)
 }
 
+func TestResourceGroups(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, false, usage.ResourceControlUsage.Enabled)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'ON'")
+	tk.MustExec("create resource group x rru_per_sec=100 wru_per_sec=200")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, true, usage.ResourceControlUsage.Enabled)
+	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+
+	tk.MustExec("create resource group y rru_per_sec=100 wru_per_sec=200")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
+
+	tk.MustExec("alter resource group y rru_per_sec=100 wru_per_sec=300")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
+
+	tk.MustExec("drop resource group y")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'OFF'")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, false, usage.ResourceControlUsage.Enabled)
+}
+
 func TestAutoCapture(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

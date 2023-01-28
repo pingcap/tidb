@@ -354,25 +354,41 @@ func (t StoreType) Name() string {
 // KeyRanges wrap the ranges for partitioned table cases.
 // We might send ranges from different in the one request.
 type KeyRanges struct {
-	ranges [][]KeyRange
+	ranges        [][]KeyRange
+	rowCountHints [][]int
 
 	isPartitioned bool
 }
 
 // NewPartitionedKeyRanges constructs a new RequestRange for partitioned table.
 func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
-	return &KeyRanges{
-		ranges:        ranges,
-		isPartitioned: true,
-	}
+	return NewPartitionedKeyRangesWithHints(ranges, nil)
 }
 
 // NewNonParitionedKeyRanges constructs a new RequestRange for a non partitioned table.
 func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
+	return NewNonParitionedKeyRangesWithHint(ranges, nil)
+}
+
+// NewPartitionedKeyRangesWithHints constructs a new RequestRange for partitioned table with row count hint.
+func NewPartitionedKeyRangesWithHints(ranges [][]KeyRange, hints [][]int) *KeyRanges {
 	return &KeyRanges{
+		ranges:        ranges,
+		rowCountHints: hints,
+		isPartitioned: true,
+	}
+}
+
+// NewNonParitionedKeyRangesWithHint constructs a new RequestRange for a non partitioned table with rou count hint.
+func NewNonParitionedKeyRangesWithHint(ranges []KeyRange, hints []int) *KeyRanges {
+	rr := &KeyRanges{
 		ranges:        [][]KeyRange{ranges},
 		isPartitioned: false,
 	}
+	if hints != nil {
+		rr.rowCountHints = [][]int{hints}
+	}
+	return rr
 }
 
 // FirstPartitionRange returns the the result of first range.
@@ -430,9 +446,13 @@ func (rr *KeyRanges) SortByFunc(sortFunc func(i, j KeyRange) bool) {
 }
 
 // ForEachPartitionWithErr runs the func for each partition with an error check.
-func (rr *KeyRanges) ForEachPartitionWithErr(theFunc func([]KeyRange) error) (err error) {
+func (rr *KeyRanges) ForEachPartitionWithErr(theFunc func([]KeyRange, []int) error) (err error) {
 	for i := range rr.ranges {
-		err = theFunc(rr.ranges[i])
+		var hints []int
+		if len(rr.rowCountHints) > i {
+			hints = rr.rowCountHints[i]
+		}
+		err = theFunc(rr.ranges[i], hints)
 		if err != nil {
 			return err
 		}
@@ -549,10 +569,10 @@ type Request struct {
 	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
-	// FixedRowCountHint is the optimization hint for copr request for task scheduling.
-	FixedRowCountHint []int
 	// StoreBatchSize indicates the batch size of coprocessor in the same store.
 	StoreBatchSize int
+	// ResourceGroupName is the name of the bind resource group.
+	ResourceGroupName string
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

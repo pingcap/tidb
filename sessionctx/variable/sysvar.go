@@ -1783,7 +1783,7 @@ var defaultSysVars = []*SysVar{
 		s.NoopFuncsMode = TiDBOptOnOffWarn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive"}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower", "closest-replicas", "closest-adaptive", "learner"}, SetSession: func(s *SessionVars, val string) error {
 		if strings.EqualFold(val, "follower") {
 			s.SetReplicaRead(kv.ReplicaReadFollower)
 		} else if strings.EqualFold(val, "leader-and-follower") {
@@ -1794,6 +1794,8 @@ var defaultSysVars = []*SysVar{
 			s.SetReplicaRead(kv.ReplicaReadClosest)
 		} else if strings.EqualFold(val, "closest-adaptive") {
 			s.SetReplicaRead(kv.ReplicaReadClosestAdaptive)
+		} else if strings.EqualFold(val, "learner") {
+			s.SetReplicaRead(kv.ReplicaReadLearner)
 		}
 		return nil
 	}},
@@ -2003,6 +2005,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCostModelVersion, Value: strconv.Itoa(DefTiDBCostModelVer), Hidden: false, Type: TypeInt, MinValue: 1, MaxValue: 2,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.CostModelVersion = int(TidbOptInt64(s, 1))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexJoinDoubleReadPenaltyCostRate, Value: strconv.Itoa(0), Hidden: false, Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IndexJoinDoubleReadPenaltyCostRate = tidbOptFloat64(s, 0)
 			return nil
 		},
 	},
@@ -2298,6 +2306,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal, Name: TiDBEnableResourceControl, Value: BoolToOnOff(DefTiDBEnableResourceControl), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		EnableResourceControl.Store(TiDBOptOn(s))
+		(*SetGlobalResourceControl.Load())(TiDBOptOn(s))
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableResourceControl.Load()), nil

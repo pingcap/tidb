@@ -563,6 +563,8 @@ type PhysicalIndexMergeReader struct {
 	// IsIntersectionType means whether it's intersection type or union type.
 	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
 	IsIntersectionType bool
+	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
+	AccessMVIndex bool
 
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
