@@ -371,7 +371,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	}
 
 	// Do keyspace delete range
-	if w.store.GetCodec().GetKeyspace() == nil {
+	if w.store.GetCodec().GetKeyspace() != nil {
 		// When the worker is just started, or an old GC job has just finished,
 		// wait a while before starting a new job.
 		if time.Since(w.lastFinish) < gcWaitTime {
