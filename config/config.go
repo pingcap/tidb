@@ -23,7 +23,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -95,8 +94,6 @@ const (
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
-	// ConfigKeyspaceFieldName is the struct field name Config.KeyspaceName.
-	ConfigKeyspaceFieldName = "KeyspaceName"
 )
 
 // Valid config maps
@@ -1046,17 +1043,9 @@ func StoreGlobalConfig(config *Config) {
 // GetClusterName returns clusterName, which is KeyspaceName or ClusterName.
 func GetClusterName() (string, error) {
 	c := GetGlobalConfig()
-	var keyspaceName string
+	keyspaceName := c.KeyspaceName
 	clusterName := c.ClusterName
 
-	// TODO: Delete using reflect when keyspace code is merged.
-	v := reflect.ValueOf(c).FieldByName(ConfigKeyspaceFieldName)
-	if v.IsValid() {
-		if v.Kind() != reflect.String {
-			terror.MustNil(errors.New("config.KeyspaceName should be String type"))
-		}
-		keyspaceName = v.String()
-	}
 	if keyspaceName != "" && clusterName != "" {
 		return "", errors.Errorf("config.KeyspaceName(%s) and config.ClusterName(%s) are not empty both", keyspaceName, clusterName)
 	}
