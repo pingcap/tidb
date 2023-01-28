@@ -622,16 +622,16 @@ func TestLoadStats(t *testing.T) {
 	require.True(t, idx.IsFullLoad())
 
 	// Following test tests whether the LoadNeededHistograms would panic.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail", `return(true)`))
 	err = h.LoadNeededHistograms()
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic", "panic"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic", "panic"))
 	err = h.LoadNeededHistograms()
 	require.Error(t, err)
 	require.Regexp(t, ".*getStatsReader panic.*", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic"))
 	err = h.LoadNeededHistograms()
 	require.NoError(t, err)
 }
@@ -1160,8 +1160,8 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
-		"0 20",  // global: g.count = p0.count + p1.count
-		"0 9",   // p0
+		"0 20", // global: g.count = p0.count + p1.count
+		"0 9",  // p0
 		"0 11")) // p1
 
 	tk.MustQuery("show stats_topn where table_name='tint' and is_index=0").Check(testkit.Rows(
@@ -1191,7 +1191,7 @@ func TestGlobalStatsData2(t *testing.T) {
 
 	tk.MustQuery("select distinct_count, null_count, tot_col_size from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("12 1 19", // global, g = p0 + p1
-			"5 1 8",   // p0
+			"5 1 8", // p0
 			"7 0 11")) // p1
 
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
@@ -1205,7 +1205,7 @@ func TestGlobalStatsData2(t *testing.T) {
 
 	tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
 		testkit.Rows("12 1", // global, g = p0 + p1
-			"5 1",  // p0
+			"5 1", // p0
 			"7 0")) // p1
 
 	// double + (column + index with 1 column)
