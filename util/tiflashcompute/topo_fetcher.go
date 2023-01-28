@@ -92,8 +92,14 @@ type TopoFetcher interface {
 	FetchAndGetTopo() ([]string, error)
 }
 
-// GetAutoScalerType return topo fetcher type.
-func GetAutoScalerType(typ string) int {
+// IsValidAutoScalerConfig return true if user config of autoscaler type is valid.
+func IsValidAutoScalerConfig(typ string) bool {
+	t := getAutoScalerType(typ)
+	return t == MockASType || t == AWSASType || t == GCPASType
+}
+
+// getAutoScalerType return topo fetcher type.
+func getAutoScalerType(typ string) int {
 	switch typ {
 	case MockASStr:
 		return MockASType
@@ -113,7 +119,7 @@ func InitGlobalTopoFetcher(typ string, addr string, clusterID string, isFixedPoo
 	logutil.BgLogger().Info("init globalTopoFetcher", zap.Any("type", typ), zap.Any("addr", addr),
 		zap.Any("clusterID", clusterID), zap.Any("isFixedPool", isFixedPool))
 
-	ft := GetAutoScalerType(typ)
+	ft := getAutoScalerType(typ)
 	switch ft {
 	case MockASType:
 		globalTopoFetcher = NewMockAutoScalerFetcher(addr)
