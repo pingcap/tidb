@@ -1022,6 +1022,20 @@
     ]
   },
   {
+    "name": "TestMppVersion",
+    "cases": [
+      "desc format = 'brief' select count(*) as cnt from t group by a, b",
+      "set mpp_exchange_compression_mode = UNSPECIFIED",
+      "desc format = 'brief' select count(*) as cnt from t group by a, b",
+      "set mpp_version = 0",
+      "set mpp_exchange_compression_mode = fast",
+      "desc format = 'brief' select count(*) as cnt from t group by a, b",
+      "set mpp_version = -1",
+      "set mpp_exchange_compression_mode = high_compression",
+      "desc format = 'brief' select count(*) as cnt from t group by a, b"
+    ]
+  },
+  {
     "name": "TestPushDownAggForMPP",
     "cases": [
       "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",

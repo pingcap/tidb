@@ -8012,6 +8012,88 @@
     ]
   },
   {
+    "Name": "TestMppVersion",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' select count(*) as cnt from t group by a, b",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#4",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compression: FAST",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:count(1)->Column#8",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set mpp_exchange_compression_mode = UNSPECIFIED",
+        "Plan": null,
+        "Warnings": null
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) as cnt from t group by a, b",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#4",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compression: FAST",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:count(1)->Column#8",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set mpp_version = 0",
+        "Plan": null,
+        "Warnings": null
+      },
+      {
+        "SQL": "set mpp_exchange_compression_mode = fast",
+        "Plan": null,
+        "Warnings": null
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) as cnt from t group by a, b",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 0, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#4",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary]",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:count(1)->Column#8",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set mpp_version = -1",
+        "Plan": null,
+        "Warnings": null
+      },
+      {
+        "SQL": "set mpp_exchange_compression_mode = high_compression",
+        "Plan": null,
+        "Warnings": null
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) as cnt from t group by a, b",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 1, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#4",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:sum(Column#8)->Column#4",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.b, collate: binary], Compression: HIGH_COMPRESSION",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.a, test.t.b, funcs:count(1)->Column#8",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestPushDownAggForMPP",
     "Cases": [
       {
