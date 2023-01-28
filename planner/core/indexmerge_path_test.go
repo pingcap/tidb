@@ -15,6 +15,8 @@
 package core_test
 
 import (
+	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/planner/core"
@@ -148,4 +150,26 @@ func TestMVIndexIndexMergePlanCache(t *testing.T) {
 	tk.MustExec("execute st")
 	tk.MustExec("execute st")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestMVIndexPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(j json, unique kj((cast(j as signed array))))`)
+
+	for _, sql := range []string{
+		"select j from t where j=1",
+		"select j from t where j=1 or j=2",
+		"select j from t where j in (1, 2)",
+	} {
+		plan := tk.MustQuery("explain " + sql).Rows()
+		hasPointGet := false
+		for _, line := range plan {
+			if strings.Contains(strings.ToLower(line[0].(string)), "point") {
+				hasPointGet = true
+			}
+		}
+		require.True(t, !hasPointGet) // no point-get plan
+	}
 }
