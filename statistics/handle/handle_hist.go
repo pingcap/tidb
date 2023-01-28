@@ -188,7 +188,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
 		if readerCtx.reader != nil {
-			err := h.releaseStatsReader(readerCtx.reader, ctx.(sqlexec.RestrictedSQLExecutor))
+			err := statistics.ReleaseStatsReader(readerCtx.reader)
 			if err != nil {
 				logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err))
 			}
@@ -295,13 +295,13 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
 	if readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now()) {
 		if readerCtx.reader != nil {
-			err := h.releaseStatsReader(readerCtx.reader, ctx)
+			err := statistics.ReleaseStatsReader(readerCtx.reader)
 			if err != nil {
 				logutil.BgLogger().Warn("Fail to release stats loader: ", zap.Error(err))
 			}
 		}
 		for {
-			newReader, err := h.getStatsReader(0, ctx)
+			newReader, err := statistics.GetStatsReader(0, ctx)
 			if err != nil {
 				logutil.BgLogger().Error("Fail to new stats loader, retry after a while.", zap.Error(err))
 				time.Sleep(h.Lease() / 10)

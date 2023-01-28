@@ -16,6 +16,10 @@ package statistics
 
 import (
 	"context"
+	"fmt"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/util/chunk"
@@ -27,19 +31,6 @@ import (
 type StatsReader struct {
 	ctx      sqlexec.RestrictedSQLExecutor
 	snapshot uint64
-}
-
-func NewCurrentStatsReader(ctx sqlexec.RestrictedSQLExecutor) *StatsReader {
-	return &StatsReader{
-		ctx: ctx,
-	}
-}
-
-func NewHistoryStatsReader(ctx sqlexec.RestrictedSQLExecutor, snapshot uint64) *StatsReader {
-	return &StatsReader{
-		ctx:      ctx,
-		snapshot: snapshot,
-	}
 }
 
 // Read is a thin wrapper reading statistics from storage by sql command.
@@ -54,4 +45,38 @@ func (sr *StatsReader) Read(sql string, args ...interface{}) (rows []chunk.Row, 
 // IsHistory indicates whether to read history statistics.
 func (sr *StatsReader) IsHistory() bool {
 	return sr.snapshot > 0
+}
+
+// GetStatsReader returns a StatsReader.
+func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader *StatsReader, err error) {
+	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
+		}
+	})
+	if snapshot > 0 {
+		return &StatsReader{ctx: exec, snapshot: snapshot}, nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("getStatsReader panic %v", r)
+		}
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	failpoint.Inject("mockGetStatsReaderPanic", nil)
+	_, err = exec.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+	if err != nil {
+		return nil, err
+	}
+	return &StatsReader{ctx: exec}, nil
+}
+
+// ReleaseStatsReader releases the reader.
+func ReleaseStatsReader(reader *StatsReader) error {
+	if reader.IsHistory() || reader.ctx == nil {
+		return nil
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, err := reader.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
+	return err
 }

@@ -2024,44 +2024,12 @@ func (h *Handle) getGlobalStatsReader(snapshot uint64) (reader *statistics.Stats
 			h.mu.Unlock()
 		}
 	}()
-	return h.getStatsReader(snapshot, h.mu.ctx.(sqlexec.RestrictedSQLExecutor))
+	return statistics.GetStatsReader(snapshot, h.mu.ctx.(sqlexec.RestrictedSQLExecutor))
 }
 
 func (h *Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
 	defer h.mu.Unlock()
-	return h.releaseStatsReader(reader, h.mu.ctx.(sqlexec.RestrictedSQLExecutor))
-}
-
-func (h *Handle) getStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader *statistics.StatsReader, err error) {
-	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
-		}
-	})
-	if snapshot > 0 {
-		return statistics.NewHistoryStatsReader(exec, snapshot), nil
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("getStatsReader panic %v", r)
-		}
-	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	failpoint.Inject("mockGetStatsReaderPanic", nil)
-	_, err = exec.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
-	if err != nil {
-		return nil, err
-	}
-	return statistics.NewCurrentStatsReader(exec), nil
-}
-
-func (h *Handle) releaseStatsReader(reader *statistics.StatsReader, exec sqlexec.RestrictedSQLExecutor) error {
-	if reader.IsHistory() {
-		return nil
-	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, err := exec.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
-	return err
+	return statistics.ReleaseStatsReader(reader)
 }
 
 const (
