@@ -766,14 +766,7 @@ func (tr *TableRestore) postProcess(
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
 				return false, e
-			} else {
-				hasDupe = hasDupe || hasRemoteDupe
 			}
-<<<<<<< HEAD
-			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
-				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
-				return false, err
-=======
 			hasDupe = hasDupe || hasRemoteDupe
 
 			if hasDupe {
@@ -781,7 +774,6 @@ func (tr *TableRestore) postProcess(
 					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 					return false, err
 				}
->>>>>>> 06e2b29551 (lightning: check hasDupe and tableID when resolve duplicate rows (#40696))
 			}
 		}
 
