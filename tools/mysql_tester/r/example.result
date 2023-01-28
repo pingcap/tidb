@@ -1,0 +1,5 @@
+create table t(a bigint, b bigint);
+insert into t values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+select * from t where a = 1;
+a	b
+1	1
