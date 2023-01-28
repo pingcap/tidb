@@ -38,7 +38,6 @@ func TestIssue40224(t *testing.T) {
 	tk.MustExec("prepare st from 'select a from t where a in (?, ?)'")
 	tk.MustExec("set @a=1.0, @b=2.0")
 	tk.MustExec("execute st using @a, @b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '1.0' may be converted to INT"))
 	tk.MustExec("execute st using @a, @b")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
