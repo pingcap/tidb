@@ -13041,7 +13041,7 @@ ResourceGroupNameOption:
 	}
 |	"RESOURCE" "GROUP" ResourceGroupName
 	{
-		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
+		$$ = &ast.ResourceGroupNameOption{Value: $3}
 	}
 
 PasswordOrLockOptions:

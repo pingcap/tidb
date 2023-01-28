@@ -1090,14 +1090,13 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			userAttributes = append(userAttributes, fmt.Sprintf("\"metadata\": %s", s.CommentOrAttributeOption.Value))
 		}
 	}
-	resourceGroupName := "default"
+
 	if s.ResourceGroupNameOption != nil {
 		if !variable.EnableResourceControl.Load() {
 			return infoschema.ErrResourceGroupSupportDisabled
 		}
-		if s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
-			resourceGroupName = s.ResourceGroupNameOption.Value
-		}
+
+		resourceGroupName := s.ResourceGroupNameOption.Value
 
 		// check if specified resource group exists
 		if resourceGroupName != "default" && resourceGroupName != "" {
@@ -1106,8 +1105,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 				return infoschema.ErrResourceGroupNotExists
 			}
 		}
+		userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
 	}
-	userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
 	// If FAILED_LOGIN_ATTEMPTS and PASSWORD_LOCK_TIME are both specified to 0, a string of 0 length is generated.
 	// When inserting the attempts into json, an error occurs. This requires special handling.
 	if PasswordLocking != "" {
@@ -1904,7 +1903,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				newAttributes = append(newAttributes, fmt.Sprintf(`"metadata": %s`, s.CommentOrAttributeOption.Value))
 			}
 		}
-		if s.ResourceGroupNameOption != nil && s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
+		if s.ResourceGroupNameOption != nil {
 			if !variable.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
 			}
