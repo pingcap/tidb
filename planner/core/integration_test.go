@@ -3026,7 +3026,7 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "10000.00", "root", "MppVersion: 1, data:ExchangeSender_8"},
+		{"TableReader_9", "10000.00", "root", " MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "10000.00", "mpp[tiflash]", " ExchangeType: PassThrough"},
 		{"  └─Projection_4", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#3"},
 		{"    └─TableFullScan_7", "10000.00", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},

@@ -811,9 +811,11 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "Broadcast")
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
-		if p.CompressionMode != kv.ExchangeCompressionModeNONE {
-			fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
-		}
+	}
+	if p.CompressionMode != kv.ExchangeCompressionModeNONE {
+		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
+	}
+	if p.ExchangeType == tipb.ExchangeType_Hash {
 		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.HashCols))
 	}
 	if len(p.Tasks) > 0 {
