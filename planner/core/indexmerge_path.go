@@ -116,7 +116,7 @@ func (ds *DataSource) generateIndexMergePath() error {
 		return nil
 	}
 	regularPathCount := len(ds.possibleAccessPaths)
-	if err := ds.generateAndPruneIndexMergePath(indexMergeConds, ds.indexMergeHints != nil); err != nil {
+	if err := ds.generateAndPruneIndexMergePath(indexMergeConds); err != nil {
 		return err
 	}
 
@@ -476,7 +476,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 	return indexMergePath
 }
 
-func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression, needPrune bool) error {
+func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression) error {
 	regularPathCount := len(ds.possibleAccessPaths)
 	// 1. Generate possible IndexMerge paths for `OR`.
 	err := ds.generateIndexMergeOrPaths(indexMergeConds)
