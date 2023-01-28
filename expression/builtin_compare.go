@@ -1638,7 +1638,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// year type [cmp] int constant
 	if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1.Value.IsNull() {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0}) {
+		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg1}) {
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to YEAR", arg1.String()))
 			RemoveMutableConst(ctx, args)
 		}
