@@ -177,7 +177,6 @@ func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 func (p *PhysicalTableReader) GetMppVersion() kv.MppVersion {
 	if p.ReadReqType == MPP {
 		tp, ok := p.tablePlan.(*PhysicalExchangeSender)
-		// assert ok is always true when typs is mpp
 		if ok {
 			return tp.MppVersion
 		}

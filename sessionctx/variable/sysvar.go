@@ -2250,10 +2250,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: ExplainShowMppFeature, Value: BoolToOnOff(DefExplainShowMppFeature), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.ExplainShowMppFeature = TiDBOptOn(val)
-		return nil
-	}},
 	{
 		Scope: ScopeGlobal, Name: TiDBTTLJobScheduleWindowStartTime, Value: DefTiDBTTLJobScheduleWindowStartTime, Type: TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			startTime, err := time.ParseInLocation(FullDayTimeFormat, s, time.UTC)

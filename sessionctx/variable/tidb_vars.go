@@ -258,9 +258,6 @@ const (
 
 	// TiDBUseAlloc indicates whether the last statement used chunk alloc
 	TiDBUseAlloc = "last_sql_use_alloc"
-
-	// ExplainShowMppFeature indicates whether to show mpp feature in explain result
-	ExplainShowMppFeature = "explain_show_mpp_feature"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1175,7 +1172,6 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                              = 4
 	DefTiDBTTLDeleteWorkerCount                            = 4
-	DefExplainShowMppFeature                               = false
 	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false

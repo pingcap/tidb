@@ -249,10 +249,8 @@ func (p *PhysicalTableScan) isFullScan() bool {
 func (p *PhysicalTableReader) ExplainInfo() string {
 	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
 
-	if p.ctx.GetSessionVars().ExplainShowMppFeature {
-		if mppVersion := p.GetMppVersion(); mppVersion != kv.MppVersionUnspecified {
-			return fmt.Sprintf("MppVersion: %d, %s", mppVersion, tablePlanInfo)
-		}
+	if mppVersion := p.GetMppVersion(); mppVersion != kv.MppVersionUnspecified {
+		return fmt.Sprintf("MppVersion: %d, %s", mppVersion, tablePlanInfo)
 	}
 
 	return tablePlanInfo
@@ -815,7 +813,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "HashPartition")
 		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.HashCols))
 	}
-	if p.ctx.GetSessionVars().ExplainShowMppFeature && p.CompressionMode != kv.ExchangeCompressionModeNONE {
+	if p.CompressionMode != kv.ExchangeCompressionModeNONE {
 		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
 	}
 	if len(p.Tasks) > 0 {

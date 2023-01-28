@@ -1146,29 +1146,34 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhysicalUnionAll) attach2MppTasks(mppVersion kv.MppVersion, tasks ...task) task {
-	t := &mppTask{p: p, mppVersion: mppVersion}
+func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
+	mppVersion := kv.MppVersionUnspecified
 	childPlans := make([]PhysicalPlan, 0, len(tasks))
 	for _, tk := range tasks {
 		if mpp, ok := tk.(*mppTask); ok && !tk.invalid() {
 			childPlans = append(childPlans, mpp.plan())
+			if mppVersion == kv.MppVersionUnspecified {
+				mppVersion = mpp.mppVersion
+			} else if mppVersion != mpp.mppVersion {
+				return invalidTask
+			}
 		} else if root, ok := tk.(*rootTask); ok && root.isEmpty {
 			continue
 		} else {
 			return invalidTask
 		}
 	}
-	if len(childPlans) == 0 {
+	if len(childPlans) == 0 || mppVersion == kv.MppVersionUnspecified {
 		return invalidTask
 	}
 	p.SetChildren(childPlans...)
-	return t
+	return &mppTask{p: p, mppVersion: mppVersion}
 }
 
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	for _, t := range tasks {
-		if x, ok := t.(*mppTask); ok {
-			return p.attach2MppTasks(x.mppVersion, tasks...)
+		if _, ok := t.(*mppTask); ok {
+			return p.attach2MppTasks(tasks...)
 		}
 	}
 	t := &rootTask{p: p}
