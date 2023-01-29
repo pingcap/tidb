@@ -136,18 +136,15 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			}
 		}
 	case *ast.Limit:
-		if checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-			return in, false
-		}
 		if node.Count != nil {
-			if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+			if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker && !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 				checker.cacheable = false
 				checker.reason = "query has 'limit ?' is un-cacheable"
 				return in, true
 			}
 		}
 		if node.Offset != nil {
-			if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+			if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker && !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 				checker.cacheable = false
 				checker.reason = "query has 'limit ?, 10' is un-cacheable"
 				return in, true
