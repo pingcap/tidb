@@ -793,6 +793,10 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 			job.MarkNonRevertible()
 		}
 		// We need another round to wait for all the others sub-jobs to finish.
+		if err == nil {
+			ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+			return false, ver, err
+		}
 		return false, ver, err
 	}
 	return true, ver, err
@@ -877,7 +881,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			return false, ver, err
 		}
 		indexInfo.BackfillState = model.BackfillStateInapplicable // Prevent double-write on this index.
-		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return true, ver, err
 	default:
 		return false, 0, dbterror.ErrInvalidDDLState.GenWithStackByArgs("backfill", indexInfo.BackfillState)
