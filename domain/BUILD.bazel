@@ -45,7 +45,6 @@ go_library(
         "//privilege/privileges",
         "//sessionctx",
         "//sessionctx/sessionstates",
-        "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//statistics/handle",
         "//telemetry",
