@@ -269,7 +269,7 @@ func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOp
 		if !ok2 {
 			continue
 		}
-		if len(plan.matchOpts.limitOffsetAndCount) > 0 && l.sctx.GetSessionVars().EnablePlanCacheForParamLimit == false {
+		if len(plan.matchOpts.limitOffsetAndCount) > 0 && !l.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 			// offset and key slice matched, but it is a plan with param limit and the switch is disabled
 			continue
 		}
