@@ -18,10 +18,11 @@ StreamAgg	1.00	root		funcs:count(1)->Column#5
 explain format = 'brief' select /*+ TIDB_INLJ(e) */ count(*) from e, lo where lo.a=e.a and e.b=22336;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#5
-└─IndexJoin	19977.00	root		inner join, inner:TableReader, outer key:test.e.a, inner key:test.lo.a, equal cond:eq(test.e.a, test.lo.a)
-  ├─IndexLookUp(Build)	19977.00	root		
-  │ ├─IndexRangeScan(Build)	19977.00	cop[tikv]	table:e, index:idx_b(b)	range:[22336,22336], keep order:false
-  │ └─Selection(Probe)	19977.00	cop[tikv]		not(isnull(test.e.a))
-  │   └─TableRowIDScan	19977.00	cop[tikv]	table:e	keep order:false
-  └─TableReader(Probe)	19977.00	root		data:TableRangeScan
-    └─TableRangeScan	19977.00	cop[tikv]	table:lo	range: decided by [test.e.a], keep order:false
+└─IndexJoin	19977.00	root		inner join, inner:IndexLookUp, outer key:test.lo.a, inner key:test.e.a, equal cond:eq(test.lo.a, test.e.a)
+  ├─TableReader(Build)	250.00	root		data:TableFullScan
+  │ └─TableFullScan	250.00	cop[tikv]	table:lo	keep order:false
+  └─IndexLookUp(Probe)	19977.00	root		
+    ├─Selection(Build)	1020000.00	cop[tikv]		not(isnull(test.e.a))
+    │ └─IndexRangeScan	1020000.00	cop[tikv]	table:e, index:idx_a(a)	range: decided by [eq(test.e.a, test.lo.a)], keep order:false
+    └─Selection(Probe)	19977.00	cop[tikv]		eq(test.e.b, 22336)
+      └─TableRowIDScan	1020000.00	cop[tikv]	table:e	keep order:false
