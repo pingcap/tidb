@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -330,8 +331,11 @@ func (importer *FileImporter) getKeyRangeForFiles(
 	)
 
 	for _, f := range files {
-		if importer.kvMode == Raw || importer.kvMode == Txn {
+		if importer.kvMode == Raw {
 			start, end = f.GetStartKey(), f.GetEndKey()
+		} else if importer.kvMode == Txn {
+			start = codec.EncodeBytes([]byte{}, f.GetStartKey())
+			end = codec.EncodeBytes([]byte{}, f.GetEndKey())
 		} else {
 			start, end, err = GetRewriteRawKeys(f, rewriteRules)
 			if err != nil {
@@ -593,7 +597,8 @@ func (importer *FileImporter) download(
 		var e error
 		for i, f := range remainFiles {
 			var downloadMeta *import_sstpb.SSTMeta
-			if importer.kvMode == Raw {
+			// we treat Txn kv file as Raw kv file. because we don't have table id to decode
+			if importer.kvMode == Raw || importer.kvMode == Txn {
 				downloadMeta, e = importer.downloadRawKVSST(ctx, regionInfo, f, cipher, apiVersion)
 			} else {
 				downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, cipher)
@@ -610,7 +615,7 @@ func (importer *FileImporter) download(
 			})
 			if isDecryptSstErr(e) {
 				log.Info("fail to decrypt when download sst, try again with no-crypt", logutil.File(f))
-				if importer.kvMode == Raw {
+				if importer.kvMode == Raw || importer.kvMode == Txn {
 					downloadMeta, e = importer.downloadRawKVSST(ctx, regionInfo, f, nil, apiVersion)
 				} else {
 					downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, nil)

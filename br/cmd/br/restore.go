@@ -104,7 +104,7 @@ func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 }
 
 func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
-	cfg := task.Config{}
+	cfg := task.Config{LogProgress: HasLogFile()}
 	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
 		command.SilenceUsage = false
 		return errors.Trace(err)
