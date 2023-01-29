@@ -434,17 +434,23 @@ func TestTriggerScanTask(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	sessionFactory := sessionFactory(t, store)
-
 	now := time.Now()
-
 	se := sessionFactory()
-	m := dom.TTLJobManager()
-	m.TaskManager().ResizeWorkersWithSysVar()
-	nCli := m.GetNotificationCli()
+
+	waitAndStopTTLManager(t, dom)
 
 	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
-	require.NoError(t, m.InfoSchemaCache().Update(se))
 
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+	m.TaskManager().ResizeWorkersWithSysVar()
+	m.Start()
+	defer func() {
+		m.Stop()
+		require.NoError(t, m.WaitStopped(context.Background(), time.Second*10))
+	}()
+
+	nCli := m.GetNotificationCli()
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
