@@ -32,8 +32,6 @@ const ttlJobTimeout = 6 * time.Hour
 
 const taskManagerLoopTickerInterval = time.Minute
 const ttlTaskHeartBeatTickerInterval = time.Minute
-const ttlTaskGCInterval = time.Hour
-
 const ttlGCInterval = time.Hour
 
 func getUpdateInfoSchemaCacheInterval() time.Duration {
