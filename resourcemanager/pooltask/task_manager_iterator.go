@@ -17,6 +17,8 @@ package pooltask
 import (
 	"container/list"
 	"time"
+
+	"github.com/pingcap/tidb/resourcemanager/util"
 )
 
 func (t *TaskManager[T, U, C, CT, TF]) getBoostTask() (tid uint64, result *TaskBox[T, U, C, CT, TF]) {
@@ -97,8 +99,8 @@ func canPause[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, 
 }
 
 func canBoost[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, TF], min time.Time) (result *list.Element, isBreak bool) {
-	if m.running.Load() >= m.initialConcurrency {
-		return nil, true
+	if m.running.Load() >= m.initialConcurrency+util.MaxBoostTask {
+		return nil, false
 	}
 	if m.createTS.After(min) {
 		box := getTask[T, U, C, CT, TF](m)

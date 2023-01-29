@@ -22,7 +22,8 @@ import (
 
 var (
 	// MinSchedulerInterval is the minimum interval between two scheduling.
-	MinSchedulerInterval = atomic.NewDuration(200 * time.Millisecond)
+	MinSchedulerInterval       = atomic.NewDuration(200 * time.Millisecond)
+	MaxBoostTask         int32 = 1
 )
 
 // GorotinuePool is a pool interface
