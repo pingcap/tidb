@@ -18,7 +18,25 @@ set -eux
 
 mydir=$(dirname "${BASH_SOURCE[0]}")
 
-data_file="${mydir}/data/mytest.testtbl.csv"
+original_schema_file="${mydir}/original_data/mytest.testtbl-schema.sql"
+original_data_file="${mydir}/original_data/mytest.testtbl.csv"
+schema_file="${original_schema_file/original_data/data}"
+data_file="${original_data_file/original_data/data}"
+
+# add the BOM header
+printf '\xEF\xBB\xBF' | cat - <( sed '1s/^\xEF\xBB\xBF//' "${original_schema_file}" ) > "${schema_file}"
+printf '\xEF\xBB\xBF' | cat - <( sed '1s/^\xEF\xBB\xBF//' "${original_data_file}" ) > "${data_file}"
+
+# verify the BOM header
+if ! [[ $(xxd -p "${schema_file}" | head -c 6 ) == "efbbbf" ]]; then
+    echo "schema file doesn't contain the BOM header" >&2
+    exit 1
+fi
+
+if ! [[ $(xxd -p "${data_file}" | head -c 6 ) == "efbbbf" ]]; then
+    echo "data file doesn't contain the BOM header" >&2
+    exit 1
+fi
 
 row_count=$( sed '1d' "${data_file}" | wc -l | xargs echo )
 
