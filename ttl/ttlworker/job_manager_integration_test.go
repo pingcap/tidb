@@ -16,8 +16,10 @@ package ttlworker_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -69,7 +71,7 @@ func TestParallelLockNewJob(t *testing.T) {
 	se := sessionFactory()
 	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now(), false)
 	require.NoError(t, err)
-	job.Finish(se, time.Now(), "")
+	job.Finish(se, time.Now(), &ttlworker.TTLSummary{})
 
 	// lock one table in parallel, only one of them should lock successfully
 	testTimes := 100
@@ -103,18 +105,19 @@ func TestParallelLockNewJob(t *testing.T) {
 		wg.Wait()
 
 		require.Equal(t, uint64(1), successCounter.Load())
-		successJob.Finish(se, time.Now(), "")
+		successJob.Finish(se, time.Now(), &ttlworker.TTLSummary{})
 	}
 }
 
 func TestFinishJob(t *testing.T) {
+	timeFormat := "2006-01-02 15:04:05"
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
 
 	sessionFactory := sessionFactory(t, store)
 
-	testTable := &cache.PhysicalTable{ID: 2, TableInfo: &model.TableInfo{ID: 1, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
+	testTable := &cache.PhysicalTable{ID: 2, Schema: model.NewCIStr("db1"), TableInfo: &model.TableInfo{ID: 1, Name: model.NewCIStr("t1"), TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
 
 	tk.MustExec("insert into mysql.tidb_ttl_table_status(table_id) values (2)")
 
@@ -122,13 +125,33 @@ func TestFinishJob(t *testing.T) {
 	m := ttlworker.NewJobManager("test-id", nil, store, nil)
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 	se := sessionFactory()
-	job, err := m.LockNewJob(context.Background(), se, testTable, time.Now(), false)
+	startTime := time.Now()
+	job, err := m.LockNewJob(context.Background(), se, testTable, startTime, false)
 	require.NoError(t, err)
 
-	summary := `{"total_rows":0,"scan_task_err":"\"'an error message contains both single and double quote'\""}`
-	job.Finish(se, time.Now(), summary)
-	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows(`2 {"total_rows":0,"scan_task_err":"\"'an error message contains both single and double quote'\""}`))
+	expireTime, err := testTable.EvalExpireTime(context.Background(), se, startTime)
+	require.NoError(t, err)
+
+	summary := &ttlworker.TTLSummary{
+		ScanTaskErr: "\"'an error message contains both single and double quote'\"",
+		TotalRows:   128,
+		SuccessRows: 120,
+		ErrorRows:   8,
+	}
+	summaryBytes, err := json.Marshal(summary)
+	summary.SummaryText = string(summaryBytes)
+
+	require.NoError(t, err)
+	endTime := time.Now()
+	job.Finish(se, endTime, summary)
+	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 " + summary.SummaryText))
 	tk.MustQuery("select * from mysql.tidb_ttl_task").Check(testkit.Rows())
+	expectedRow := []string{
+		job.ID(), "2", "1", "db1", "t1", "<nil>",
+		startTime.Format(timeFormat), endTime.Format(timeFormat), expireTime.Format(timeFormat),
+		summary.SummaryText, "128", "120", "8", "finished",
+	}
+	tk.MustQuery("select * from mysql.tidb_ttl_job_history").Check(testkit.Rows(strings.Join(expectedRow, " ")))
 }
 
 func TestTTLAutoAnalyze(t *testing.T) {
@@ -407,6 +430,50 @@ func TestJobTimeout(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
 }
 
+func TestTriggerScanTask(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+	now := time.Now()
+	se := sessionFactory()
+
+	waitAndStopTTLManager(t, dom)
+
+	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
+
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+	m.TaskManager().ResizeWorkersWithSysVar()
+	m.Start()
+	defer func() {
+		m.Stop()
+		require.NoError(t, m.WaitStopped(context.Background(), time.Second*10))
+	}()
+
+	nCli := m.GetNotificationCli()
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		<-nCli.WatchNotification(context.Background(), "scan")
+		wg.Done()
+	}()
+	m.RescheduleJobs(se, now)
+
+	// notification is sent
+	wg.Wait()
+
+	for time.Now().Before(now.Add(time.Second * 5)) {
+		time.Sleep(time.Second)
+		rows := tk.MustQuery("SELECT status FROM mysql.tidb_ttl_task").Rows()
+		if len(rows) == 0 {
+			break
+		}
+		if rows[0][0] == cache.TaskStatusFinished {
+			break
+		}
+	}
+}
+
 func waitAndStopTTLManager(t *testing.T, dom *domain.Domain) {
 	maxWaitTime := 30
 	for {
@@ -422,4 +489,88 @@ func waitAndStopTTLManager(t *testing.T, dom *domain.Domain) {
 		time.Sleep(time.Second)
 		continue
 	}
+}
+
+func TestGCScanTasks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	addTableStatusRecord := func(tableID, parentTableID, curJobID int64) {
+		tk.MustExec("INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (?, ?)", tableID, parentTableID)
+		if curJobID == 0 {
+			return
+		}
+
+		tk.MustExec(`UPDATE mysql.tidb_ttl_table_status
+			SET current_job_id = ?,
+				current_job_owner_id = '12345',
+				current_job_start_time = NOW(),
+				current_job_status = 'running',
+				current_job_status_update_time = NOW(),
+				current_job_ttl_expire = NOW(),
+				current_job_owner_hb_time = NOW()
+			WHERE table_id = ?`, curJobID, tableID)
+	}
+
+	addScanTaskRecord := func(jobID, tableID, scanID int64) {
+		tk.MustExec(`INSERT INTO mysql.tidb_ttl_task SET
+			job_id = ?,
+			table_id = ?,
+			scan_id = ?,
+			expire_time = NOW(),
+			created_time = NOW()`, jobID, tableID, scanID)
+	}
+
+	addTableStatusRecord(1, 1, 1)
+	addScanTaskRecord(1, 1, 1)
+	addScanTaskRecord(1, 1, 2)
+	addScanTaskRecord(2, 1, 1)
+	addScanTaskRecord(2, 1, 2)
+	addScanTaskRecord(3, 2, 1)
+	addScanTaskRecord(3, 2, 2)
+
+	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
+	ttlworker.DoGC(context.TODO(), se)
+	tk.MustQuery("select job_id, scan_id from mysql.tidb_ttl_task order by job_id, scan_id asc").Check(testkit.Rows("1 1", "1 2"))
+}
+
+func TestGCTTLHistory(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	addHistory := func(jobID, createdBeforeDays int) {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_ttl_job_history (
+				job_id,
+				table_id,
+				parent_table_id,
+				table_schema,
+				table_name,
+				partition_name,
+				create_time,
+				finish_time,
+				ttl_expire,
+				summary_text,
+				expired_rows,
+				deleted_rows,
+				error_delete_rows,
+				status
+			)
+		VALUES
+			(
+			 	%d, 1, 1, 'test', 't1', '',
+			 	CURDATE() - INTERVAL %d DAY,
+			 	CURDATE() - INTERVAL %d DAY + INTERVAL 1 HOUR,
+			 	CURDATE() - INTERVAL %d DAY,
+			 	"", 100, 100, 0, "finished"
+		)`, jobID, createdBeforeDays, createdBeforeDays, createdBeforeDays))
+	}
+
+	addHistory(1, 1)
+	addHistory(2, 30)
+	addHistory(3, 60)
+	addHistory(4, 89)
+	addHistory(5, 90)
+	addHistory(6, 91)
+	addHistory(7, 100)
+	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
+	ttlworker.DoGC(context.TODO(), se)
+	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3", "4", "5"))
 }

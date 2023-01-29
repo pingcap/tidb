@@ -15,7 +15,6 @@
 package core
 
 import (
-	"fmt"
 	"math"
 	"strings"
 
@@ -37,6 +36,16 @@ import (
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func (ds *DataSource) generateIndexMergePath() error {
+	var warningMsg string
+	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
+	defer func() {
+		if len(ds.indexMergeHints) > 0 && warningMsg != "" {
+			ds.indexMergeHints = nil
+			stmtCtx.AppendWarning(errors.Errorf(warningMsg))
+			logutil.BgLogger().Debug(warningMsg)
+		}
+	}()
+
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
 	// Use allConds instread of pushedDownConds,
 	// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
@@ -46,11 +55,26 @@ func (ds *DataSource) generateIndexMergePath() error {
 		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
 	}
 
-	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
 		(len(ds.possibleAccessPaths) > 1 || // (have multiple index paths, or
 			(len(ds.possibleAccessPaths) == 1 && isMVIndexPath(ds.possibleAccessPaths[0]))) // have a MVIndex)
+
+	if !isPossibleIdxMerge {
+		warningMsg = "IndexMerge is inapplicable or disabled. No available filter or available index."
+		return nil
+	}
+
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
+	if !sessionAndStmtPermission {
+		warningMsg = "IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off."
+		return nil
+	}
+
+	if ds.tableInfo.TempTableType == model.TempTableLocal {
+		warningMsg = "IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."
+		return nil
+	}
+
 	// We current do not consider `IndexMergePath`:
 	// 1. If there is an index path.
 	// 2. TODO: If there exists exprs that cannot be pushed down. This is to avoid wrongly estRow of Selection added by rule_predicate_push_down.
@@ -87,26 +111,37 @@ func (ds *DataSource) generateIndexMergePath() error {
 		}
 	}
 
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal {
-		err := ds.generateAndPruneIndexMergePath(indexMergeConds, ds.indexMergeHints != nil)
-		if err != nil {
-			return err
-		}
-	} else if len(ds.indexMergeHints) > 0 {
-		ds.indexMergeHints = nil
-		var msg string
-		if !isPossibleIdxMerge {
-			msg = "No available filter or available index."
-		} else if !sessionAndStmtPermission {
-			msg = "Got no_index_merge hint or tidb_enable_index_merge is off."
-		} else if ds.tableInfo.TempTableType == model.TempTableLocal {
-			msg = "Cannot use IndexMerge on temporary table."
-		}
-		msg = fmt.Sprintf("IndexMerge is inapplicable or disabled. %s", msg)
-		stmtCtx.AppendWarning(errors.Errorf(msg))
-		logutil.BgLogger().Debug(msg)
+	if !needConsiderIndexMerge {
+		warningMsg = "IndexMerge is inapplicable or disabled. "
+		return nil
+	}
+	regularPathCount := len(ds.possibleAccessPaths)
+	if err := ds.generateAndPruneIndexMergePath(indexMergeConds); err != nil {
+		return err
 	}
 
+	// If without hints, it means that `enableIndexMerge` is true
+	if len(ds.indexMergeHints) == 0 {
+		return nil
+	}
+	// If len(indexMergeHints) > 0, then add warnings if index-merge hints cannot work.
+	if regularPathCount == len(ds.possibleAccessPaths) {
+		ds.indexMergeHints = nil
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
+		return nil
+	}
+
+	// If len(indexMergeHints) > 0 and some index-merge paths were added, then prune all other non-index-merge paths.
+	ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+	minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
+	for _, path := range ds.possibleAccessPaths {
+		if minRowCount < path.CountAfterAccess {
+			minRowCount = path.CountAfterAccess
+		}
+	}
+	if ds.stats.RowCount > minRowCount {
+		ds.stats = ds.tableStats.ScaleByExpectCnt(minRowCount)
+	}
 	return nil
 }
 
@@ -441,7 +476,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 	return indexMergePath
 }
 
-func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression, needPrune bool) error {
+func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression) error {
 	regularPathCount := len(ds.possibleAccessPaths)
 	// 1. Generate possible IndexMerge paths for `OR`.
 	err := ds.generateIndexMergeOrPaths(indexMergeConds)
@@ -460,36 +495,6 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	}
 	if mvIndexMergePath != nil {
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvIndexMergePath...)
-	}
-
-	// 4. If needed, append a warning if no IndexMerge is generated.
-
-	// If without hints, it means that `enableIndexMerge` is true
-	if len(ds.indexMergeHints) == 0 {
-		return nil
-	}
-	// With hints and without generated IndexMerge paths
-	if regularPathCount == len(ds.possibleAccessPaths) {
-		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
-		return nil
-	}
-
-	// 4. If needPrune is true, prune non-IndexMerge paths.
-
-	// Do not need to consider the regular paths in find_best_task().
-	// So we can use index merge's row count as DataSource's row count.
-	if needPrune {
-		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
-		minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
-		for _, path := range ds.possibleAccessPaths {
-			if minRowCount < path.CountAfterAccess {
-				minRowCount = path.CountAfterAccess
-			}
-		}
-		if ds.stats.RowCount > minRowCount {
-			ds.stats = ds.tableStats.ScaleByExpectCnt(minRowCount)
-		}
 	}
 	return nil
 }
