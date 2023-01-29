@@ -642,7 +642,7 @@ func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerI
 
 // StoreServerInfo stores self server static information to etcd.
 func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
-	if is.unprefixedEtcdCli == nil {
+	if is.etcdCli == nil {
 		return nil
 	}
 	infoBuf, err := is.info.Marshal()
@@ -650,7 +650,7 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	err = util.PutKVToEtcd(ctx, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
+	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
 	return err
 }
 
@@ -723,10 +723,10 @@ func (is *InfoSyncer) GetMinStartTS() uint64 {
 
 // storeMinStartTS stores self server min start timestamp to etcd.
 func (is *InfoSyncer) storeMinStartTS(ctx context.Context) error {
-	if is.etcdCli == nil {
+	if is.unprefixedEtcdCli == nil {
 		return nil
 	}
-	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
+	return util.PutKVToEtcd(ctx, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
 		strconv.FormatUint(is.minStartTS, 10),
 		clientv3.WithLease(is.session.Lease()))
 }
