@@ -15,11 +15,14 @@
 package spmc
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
+	rmutil "github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/stretchr/testify/require"
@@ -32,7 +35,7 @@ func TestPool(t *testing.T) {
 	myArgs := ConstArgs{a: 10}
 	// init the pool
 	// input type， output type, constArgs type
-	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestPool", 10)
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestPool", 10, rmutil.UNKNOWN)
 	require.NoError(t, err)
 	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
 		return task + constArgs.a
@@ -68,6 +71,128 @@ func TestPool(t *testing.T) {
 	require.Equal(t, uint32(10), count.Load())
 	// close pool
 	pool.ReleaseAndWait()
+
+	// test renew is normal
+	pool, err = NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestPool", 10, rmutil.UNKNOWN)
+	require.NoError(t, err)
+	pool.ReleaseAndWait()
+}
+
+func TestStopPool(t *testing.T) {
+	type ConstArgs struct {
+		a int
+	}
+	myArgs := ConstArgs{a: 10}
+	// init the pool
+	// input type， output type, constArgs type
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestPool", 10, rmutil.UNKNOWN)
+	require.NoError(t, err)
+	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
+		return task + constArgs.a
+	})
+
+	exit := make(chan struct{})
+
+	pfunc := func() (int, error) {
+		select {
+		case <-exit:
+			return 0, gpool.ErrProducerClosed
+		default:
+			return 1, nil
+		}
+	}
+	// add new task
+	resultCh, control := pool.AddProducer(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(4))
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for result := range resultCh {
+			require.Greater(t, result, 10)
+		}
+	}()
+	// Waiting task finishing
+	control.Stop()
+	close(exit)
+	control.Wait()
+	// it should pass. Stop can be used after the pool is closed. we should prevent it from panic.
+	control.Stop()
+	wg.Wait()
+	// close pool
+	pool.ReleaseAndWait()
+}
+
+func TestTuneSimplePool(t *testing.T) {
+	testTunePool(t, "TestTuneSimplePool")
+}
+
+func TestTuneMultiPool(t *testing.T) {
+	var concurrency = 5
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func(id int) {
+			testTunePool(t, fmt.Sprintf("TestTuneMultiPool%d", id))
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+}
+
+func testTunePool(t *testing.T, name string) {
+	type ConstArgs struct {
+		a int
+	}
+	myArgs := ConstArgs{a: 10}
+	// init the pool
+	// input type， output type, constArgs type
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext](name, 10, rmutil.UNKNOWN)
+	require.NoError(t, err)
+	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
+		return task + constArgs.a
+	})
+
+	exit := make(chan struct{})
+
+	pfunc := func() (int, error) {
+		select {
+		case <-exit:
+			return 0, gpool.ErrProducerClosed
+		default:
+			return 1, nil
+		}
+	}
+	// add new task
+	resultCh, control := pool.AddProducer(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(10))
+	tid := control.TaskID()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for result := range resultCh {
+			require.Greater(t, result, 10)
+		}
+	}()
+	time.Sleep(1 * time.Second)
+	newSize := pool.Cap() - 1
+	pool.Tune(newSize)
+	time.Sleep(1 * time.Second)
+	require.Equal(t, newSize, pool.Cap())
+	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+
+	newSize = pool.Cap() + 1
+	pool.Tune(newSize)
+	time.Sleep(1 * time.Second)
+	require.Equal(t, newSize, pool.Cap())
+	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+
+	// exit test
+	close(exit)
+	control.Wait()
+	wg.Wait()
+	// close pool
+	pool.ReleaseAndWait()
 }
 
 func TestPoolWithEnoughCapacity(t *testing.T) {
@@ -76,7 +201,7 @@ func TestPoolWithEnoughCapacity(t *testing.T) {
 		poolsize    = 30
 		concurrency = 6
 	)
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithEnoughCapa", poolsize, WithExpiryDuration(DefaultExpiredTime))
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithEnoughCapa", poolsize, rmutil.UNKNOWN, WithExpiryDuration(DefaultExpiredTime))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {
@@ -128,7 +253,7 @@ func TestPoolWithoutEnoughCapacity(t *testing.T) {
 		concurrency = 2
 		poolsize    = 2
 	)
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", poolsize,
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapacity", poolsize, rmutil.UNKNOWN,
 		WithExpiryDuration(DefaultExpiredTime))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
@@ -184,7 +309,7 @@ func TestPoolWithoutEnoughCapacityParallel(t *testing.T) {
 		concurrency = 2
 		poolsize    = 2
 	)
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapa", poolsize,
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestPoolWithoutEnoughCapacityParallel", poolsize, rmutil.UNKNOWN,
 		WithExpiryDuration(DefaultExpiredTime), WithNonblocking(true))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
@@ -236,7 +361,8 @@ func TestPoolWithoutEnoughCapacityParallel(t *testing.T) {
 }
 
 func TestBenchPool(t *testing.T) {
-	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestBenchPool", 10, WithExpiryDuration(DefaultExpiredTime))
+	p, err := NewSPMCPool[struct{}, struct{}, int, any, pooltask.NilContext]("TestBenchPool", 10,
+		rmutil.UNKNOWN, WithExpiryDuration(DefaultExpiredTime))
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	p.SetConsumerFunc(func(a struct{}, b int, c any) struct{} {

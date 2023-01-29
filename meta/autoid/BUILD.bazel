@@ -32,6 +32,7 @@ go_library(
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_zap//:zap",
     ],
 )

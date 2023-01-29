@@ -32,8 +32,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // JSONTable is used for dumping statistics.
@@ -173,9 +175,10 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 	if isDynamicMode {
 		tbl, err := h.tableHistoricalStatsToJSON(tableInfo.ID, snapshot)
 		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if tbl != nil {
+			logutil.BgLogger().Warn("dump global historical stats failed",
+				zap.Int64("table-id", tableInfo.ID),
+				zap.String("table-name", tableInfo.Name.String()))
+		} else if tbl != nil {
 			jsonTbl.Partitions["global"] = tbl
 		}
 	}
@@ -260,7 +263,7 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 	}()
 
 	// get meta version
-	rows, _, err := reader.read("select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
+	rows, _, err := reader.Read("select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
 	if err != nil {
 		return nil, errors.AddStack(err)
 	}
@@ -269,14 +272,14 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 	}
 	statsMetaVersion := rows[0].GetInt64(0)
 	// get stats meta
-	rows, _, err = reader.read("select modify_count, count from mysql.stats_meta_history where table_id = %? and version = %?", physicalID, statsMetaVersion)
+	rows, _, err = reader.Read("select modify_count, count from mysql.stats_meta_history where table_id = %? and version = %?", physicalID, statsMetaVersion)
 	if err != nil {
 		return nil, errors.AddStack(err)
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
 	// get stats version
-	rows, _, err = reader.read("select distinct version from mysql.stats_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
+	rows, _, err = reader.Read("select distinct version from mysql.stats_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
 	if err != nil {
 		return nil, errors.AddStack(err)
 	}
@@ -286,7 +289,7 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 	statsVersion := rows[0].GetInt64(0)
 
 	// get stats
-	rows, _, err = reader.read("select stats_data from mysql.stats_history where table_id = %? and version = %? order by seq_no", physicalID, statsVersion)
+	rows, _, err = reader.Read("select stats_data from mysql.stats_history where table_id = %? and version = %? order by seq_no", physicalID, statsVersion)
 	if err != nil {
 		return nil, errors.AddStack(err)
 	}

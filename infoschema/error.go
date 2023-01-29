@@ -32,7 +32,11 @@ var (
 	ErrPlacementPolicyExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyExists)
 	// ErrPlacementPolicyNotExists return for placement_policy policy not exists.
 	ErrPlacementPolicyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyNotExists)
-	// ErrReservedSyntax  for internal syntax.
+	// ErrResourceGroupExists return for resource group already exists.
+	ErrResourceGroupExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupExists)
+	// ErrResourceGroupNotExists return for resource group not exists.
+	ErrResourceGroupNotExists = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupNotExists)
+	// ErrReservedSyntax for internal syntax.
 	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.
 	ErrTableExists = dbterror.ClassSchema.NewStd(mysql.ErrTableExists)
@@ -96,4 +100,6 @@ var (
 	ErrForeignKeyNoIndexInParent = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyNoIndexInParent)
 	// ErrForeignKeyColumnNotNull returns when foreign key with SET NULL constrain and the related column has not null.
 	ErrForeignKeyColumnNotNull = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyColumnNotNull)
+	// ErrResourceGroupSupportDisabled returns for resource group feature is disabled
+	ErrResourceGroupSupportDisabled = dbterror.ClassSchema.NewStd(mysql.ErrResourceGroupSupportDisabled)
 )

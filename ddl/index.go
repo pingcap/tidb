@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -84,7 +86,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		}
 		if col.FieldType.IsArray() {
 			if mvIndex {
-				return nil, false, dbterror.ErrNotSupportedYet.GenWithStack("'more than one multi-valued key part per index'")
+				return nil, false, dbterror.ErrNotSupportedYet.GenWithStackByArgs("more than one multi-valued key part per index")
 			}
 			mvIndex = true
 		}
@@ -836,8 +838,11 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
 			if err != nil {
-				if kv.ErrKeyExists.Equal(err) {
+				if kv.ErrKeyExists.Equal(err) || common.ErrFoundDuplicateKeys.Equal(err) {
 					logutil.BgLogger().Warn("[ddl] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+					if common.ErrFoundDuplicateKeys.Equal(err) {
+						err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
+					}
 					ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 				} else {
 					logutil.BgLogger().Warn("[ddl] lightning import error", zap.Error(err))
@@ -879,10 +884,32 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 }
 
+func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	tErr, ok := errors.Cause(originErr).(*terror.Error)
+	if !ok {
+		return originErr
+	}
+	if len(tErr.Args()) != 2 {
+		return originErr
+	}
+	key, keyIsByte := tErr.Args()[0].([]byte)
+	value, valIsByte := tErr.Args()[1].([]byte)
+	if !keyIsByte || !valIsByte {
+		return originErr
+	}
+	return genKeyExistsErr(key, value, idxInfo, tblInfo)
+}
+
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-	rh := newReorgHandler(t, w.sess)
+	sctx, err1 := w.sessPool.get()
+	if err1 != nil {
+		err = err1
+		return
+	}
+	defer w.sessPool.put(sctx)
+	rh := newReorgHandler(newSession(sctx))
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return false, ver, errors.Trace(err)
@@ -1240,7 +1267,7 @@ func newAddIndexWorker(decodeColMap map[int64]decoder.Column, id int, t table.Ph
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		lwCtx, err = ei.NewWriterCtx(id)
+		lwCtx, err = ei.NewWriterCtx(id, indexInfo.Unique)
 		if err != nil {
 			return nil, err
 		}
@@ -1274,13 +1301,10 @@ func (w *baseIndexWorker) String() string {
 }
 
 func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
-	sess, ok := w.backfillCtx.sessCtx.(*session)
-	if !ok {
-		return errors.Errorf("sess ctx:%#v convert session failed", w.backfillCtx.sessCtx)
-	}
+	s := newSession(w.backfillCtx.sessCtx)
 
-	return runInTxn(sess, func(se *session) error {
-		jobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
+	return s.runInTxn(func(se *session) error {
+		jobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
 			bfJob.JobID, bfJob.EleID, bfJob.EleKey, bfJob.ID), "update_backfill_task")
 		if err != nil {
 			return err
@@ -1297,26 +1321,23 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 			return err
 		}
 		bfJob.InstanceLease = GetLeaseGoTime(currTime, InstanceLease)
-		return updateBackfillJob(sess, BackfillTable, bfJob, "update_backfill_task")
+		return updateBackfillJob(se, BackfillTable, bfJob, "update_backfill_task")
 	})
 }
 
 func (w *baseIndexWorker) FinishTask(bfJob *BackfillJob) error {
-	sess, ok := w.backfillCtx.sessCtx.(*session)
-	if !ok {
-		return errors.Errorf("sess ctx:%#v convert session failed", w.backfillCtx.sessCtx)
-	}
-	return runInTxn(sess, func(se *session) error {
+	s := newSession(w.backfillCtx.sessCtx)
+	return s.runInTxn(func(se *session) error {
 		txn, err := se.txn()
 		if err != nil {
 			return errors.Trace(err)
 		}
 		bfJob.FinishTS = txn.StartTS()
-		err = RemoveBackfillJob(sess, false, bfJob)
+		err = RemoveBackfillJob(se, false, bfJob)
 		if err != nil {
 			return err
 		}
-		return AddBackfillHistoryJob(sess, []*BackfillJob{bfJob})
+		return AddBackfillHistoryJob(se, []*BackfillJob{bfJob})
 	})
 }
 
@@ -1485,17 +1506,26 @@ func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.H
 	if hasBeenBackFilled {
 		return nil
 	}
+	return genKeyExistsErr(key, value, idxInfo, tblInfo)
+}
+
+func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	idxColLen := len(idxInfo.Columns)
+	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
 	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("decode index key value failed", zap.String("index", indexName),
+			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+		return kv.ErrKeyExists.FastGenByArgs(key, indexName)
 	}
-	indexName := fmt.Sprintf("%s.%s", w.index.TableMeta().Name.String(), w.index.Meta().Name.String())
 	valueStr := make([]string, 0, idxColLen)
 	for i, val := range values[:idxColLen] {
 		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
 		if err != nil {
-			return kv.ErrKeyExists.FastGenByArgs(key.String(), indexName)
+			logutil.BgLogger().Warn("decode column value failed", zap.String("index", indexName),
+				zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+			return kv.ErrKeyExists.FastGenByArgs(key, indexName)
 		}
 		str, err := d.ToString()
 		if err != nil {
@@ -1669,9 +1699,17 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillDataInTxn", 3000)
-
+	failpoint.Inject("mockDMLExecution", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && MockDMLExecution != nil {
+			MockDMLExecution()
+		}
+	})
 	return
 }
+
+// MockDMLExecution is only used for test.
+var MockDMLExecution func()
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
