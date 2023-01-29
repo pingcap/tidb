@@ -55,15 +55,6 @@ func (ds *DataSource) generateIndexMergePath() error {
 		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
 	}
 
-	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
-		(len(ds.possibleAccessPaths) > 1 || // (have multiple index paths, or
-			(len(ds.possibleAccessPaths) == 1 && isMVIndexPath(ds.possibleAccessPaths[0]))) // have a MVIndex)
-
-	if !isPossibleIdxMerge {
-		warningMsg = "IndexMerge is inapplicable or disabled. No available filter or available index."
-		return nil
-	}
-
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
 	if !sessionAndStmtPermission {
 		warningMsg = "IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off."
@@ -75,48 +66,11 @@ func (ds *DataSource) generateIndexMergePath() error {
 		return nil
 	}
 
-	// We current do not consider `IndexMergePath`:
-	// 1. If there is an index path.
-	// 2. TODO: If there exists exprs that cannot be pushed down. This is to avoid wrongly estRow of Selection added by rule_predicate_push_down.
-	needConsiderIndexMerge := true
-	if len(ds.indexMergeHints) == 0 {
-		for i := 1; i < len(ds.possibleAccessPaths); i++ {
-			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
-				needConsiderIndexMerge = false
-				break
-			}
-		}
-		if needConsiderIndexMerge {
-			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
-			warnings := stmtCtx.GetWarnings()
-			extraWarnings := stmtCtx.GetExtraWarnings()
-			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
-			stmtCtx.SetWarnings(warnings)
-			stmtCtx.SetExtraWarnings(extraWarnings)
-
-			remainingExpr := 0
-			for _, expr := range remaining {
-				// Handle these 3 functions specially since they can be used to access MVIndex.
-				if sf, ok := expr.(*expression.ScalarFunction); ok {
-					if sf.FuncName.L == ast.JSONMemberOf || sf.FuncName.L == ast.JSONOverlaps ||
-						sf.FuncName.L == ast.JSONContains {
-						continue
-					}
-				}
-				remainingExpr++
-			}
-			if remainingExpr > 0 {
-				needConsiderIndexMerge = false
-			}
-		}
-	}
-
-	if !needConsiderIndexMerge {
-		warningMsg = "IndexMerge is inapplicable or disabled. "
-		return nil
-	}
 	regularPathCount := len(ds.possibleAccessPaths)
-	if err := ds.generateAndPruneIndexMergePath(indexMergeConds); err != nil {
+	if err := ds.generateIndexMerge4NormalIndex(regularPathCount, indexMergeConds); err != nil {
+		return err
+	}
+	if err := ds.generateIndexMerge4MVIndex(regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
 
@@ -476,8 +430,42 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 	return indexMergePath
 }
 
-func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression) error {
-	regularPathCount := len(ds.possibleAccessPaths)
+func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, indexMergeConds []expression.Expression) error {
+	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
+		len(ds.possibleAccessPaths) > 1 // have multiple index paths
+	if !isPossibleIdxMerge {
+		return nil
+	}
+
+	// We current do not consider `IndexMergePath`:
+	// 1. If there is an index path.
+	// 2. TODO: If there exists exprs that cannot be pushed down. This is to avoid wrongly estRow of Selection added by rule_predicate_push_down.
+	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
+	needConsiderIndexMerge := true
+	if len(ds.indexMergeHints) == 0 {
+		for i := 1; i < len(ds.possibleAccessPaths); i++ {
+			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
+				needConsiderIndexMerge = false
+				break
+			}
+		}
+		if needConsiderIndexMerge {
+			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
+			warnings := stmtCtx.GetWarnings()
+			extraWarnings := stmtCtx.GetExtraWarnings()
+			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
+			stmtCtx.SetWarnings(warnings)
+			stmtCtx.SetExtraWarnings(extraWarnings)
+			if len(remaining) > 0 {
+				needConsiderIndexMerge = false
+			}
+		}
+	}
+
+	if !needConsiderIndexMerge {
+		return nil // IndexMerge is inapplicable
+	}
+
 	// 1. Generate possible IndexMerge paths for `OR`.
 	err := ds.generateIndexMergeOrPaths(indexMergeConds)
 	if err != nil {
@@ -487,14 +475,6 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	indexMergeAndPath := ds.generateIndexMergeAndPaths(regularPathCount)
 	if indexMergeAndPath != nil {
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
-	}
-	// 3. Generate possible IndexMerge paths for MVIndex.
-	mvIndexMergePath, err := ds.generateIndexMerge4MVIndex(regularPathCount, indexMergeConds)
-	if err != nil {
-		return err
-	}
-	if mvIndexMergePath != nil {
-		ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvIndexMergePath...)
 	}
 	return nil
 }
@@ -587,12 +567,12 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			IndexRangeScan(a, [3,3])
 			TableRowIdScan(t)
 */
-func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
+func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []expression.Expression) error {
 	dnfMVIndexPaths, err := ds.generateIndexMergeOnDNF4MVIndex(normalPathCnt, filters)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	mvIndexPaths = append(mvIndexPaths, dnfMVIndexPaths...)
+	ds.possibleAccessPaths = append(ds.possibleAccessPaths, dnfMVIndexPaths...)
 
 	for idx := 0; idx < normalPathCnt; idx++ {
 		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
@@ -605,21 +585,22 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 		}
 
 		accessFilters, remainingFilters := ds.collectFilters4MVIndex(filters, idxCols)
-		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
+		if len(accessFilters) == 0 && // cannot use any filter on this MVIndex
+			!ds.possibleAccessPaths[idx].Forced { // whether this index is forced by use-index hint
 			continue
 		}
 
 		partialPaths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, ds.possibleAccessPaths[idx].Index)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if !ok {
 			continue
 		}
 
-		mvIndexPaths = append(mvIndexPaths, ds.buildPartialPathUp4MVIndex(partialPaths, isIntersection, remainingFilters))
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, ds.buildPartialPathUp4MVIndex(partialPaths, isIntersection, remainingFilters))
 	}
-	return
+	return nil
 }
 
 // buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
