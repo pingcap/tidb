@@ -58,7 +58,7 @@ const taskGCTemplate = `DELETE task FROM
 	ON task.job_id = job.current_job_id
 	WHERE job.table_id IS NULL`
 
-const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 30 DAY`
+const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 90 DAY`
 
 const timeFormat = "2006-01-02 15:04:05"
 

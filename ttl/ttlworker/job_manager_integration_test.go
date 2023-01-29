@@ -558,11 +558,13 @@ func TestGCTTLHistory(t *testing.T) {
 	}
 
 	addHistory(1, 1)
-	addHistory(2, 29)
-	addHistory(3, 30)
-	addHistory(4, 31)
-	addHistory(5, 32)
+	addHistory(2, 30)
+	addHistory(3, 60)
+	addHistory(4, 89)
+	addHistory(5, 90)
+	addHistory(6, 91)
+	addHistory(7, 100)
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
 	ttlworker.DoGC(context.TODO(), se)
-	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
