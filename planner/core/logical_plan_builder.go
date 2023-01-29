@@ -2047,7 +2047,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 			return 0, false, true
 		}
 		if mustInt64orUint64 {
-			if expected := checkParamTypeInt64orUint64(v); !expected {
+			if expected, _ := CheckParamTypeInt64orUint64(v); !expected {
 				return 0, false, false
 			}
 		}
@@ -2084,19 +2084,19 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 	return 0, false, false
 }
 
-// check param type for plan cache limit, only allow int64 and uint64 now
+// CheckParamTypeInt64orUint64 check param type for plan cache limit, only allow int64 and uint64 now
 // eg: set @a = 1;
-func checkParamTypeInt64orUint64(param *driver.ParamMarkerExpr) bool {
+func CheckParamTypeInt64orUint64(param *driver.ParamMarkerExpr) (bool, uint64) {
 	val := param.GetValue()
 	switch v := val.(type) {
 	case int64:
 		if v >= 0 {
-			return true
+			return true, uint64(v)
 		}
 	case uint64:
-		return true
+		return true, v
 	}
-	return false
+	return false, 0
 }
 
 func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count uint64,
