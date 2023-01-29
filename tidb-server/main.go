@@ -331,9 +331,6 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
 	dom, err := session.BootstrapSession(storage)
-	if err != nil {
-		fmt.Println("ErrorStack", errors.ErrorStack(err))
-	}
 	terror.MustNil(err)
 	return storage, dom
 }
@@ -466,7 +463,6 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Port = uint(p)
 	}
 	if actualFlags[nmCors] {
-		fmt.Println(cors)
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {

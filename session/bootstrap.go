@@ -964,9 +964,6 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s Session) {
 	ver, err := getBootstrapVersion(s)
-	if err != nil {
-		fmt.Println("ErrorStack:", errors.ErrorStack(err))
-	}
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.

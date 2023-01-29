@@ -3239,8 +3239,6 @@ func InitMDLVariable(store kv.Storage) error {
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
-	fmt.Println("BootstrapSesssion Start")
-	defer fmt.Println("BootstrapSesssion End")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
