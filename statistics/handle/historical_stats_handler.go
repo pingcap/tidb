@@ -86,6 +86,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 		logutil.BgLogger().Error("record historical stats meta failed",
 			zap.Int64("table-id", tableID),
 			zap.Uint64("version", version),
+			zap.String("source", source),
 			zap.Error(err))
 	}
 }
