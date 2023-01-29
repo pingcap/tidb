@@ -3402,19 +3402,12 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		return nil
 	}
 
-	mppVersion := v.GetMppVersion()
-	if mppVersion == kv.MppVersionUnspecified {
-		b.err = errors.New("failed to build MPPGather, plan of table reader should use MPP execution")
-		return nil
-	}
-
 	gather := &MPPGather{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
 		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.ctx), LocalQueryID: getMPPQueryID(b.ctx), ServerID: domain.GetDomain(b.ctx).ServerID()},
-		MppVersion:   mppVersion,
 	}
 	return gather
 }

@@ -249,8 +249,8 @@ func (p *PhysicalTableScan) isFullScan() bool {
 func (p *PhysicalTableReader) ExplainInfo() string {
 	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
 
-	if mppVersion := p.GetMppVersion(); mppVersion != kv.MppVersionUnspecified {
-		return fmt.Sprintf("MppVersion: %d, %s", mppVersion, tablePlanInfo)
+	if p.ReadReqType == MPP {
+		return fmt.Sprintf("MppVersion: %d, %s", p.ctx.GetSessionVars().ChooseMppVersion(), tablePlanInfo)
 	}
 
 	return tablePlanInfo

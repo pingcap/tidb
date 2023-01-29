@@ -173,17 +173,6 @@ func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 	return p.tablePlan
 }
 
-// GetMppVersion return mpp-version.
-func (p *PhysicalTableReader) GetMppVersion() kv.MppVersion {
-	if p.ReadReqType == MPP {
-		tp, ok := p.tablePlan.(*PhysicalExchangeSender)
-		if ok {
-			return tp.MppVersion
-		}
-	}
-	return kv.MppVersionUnspecified
-}
-
 // GetTableScans exports the tableScan that contained in tablePlans.
 func (p *PhysicalTableReader) GetTableScans() []*PhysicalTableScan {
 	tableScans := make([]*PhysicalTableScan, 0, 1)
@@ -1515,7 +1504,6 @@ type PhysicalExchangeSender struct {
 	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks           []*kv.MPPTask
-	MppVersion      kv.MppVersion
 	CompressionMode kv.ExchangeCompressionMode
 }
 
@@ -1529,7 +1517,6 @@ func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np.basePhysicalPlan = *base
 	np.ExchangeType = p.ExchangeType
 	np.HashCols = p.HashCols
-	np.MppVersion = p.MppVersion
 	np.CompressionMode = p.CompressionMode
 	return np, nil
 }

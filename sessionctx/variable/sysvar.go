@@ -2246,7 +2246,7 @@ var defaultSysVars = []*SysVar{
 		},
 		SetSession: func(s *SessionVars, val string) error {
 			version, _ := kv.ToMppVersion(val)
-			s.MppVersion = version
+			s.mppVersion = version
 			return nil
 		},
 	},

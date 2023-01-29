@@ -87,18 +87,16 @@ type mppTaskGenerator struct {
 	is         infoschema.InfoSchema
 	frags      []*Fragment
 	cache      map[int]tasksAndFrags
-	MppVersion kv.MppVersion
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema, mppVersion kv.MppVersion) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
 	g := &mppTaskGenerator{
 		ctx:        ctx,
 		startTS:    startTs,
 		mppQueryID: mppQueryID,
 		is:         is,
 		cache:      make(map[int]tasksAndFrags),
-		MppVersion: mppVersion,
 	}
 	return g.generateMPPTasks(sender)
 }
@@ -117,12 +115,13 @@ func AllocMPPQueryID() uint64 {
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
-	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)), zap.Int64("mpp-version", e.MppVersion.ToInt64()))
+	mppVersion := e.ctx.GetSessionVars().ChooseMppVersion()
+	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)), zap.Int64("mpp-version", mppVersion.ToInt64()))
 	tidbTask := &kv.MPPTask{
 		StartTs:    e.startTS,
 		MppQueryID: e.mppQueryID,
 		ID:         -1,
-		MppVersion: e.MppVersion,
+		MppVersion: mppVersion,
 	}
 	_, frags, err := e.generateMPPTasksForExchangeSender(s)
 	if err != nil {
@@ -158,7 +157,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 				MppQueryID: e.mppQueryID,
 				StartTs:    e.startTS,
 				TableID:    -1,
-				MppVersion: e.MppVersion,
+				MppVersion: e.ctx.GetSessionVars().ChooseMppVersion(),
 			}
 			newTasks = append(newTasks, mppTask)
 			addressMap[addr] = struct{}{}
@@ -424,7 +423,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		task := &kv.MPPTask{
 			Meta:                              meta,
 			ID:                                AllocMPPTaskID(e.ctx),
-			MppVersion:                        e.MppVersion,
+			MppVersion:                        e.ctx.GetSessionVars().ChooseMppVersion(),
 			StartTs:                           e.startTS,
 			MppQueryID:                        e.mppQueryID,
 			TableID:                           ts.Table.ID,
