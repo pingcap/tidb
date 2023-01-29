@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -205,7 +206,7 @@ func TestConcurrentLockTables(t *testing.T) {
 }
 
 func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql1, sql2 string, se1, se2 session.Session, f func(t *testing.T, err1, err2 error)) {
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	times := 0
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if times != 0 {

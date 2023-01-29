@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -97,7 +98,7 @@ func TestParallelDDL(t *testing.T) {
 
 	// set hook to execute jobs after all jobs are in queue.
 	jobCnt := 11
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 	once := sync.Once{}
 	var checkErr error
 	tc.OnJobRunBeforeExported = func(job *model.Job) {

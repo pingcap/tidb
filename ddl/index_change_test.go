@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -41,7 +42,7 @@ func TestIndexChange(t *testing.T) {
 	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3);")
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
+	tc := &callback.TestDDLCallback{Do: dom}
 	// set up hook
 	prevState := model.StateNone
 	addIndexDone := false
