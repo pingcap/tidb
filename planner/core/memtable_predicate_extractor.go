@@ -1398,6 +1398,8 @@ type StatementsSummaryExtractor struct {
 
 	// SkipRequest means the where clause always false, we don't need to request any component
 	SkipRequest bool
+	// Time range predicates
+	TimeRanges []*TimeRange
 	// Digests represents digest applied to, and we should apply all digest if there is no digest specified.
 	// e.g: SELECT * FROM STATEMENTS_SUMMARY WHERE digest='8019af26debae8aa7642c501dbc43212417b3fb14e6aec779f709976b7e521be'
 	Digests set.StringSet
@@ -1408,32 +1410,80 @@ type StatementsSummaryExtractor struct {
 
 // Extract implements the MemTablePredicateExtractor Extract interface
 func (e *StatementsSummaryExtractor) Extract(
-	_ sessionctx.Context,
+	sctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `digest` column
 	remained, skip, digests := e.extractCol(schema, names, predicates, "digest", false)
-	e.SkipRequest = skip
-	if e.SkipRequest {
+	if skip {
+		e.SkipRequest = true
 		return nil
 	}
 	if digests.Count() > 0 {
 		e.Enable = true
 		e.Digests = digests
 	}
+	// Extract time range
+	// SELECT ... WHERE summary_begin_time <= endTime AND summary_end_time >= startTime
+	tz := sctx.GetSessionVars().StmtCtx.TimeZone
+	remained, _, endTime := e.extractTimeRange(sctx, schema, names, remained, "summary_begin_time", tz)
+	remained, startTime, _ := e.extractTimeRange(sctx, schema, names, remained, "summary_end_time", tz)
+	e.setTimeRange(startTime, endTime)
+	if len(e.TimeRanges) > 0 && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime) {
+		e.SkipRequest = true
+		return nil
+	}
 	return remained
 }
 
-func (e *StatementsSummaryExtractor) explainInfo(_ *PhysicalMemTable) string {
+func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-	if !e.Enable {
-		return ""
+	buf := bytes.NewBuffer(nil)
+	if e.Enable {
+		buf.WriteString(fmt.Sprintf("digests:[%s], ", extractStringFromStringSet(e.Digests)))
 	}
-	return fmt.Sprintf("digests: [%s]", extractStringFromStringSet(e.Digests))
+	if len(e.TimeRanges) > 0 && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().StmtCtx != nil {
+		stmtCtx := p.ctx.GetSessionVars().StmtCtx
+		startTime := e.TimeRanges[0].StartTime.In(stmtCtx.TimeZone)
+		endTime := e.TimeRanges[0].EndTime.In(stmtCtx.TimeZone)
+		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
+		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
+		buf.WriteString(fmt.Sprintf("start_time:%v, end_time:%v, ", startTimeStr, endTimeStr))
+	}
+	// remove the last ", " in the message info
+	s := buf.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+func (e *StatementsSummaryExtractor) setTimeRange(start, end int64) {
+	const defaultStatementsDuration = time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultStatementsDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultStatementsDuration)
+	}
+	e.TimeRanges = append(e.TimeRanges, &TimeRange{
+		StartTime: startTime,
+		EndTime:   endTime,
+	})
 }
 
 // TikvRegionPeersExtractor is used to extract some predicates of cluster table.

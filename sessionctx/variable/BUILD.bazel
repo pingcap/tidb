@@ -52,6 +52,7 @@ go_library(
         "//util/rowcodec",
         "//util/size",
         "//util/stmtsummary",
+        "//util/stmtsummary/v2:stmtsummary",
         "//util/stringutil",
         "//util/tableutil",
         "//util/tikvutil",

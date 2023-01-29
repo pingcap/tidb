@@ -1918,8 +1918,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiFlashReplica),
 			strings.ToLower(infoschema.TableTiDBServersInfo),
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
-			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
-			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
@@ -1974,15 +1972,33 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableStatementsSummary),
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
+			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
+			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
-			strings.ToLower(infoschema.ClusterTableStatementsSummary):
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted):
+			var extractor *plannercore.StatementsSummaryExtractor
+			if v.Extractor != nil {
+				extractor = v.Extractor.(*plannercore.StatementsSummaryExtractor)
+			}
+			if b.ctx.GetSessionVars().EnablePersistentStmtSummary {
+				return &MemTableReaderExec{
+					baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+					table:        v.Table,
+					retriever: &stmtSummaryRetrieverV2{
+						stmtSummary: b.ctx.GetSessionVars().StmtSummary,
+						table:       v.Table,
+						columns:     v.Columns,
+						extractor:   extractor,
+					},
+				}
+			}
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
-				retriever: &stmtSummaryTableRetriever{
+				retriever: &stmtSummaryRetriever{
 					table:     v.Table,
 					columns:   v.Columns,
-					extractor: v.Extractor.(*plannercore.StatementsSummaryExtractor),
+					extractor: extractor,
 				},
 			}
 		case strings.ToLower(infoschema.TableColumns):
@@ -1997,7 +2013,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					viewOutputNamesMap: make(map[int64]types.NameSlice),
 				},
 			}
-
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)

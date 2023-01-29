@@ -892,7 +892,13 @@ func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
 	captureFilter := h.extractCaptureFilterFromStorage()
 	emptyCaptureFilter := captureFilter.isEmpty()
-	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(captureFilter.frequency)
+	sessVars := h.sctx.GetSessionVars()
+	var bindableStmts []*stmtsummary.BindableStmt
+	if sessVars.EnablePersistentStmtSummary {
+		bindableStmts = sessVars.StmtSummary.GetMoreThanCntBindableStmt(captureFilter.frequency)
+	} else {
+		bindableStmts = stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(captureFilter.frequency)
+	}
 	for _, bindableStmt := range bindableStmts {
 		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
