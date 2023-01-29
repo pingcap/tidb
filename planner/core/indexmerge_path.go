@@ -67,7 +67,8 @@ func (ds *DataSource) generateIndexMergePath() error {
 	}
 
 	regularPathCount := len(ds.possibleAccessPaths)
-	if err := ds.generateIndexMerge4NormalIndex(regularPathCount, indexMergeConds); err != nil {
+	var err error
+	if warningMsg, err = ds.generateIndexMerge4NormalIndex(regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
 	if err := ds.generateIndexMerge4MVIndex(regularPathCount, indexMergeConds); err != nil {
@@ -80,8 +81,9 @@ func (ds *DataSource) generateIndexMergePath() error {
 	}
 	// If len(indexMergeHints) > 0, then add warnings if index-merge hints cannot work.
 	if regularPathCount == len(ds.possibleAccessPaths) {
-		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
+		if warningMsg == "" {
+			warningMsg = "IndexMerge is inapplicable"
+		}
 		return nil
 	}
 
@@ -430,11 +432,11 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 	return indexMergePath
 }
 
-func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, indexMergeConds []expression.Expression) error {
+func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, indexMergeConds []expression.Expression) (string, error) {
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
 		len(ds.possibleAccessPaths) > 1 // have multiple index paths
 	if !isPossibleIdxMerge {
-		return nil
+		return "IndexMerge is inapplicable or disabled. No available filter or available index.", nil
 	}
 
 	// We current do not consider `IndexMergePath`:
@@ -463,20 +465,20 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 	}
 
 	if !needConsiderIndexMerge {
-		return nil // IndexMerge is inapplicable
+		return "IndexMerge is inapplicable or disabled. ", nil // IndexMerge is inapplicable
 	}
 
 	// 1. Generate possible IndexMerge paths for `OR`.
 	err := ds.generateIndexMergeOrPaths(indexMergeConds)
 	if err != nil {
-		return err
+		return "", err
 	}
 	// 2. Generate possible IndexMerge paths for `AND`.
 	indexMergeAndPath := ds.generateIndexMergeAndPaths(regularPathCount)
 	if indexMergeAndPath != nil {
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
 	}
-	return nil
+	return "", nil
 }
 
 // generateIndexMergeOnDNF4MVIndex generates IndexMerge paths for MVIndex upon DNF filters.
