@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -2447,7 +2448,7 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustExec(`insert into pt values (0), (4), (7)`)
 	tk.MustExec("insert into nt values (1)")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	dom.DDL().SetHook(hook)
 
 	hookFunc := func(job *model.Job) {
@@ -3733,7 +3734,7 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	dom.DDL().SetHook(hook)
 	injected := false
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -4543,7 +4544,7 @@ func TestIssue40135Ver2(t *testing.T) {
 	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', index(a)) PARTITION BY HASH (a) PARTITIONS 6")
 	tk.MustExec("insert into t40135 values (1, 'md'), (2, 'ma'), (3, 'md'), (4, 'ma'), (5, 'md'), (6, 'ma')")
 	one := true
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
