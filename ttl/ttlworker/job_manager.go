@@ -629,7 +629,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		return nil, err
 	}
 
-	job := m.createNewJob(now, table)
+	job := m.createNewJob(expireTime, now, table)
 
 	// job is created, notify every scan managers to fetch new tasks
 	err = m.notificationCli.Notify(m.ctx, scanTaskNotificationType, job.id)
@@ -639,14 +639,15 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 	return job, nil
 }
 
-func (m *JobManager) createNewJob(now time.Time, table *cache.PhysicalTable) *ttlJob {
+func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *cache.PhysicalTable) *ttlJob {
 	id := m.tableStatusCache.Tables[table.ID].CurrentJobID
 
 	return &ttlJob{
 		id:      id,
 		ownerID: m.id,
 
-		createTime: now,
+		createTime:    now,
+		ttlExpireTime: expireTime,
 		// at least, the info schema cache and table status cache are consistent in table id, so it's safe to get table
 		// information from schema cache directly
 		tbl: table,
@@ -717,7 +718,8 @@ func (m *JobManager) GetNotificationCli() client.NotificationClient {
 	return m.notificationCli
 }
 
-type ttlSummary struct {
+// TTLSummary is the summary for TTL job
+type TTLSummary struct {
 	TotalRows   uint64 `json:"total_rows"`
 	SuccessRows uint64 `json:"success_rows"`
 	ErrorRows   uint64 `json:"error_rows"`
@@ -727,22 +729,24 @@ type ttlSummary struct {
 	FinishedScanTask  int `json:"finished_scan_task"`
 
 	ScanTaskErr string `json:"scan_task_err,omitempty"`
+	SummaryText string `json:"-"`
 }
 
-func summarizeErr(err error) (string, error) {
-	summary := &ttlSummary{
+func summarizeErr(err error) (*TTLSummary, error) {
+	summary := &TTLSummary{
 		ScanTaskErr: err.Error(),
 	}
 
 	buf, err := json.Marshal(summary)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(buf), nil
+	summary.SummaryText = string(buf)
+	return summary, nil
 }
 
-func summarizeTaskResult(tasks []*cache.TTLTask) (string, error) {
-	summary := &ttlSummary{}
+func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
+	summary := &TTLSummary{}
 	var allErr error
 	for _, t := range tasks {
 		if t.State != nil {
@@ -768,7 +772,8 @@ func summarizeTaskResult(tasks []*cache.TTLTask) (string, error) {
 
 	buf, err := json.Marshal(summary)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(buf), nil
+	summary.SummaryText = string(buf)
+	return summary, nil
 }
