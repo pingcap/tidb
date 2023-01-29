@@ -417,6 +417,9 @@ func getKeyspaceName(g glue.Glue) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if db == nil {
+		return "", nil
+	}
 
 	rows, err := db.Query("show config where Type = 'tidb' and name = 'keyspace-name'")
 	if err != nil {
