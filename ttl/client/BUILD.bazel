@@ -2,10 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "client",
-    srcs = ["command.go"],
+    srcs = [
+        "command.go",
+        "notification.go",
+    ],
     importpath = "github.com/pingcap/tidb/ttl/client",
     visibility = ["//visibility:public"],
     deps = [
+        "//ddl/util",
         "//util/logutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",

@@ -23,6 +23,7 @@ import (
 	pb "github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func Benchmark100Thread(b *testing.B) {
@@ -86,7 +87,7 @@ func createMockPumpsClientAndServer(b *testing.B) (*PumpsClient, *mockPumpServer
 		return net.DialTimeout("tcp", addr, timeout)
 	})
 
-	clientCon, err := grpc.Dial(addr, opt, grpc.WithInsecure())
+	clientCon, err := grpc.Dial(addr, opt, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		b.Fatal(err)
 	}
