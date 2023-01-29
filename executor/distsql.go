@@ -174,7 +174,7 @@ type IndexReaderExecutor struct {
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
-	startTS          uint64
+	readTS           *kv.RefreshableReadTS
 	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
@@ -321,7 +321,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	var builder distsql.RequestBuilder
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
+		SetReadTS(e.readTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -348,11 +348,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 type IndexLookUpExecutor struct {
 	baseExecutor
 
-	table   table.Table
-	index   *model.IndexInfo
-	ranges  []*ranger.Range
-	dagPB   *tipb.DAGRequest
-	startTS uint64
+	table  table.Table
+	index  *model.IndexInfo
+	ranges []*ranger.Range
+	dagPB  *tipb.DAGRequest
+	readTS *kv.RefreshableReadTS
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx       []int
 	handleCols      []*expression.Column
@@ -597,7 +597,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		}
 		var builder distsql.RequestBuilder
 		builder.SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
+			SetReadTS(e.readTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetPaging(e.indexPaging).
@@ -704,7 +704,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
 		table:            table,
 		dagPB:            e.tableRequest,
-		startTS:          e.startTS,
+		readTS:           e.readTS,
 		txnScope:         e.txnScope,
 		readReplicaScope: e.readReplicaScope,
 		isStaleness:      e.isStaleness,

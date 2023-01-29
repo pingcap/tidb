@@ -83,7 +83,7 @@ type TableReaderExecutor struct {
 	// kvRanges are only use for union scan.
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
-	startTS          uint64
+	readTS           *kv.RefreshableReadTS
 	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
@@ -341,7 +341,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 		reqBuilder := builder.SetKeyRanges(kvRange)
 		kvReq, err := reqBuilder.
 			SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
+			SetReadTS(e.readTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetTxnScope(e.txnScope).
@@ -382,7 +382,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 	reqBuilder := builder.SetPartitionIDAndRanges(partitionIDAndRanges)
 	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
+		SetReadTS(e.readTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -430,7 +430,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 	}
 	reqBuilder.
 		SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
+		SetReadTS(e.readTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).

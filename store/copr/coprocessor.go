@@ -87,7 +87,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
 	}
-	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.ReadTS)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	enabledRateLimitAction := option.EnabledRateLimitAction
 	sessionMemTracker := option.SessionMemTracker
@@ -959,7 +959,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.Trace(resp.err)
 	}
 
-	err := it.store.CheckVisibility(it.req.StartTs)
+	err := it.store.CheckVisibility(it.req.ReadTS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1031,7 +1031,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	copReq := coprocessor.Request{
 		Tp:         worker.req.Tp,
-		StartTs:    worker.req.StartTs,
+		StartTs:    worker.req.ReadTS,
 		Data:       worker.req.Data,
 		Ranges:     task.ranges.ToPBRanges(),
 		SchemaVer:  worker.req.SchemaVar,
@@ -1051,7 +1051,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			cValue := worker.store.coprCache.Get(cKey)
 			copReq.IsCacheEnabled = true
 
-			if cValue != nil && cValue.RegionID == task.region.GetID() && cValue.TimeStamp <= worker.req.StartTs {
+			if cValue != nil && cValue.RegionID == task.region.GetID() && cValue.TimeStamp <= worker.req.ReadTS {
 				// Append cache version to the request to skip Coprocessor computation if possible
 				// when request result is cached
 				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
@@ -1129,7 +1129,7 @@ const (
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *coprocessor.Response) {
-	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txnStartTS:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.GetID(), task.storeAddr)
+	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txnStartTS:%d region_id:%d store_addr:%s", costTime, worker.req.ReadTS, task.region.GetID(), task.storeAddr)
 	if bo.GetTotalSleep() > minLogBackoffTime {
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.TiKVBackoffer().GetTypes()), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
@@ -1242,7 +1242,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
 
 		logutil.Logger(bo.GetCtx()).Warn("other error",
-			zap.Uint64("txnStartTS", worker.req.StartTs),
+			zap.Uint64("txnStartTS", worker.req.ReadTS),
 			zap.Uint64("regionID", task.region.GetID()),
 			zap.Uint64("bucketsVer", task.bucketsVer),
 			zap.Uint64("latestBucketsVer", resp.pbResp.GetLatestBucketsVersion()),
@@ -1305,7 +1305,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 
 					newCacheValue := coprCacheValue{
 						Data:              data,
-						TimeStamp:         worker.req.StartTs,
+						TimeStamp:         worker.req.ReadTS,
 						RegionID:          task.region.GetID(),
 						RegionDataVersion: resp.pbResp.CacheLastVersion,
 					}
@@ -1393,7 +1393,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
 
 			logutil.Logger(bo.GetCtx()).Warn("other error",
-				zap.Uint64("txnStartTS", worker.req.StartTs),
+				zap.Uint64("txnStartTS", worker.req.ReadTS),
 				zap.Uint64("regionID", task.region.GetID()),
 				zap.Uint64("bucketsVer", task.bucketsVer),
 				// TODO: add bucket version in log
@@ -1419,7 +1419,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, batchResp
 			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
 			logutil.Logger(bo.GetCtx()).Error("response of batched task missing",
 				zap.Uint64("id", task.taskID),
-				zap.Uint64("txnStartTS", worker.req.StartTs),
+				zap.Uint64("txnStartTS", worker.req.ReadTS),
 				zap.Uint64("regionID", task.region.GetID()),
 				zap.Uint64("bucketsVer", task.bucketsVer),
 				zap.Int("rangeNums", task.ranges.Len()),
@@ -1447,7 +1447,7 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 			zap.Stringer("lock", lockErr))
 	}
 	resolveLocksOpts := txnlock.ResolveLocksOptions{
-		CallerStartTS: worker.req.StartTs,
+		CallerStartTS: worker.req.ReadTS,
 		Locks:         []*txnlock.Lock{txnlock.NewLock(lockErr)},
 		Detail:        resolveLockDetail,
 	}

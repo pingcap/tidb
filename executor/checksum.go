@@ -173,15 +173,15 @@ type checksumResult struct {
 type checksumContext struct {
 	DBInfo    *model.DBInfo
 	TableInfo *model.TableInfo
-	StartTs   uint64
+	ReadTS    *kv.RefreshableReadTS
 	Response  *tipb.ChecksumResponse
 }
 
-func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64) *checksumContext {
+func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs *kv.RefreshableReadTS) *checksumContext {
 	return &checksumContext{
 		DBInfo:    db,
 		TableInfo: table,
-		StartTs:   startTs,
+		ReadTS:    startTs,
 		Response:  &tipb.ChecksumResponse{},
 	}
 }
@@ -244,7 +244,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
 		SetChecksumRequest(checksum).
-		SetStartTS(c.StartTs).
+		SetReadTS(c.ReadTS).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
 		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
 		Build()
@@ -262,7 +262,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, tableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
-		SetStartTS(c.StartTs).
+		SetReadTS(c.ReadTS).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
 		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
 		Build()

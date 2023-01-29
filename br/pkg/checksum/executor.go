@@ -182,7 +182,7 @@ func buildTableRequest(
 	// Use low priority to reducing impact to other requests.
 	builder.Request.Priority = kv.PriorityLow
 	return builder.SetHandleRanges(nil, tableID, tableInfo.IsCommonHandle, ranges, nil).
-		SetStartTS(startTS).
+		SetConstantReadTS(startTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		Build()
@@ -215,7 +215,7 @@ func buildIndexRequest(
 	// Use low priority to reducing impact to other requests.
 	builder.Request.Priority = kv.PriorityLow
 	return builder.SetIndexRanges(nil, tableID, indexInfo.ID, ranges).
-		SetStartTS(startTS).
+		SetConstantReadTS(startTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		Build()

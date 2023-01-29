@@ -18,6 +18,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
+	util2 "github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -483,12 +487,70 @@ func (rr *KeyRanges) TotalRangeNum() int {
 	return ret
 }
 
+// RefreshableReadTS is a container of a timestamp that's allowed to update even it's already passed around among many
+// modules. Some restrictions are applied to protect the consistency of reading:
+//   - Once the value of the ts is used (by calling `Get` method), further updating will be disallowed.
+//   - There's only one chance
+type RefreshableReadTS struct {
+	mu       sync.RWMutex
+	tsFuture oracle.Future
+
+	sealed atomic.Bool
+}
+
+func NewRefreshableReadTS(initialValue uint64) *RefreshableReadTS {
+	return &RefreshableReadTS{
+		tsFuture: util2.ConstantFuture(initialValue),
+	}
+}
+
+func (t *RefreshableReadTS) Get() (uint64, error) {
+	t.sealed.Store(true)
+
+	t.mu.RLock()
+	var ts uint64
+	var err error
+	if _, ok := t.tsFuture.(util2.ConstantFuture); ok {
+		ts, err = t.tsFuture.Wait()
+	} else {
+		// Only record wait time when it's really necessary to wait.
+		// TODO: Add metrics here.
+		// TODO: Return the statistics in some way so user can find the wait time in
+		ts, err = t.tsFuture.Wait()
+	}
+	t.mu.RUnlock()
+	return ts, err
+}
+
+func (t *RefreshableReadTS) TryRefreshWithOracle(ctx context.Context, tsOracle oracle.Oracle, scope string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.sealed.Load() {
+		// The ts is already used. Unable to update now.
+		return false
+	}
+
+	t.tsFuture = tsOracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: scope})
+	t.sealed.Store(true)
+
+	return true
+}
+
+func (t *RefreshableReadTS) String() string {
+	if value, ok := t.tsFuture.(util2.ConstantFuture); ok {
+		return strconv.FormatUint(uint64(value), 10)
+	} else {
+		return "(future)"
+	}
+}
+
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
-	Tp      int64
-	StartTs uint64
-	Data    []byte
+	Tp     int64
+	ReadTS *RefreshableReadTS
+	Data   []byte
 
 	// KeyRanges makes sure that the request is sent first by partition then by region.
 	// When the table is small, it's possible that multiple partitions are in the same region.

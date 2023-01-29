@@ -73,6 +73,11 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if builder.Request.KeyRanges == nil {
 		builder.Request.KeyRanges = kv.NewNonParitionedKeyRanges(nil)
 	}
+
+	if builder.Request.ReadTS == nil {
+		builder.SetConstantReadTS(0)
+	}
+
 	return &builder.Request, builder.err
 }
 
@@ -206,9 +211,15 @@ func (builder *RequestBuilder) SetPartitionKeyRanges(keyRanges [][]kv.KeyRange) 
 	return builder
 }
 
-// SetStartTS sets "StartTS" for "kv.Request".
-func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
-	builder.Request.StartTs = startTS
+// SetReadTS sets "ReadTS" for "kv.Request".
+func (builder *RequestBuilder) SetReadTS(readTS *kv.RefreshableReadTS) *RequestBuilder {
+	builder.Request.ReadTS = readTS
+	return builder
+}
+
+// SetConstantReadTS is a helper that sets "ReadTS" to a value that will never be refreshed.
+func (builder *RequestBuilder) SetConstantReadTS(readTS uint64) *RequestBuilder {
+	builder.Request.ReadTS = kv.NewRefreshableReadTS(readTS)
 	return builder
 }
 

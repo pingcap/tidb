@@ -152,7 +152,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	}
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
-		SetStartTS(startTS).
+		SetConstantReadTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		SetResourceGroupName(e.ctx.GetSessionVars().ResourceGroupName).

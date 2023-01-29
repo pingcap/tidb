@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/types"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -202,6 +203,12 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.getStmtForUpdateTSFunc()
 }
 
+// InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
+// is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
+func (p *baseTxnContextProvider) InvalidateForUpdateTS() error {
+	return errors.New("InvalidateForUpdateTS not applicable for this kind of transaction")
+}
+
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
@@ -271,7 +278,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	if p.constStartTS != 0 {
-		if err := p.replaceTxnTsFuture(sessiontxn.ConstantFuture(p.constStartTS)); err != nil {
+		if err := p.replaceTxnTsFuture(types.ConstantFuture(p.constStartTS)); err != nil {
 			return nil, err
 		}
 	}
@@ -340,7 +347,7 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 	}
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
+		return p.replaceTxnTsFuture(types.ConstantFuture(snapshotTS))
 	}
 
 	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
@@ -536,15 +543,22 @@ func (f funcFuture) Wait() (uint64, error) {
 	return f()
 }
 
-// basePessimisticTxnContextProvider extends baseTxnContextProvider with some functionalities that are commonly used in
-// pessimistic transactions.
-type basePessimisticTxnContextProvider struct {
+// basePessimisticRCTxnContextProvider extends baseTxnContextProvider with some functionalities that are commonly used
+// in pessimistic RC and RR transactions. Since DMLs and select-for-update statements in pessimistic RR transactions
+// actually works in RC semantics, these are many common logics in these two kinds.
+type basePessimisticRCTxnContextProvider struct {
 	baseTxnContextProvider
+}
+
+// InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
+// is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
+func (p *basePessimisticRCTxnContextProvider) InvalidateForUpdateTS() error {
+	return nil
 }
 
 // OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
 // a pessimistic select-for-update statements.
-func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx context.Context) error {
+func (p *basePessimisticRCTxnContextProvider) OnHandlePessimisticStmtStart(ctx context.Context) error {
 	if err := p.baseTxnContextProvider.OnHandlePessimisticStmtStart(ctx); err != nil {
 		return err
 	}
@@ -557,7 +571,7 @@ func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx con
 }
 
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
-func (p *basePessimisticTxnContextProvider) OnStmtRetry(ctx context.Context) error {
+func (p *basePessimisticRCTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	if err := p.baseTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
@@ -570,7 +584,7 @@ func (p *basePessimisticTxnContextProvider) OnStmtRetry(ctx context.Context) err
 }
 
 // OnStmtCommit is the hook that should be called when a statement is executed successfully.
-func (p *basePessimisticTxnContextProvider) OnStmtCommit(ctx context.Context) error {
+func (p *basePessimisticRCTxnContextProvider) OnStmtCommit(ctx context.Context) error {
 	if err := p.baseTxnContextProvider.OnStmtCommit(ctx); err != nil {
 		return err
 	}
@@ -583,7 +597,7 @@ func (p *basePessimisticTxnContextProvider) OnStmtCommit(ctx context.Context) er
 }
 
 // OnStmtRollback is the hook that should be called when a statement fails to execute.
-func (p *basePessimisticTxnContextProvider) OnStmtRollback(ctx context.Context, isForPessimisticRetry bool) error {
+func (p *basePessimisticRCTxnContextProvider) OnStmtRollback(ctx context.Context, isForPessimisticRetry bool) error {
 	if err := p.baseTxnContextProvider.OnStmtRollback(ctx, isForPessimisticRetry); err != nil {
 		return err
 	}

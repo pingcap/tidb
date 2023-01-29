@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1341,9 +1342,27 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
+	err = handleErrLockedWithConflict(se, err)
 	if lockKeyStats != nil {
 		sctx.MergeLockKeysExecDetails(lockKeyStats)
 	}
+	return err
+}
+
+func handleErrLockedWithConflict(se sessionctx.Context, err error) error {
+	if errLockedWithConflict, ok := err.(*txn.ErrLockedWithConflict); ok {
+		stmtCtx := se.GetSessionVars().StmtCtx
+		if stmtCtx.KvReadOperationsCount.Load() > 0 {
+			// The statement has performed read operations before. The statement cannot continue safely without a
+			// pessimistic retry.
+			return errLockedWithConflict.ToWriteConflict()
+		}
+		// Invalidate forUpdateTS of the current statement, and ignore the error so that the statement can continue
+		// execution. In case the statement tries to do more read/write operations, it must use an updated forUpdateTS.
+		txnManager := sessiontxn.GetTxnManager(se)
+		return txnManager.InvalidateForUpdateTS()
+	}
+
 	return err
 }
 

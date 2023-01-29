@@ -77,14 +77,14 @@ func (m *txnManager) SetTxnInfoSchema(is infoschema.InfoSchema) {
 	m.ctxProvider.SetTxnInfoSchema(is)
 }
 
-func (m *txnManager) GetStmtReadTS() (uint64, error) {
+func (m *txnManager) GetStmtReadTS() (*kv.RefreshableReadTS, error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
 	}
 	return m.ctxProvider.GetStmtReadTS()
 }
 
-func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
+func (m *txnManager) GetStmtForUpdateTS() (*kv.RefreshableReadTS, error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
 	}
@@ -102,6 +102,12 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 	})
 
 	return ts, nil
+}
+
+// InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
+// is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
+func (m *txnManager) InvalidateForUpdateTS() error {
+	return m.ctxProvider.InvalidateForUpdateTS()
 }
 
 func (m *txnManager) GetTxnScope() string {

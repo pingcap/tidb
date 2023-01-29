@@ -73,7 +73,7 @@ type IndexMergeReaderExecutor struct {
 	descs        []bool
 	ranges       [][]*ranger.Range
 	dagPBs       []*tipb.DAGRequest
-	startTS      uint64
+	readTS       *kv.RefreshableReadTS
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
@@ -323,7 +323,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 				var builder distsql.RequestBuilder
 				builder.SetDAGRequest(e.dagPBs[workID]).
-					SetStartTS(e.startTS).
+					SetReadTS(e.readTS).
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
 					SetTxnScope(e.txnScope).
@@ -410,7 +410,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				partialTableReader := &TableReaderExecutor{
 					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
 					dagPB:            e.dagPBs[workID],
-					startTS:          e.startTS,
+					readTS:           e.readTS,
 					txnScope:         e.txnScope,
 					readReplicaScope: e.readReplicaScope,
 					isStaleness:      e.isStaleness,
@@ -626,7 +626,7 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
 		table:            tbl,
 		dagPB:            e.tableRequest,
-		startTS:          e.startTS,
+		readTS:           e.readTS,
 		txnScope:         e.txnScope,
 		readReplicaScope: e.readReplicaScope,
 		isStaleness:      e.isStaleness,

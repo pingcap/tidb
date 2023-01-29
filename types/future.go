@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sessiontxn
+package types
 
 // ConstantFuture implements oracle.Future
 type ConstantFuture uint64

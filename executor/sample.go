@@ -39,8 +39,8 @@ var _ Executor = &TableSampleExecutor{}
 type TableSampleExecutor struct {
 	baseExecutor
 
-	table   table.Table
-	startTS uint64
+	table  table.Table
+	readTS *kv.RefreshableReadTS
 
 	sampler rowSampler
 }
@@ -78,7 +78,7 @@ type rowSampler interface {
 type tableRegionSampler struct {
 	ctx        sessionctx.Context
 	table      table.Table
-	startTS    uint64
+	readTS     *kv.RefreshableReadTS
 	partTables []table.PartitionedTable
 	schema     *expression.Schema
 	fullSchema *expression.Schema
@@ -90,12 +90,12 @@ type tableRegionSampler struct {
 	isFinished   bool
 }
 
-func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, partTables []table.PartitionedTable,
+func newTableRegionSampler(ctx sessionctx.Context, t table.Table, readTS *kv.RefreshableReadTS, partTables []table.PartitionedTable,
 	schema *expression.Schema, fullSchema *expression.Schema, retTypes []*types.FieldType, desc bool) *tableRegionSampler {
 	return &tableRegionSampler{
 		ctx:        ctx,
 		table:      t,
-		startTS:    startTs,
+		readTS:     readTS,
 		partTables: partTables,
 		schema:     schema,
 		fullSchema: fullSchema,
@@ -280,7 +280,11 @@ func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, m
 
 func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	fn func(handle kv.Handle, value []byte) error) error {
-	ver := kv.Version{Ver: s.startTS}
+	readTS, err := s.readTS.Get()
+	if err != nil {
+		return err
+	}
+	ver := kv.Version{Ver: readTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
 	setOptionForTopSQL(s.ctx.GetSessionVars().StmtCtx, snap)
 	concurrency := s.ctx.GetSessionVars().ExecutorConcurrency

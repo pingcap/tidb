@@ -110,7 +110,7 @@ type executorBuilder struct {
 	// dataReaderBuilder can be used in concurrent goroutines, so we must ensure that getting the ts should be thread safe and
 	// can return a correct value even if the session context has already been destroyed
 	forDataReaderBuilder bool
-	dataReaderTS         uint64
+	dataReaderTS         *kv.RefreshableReadTS
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -758,8 +758,12 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		if err != nil {
 			panic(e)
 		}
+		tsValue, err := ts.Get()
+		if err != nil {
+			panic(e)
+		}
 
-		if strconv.FormatUint(ts, 10) != assertTS ||
+		if strconv.FormatUint(tsValue, 10) != assertTS ||
 			assertReadReplicaScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
@@ -1246,7 +1250,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.collators = append(us.collators, collate.GetCollator(tp.GetCollate()))
 	}
 
-	startTS, err := b.getSnapshotTS()
+	readTS, err := b.getSnapshotTS()
 	sessionVars := b.ctx.GetSessionVars()
 	if err != nil {
 		b.err = err
@@ -1260,7 +1264,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = x.virtualColumnIndex
-		us.handleCachedTable(b, x, sessionVars, startTS)
+		err = us.handleCachedTable(b, x, sessionVars, readTS)
+		if err != nil {
+			b.err = err
+			return nil
+		}
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -1274,7 +1282,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
-		us.handleCachedTable(b, x, sessionVars, startTS)
+		err = us.handleCachedTable(b, x, sessionVars, readTS)
+		if err != nil {
+			b.err = err
+			return nil
+		}
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -1289,7 +1301,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
-		us.handleCachedTable(b, x, sessionVars, startTS)
+		err = us.handleCachedTable(b, x, sessionVars, readTS)
+		if err != nil {
+			b.err = err
+			return nil
+		}
 	case *IndexMergeReaderExecutor:
 		// IndexMergeReader doesn't care order for now. So we will not set desc and useIndex.
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
@@ -1308,13 +1324,18 @@ type bypassDataSourceExecutor interface {
 	setDummy()
 }
 
-func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
+func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, readTS *kv.RefreshableReadTS) error {
 	tbl := x.Table()
 	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+		readTSValue, err := readTS.Get()
+		if err != nil {
+			return err
+		}
+
 		cachedTable := tbl.(table.CachedTable)
 		// Determine whether the cache can be used.
 		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-		cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
+		cacheData, loading := cachedTable.TryReadFromCache(readTSValue, leaseDuration)
 		if cacheData != nil {
 			vars.StmtCtx.ReadFromTableCache = true
 			x.setDummy()
@@ -1324,10 +1345,11 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 		} else {
 			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
 				store := b.ctx.GetStore()
-				cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
+				cachedTable.UpdateLockForRead(context.Background(), store, readTSValue, leaseDuration)
 			}
 		}
 	}
+	return nil
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
@@ -1725,7 +1747,7 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 
 // `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise the isolation read ts
 // Please notice that in RC isolation, the above two ts are the same
-func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
+func (b *executorBuilder) getSnapshotTS() (ts *kv.RefreshableReadTS, err error) {
 	if b.forDataReaderBuilder {
 		return b.dataReaderTS, nil
 	}
@@ -2382,13 +2404,20 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	startTS, err := b.getSnapshotTS()
+	readTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
+
+	readTSValue, err := readTS.Get()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
-		startTS = uint64(val.(int))
+		readTSValue = uint64(val.(int))
 	})
 
 	base := baseAnalyzeExec{
@@ -2402,7 +2431,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		},
 		opts:     opts,
 		job:      job,
-		snapshot: startTS,
+		snapshot: readTSValue,
 	}
 	e := &AnalyzeIndexExec{
 		baseAnalyzeExec: base,
@@ -2503,13 +2532,19 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	startTS, err := b.getSnapshotTS()
+	readTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
+	readTSValue, err := readTS.Get()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
-		startTS = uint64(val.(int))
+		readTSValue = uint64(val.(int))
 	})
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
@@ -2563,7 +2598,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		},
 		opts:     opts,
 		job:      job,
-		snapshot: startTS,
+		snapshot: readTSValue,
 	}
 	e := &AnalyzeColumnsExec{
 		baseAnalyzeExec:         base,
@@ -2708,13 +2743,19 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	startTS, err := b.getSnapshotTS()
+	readTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
+	readTSValue, err := readTS.Get()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
-		startTS = uint64(val.(int))
+		readTSValue = uint64(val.(int))
 	})
 
 	base := baseAnalyzeExec{
@@ -2728,7 +2769,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		},
 		opts:     opts,
 		job:      job,
-		snapshot: startTS,
+		snapshot: readTSValue,
 	}
 	e := &AnalyzeColumnsExec{
 		baseAnalyzeExec: base,
@@ -2831,7 +2872,12 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 		if b.err != nil {
 			return
 		}
-		startTS, err := b.getSnapshotTS()
+		readTS, err := b.getSnapshotTS()
+		if err != nil {
+			b.err = err
+			return
+		}
+		readTSValue, err := readTS.Get()
 		if err != nil {
 			b.err = err
 			return
@@ -2842,7 +2888,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 			opts:        opts,
 			concurrency: concurrency,
 			job:         job,
-			snapshot:    startTS,
+			snapshot:    readTSValue,
 		}
 		fastExec := &AnalyzeFastExec{
 			baseAnalyzeExec: base,
@@ -2879,18 +2925,24 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 		if b.err != nil {
 			return
 		}
-		startTS, err := b.getSnapshotTS()
+		readTS, err := b.getSnapshotTS()
 		if err != nil {
 			b.err = err
 			return
 		}
+		readTSValue, err := readTS.Get()
+		if err != nil {
+			b.err = err
+			return
+		}
+
 		base := baseAnalyzeExec{
 			ctx:         b.ctx,
 			tableID:     task.TableID,
 			opts:        opts,
 			concurrency: concurrency,
 			job:         job,
-			snapshot:    startTS,
+			snapshot:    readTSValue,
 		}
 		fastExec := &AnalyzeFastExec{
 			baseAnalyzeExec: base,
@@ -3345,7 +3397,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	e := &TableReaderExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
-		startTS:          startTS,
+		readTS:           startTS,
 		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
@@ -3393,7 +3445,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 }
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
-	startTs, err := b.getSnapshotTS()
+	readTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
@@ -3402,7 +3454,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
-		startTS:      startTs,
+		readTS:       readTS,
 		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.ctx), LocalQueryID: getMPPQueryID(b.ctx), ServerID: domain.GetDomain(b.ctx).ServerID()},
 	}
 	return gather
@@ -3613,7 +3665,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		physicalTableID = is.Table.ID
 	}
-	startTS, err := b.getSnapshotTS()
+	readTS, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
@@ -3621,7 +3673,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	e := &IndexReaderExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
-		startTS:          startTS,
+		readTS:           readTS,
 		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
@@ -3786,7 +3838,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	e := &IndexLookUpExecutor{
 		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:             indexReq,
-		startTS:           startTS,
+		readTS:            startTS,
 		table:             tbl,
 		index:             is.Index,
 		keepOrder:         is.KeepOrder,
@@ -3948,7 +4000,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	e := &IndexMergeReaderExecutor{
 		baseExecutor:             newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPBs:                   partialReqs,
-		startTS:                  startTS,
+		readTS:                   startTS,
 		table:                    tblInfo,
 		indexes:                  indexes,
 		descs:                    descs,
@@ -4317,13 +4369,13 @@ func newClosestReadAdjuster(ctx sessionctx.Context, req *kv.Request, netDataSize
 }
 
 func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder) (*TableReaderExecutor, error) {
-	startTS, err := builder.getSnapshotTS()
+	readTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
 	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
-		SetStartTS(startTS).
+		SetReadTS(readTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -4928,7 +4980,12 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		return nil
 	}
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
+		snapshotTSValue, err := snapshotTS.Get()
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTSValue); cacheTable != nil {
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}
 	}
@@ -5085,7 +5142,7 @@ func (s *emptySampler) finished() bool {
 }
 
 func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
-	startTS, err := b.getSnapshotTS()
+	readTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
@@ -5093,7 +5150,7 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 	e := &TableSampleExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		table:        v.TableInfo,
-		startTS:      startTS,
+		readTS:       readTS,
 	}
 
 	tblInfo := v.TableInfo.Meta()
@@ -5106,7 +5163,7 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		}
 	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
-			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
+			b.ctx, v.TableInfo, readTS, v.TableSampleInfo.Partitions, v.Schema(),
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
 

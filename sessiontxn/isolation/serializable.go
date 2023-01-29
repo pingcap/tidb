@@ -24,24 +24,22 @@ import (
 
 // PessimisticSerializableTxnContextProvider provides txn context for isolation level oracle-like serializable
 type PessimisticSerializableTxnContextProvider struct {
-	basePessimisticTxnContextProvider
+	baseTxnContextProvider
 }
 
 // NewPessimisticSerializableTxnContextProvider returns a new PessimisticSerializableTxnContextProvider
 func NewPessimisticSerializableTxnContextProvider(sctx sessionctx.Context,
 	causalConsistencyOnly bool) *PessimisticSerializableTxnContextProvider {
 	provider := &PessimisticSerializableTxnContextProvider{
-		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
-			baseTxnContextProvider{
-				sctx:                  sctx,
-				causalConsistencyOnly: causalConsistencyOnly,
-				onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
-					txnCtx.IsPessimistic = true
-					txnCtx.Isolation = ast.Serializable
-				},
-				onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
-					txn.SetOption(kv.Pessimistic, true)
-				},
+		baseTxnContextProvider: baseTxnContextProvider{
+			sctx:                  sctx,
+			causalConsistencyOnly: causalConsistencyOnly,
+			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
+				txnCtx.IsPessimistic = true
+				txnCtx.Isolation = ast.Serializable
+			},
+			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
 	}

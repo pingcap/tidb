@@ -312,7 +312,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	useMaxTS := startTs == math.MaxUint64
 
 	// try to reuse point get executor
-	// We should only use the cached the executor when the startTS is MaxUint64
+	// We should only use the cached the executor when the readTS is MaxUint64
 	if a.PsStmt.Executor != nil && useMaxTS {
 		exec, ok := a.PsStmt.Executor.(*PointGetExecutor)
 		if !ok {
@@ -1060,6 +1060,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
+		err = handleErrLockedWithConflict(sctx, err)
 		a.phaseLockDurations[0] += time.Since(startLocking)
 		if lockKeyStats != nil {
 			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)

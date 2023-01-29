@@ -57,7 +57,7 @@ type MPPGather struct {
 	baseExecutor
 	is           infoschema.InfoSchema
 	originalPlan plannercore.PhysicalPlan
-	startTS      uint64
+	readTS       *kv.RefreshableReadTS
 	mppQueryID   kv.MPPQueryID
 
 	mppReqs []*kv.MPPDispatchRequest
@@ -66,6 +66,10 @@ type MPPGather struct {
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
+	readTSValue, err := e.readTS.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	dagReq, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -104,7 +108,7 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			IsRoot:     pf.IsRoot,
 			Timeout:    10,
 			SchemaVar:  e.is.SchemaMetaVersion(),
-			StartTs:    e.startTS,
+			StartTs:    readTSValue,
 			MppQueryID: mppTask.MppQueryID,
 			State:      kv.MppTaskReady,
 		}
@@ -124,10 +128,14 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 // Open decides the task counts and locations and generate exchange operators for every plan fragment.
 // Then dispatch tasks to tiflash stores. If any task fails, it would cancel the rest tasks.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
+	readTSValue, err := e.readTS.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
 	planIDs := collectPlanIDS(e.originalPlan, nil)
-	frags, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, e.mppQueryID, sender, e.is)
+	frags, err := plannercore.GenerateRootMPPTasks(e.ctx, readTSValue, e.mppQueryID, sender, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -142,7 +150,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
 		}
 	})
-	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, e.startTS, e.mppQueryID)
+	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, readTSValue, e.mppQueryID)
 	if err != nil {
 		return errors.Trace(err)
 	}

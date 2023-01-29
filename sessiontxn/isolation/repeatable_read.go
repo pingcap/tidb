@@ -34,7 +34,7 @@ import (
 
 // PessimisticRRTxnContextProvider provides txn context for isolation level repeatable-read
 type PessimisticRRTxnContextProvider struct {
-	basePessimisticTxnContextProvider
+	basePessimisticRCTxnContextProvider
 
 	// Used for ForUpdateRead statement
 	forUpdateTS       uint64
@@ -47,7 +47,7 @@ type PessimisticRRTxnContextProvider struct {
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
 func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRRTxnContextProvider {
 	provider := &PessimisticRRTxnContextProvider{
-		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
+		basePessimisticRCTxnContextProvider: basePessimisticRCTxnContextProvider{
 			baseTxnContextProvider: baseTxnContextProvider{
 				sctx:                  sctx,
 				causalConsistencyOnly: causalConsistencyOnly,
@@ -133,7 +133,7 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
-	if err := p.basePessimisticTxnContextProvider.OnStmtStart(ctx, node); err != nil {
+	if err := p.basePessimisticRCTxnContextProvider.OnStmtStart(ctx, node); err != nil {
 		return err
 	}
 
@@ -145,7 +145,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context, node 
 
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err error) {
-	if err = p.basePessimisticTxnContextProvider.OnStmtRetry(ctx); err != nil {
+	if err = p.basePessimisticRCTxnContextProvider.OnStmtRetry(ctx); err != nil {
 		return err
 	}
 

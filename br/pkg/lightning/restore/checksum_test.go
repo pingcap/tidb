@@ -174,7 +174,9 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		kvClient.curErrCount = 0
 		var checksumTS uint64
 		kvClient.onSendReq = func(req *kv.Request) {
-			checksumTS = req.StartTs
+			ts, err := req.ReadTS.Get()
+			require.NoError(t, err)
+			checksumTS = ts
 		}
 		checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
 		physicalTS, logicalTS, err := pdClient.GetTS(ctx)

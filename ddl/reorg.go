@@ -442,7 +442,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	}
 	builder = b.SetHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges, nil)
 	builder.SetDAGRequest(dagPB).
-		SetStartTS(startTS).
+		SetConstantReadTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(1).SetDesc(true)
 

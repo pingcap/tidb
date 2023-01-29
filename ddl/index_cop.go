@@ -421,7 +421,7 @@ func (c *copContext) buildTableScan(ctx context.Context, startTS uint64, start, 
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.
 		SetDAGRequest(dagPB).
-		SetStartTS(startTS).
+		SetConstantReadTS(startTS).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
 		SetFromSessionVars(c.sessCtx.GetSessionVars()).

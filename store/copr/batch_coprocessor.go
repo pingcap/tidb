@@ -800,7 +800,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
-	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.ReadTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 
 	var tasks []*batchCopTask
@@ -897,7 +897,12 @@ func (b *batchCopIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.Trace(resp.err)
 	}
 
-	err := b.store.CheckVisibility(b.req.StartTs)
+	readTS, err := b.req.ReadTS.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	err = b.store.CheckVisibility(readTS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -996,9 +1001,14 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())
 	}
 
+	readTS, err := b.req.ReadTS.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	copReq := coprocessor.BatchRequest{
 		Tp:           b.req.Tp,
-		StartTs:      b.req.StartTs,
+		StartTs:      readTS,
 		Data:         b.req.Data,
 		SchemaVer:    b.req.SchemaVar,
 		Regions:      regionInfos,
@@ -1068,8 +1078,10 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *coprocessor.BatchResponse, task *batchCopTask) (err error) {
 	if otherErr := response.GetOtherError(); otherErr != "" {
 		err = errors.Errorf("other error: %s", otherErr)
+		// TODO: The readTS may be different from the transaction's startTS in pessimistic transactions, so the log may
+		// be inaccurate.
 		logutil.BgLogger().Warn("other error",
-			zap.Uint64("txnStartTS", b.req.StartTs),
+			zap.Stringer("txnStartTS", b.req.ReadTS),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		return errors.Trace(err)

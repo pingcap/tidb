@@ -15,7 +15,6 @@
 package txn
 
 import (
-	"bytes"
 	"context"
 	"sync/atomic"
 
@@ -365,28 +364,26 @@ func (txn *tikvTxn) exitAggressiveLockingIfInapplicable(ctx context.Context, key
 
 func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {
 	if lockCtx.MaxLockedWithConflictTS != 0 {
-		var bufTableID, bufRest bytes.Buffer
-		foundKey := false
+		var conflictKey []byte
 		for k, v := range lockCtx.Values {
 			if v.LockedWithConflictTS >= lockCtx.MaxLockedWithConflictTS {
-				foundKey = true
-				prettyWriteKey(&bufTableID, &bufRest, []byte(k))
+				conflictKey = []byte(k)
 				break
 			}
 		}
-		if !foundKey {
-			bufTableID.WriteString("<unknown>")
+		return &ErrLockedWithConflict{
+			StartTS:              txn.StartTS(),
+			ConflictStartTS:      0, // Unknown
+			LockedWithConflictTS: lockCtx.MaxLockedWithConflictTS,
+			Key:                  conflictKey,
+			Primary:              nil, // Unknown
 		}
-		// TODO: Primary is not exported here.
-		primary := " primary=<unknown>"
-		primaryRest := ""
-		return kv.ErrWriteConflict.FastGenByArgs(txn.StartTS(), 0, lockCtx.MaxLockedWithConflictTS, bufTableID.String(), bufRest.String(), primary, primaryRest, "LockedWithConflict")
 	}
 	return nil
 }
 
 // StartAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
-// TODO: Update the methods' signatures in client-go to avoid this adaptor functions.
+// TODO: Update the methods' signatures in client-go to avoid these adaptor functions.
 func (txn *tikvTxn) StartAggressiveLocking() error {
 	txn.KVTxn.StartAggressiveLocking()
 	return nil

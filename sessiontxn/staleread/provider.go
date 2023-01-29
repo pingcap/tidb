@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/types"
 )
 
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
@@ -78,6 +79,10 @@ func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return 0, errors.New("GetForUpdateTS not supported for stalenessTxnProvider")
 }
 
+func (p *StalenessTxnContextProvider) InvalidateForUpdateTS() error {
+	return errors.New("InvalidateForUpdateTS not supported for stalenessTxnProvider")
+}
+
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) error {
 	p.ctx = ctx
@@ -100,7 +105,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	}
 
 	txnScope := kv.GlobalTxnScope
-	if err = p.sctx.PrepareTSFuture(p.ctx, sessiontxn.ConstantFuture(p.ts), txnScope); err != nil {
+	if err = p.sctx.PrepareTSFuture(p.ctx, types.ConstantFuture(p.ts), txnScope); err != nil {
 		return err
 	}
 

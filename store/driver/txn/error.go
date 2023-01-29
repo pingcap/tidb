@@ -254,3 +254,47 @@ func prettyLockNotFoundKey(rawRetry string) string {
 	prettyWriteKey(&buf1, &buf2, key)
 	return buf1.String() + buf2.String()
 }
+
+// ErrLockedWithConflict is a special error type that will be thrown when LockedWithConflict happens.
+// When aggressive locking is used or may be used, caller should check if this error is returned, and
+// choose to ignore it or consider it as a normal `WriteConflict` error.
+type ErrLockedWithConflict struct {
+	StartTS              uint64
+	ConflictStartTS      uint64
+	LockedWithConflictTS uint64
+	Key                  []byte
+	Primary              []byte
+}
+
+// ToWriteConflict converts the `ErrLockedWithConflict`
+func (e *ErrLockedWithConflict) ToWriteConflict() error {
+	var bufConflictKeyTableID bytes.Buffer
+	var bufConflictKeyRest bytes.Buffer
+	var bufPrimaryKeyTableID bytes.Buffer
+	var bufPrimaryKeyRest bytes.Buffer
+	if len(e.Key) > 0 {
+		prettyWriteKey(&bufConflictKeyTableID, &bufConflictKeyRest, e.Key)
+		bufConflictKeyRest.WriteString(", originalKey=" + hex.EncodeToString(e.Key))
+	} else {
+		bufConflictKeyTableID.WriteString("<unknown>")
+	}
+	bufConflictKeyRest.WriteString(", primary=")
+
+	if len(e.Primary) > 0 {
+		prettyWriteKey(&bufPrimaryKeyTableID, &bufPrimaryKeyRest, e.Primary)
+		bufConflictKeyRest.WriteString(", originalPrimaryKey=" + hex.EncodeToString(e.Key))
+	} else {
+		bufPrimaryKeyTableID.WriteString("<unknown>")
+	}
+
+	reason := "LockedWithConflict"
+
+	return kv.ErrWriteConflict.FastGenByArgs(e.StartTS, e.ConflictStartTS, e.LockedWithConflictTS,
+		bufConflictKeyTableID.String(), bufConflictKeyRest.String(), bufPrimaryKeyTableID.String(), bufPrimaryKeyRest.String(),
+		reason,
+	)
+}
+
+func (e *ErrLockedWithConflict) Error() string {
+	return "LockedWithConflict(" + e.ToWriteConflict().Error() + ")"
+}
