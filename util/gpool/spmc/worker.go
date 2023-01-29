@@ -67,7 +67,7 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 				for t := range f.GetTaskCh() {
 					if f.GetStatus() == pooltask.StopTask {
 						f.Done()
-						continue
+						break
 					}
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
 					f.Done()
