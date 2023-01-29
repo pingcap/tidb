@@ -171,7 +171,7 @@ func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, no
 	return m.updateHeartBeat(ctx, se, now)
 }
 
-func (j *ttlJob) Finish(se session.Session, now time.Time, summary string) {
+func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) {
 	j.finish(se, now, summary)
 }
 
