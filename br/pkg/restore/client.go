@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -1126,6 +1127,18 @@ func (rc *Client) SplitRanges(ctx context.Context,
 	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
+func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
+	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
+	return NewLogFilesIterWithSplitHelper(iter, rules, client, splitSize, splitKeys), nil
+}
+
 // RestoreSSTFiles tries to restore the files.
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
@@ -2043,19 +2056,21 @@ func (rc *Client) RestoreKVFiles(
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
-			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer func() {
 					onProgress(int64(len(files)))
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
 
-					filenames := make([]string, 0, len(files))
-					for _, f := range files {
-						filenames = append(filenames, f.Path+", ")
+					if err == nil {
+						filenames := make([]string, 0, len(files))
+						for _, f := range files {
+							filenames = append(filenames, f.Path+", ")
+						}
+						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 					}
-					log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
-						zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 				}()
 
 				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
@@ -2063,14 +2078,14 @@ func (rc *Client) RestoreKVFiles(
 		}
 	}
 
-	if supportBatch {
-		err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
-	} else {
-		err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
-	}
-	if err != nil {
+	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+		if supportBatch {
+			err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+		} else {
+			err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
+		}
 		return errors.Trace(err)
-	}
+	})
 
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
 	if skipFile > 0 {
