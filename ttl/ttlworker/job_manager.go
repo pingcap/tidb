@@ -38,6 +38,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const scanTaskNotificationType string = "scan"
+
 const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%?, %?)"
 const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
 	SET current_job_id = %?,
@@ -84,8 +86,9 @@ type JobManager struct {
 	// id is the ddl id of this instance
 	id string
 
-	store  kv.Storage
-	cmdCli client.CommandClient
+	store           kv.Storage
+	cmdCli          client.CommandClient
+	notificationCli client.NotificationClient
 
 	// infoSchemaCache and tableStatusCache are a cache stores the information from info schema and the tidb_ttl_table_status
 	// table. They don't need to be protected by mutex, because they are only used in job loop goroutine.
@@ -115,9 +118,11 @@ func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *c
 	manager.tableStatusCache = cache.NewTableStatusCache(getUpdateTTLTableStatusCacheInterval())
 
 	if etcdCli != nil {
-		manager.cmdCli = client.NewEtcdCommandClient(etcdCli)
+		manager.cmdCli = client.NewCommandClient(etcdCli)
+		manager.notificationCli = client.NewNotificationClient(etcdCli)
 	} else {
 		manager.cmdCli = client.NewMockCommandClient()
+		manager.notificationCli = client.NewMockNotificationClient()
 	}
 
 	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id)
@@ -152,6 +157,7 @@ func (m *JobManager) jobLoop() error {
 	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
 
 	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
+	scanTaskNotificationWatcher := m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
 	m.taskManager.resizeWorkersWithSysVar()
 	for {
 		m.reportMetrics()
@@ -206,6 +212,17 @@ func (m *JobManager) jobLoop() error {
 
 		// Task Manager Loop
 		case <-scheduleTaskTicker:
+			m.taskManager.rescheduleTasks(se, now)
+		case _, ok := <-scanTaskNotificationWatcher:
+			if !ok {
+				if m.ctx.Err() != nil {
+					return nil
+				}
+
+				logutil.BgLogger().Warn("The TTL scan task notification watcher is closed unexpectedly, re-watch it again")
+				scanTaskNotificationWatcher = m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
+				continue
+			}
 			m.taskManager.rescheduleTasks(se, now)
 		case <-taskCheckTicker:
 			m.taskManager.checkInvalidTask(se)
@@ -610,10 +627,18 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 	if err != nil {
 		return nil, err
 	}
-	return m.createNewJob(expireTime, now, table)
+
+	job := m.createNewJob(expireTime, now, table)
+
+	// job is created, notify every scan managers to fetch new tasks
+	err = m.notificationCli.Notify(m.ctx, scanTaskNotificationType, job.id)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to trigger scan tasks", zap.Error(err))
+	}
+	return job, nil
 }
 
-func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *cache.PhysicalTable) (*ttlJob, error) {
+func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *cache.PhysicalTable) *ttlJob {
 	id := m.tableStatusCache.Tables[table.ID].CurrentJobID
 
 	return &ttlJob{
@@ -627,7 +652,7 @@ func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *ca
 		tbl: table,
 
 		status: cache.JobStatusWaiting,
-	}, nil
+	}
 }
 
 // updateHeartBeat updates the heartbeat for all task with current instance as owner
@@ -685,6 +710,11 @@ func (m *JobManager) appendJob(job *ttlJob) {
 // GetCommandCli returns the command client
 func (m *JobManager) GetCommandCli() client.CommandClient {
 	return m.cmdCli
+}
+
+// GetNotificationCli returns the notification client
+func (m *JobManager) GetNotificationCli() client.NotificationClient {
+	return m.notificationCli
 }
 
 // TTLSummary is the summary for TTL job

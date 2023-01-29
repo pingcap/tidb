@@ -430,6 +430,44 @@ func TestJobTimeout(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
 }
 
+func TestTriggerScanTask(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+
+	now := time.Now()
+
+	se := sessionFactory()
+	m := dom.TTLJobManager()
+	m.TaskManager().ResizeWorkersWithSysVar()
+	nCli := m.GetNotificationCli()
+
+	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		<-nCli.WatchNotification(context.Background(), "scan")
+		wg.Done()
+	}()
+	m.RescheduleJobs(se, now)
+
+	// notification is sent
+	wg.Wait()
+
+	for time.Now().Before(now.Add(time.Second * 5)) {
+		time.Sleep(time.Second)
+		rows := tk.MustQuery("SELECT status FROM mysql.tidb_ttl_task").Rows()
+		if len(rows) == 0 {
+			break
+		}
+		if rows[0][0] == cache.TaskStatusFinished {
+			break
+		}
+	}
+}
+
 func waitAndStopTTLManager(t *testing.T, dom *domain.Domain) {
 	maxWaitTime := 30
 	for {
