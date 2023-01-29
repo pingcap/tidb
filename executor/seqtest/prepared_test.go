@@ -862,5 +862,4 @@ func TestPlanCacheLimitSwitchEffective(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
 	checkIfCached("0")
 	tk.MustExec("deallocate prepare stmt")
-
 }

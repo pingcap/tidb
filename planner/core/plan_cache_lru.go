@@ -264,18 +264,15 @@ func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOp
 			continue
 		}
 
-		// check limit offset and key if equal and switch if enabled
+		// check limit offset and key if equal and check switch if enabled
 		ok2 := checkUint64SliceIfEqual(plan.matchOpts.limitOffsetAndCount, matchOpts.limitOffsetAndCount)
 		if !ok2 {
 			continue
 		}
-		// todo; wait for the refactor pr and release this
-		//if !ok2 || (len(plan.matchOpts.limitOffsetAndCount) > 0 &&
-		//l.sctx.GetSessionVars().EnablePlanCacheForParamLimit == false) {
-		// 1. slice not match.
-		// 2. slice match, but it is a plan with param limit and the switch is disabled
-		//	continue
-		//}
+		if len(plan.matchOpts.limitOffsetAndCount) > 0 && l.sctx.GetSessionVars().EnablePlanCacheForParamLimit == false {
+			// offset and key slice matched, but it is a plan with param limit and the switch is disabled
+			continue
+		}
 		return k, true
 	}
 	return nil, false
