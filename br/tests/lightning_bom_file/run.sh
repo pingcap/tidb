@@ -28,12 +28,12 @@ printf '\xEF\xBB\xBF' | cat - <( sed '1s/^\xEF\xBB\xBF//' "${original_schema_fil
 printf '\xEF\xBB\xBF' | cat - <( sed '1s/^\xEF\xBB\xBF//' "${original_data_file}" ) > "${data_file}"
 
 # verify the BOM header
-if ! [[ $(xxd -p "${schema_file}" | head -c 6 ) == "efbbbf" ]]; then
+if ! grep -q $'^\xEF\xBB\xBF' "${schema_file}"; then
     echo "schema file doesn't contain the BOM header" >&2
     exit 1
 fi
 
-if ! [[ $(xxd -p "${data_file}" | head -c 6 ) == "efbbbf" ]]; then
+if ! grep -q $'^\xEF\xBB\xBF' "${data_file}"; then
     echo "data file doesn't contain the BOM header" >&2
     exit 1
 fi
