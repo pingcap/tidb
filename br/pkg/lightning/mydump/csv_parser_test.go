@@ -967,7 +967,8 @@ something xxx"def",2
 		{
 			input: `xxxabc,1
 something xxxdef,2
-ghi,3`,
+ghi,3
+"bad syntax"aaa`,
 			expected: [][]types.Datum{
 				{types.NewStringDatum("abc"), types.NewStringDatum("1")},
 				{types.NewStringDatum("def"), types.NewStringDatum("2")},
@@ -1112,6 +1113,18 @@ func TestIgnoreLines(t *testing.T) {
 	}
 	runTestCasesCSV(t, &cfg, 1, testCases)
 
+	testCases = []testCase{
+		{
+			input: `"bad syntax"1
+"b",2
+"c",3`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("c"), types.NewStringDatum("3")},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
 	cfg = config.MydumperRuntime{
 		CSV: config.CSVConfig{
 			Separator:   ",",
@@ -1126,6 +1139,31 @@ func TestIgnoreLines(t *testing.T) {
 2,2
 3,3`,
 			expected: [][]types.Datum{},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
+	// test IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:   ",",
+			Delimiter:   `"`,
+			Terminator:  "\n",
+			IgnoreLines: 2,
+		},
+	}
+	testCases = []testCase{
+		{
+			input: `"a
+",1
+"b
+",2
+"c",3`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("b\n"), types.NewStringDatum("2")},
+				{types.NewStringDatum("c"), types.NewStringDatum("3")},
+			},
 		},
 	}
 	runTestCasesCSV(t, &cfg, 1, testCases)

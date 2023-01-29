@@ -602,7 +602,8 @@ func (parser *CSVParser) ReadRow() error {
 	row.RowID++
 
 	for parser.ignoreLines > 0 {
-		_, err := parser.readRecord(parser.lastRecord)
+		// IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
+		_, err := parser.ReadUntilTerminator()
 		if err != nil {
 			return errors.Trace(err)
 		}
