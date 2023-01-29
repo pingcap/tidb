@@ -2226,7 +2226,7 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 		SetSession: func(s *SessionVars, val string) error {
-			s.MppExchangeCompressionMode, _ = kv.ToExchangeCompressionMode(strings.ToUpper(val))
+			s.mppExchangeCompressionMode, _ = kv.ToExchangeCompressionMode(strings.ToUpper(val))
 			return nil
 		},
 	},

@@ -2241,12 +2241,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
 		// Use compress when exchange tyoe is `Hash`
 		if sender.ExchangeType == tipb.ExchangeType_Hash {
-			mode := ctx.GetSessionVars().MppExchangeCompressionMode
-			if mode == kv.ExchangeCompressionModeUnspecified {
-				// If unspecified, use recommended mode
-				mode = kv.RecommendedExchangeCompressionMode
-			}
-			sender.CompressionMode = mode
+			sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
 		}
 	}
 
