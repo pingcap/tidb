@@ -2226,7 +2226,11 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 		SetSession: func(s *SessionVars, val string) error {
-			s.mppExchangeCompressionMode, _ = kv.ToExchangeCompressionMode(strings.ToUpper(val))
+			s.mppExchangeCompressionMode, _ = kv.ToExchangeCompressionMode(val)
+			if s.ChooseMppVersion() == kv.MppVersionV0 && s.mppExchangeCompressionMode != kv.ExchangeCompressionModeUnspecified {
+				s.StmtCtx.AppendWarning(fmt.Errorf("mpp exchange compression won't work under current mpp version %d", kv.MppVersionV0))
+			}
+
 			return nil
 		},
 	},

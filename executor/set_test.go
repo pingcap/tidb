@@ -2114,4 +2114,16 @@ func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
 		tk.MustExec("SET GLOBAL mpp_exchange_compression_mode = none")
 		tk.MustQuery("select @@global.mpp_exchange_compression_mode").Check(testkit.Rows("none"))
 	}
+	{
+		tk.MustExec("SET mpp_version = 0")
+		tk.MustExec("SET mpp_exchange_compression_mode = unspecified")
+		require.Equal(t, len(tk.Session().GetSessionVars().StmtCtx.GetWarnings()), 0)
+	}
+	{
+		tk.MustExec("SET mpp_version = 0")
+		tk.MustExec("SET mpp_exchange_compression_mode = HIGH_COMPRESSION")
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		require.Equal(t, len(warnings), 1)
+		require.Equal(t, warnings[0].Err.Error(), "mpp exchange compression won't work under current mpp version 0")
+	}
 }
