@@ -850,9 +850,12 @@ func TestPlanCacheLimitSwitchEffective(t *testing.T) {
 	tk.MustExec("deallocate prepare stmt")
 
 	// after prepare
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = ON")
 	tk.MustExec("prepare stmt from 'select * from t limit ?'")
 	tk.MustExec("set @@session.tidb_enable_plan_cache_for_param_limit = OFF")
 	checkIfCached("0")
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
 	tk.MustExec("deallocate prepare stmt")
 
 	// after execute
