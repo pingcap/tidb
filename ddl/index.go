@@ -776,7 +776,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 			job.MarkNonRevertible()
 			if err == nil {
 				ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-				return true, ver, err
+				return false, ver, err
 			}
 		}
 		// We need another round to wait for all the others sub-jobs to finish.
