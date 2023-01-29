@@ -97,7 +97,7 @@ func canPause[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, 
 }
 
 func canBoost[T any, U any, C any, CT any, TF Context[CT]](m *meta[T, U, C, CT, TF], min time.Time) (result *list.Element, isBreak bool) {
-	if m.running.Load() < m.initialConcurrency {
+	if m.running.Load() >= m.initialConcurrency {
 		return nil, true
 	}
 	if m.createTS.After(min) {
