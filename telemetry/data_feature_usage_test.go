@@ -631,7 +631,7 @@ func TestTTLTelemetry(t *testing.T) {
 	now := time.Now()
 	curDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	if interval := curDate.Add(time.Hour * 24).Sub(now); interval > 0 && interval < 5*time.Minute {
-		// make sure testing is not running one the end of one day
+		// make sure testing is not running at the end of one day
 		time.Sleep(interval)
 	}
 
