@@ -490,3 +490,87 @@ func waitAndStopTTLManager(t *testing.T, dom *domain.Domain) {
 		continue
 	}
 }
+
+func TestGCScanTasks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	addTableStatusRecord := func(tableID, parentTableID, curJobID int64) {
+		tk.MustExec("INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (?, ?)", tableID, parentTableID)
+		if curJobID == 0 {
+			return
+		}
+
+		tk.MustExec(`UPDATE mysql.tidb_ttl_table_status
+			SET current_job_id = ?,
+				current_job_owner_id = '12345',
+				current_job_start_time = NOW(),
+				current_job_status = 'running',
+				current_job_status_update_time = NOW(),
+				current_job_ttl_expire = NOW(),
+				current_job_owner_hb_time = NOW()
+			WHERE table_id = ?`, curJobID, tableID)
+	}
+
+	addScanTaskRecord := func(jobID, tableID, scanID int64) {
+		tk.MustExec(`INSERT INTO mysql.tidb_ttl_task SET
+			job_id = ?,
+			table_id = ?,
+			scan_id = ?,
+			expire_time = NOW(),
+			created_time = NOW()`, jobID, tableID, scanID)
+	}
+
+	addTableStatusRecord(1, 1, 1)
+	addScanTaskRecord(1, 1, 1)
+	addScanTaskRecord(1, 1, 2)
+	addScanTaskRecord(2, 1, 1)
+	addScanTaskRecord(2, 1, 2)
+	addScanTaskRecord(3, 2, 1)
+	addScanTaskRecord(3, 2, 2)
+
+	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
+	ttlworker.DoGC(context.TODO(), se)
+	tk.MustQuery("select job_id, scan_id from mysql.tidb_ttl_task order by job_id, scan_id asc").Check(testkit.Rows("1 1", "1 2"))
+}
+
+func TestGCTTLHistory(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	addHistory := func(jobID, createdBeforeDays int) {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_ttl_job_history (
+				job_id,
+				table_id,
+				parent_table_id,
+				table_schema,
+				table_name,
+				partition_name,
+				create_time,
+				finish_time,
+				ttl_expire,
+				summary_text,
+				expired_rows,
+				deleted_rows,
+				error_delete_rows,
+				status
+			)
+		VALUES
+			(
+			 	%d, 1, 1, 'test', 't1', '',
+			 	CURDATE() - INTERVAL %d DAY,
+			 	CURDATE() - INTERVAL %d DAY + INTERVAL 1 HOUR,
+			 	CURDATE() - INTERVAL %d DAY,
+			 	"", 100, 100, 0, "finished"
+		)`, jobID, createdBeforeDays, createdBeforeDays, createdBeforeDays))
+	}
+
+	addHistory(1, 1)
+	addHistory(2, 30)
+	addHistory(3, 60)
+	addHistory(4, 89)
+	addHistory(5, 90)
+	addHistory(6, 91)
+	addHistory(7, 100)
+	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
+	ttlworker.DoGC(context.TODO(), se)
+	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3", "4", "5"))
+}

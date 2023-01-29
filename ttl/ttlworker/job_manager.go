@@ -58,6 +58,8 @@ const taskGCTemplate = `DELETE task FROM
 	ON task.job_id = job.current_job_id
 	WHERE job.table_id IS NULL`
 
+const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 90 DAY`
+
 const timeFormat = "2006-01-02 15:04:05"
 
 func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []interface{}) {
@@ -143,7 +145,7 @@ func (m *JobManager) jobLoop() error {
 	infoSchemaCacheUpdateTicker := time.Tick(m.infoSchemaCache.GetInterval())
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
 	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
-	taskGC := time.Tick(jobManagerLoopTickerInterval)
+	gcTicker := time.Tick(ttlGCInterval)
 
 	scheduleJobTicker := time.Tick(jobManagerLoopTickerInterval)
 	jobCheckTicker := time.Tick(jobManagerLoopTickerInterval)
@@ -175,12 +177,9 @@ func (m *JobManager) jobLoop() error {
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to update table status cache", zap.Error(err))
 			}
-		case <-taskGC:
-			taskGCCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-			_, err = se.ExecuteSQL(taskGCCtx, taskGCTemplate)
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to gc redundant scan task", zap.Error(err))
-			}
+		case <-gcTicker:
+			gcCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
+			DoGC(gcCtx, se)
 			cancel()
 		// Job Schedule loop:
 		case <-updateJobHeartBeatTicker:
@@ -776,4 +775,15 @@ func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
 	}
 	summary.SummaryText = string(buf)
 	return summary, nil
+}
+
+// DoGC deletes some old TTL job histories and redundant scan tasks
+func DoGC(ctx context.Context, se session.Session) {
+	if _, err := se.ExecuteSQL(ctx, taskGCTemplate); err != nil {
+		logutil.Logger(ctx).Warn("fail to gc redundant scan task", zap.Error(err))
+	}
+
+	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCTemplate); err != nil {
+		logutil.Logger(ctx).Warn("fail to gc ttl job history", zap.Error(err))
+	}
 }
