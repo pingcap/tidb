@@ -1092,8 +1092,19 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	resourceGroupName := "default"
 	if s.ResourceGroupNameOption != nil {
+		if !variable.EnableResourceControl.Load() {
+			return infoschema.ErrResourceGroupSupportDisabled
+		}
 		if s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
 			resourceGroupName = s.ResourceGroupNameOption.Value
+		}
+
+		// check if specified resource group exists
+		if resourceGroupName != "default" && resourceGroupName != "" {
+			_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+			if !exists {
+				return infoschema.ErrResourceGroupNotExists
+			}
 		}
 	}
 	userAttributes = append(userAttributes, fmt.Sprintf("\"resource_group\": \"%s\"", resourceGroupName))
@@ -1894,6 +1905,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if s.ResourceGroupNameOption != nil && s.ResourceGroupNameOption.Type == ast.UserResourceGroupName {
+			if !variable.EnableResourceControl.Load() {
+				return infoschema.ErrResourceGroupSupportDisabled
+			}
+
+			// check if specified resource group exists
+			if s.ResourceGroupNameOption.Value != "default" && s.ResourceGroupNameOption.Value != "" {
+				_, exists := e.is.ResourceGroupByName(model.NewCIStr(s.ResourceGroupNameOption.Value))
+				if !exists {
+					return infoschema.ErrResourceGroupNotExists
+				}
+			}
+
 			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, s.ResourceGroupNameOption.Value))
 		}
 		if passwordLockingStr != "" {

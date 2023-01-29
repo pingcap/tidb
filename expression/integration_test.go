@@ -2208,6 +2208,22 @@ func TestAggregationBuiltinJSONObjectAgg(t *testing.T) {
 	result.Check(testkit.Rows(`{"first": "json_objectagg_test"}`))
 	result = tk.MustQuery("select json_objectagg(a, null) from t group by a order by a;")
 	result.Check(testkit.Rows(`{"1": null}`))
+
+	// For issue: https://github.com/pingcap/tidb/issues/39806
+	// Optimization shouldn't rewrite the flag of `castStringAsJson`.
+	tk.MustQuery(`
+	select a from (
+		select JSON_OBJECT('number', number, 'name', name)  'a' from
+		(
+			select 1  as number, 'name-1' as name  union
+			(select 2, 'name-2' ) union
+			(select 3, 'name-3' ) union
+			(select 4, 'name-4' ) union
+			(select 5, 'name-5' ) union
+			(select 6, 'name-2' )
+		) temp1
+	) temp
+	where  a ->> '$.number' = 1`).Check(testkit.Rows(`{"name": "name-1", "number": 1}`))
 }
 
 func TestOtherBuiltin(t *testing.T) {
@@ -4971,25 +4987,6 @@ func TestIssue18525(t *testing.T) {
 	tk.MustExec("insert into t1 values ('l', NULL, '1000-01-04')")
 	tk.MustExec("insert into t1 values ('b', NULL, '1000-01-02')")
 	tk.MustQuery("select INTERVAL( ( CONVERT( -11752 USING utf8 ) ), 6558853612195285496, `col1`) from t1").Check(testkit.Rows("0", "0", "0"))
-}
-
-func TestSchemaDMLNotChange(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_metadata_lock=0")
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
-	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
-	tk2.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int primary key, c_json json);")
-	tk.MustExec("insert into t values (1, '{\"k\": 1}');")
-	tk.MustExec("begin")
-	tk.MustExec("update t set c_json = '{\"k\": 2}' where id = 1;")
-	tk2.MustExec("alter table t rename column c_json to cc_json;")
-	tk.MustExec("commit")
 }
 
 func TestIssue18850(t *testing.T) {

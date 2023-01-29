@@ -462,6 +462,8 @@ func TestUnaryNot(t *testing.T) {
 		{[]interface{}{"0.3"}, 0, false, false},
 		{[]interface{}{types.NewDecFromFloatForTest(0.3)}, 0, false, false},
 		{[]interface{}{nil}, 0, true, false},
+		{[]interface{}{types.CreateBinaryJSON(int64(0))}, 1, false, false},
+		{[]interface{}{types.CreateBinaryJSON(map[string]interface{}{"test": "test"})}, 0, false, false},
 
 		{[]interface{}{errors.New("must error")}, 0, false, true},
 	}

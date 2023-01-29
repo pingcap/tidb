@@ -520,7 +520,6 @@ type Prepared struct {
 	StmtType      string
 	Params        []ParamMarkerExpr
 	SchemaVersion int64
-	UseCache      bool
 	CachedPlan    interface{}
 	CachedNames   interface{}
 }
@@ -1592,7 +1591,7 @@ type ResourceGroupNameOption struct {
 func (c *ResourceGroupNameOption) Restore(ctx *format.RestoreCtx) error {
 	if c.Type == UserResourceGroupName {
 		ctx.WriteKeyWord(" RESOURCE GROUP ")
-		ctx.WriteString(c.Value)
+		ctx.WriteName(c.Value)
 	}
 	return nil
 }
@@ -3768,7 +3767,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index":
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "keep_order", "no_keep_order":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {
@@ -3817,9 +3816,9 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(hintData.To)
 	case "set_var":
 		hintData := n.HintData.(HintSetVar)
-		ctx.WriteString(hintData.VarName)
-		ctx.WritePlain(", ")
-		ctx.WriteString(hintData.Value)
+		ctx.WritePlain(hintData.VarName)
+		ctx.WritePlain(" = ")
+		ctx.WritePlain(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil

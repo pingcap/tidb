@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/util/promutil"
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,7 @@ func TestWriteDatabaseMeta(t *testing.T) {
 
 	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
-	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n", string(bytes))
+	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n", string(bytes))
 }
 
 func TestWritePolicyMeta(t *testing.T) {
@@ -51,7 +52,7 @@ func TestWritePolicyMeta(t *testing.T) {
 
 	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
-	require.Equal(t, "/*!40101 SET NAMES binary*/;\ncreate placement policy `y` followers=2;\n", string(bytes))
+	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\ncreate placement policy `y` followers=2;\n", string(bytes))
 }
 
 func TestWriteTableMeta(t *testing.T) {
@@ -69,7 +70,7 @@ func TestWriteTableMeta(t *testing.T) {
 	require.NoError(t, err)
 	bytes, err := os.ReadFile(p)
 	require.NoError(t, err)
-	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
+	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
 }
 
 func TestWriteViewMeta(t *testing.T) {
@@ -79,7 +80,7 @@ func TestWriteViewMeta(t *testing.T) {
 
 	writer := createTestWriter(config, t)
 
-	specCmt := "/*!40101 SET NAMES binary*/;\n"
+	specCmt := "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\n"
 	createTableSQL := "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n"
 	createViewSQL := "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n"
 	err := writer.WriteViewMeta("test", "v", createTableSQL, createViewSQL)
@@ -331,6 +332,7 @@ var mu sync.Mutex
 
 func createTestWriter(conf *Config, t *testing.T) *Writer {
 	t.Helper()
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
 
 	mu.Lock()
 	extStore, err := conf.createExternalStorage(context.Background())

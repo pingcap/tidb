@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"golang.org/x/exp/slices"
@@ -80,16 +81,17 @@ var etcdDialTimeout = 5 * time.Second
 type ShowExec struct {
 	baseExecutor
 
-	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName    model.CIStr
-	Table     *ast.TableName       // Used for showing columns.
-	Partition model.CIStr          // Used for showing partition
-	Column    *ast.ColumnName      // Used for `desc table column`.
-	IndexName model.CIStr          // Used for show table regions.
-	Flag      int                  // Some flag parsed from sql, such as FULL.
-	Roles     []*auth.RoleIdentity // Used for show grants.
-	User      *auth.UserIdentity   // Used by show grants, show create user.
-	Extractor plannercore.ShowPredicateExtractor
+	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName            model.CIStr
+	Table             *ast.TableName       // Used for showing columns.
+	Partition         model.CIStr          // Used for showing partition
+	Column            *ast.ColumnName      // Used for `desc table column`.
+	IndexName         model.CIStr          // Used for show table regions.
+	ResourceGroupName model.CIStr          // Used for showing resource group
+	Flag              int                  // Some flag parsed from sql, such as FULL.
+	Roles             []*auth.RoleIdentity // Used for show grants.
+	User              *auth.UserIdentity   // Used by show grants, show create user.
+	Extractor         plannercore.ShowPredicateExtractor
 
 	is infoschema.InfoSchema
 
@@ -181,6 +183,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateDatabase()
 	case ast.ShowCreatePlacementPolicy:
 		return e.fetchShowCreatePlacementPolicy()
+	case ast.ShowCreateResourceGroup:
+		return e.fetchShowCreateResourceGroup()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowDrainerStatus:
@@ -306,13 +310,14 @@ func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var bindRecords []*bindinfo.BindRecord
+	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		bindRecords = handle.GetAllBindRecord()
+		tmp = handle.GetAllBindRecord()
 	} else {
-		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
+	bindRecords := slice.Copy(tmp)
 	// Remove the invalid bindRecord.
 	ind := 0
 	for _, bindData := range bindRecords {
@@ -1010,8 +1015,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 						}
 						buf.WriteString(" DEFAULT NULL")
 					}
-				case "CURRENT_TIMESTAMP":
-					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+				case "CURRENT_TIMESTAMP", "CURRENT_DATE":
+					buf.WriteString(" DEFAULT ")
+					buf.WriteString(defaultValue.(string))
 					if col.GetDecimal() > 0 {
 						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
 					}
@@ -1261,6 +1267,18 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if err != nil {
 			return err
 		}
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1437,6 +1455,11 @@ func ConstructResultOfShowCreatePlacementPolicy(policyInfo *model.PolicyInfo) st
 	return fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", policyInfo.Name.O, policyInfo.PlacementSettings.String())
 }
 
+// constructResultOfShowCreateResourceGroup constructs the result for show create resource group.
+func constructResultOfShowCreateResourceGroup(resourceGroup *model.ResourceGroupInfo) string {
+	return fmt.Sprintf("CREATE RESOURCE GROUP `%s` %s", resourceGroup.Name.O, resourceGroup.ResourceGroupSettings.String())
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -1467,6 +1490,17 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 	}
 	showCreate := ConstructResultOfShowCreatePlacementPolicy(policy)
 	e.appendRow([]interface{}{e.DBName.O, showCreate})
+	return nil
+}
+
+// fetchShowCreateResourceGroup composes show create resource group result.
+func (e *ShowExec) fetchShowCreateResourceGroup() error {
+	group, found := e.is.ResourceGroupByName(e.ResourceGroupName)
+	if !found {
+		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(e.ResourceGroupName.O)
+	}
+	showCreate := constructResultOfShowCreateResourceGroup(group)
+	e.appendRow([]interface{}{e.ResourceGroupName.O, showCreate})
 	return nil
 }
 
@@ -1681,13 +1715,16 @@ func (e *ShowExec) fetchShowGrants() error {
 func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
 	e.appendRow([]interface{}{"Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"})
+	e.appendRow([]interface{}{"Config", "Server Admin", "To use SHOW CONFIG and SET CONFIG statements"})
 	e.appendRow([]interface{}{"Create", "Databases,Tables,Indexes", "To create new databases and tables"})
 	e.appendRow([]interface{}{"Create routine", "Databases", "To use CREATE FUNCTION/PROCEDURE"})
+	e.appendRow([]interface{}{"Create role", "Server Admin", "To create new roles"})
 	e.appendRow([]interface{}{"Create temporary tables", "Databases", "To use CREATE TEMPORARY TABLE"})
 	e.appendRow([]interface{}{"Create view", "Tables", "To create new views"})
 	e.appendRow([]interface{}{"Create user", "Server Admin", "To create new users"})
 	e.appendRow([]interface{}{"Delete", "Tables", "To delete existing rows"})
 	e.appendRow([]interface{}{"Drop", "Databases,Tables", "To drop databases, tables, and views"})
+	e.appendRow([]interface{}{"Drop role", "Server Admin", "To drop roles"})
 	e.appendRow([]interface{}{"Event", "Server Admin", "To create, alter, drop and execute events"})
 	e.appendRow([]interface{}{"Execute", "Functions,Procedures", "To execute stored routines"})
 	e.appendRow([]interface{}{"File", "File access on server", "To read and write files on the server"})

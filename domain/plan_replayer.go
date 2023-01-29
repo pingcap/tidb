@@ -16,10 +16,8 @@ package domain
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,18 +27,18 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -53,13 +51,6 @@ type dumpFileGcChecker struct {
 	paths                  []string
 	sctx                   sessionctx.Context
 	planReplayerTaskStatus *planReplayerDumpTaskStatus
-}
-
-// GetPlanReplayerDirName returns plan replayer directory path.
-// The path is related to the process id.
-func GetPlanReplayerDirName() string {
-	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
-	return filepath.Join(tidbLogDir, "replayer")
 }
 
 func parseType(s string) string {
@@ -110,7 +101,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 			logutil.BgLogger().Error("[dumpFileGcChecker] parseTime failed", zap.Error(err), zap.String("filename", fileName))
 			continue
 		}
-		isPlanReplayer := parseType(fileName) == "replayer"
+		isPlanReplayer := strings.Contains(fileName, "replayer")
 		if !createTime.After(gcTime) {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
@@ -173,9 +164,27 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, instance))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.String("sql", record.OriginSQL),
 			zap.Error(err))
+		// try insert record without original sql
+		_, err = exec.ExecuteInternal(ctx, fmt.Sprintf(
+			"insert into mysql.plan_replayer_status (sql_digest, plan_digest, token, instance) values ('%s','%s','%s','%s')",
+			record.SQLDigest, record.PlanDigest, record.Token, instance))
+		if err != nil {
+			logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+				zap.String("sqlDigest", record.SQLDigest),
+				zap.String("planDigest", record.PlanDigest),
+				zap.Error(err))
+		}
 	}
 }
+
+var (
+	planReplayerCaptureTaskSendCounter    = metrics.PlanReplayerTaskCounter.WithLabelValues("capture", "send")
+	planReplayerCaptureTaskDiscardCounter = metrics.PlanReplayerTaskCounter.WithLabelValues("capture", "discard")
+
+	planReplayerRegisterTaskGauge = metrics.PlanReplayerRegisterTaskGauge
+)
 
 type planReplayerHandle struct {
 	*planReplayerTaskCollectorHandle
@@ -183,24 +192,29 @@ type planReplayerHandle struct {
 }
 
 // SendTask send dumpTask in background task handler
-func (h *planReplayerHandle) SendTask(task *PlanReplayerDumpTask) {
+func (h *planReplayerHandle) SendTask(task *PlanReplayerDumpTask) bool {
 	select {
 	case h.planReplayerTaskDumpHandle.taskCH <- task:
 		// we directly remove the task key if we put task in channel successfully, if the task was failed to dump,
 		// the task handle will re-add the task in next loop
-		h.planReplayerTaskCollectorHandle.removeTask(task.PlanReplayerTaskKey)
+		if !task.IsContinuesCapture {
+			h.planReplayerTaskCollectorHandle.removeTask(task.PlanReplayerTaskKey)
+		}
+		planReplayerCaptureTaskSendCounter.Inc()
+		return true
 	default:
-		// TODO: add metrics here
+		planReplayerCaptureTaskDiscardCounter.Inc()
 		// directly discard the task if the task channel is full in order not to block the query process
-		logutil.BgLogger().Info("discard one plan replayer dump task",
-			zap.String("sql digest", task.SQLDigest), zap.String("plan digest", task.PlanDigest))
+		logutil.BgLogger().Warn("discard one plan replayer dump task",
+			zap.String("sql-digest", task.SQLDigest), zap.String("plan-digest", task.PlanDigest))
+		return false
 	}
 }
 
 type planReplayerTaskCollectorHandle struct {
 	taskMu struct {
 		sync.RWMutex
-		tasks map[PlanReplayerTaskKey]struct{}
+		tasks map[replayer.PlanReplayerTaskKey]struct{}
 	}
 	ctx  context.Context
 	sctx sessionctx.Context
@@ -212,23 +226,28 @@ func (h *planReplayerTaskCollectorHandle) CollectPlanReplayerTask() error {
 	if err != nil {
 		return err
 	}
-	tasks := make([]PlanReplayerTaskKey, 0)
+	tasks := make([]replayer.PlanReplayerTaskKey, 0)
 	for _, key := range allKeys {
 		unhandled, err := checkUnHandledReplayerTask(h.ctx, h.sctx, key)
 		if err != nil {
+			logutil.BgLogger().Warn("[plan-replayer-task] collect plan replayer task failed", zap.Error(err))
 			return err
 		}
 		if unhandled {
+			logutil.BgLogger().Debug("[plan-replayer-task] collect plan replayer task success",
+				zap.String("sql-digest", key.SQLDigest),
+				zap.String("plan-digest", key.PlanDigest))
 			tasks = append(tasks, key)
 		}
 	}
 	h.setupTasks(tasks)
+	planReplayerRegisterTaskGauge.Set(float64(len(tasks)))
 	return nil
 }
 
 // GetTasks get all tasks
-func (h *planReplayerTaskCollectorHandle) GetTasks() []PlanReplayerTaskKey {
-	tasks := make([]PlanReplayerTaskKey, 0)
+func (h *planReplayerTaskCollectorHandle) GetTasks() []replayer.PlanReplayerTaskKey {
+	tasks := make([]replayer.PlanReplayerTaskKey, 0)
 	h.taskMu.RLock()
 	defer h.taskMu.RUnlock()
 	for taskKey := range h.taskMu.tasks {
@@ -237,8 +256,8 @@ func (h *planReplayerTaskCollectorHandle) GetTasks() []PlanReplayerTaskKey {
 	return tasks
 }
 
-func (h *planReplayerTaskCollectorHandle) setupTasks(tasks []PlanReplayerTaskKey) {
-	r := make(map[PlanReplayerTaskKey]struct{})
+func (h *planReplayerTaskCollectorHandle) setupTasks(tasks []replayer.PlanReplayerTaskKey) {
+	r := make(map[replayer.PlanReplayerTaskKey]struct{})
 	for _, task := range tasks {
 		r[task] = struct{}{}
 	}
@@ -247,13 +266,13 @@ func (h *planReplayerTaskCollectorHandle) setupTasks(tasks []PlanReplayerTaskKey
 	h.taskMu.tasks = r
 }
 
-func (h *planReplayerTaskCollectorHandle) removeTask(taskKey PlanReplayerTaskKey) {
+func (h *planReplayerTaskCollectorHandle) removeTask(taskKey replayer.PlanReplayerTaskKey) {
 	h.taskMu.Lock()
 	defer h.taskMu.Unlock()
 	delete(h.taskMu.tasks, taskKey)
 }
 
-func (h *planReplayerTaskCollectorHandle) collectAllPlanReplayerTask(ctx context.Context) ([]PlanReplayerTaskKey, error) {
+func (h *planReplayerTaskCollectorHandle) collectAllPlanReplayerTask(ctx context.Context) ([]replayer.PlanReplayerTaskKey, error) {
 	exec := h.sctx.(sqlexec.SQLExecutor)
 	rs, err := exec.ExecuteInternal(ctx, "select sql_digest, plan_digest from mysql.plan_replayer_task")
 	if err != nil {
@@ -267,10 +286,10 @@ func (h *planReplayerTaskCollectorHandle) collectAllPlanReplayerTask(ctx context
 	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
 		return nil, errors.Trace(err)
 	}
-	allKeys := make([]PlanReplayerTaskKey, 0, len(rows))
+	allKeys := make([]replayer.PlanReplayerTaskKey, 0, len(rows))
 	for _, row := range rows {
 		sqlDigest, planDigest := row.GetString(0), row.GetString(1)
-		allKeys = append(allKeys, PlanReplayerTaskKey{
+		allKeys = append(allKeys, replayer.PlanReplayerTaskKey{
 			SQLDigest:  sqlDigest,
 			PlanDigest: planDigest,
 		})
@@ -282,13 +301,13 @@ type planReplayerDumpTaskStatus struct {
 	// running task records the task running by all workers in order to avoid multi workers running the same task key
 	runningTaskMu struct {
 		sync.RWMutex
-		runningTasks map[PlanReplayerTaskKey]struct{}
+		runningTasks map[replayer.PlanReplayerTaskKey]struct{}
 	}
 
 	// finished task records the finished task in order to avoid running finished task key
 	finishedTaskMu struct {
 		sync.RWMutex
-		finishedTask map[PlanReplayerTaskKey]struct{}
+		finishedTask map[replayer.PlanReplayerTaskKey]struct{}
 	}
 }
 
@@ -303,7 +322,7 @@ func (r *planReplayerDumpTaskStatus) GetRunningTaskStatusLen() int {
 func (r *planReplayerDumpTaskStatus) CleanFinishedTaskStatus() {
 	r.finishedTaskMu.Lock()
 	defer r.finishedTaskMu.Unlock()
-	r.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
+	r.finishedTaskMu.finishedTask = map[replayer.PlanReplayerTaskKey]struct{}{}
 }
 
 // GetFinishedTaskStatusLen used for unit test
@@ -346,7 +365,7 @@ func (r *planReplayerDumpTaskStatus) setTaskFinished(task *PlanReplayerDumpTask)
 func (r *planReplayerDumpTaskStatus) clearFinishedTask() {
 	r.finishedTaskMu.Lock()
 	defer r.finishedTaskMu.Unlock()
-	r.finishedTaskMu.finishedTask = map[PlanReplayerTaskKey]struct{}{}
+	r.finishedTaskMu.finishedTask = map[replayer.PlanReplayerTaskKey]struct{}{}
 }
 
 type planReplayerTaskDumpWorker struct {
@@ -357,30 +376,53 @@ type planReplayerTaskDumpWorker struct {
 }
 
 func (w *planReplayerTaskDumpWorker) run() {
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker started.")
 	for task := range w.taskCH {
-		if w.status.checkTaskKeyFinishedBefore(task) {
-			continue
-		}
-		successOccupy := w.status.occupyRunningTaskKey(task)
-		if !successOccupy {
-			continue
-		}
-		w.HandleTask(task)
-		w.status.releaseRunningTaskKey(task)
+		w.handleTask(task)
 	}
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker exited.")
+}
+
+func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
+	sqlDigest := task.SQLDigest
+	planDigest := task.PlanDigest
+	check := true
+	occupy := true
+	handleTask := true
+	defer func() {
+		util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpWorker", nil, false)
+		logutil.BgLogger().Debug("[plan-replayer-capture] handle task",
+			zap.String("sql-digest", sqlDigest),
+			zap.String("plan-digest", planDigest),
+			zap.Bool("check", check),
+			zap.Bool("occupy", occupy),
+			zap.Bool("handle", handleTask))
+	}()
+	if task.IsContinuesCapture {
+		if w.status.checkTaskKeyFinishedBefore(task) {
+			check = false
+			return
+		}
+	}
+	occupy = w.status.occupyRunningTaskKey(task)
+	if !occupy {
+		return
+	}
+	handleTask = w.HandleTask(task)
+	w.status.releaseRunningTaskKey(task)
 }
 
 // HandleTask handled task
 func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (success bool) {
 	defer func() {
-		if success {
+		if success && task.IsContinuesCapture {
 			w.status.setTaskFinished(task)
 		}
 	}()
 	taskKey := task.PlanReplayerTaskKey
 	unhandled, err := checkUnHandledReplayerTask(w.ctx, w.sctx, taskKey)
 	if err != nil {
-		logutil.BgLogger().Warn("check plan replayer capture task failed",
+		logutil.BgLogger().Warn("[plan-replayer-capture] check task failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
 			zap.String("planDigest", taskKey.PlanDigest),
 			zap.Error(err))
@@ -391,9 +433,9 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
-	file, fileName, err := GeneratePlanReplayerFile()
+	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture, task.IsContinuesCapture, variable.EnableHistoricalStatsForCapture.Load())
 	if err != nil {
-		logutil.BgLogger().Warn("generate plan replayer capture task file failed",
+		logutil.BgLogger().Warn("[plan-replayer-capture] generate task file failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
 			zap.String("planDigest", taskKey.PlanDigest),
 			zap.Error(err))
@@ -401,32 +443,22 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 	}
 	task.Zf = file
 	task.FileName = fileName
-	task.EncodedPlan, _ = task.EncodePlan(task.SessionVars.StmtCtx, false)
-	jsStats := make(map[int64]*handle.JSONTable)
-	is := GetDomain(w.sctx).InfoSchema()
-	for tblID, stat := range task.TblStats {
-		tbl, ok := is.TableByID(tblID)
-		if !ok {
-			return false
-		}
-		schema, ok := is.SchemaByTable(tbl.Meta())
-		if !ok {
-			return false
-		}
-		r, err := handle.GenJSONTableFromStats(schema.Name.String(), tbl.Meta(), stat.(*statistics.Table))
+	if task.InExecute && len(task.NormalizedSQL) > 0 {
+		p := parser.New()
+		stmts, _, err := p.ParseSQL(task.NormalizedSQL)
 		if err != nil {
-			logutil.BgLogger().Warn("generate plan replayer capture task json stats failed",
+			logutil.BgLogger().Warn("[plan-replayer-capture] parse normalized sql failed",
+				zap.String("sql", task.NormalizedSQL),
 				zap.String("sqlDigest", taskKey.SQLDigest),
 				zap.String("planDigest", taskKey.PlanDigest),
 				zap.Error(err))
 			return false
 		}
-		jsStats[tblID] = r
+		task.ExecStmts = stmts
 	}
-	task.JSONTblStats = jsStats
 	err = DumpPlanReplayerInfo(w.ctx, w.sctx, task)
 	if err != nil {
-		logutil.BgLogger().Warn("dump plan replayer capture task result failed",
+		logutil.BgLogger().Warn("[plan-replayer-capture] dump task result failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
 			zap.String("planDigest", taskKey.PlanDigest),
 			zap.Error(err))
@@ -461,7 +493,7 @@ func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 	return <-h.taskCH
 }
 
-func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task PlanReplayerTaskKey) (bool, error) {
+func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task replayer.PlanReplayerTaskKey) (bool, error) {
 	exec := sctx.(sqlexec.SQLExecutor)
 	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.SQLDigest, task.PlanDigest))
 	if err != nil {
@@ -512,60 +544,28 @@ type PlanReplayerStatusRecord struct {
 	FailedReason string
 }
 
-// PlanReplayerTaskKey indicates key of a plan replayer task
-type PlanReplayerTaskKey struct {
-	SQLDigest  string
-	PlanDigest string
-}
-
 // PlanReplayerDumpTask wrap the params for plan replayer dump
 type PlanReplayerDumpTask struct {
-	PlanReplayerTaskKey
+	replayer.PlanReplayerTaskKey
 
 	// tmp variables stored during the query
-	EncodePlan func(*stmtctx.StatementContext, bool) (string, string)
-	TblStats   map[int64]interface{}
+	TblStats      map[int64]interface{}
+	InExecute     bool
+	NormalizedSQL string
 
 	// variables used to dump the plan
 	StartTS         uint64
 	SessionBindings []*bindinfo.BindRecord
 	EncodedPlan     string
 	SessionVars     *variable.SessionVars
-	JSONTblStats    map[int64]*handle.JSONTable
 	ExecStmts       []ast.StmtNode
 	Analyze         bool
 
 	FileName string
 	Zf       *os.File
-}
 
-// GeneratePlanReplayerFile generates plan replayer file
-func GeneratePlanReplayerFile() (*os.File, string, error) {
-	path := GetPlanReplayerDirName()
-	err := os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
-	fileName, err := generatePlanReplayerFileName()
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
-	zf, err := os.Create(filepath.Join(path, fileName))
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
-	return zf, fileName, err
-}
-
-func generatePlanReplayerFileName() (string, error) {
-	// Generate key and create zip file
-	time := time.Now().UnixNano()
-	b := make([]byte, 16)
-	//nolint: gosec
-	_, err := rand.Read(b)
-	if err != nil {
-		return "", err
-	}
-	key := base64.URLEncoding.EncodeToString(b)
-	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil
+	// IsCapture indicates whether the task is from capture
+	IsCapture bool
+	// IsContinuesCapture indicates whether the task is from continues capture
+	IsContinuesCapture bool
 }

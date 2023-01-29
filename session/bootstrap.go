@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	osuser "os/user"
 	"runtime/debug"
 	"strconv"
@@ -478,7 +479,7 @@ const (
          PRIMARY KEY (Host,User,Password_timestamp )
         ) COMMENT='Password history for user accounts' `
 
-	// CreateTTLTableStatus is a table about TTL task schedule
+	// CreateTTLTableStatus is a table about TTL job schedule
 	CreateTTLTableStatus = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_table_status (
 		table_id bigint(64) PRIMARY KEY,
         parent_table_id bigint(64),
@@ -497,6 +498,45 @@ const (
 		current_job_state text DEFAULT NULL,
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
+
+	// CreateTTLTask is a table about parallel ttl tasks
+	CreateTTLTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_task (
+		job_id varchar(64) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		scan_id int NOT NULL,
+		scan_range_start BLOB,
+		scan_range_end BLOB,
+		expire_time timestamp NOT NULL,
+		owner_id varchar(64) DEFAULT NULL,
+		owner_addr varchar(64) DEFAULT NULL,
+		owner_hb_time timestamp DEFAULT NULL,
+		status varchar(64) DEFAULT 'waiting',
+		status_update_time timestamp NULL DEFAULT NULL,
+		state text,
+		created_time timestamp NOT NULL,
+		primary key(job_id, scan_id),
+		key(created_time));`
+
+	// CreateTTLJobHistory is a table that stores ttl job's history
+	CreateTTLJobHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
+		job_id varchar(64) PRIMARY KEY,
+		table_id bigint(64) NOT NULL,
+        parent_table_id bigint(64) NOT NULL,
+    	table_schema varchar(64) NOT NULL,
+		table_name varchar(64) NOT NULL,
+    	partition_name varchar(64) DEFAULT NULL,
+		create_time timestamp NOT NULL,
+		finish_time timestamp NOT NULL,
+		ttl_expire timestamp NOT NULL,
+        summary_text text,
+		expired_rows bigint(64) DEFAULT NULL,
+    	deleted_rows bigint(64) DEFAULT NULL,
+    	error_delete_rows bigint(64) DEFAULT NULL,
+    	status varchar(64) NOT NULL,
+    	key(table_schema, table_name, create_time),
+    	key(parent_table_id, create_time),
+    	key(create_time)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -526,6 +566,7 @@ func bootstrap(s Session) {
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
 			doDMLWorks(s)
+			runBootstrapSQLFile = true
 			logutil.BgLogger().Info("bootstrap successful",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -735,14 +776,21 @@ const (
 	version108 = 108
 	// version109 add column source to mysql.stats_meta_history
 	version109 = 109
+	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
+	version110 = 110
+	// version111 adds the table tidb_ttl_task and tidb_ttl_job_history
+	version111 = 111
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version109
+var currentBootstrapVersion int64 = version111
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
+
+// whether to run the sql file in bootstrap.
+var runBootstrapSQLFile = false
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -853,6 +901,8 @@ var (
 		upgradeToVer107,
 		upgradeToVer108,
 		upgradeToVer109,
+		upgradeToVer110,
+		upgradeToVer111,
 	}
 )
 
@@ -952,11 +1002,6 @@ func upgrade(s Session) {
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
-
-	if err == nil && ver <= version92 {
-		logutil.BgLogger().Info("start migrate DDLs")
-		err = domain.GetDomain(s).DDL().MoveJobFromQueue2Table(true)
-	}
 
 	if err != nil {
 		sleepTime := 1 * time.Second
@@ -2201,6 +2246,23 @@ func upgradeToVer109(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
 }
 
+// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
+}
+
+func upgradeToVer111(s Session, ver int64) {
+	if ver >= version111 {
+		return
+	}
+	doReentrantDDL(s, CreateTTLTask)
+	doReentrantDDL(s, CreateTTLJobHistory)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2307,6 +2369,42 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
+	// Create tidb_ttl_task table
+	mustExecute(s, CreateTTLTask)
+	// Create tidb_ttl_job_history table
+	mustExecute(s, CreateTTLJobHistory)
+}
+
+// doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
+// It is useful for setting the initial value of GLOBAL variables.
+func doBootstrapSQLFile(s Session) {
+	sqlFile := config.GetGlobalConfig().InitializeSQLFile
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	if sqlFile == "" {
+		return
+	}
+	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
+	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
+	if err != nil {
+		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
+	}
+	stmts, err := s.Parse(ctx, string(b))
+	if err != nil {
+		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
+	}
+	for _, stmt := range stmts {
+		rs, err := s.ExecuteStmt(ctx, stmt)
+		if err != nil {
+			logutil.BgLogger().Warn("InitializeSQLFile error", zap.Error(err))
+		}
+		if rs != nil {
+			// I don't believe we need to drain the result-set in bootstrap mode
+			// but if required we can do this here in future.
+			if err := rs.Close(); err != nil {
+				logutil.BgLogger().Fatal("unable to close result", zap.Error(err))
+			}
+		}
+	}
 }
 
 // inTestSuite checks if we are bootstrapping in the context of tests.

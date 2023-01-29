@@ -111,6 +111,7 @@ func NewMockImportSource(dbSrcDataMap map[string]*MockDBSourceData) (*MockImport
 					FileMeta: mydump.SourceFileMeta{
 						Path:     tblDataFile.FileName,
 						FileSize: int64(fileSize),
+						RealSize: int64(fileSize),
 					},
 				}
 				fileName := tblDataFile.FileName

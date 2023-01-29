@@ -28,6 +28,7 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
@@ -38,6 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	rmclient "github.com/tikv/pd/pkg/mcs/resource_manager/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -53,6 +55,10 @@ var mc storeCache
 func init() {
 	mc.cache = make(map[string]*tikvStore)
 	rand.Seed(time.Now().UnixNano())
+
+	// Setup the Hooks to dynamic control global resource controller.
+	variable.EnableGlobalResourceControlFunc = tikv.EnableResourceControl
+	variable.DisableGlobalResourceControlFunc = tikv.DisableResourceControl
 }
 
 // Option is a function that changes some config of Driver
@@ -86,8 +92,28 @@ func WithPDClientConfig(client config.PDClient) Option {
 	}
 }
 
+// TrySetupGlobalResourceController tries to setup global resource controller.
+func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv.Storage) error {
+	var (
+		store *tikvStore
+		ok    bool
+	)
+	if store, ok = s.(*tikvStore); !ok {
+		return errors.New("cannot setup up resource controller, should use tikv storage")
+	}
+
+	control, err := rmclient.NewResourceGroupController(serverID, store.GetPDClient(), rmclient.DefaultRequestUnitConfig())
+	if err != nil {
+		return err
+	}
+	tikv.SetResourceControlInterceptor(control)
+	control.Start(ctx)
+	return nil
+}
+
 // TiKVDriver implements engine TiKV.
 type TiKVDriver struct {
+	keyspaceName    string
 	pdConfig        config.PDClient
 	security        config.Security
 	tikvConfig      config.TiKVClient
@@ -117,7 +143,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
-	etcdAddrs, disableGC, err := config.ParsePath(path)
+	etcdAddrs, disableGC, keyspaceName, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -157,11 +183,39 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		return nil, errors.Trace(err)
 	}
 
-	pdClient := tikv.CodecPDClient{Client: pdCli}
-	s, err := tikv.NewKVStore(uuid, &pdClient, spkv, tikv.NewRPCClient(tikv.WithSecurity(d.security)))
+	// ---------------- keyspace logic  ----------------
+	var (
+		pdClient *tikv.CodecPDClient
+	)
+
+	if keyspaceName == "" {
+		logutil.BgLogger().Info("using API V1.")
+		pdClient = tikv.NewCodecPDClient(tikv.ModeTxn, pdCli)
+	} else {
+		logutil.BgLogger().Info("using API V2.", zap.String("keyspaceName", keyspaceName))
+		pdClient, err = tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdCli, keyspaceName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// If there's setting keyspace-name, then skipped GC worker logic.
+		// It needs a group of special tidb nodes to execute GC worker logic.
+		// TODO: remove this restriction while merged keyspace GC worker logic.
+		disableGC = true
+	}
+
+	codec := pdClient.GetCodec()
+
+	rpcClient := tikv.NewRPCClient(
+		tikv.WithSecurity(d.security),
+		tikv.WithCodec(codec),
+	)
+
+	s, err := tikv.NewKVStore(uuid, pdClient, spkv, rpcClient)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// ---------------- keyspace logic  ----------------
 	if d.txnLocalLatches.Enabled {
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
@@ -178,6 +232,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		memCache:  kv.NewCacheDB(),
 		enableGC:  !disableGC,
 		coprStore: coprStore,
+		codec:     codec,
 	}
 
 	mc.cache[uuid] = store
@@ -192,6 +247,7 @@ type tikvStore struct {
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
+	codec     tikv.Codec
 }
 
 // Name gets the name of the storage engine
@@ -342,4 +398,8 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 		result = append(result, entries...)
 	}
 	return result, nil
+}
+
+func (s *tikvStore) GetCodec() tikv.Codec {
+	return s.codec
 }

@@ -68,7 +68,7 @@ func TestInfo(t *testing.T) {
 		Storage: s,
 		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory, nil)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		err := s.Close()
@@ -171,7 +171,7 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory, nil)
+	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory)
 
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
@@ -238,7 +238,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory, nil)
+	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		require.Nil(t, store.Close())
