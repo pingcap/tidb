@@ -3941,6 +3941,7 @@ func TestIssue39999(t *testing.T) {
 
 	tk.MustExec(`create schema test39999`)
 	tk.MustExec(`use test39999`)
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec(`drop table if exists c, t`)
 	tk.MustExec("CREATE TABLE `c` (" +
 		"`serial_id` varchar(24)," +

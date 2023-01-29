@@ -152,6 +152,7 @@ func TestIndexJoinOnSinglePartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
 		tk.MustExec("set @@tidb_partition_prune_mode= '" + val + "'")
 		tk.MustExec("drop table if exists t1, t2")

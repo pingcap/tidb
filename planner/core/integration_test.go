@@ -480,6 +480,7 @@ func TestVerboseExplain(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
@@ -1419,6 +1420,7 @@ func TestViewHint(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec("drop view if exists v, v1, v2")
 	tk.MustExec("drop table if exists t, t1, t2")
 	tk.MustExec("create table t(a int, b int);")
@@ -1454,6 +1456,7 @@ func TestViewHintScope(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec("drop view if exists v, v1, v2, v3, v4")
 	tk.MustExec("drop table if exists t, t1, t2, t3, t4")
 	tk.MustExec("create table t(a int, b int);")
@@ -1526,6 +1529,7 @@ func TestAllViewHintType(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash, tikv'")
 	tk.MustExec("drop view if exists v, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12")
 	tk.MustExec("drop table if exists t, t1, t2, t4, t3, t5")
@@ -2009,6 +2013,7 @@ func TestIndexJoinTableRange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, primary key (a), key idx_t1_b (b))")
 	tk.MustExec("create table t2(a int, b int, primary key (a), key idx_t1_b (b))")
@@ -2209,6 +2214,7 @@ func TestHintWithRequiredProperty(t *testing.T) {
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, key b(b))")
@@ -3947,6 +3953,7 @@ func TestIssue20710(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists s;")
 	tk.MustExec("create table t(a int, b int)")
@@ -5132,6 +5139,7 @@ func TestDecorrelateInnerJoinInSubquery(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null, b int not null)")
 
@@ -8143,6 +8151,7 @@ func TestIndexJoinRangeFallback(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	tk.MustExec("create table t1(a int, b int, c varchar(10), d varchar(10), index idx_a_b_c_d(a, b, c(2), d(2)))")
 	tk.MustExec("create table t2(e int, f int, g varchar(10), h varchar(10))")
 

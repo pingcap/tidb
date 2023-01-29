@@ -638,6 +638,7 @@ func TestIssue9562(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 	var input [][]string
 	var output []struct {
 		SQL  []string
