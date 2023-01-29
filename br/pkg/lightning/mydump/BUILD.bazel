@@ -31,6 +31,7 @@ go_library(
         "//util/slice",
         "//util/table-filter",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_spkg_bom//:bom",
         "@com_github_xitongsys_parquet_go//parquet",
         "@com_github_xitongsys_parquet_go//reader",
         "@com_github_xitongsys_parquet_go//source",

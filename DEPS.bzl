@@ -3421,6 +3421,14 @@ def go_deps():
         version = "v1.12.0",
     )
     go_repository(
+        name = "com_github_spkg_bom",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/spkg/bom",
+        sum = "h1:S939THe0ukL5WcTGiGqkgtaW5JW+O6ITaIlpJXTYY64=",
+        version = "v1.0.0",
+    )
+
+    go_repository(
         name = "com_github_ssgreg_nlreturn_v2",
         build_file_proto_mode = "disable",
         importpath = "github.com/ssgreg/nlreturn/v2",

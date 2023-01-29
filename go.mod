@@ -84,7 +84,13 @@ require (
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.5
+<<<<<<< HEAD
 	github.com/stretchr/testify v1.8.0
+=======
+	github.com/spkg/bom v1.0.0
+	github.com/stathat/consistent v1.0.0
+	github.com/stretchr/testify v1.8.1
+>>>>>>> e11cbec12b (lightning: support data files with bom header (#40813))
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.3
