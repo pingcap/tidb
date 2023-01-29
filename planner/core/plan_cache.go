@@ -352,7 +352,6 @@ func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int, limitP
 	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
 	}
-
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
