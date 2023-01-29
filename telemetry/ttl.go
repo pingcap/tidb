@@ -64,9 +64,13 @@ const (
 )
 
 type ttlHistItem struct {
-	LessThan    *int64 `json:"less_than,omitempty"`
-	LessThanMax bool   `json:"less_than_max,omitempty"`
-	Count       int64  `json:"count"`
+	// LessThan is not null means it collects the count of items with condition [prevLessThan, LessThan)
+	// Notice that it's type is an int64 pointer to forbid serializing it when it is not set.
+	LessThan *int64 `json:"less_than,omitempty"`
+	// LessThanMax is true means the condition is [prevLessThan, MAX)
+	LessThanMax bool `json:"less_than_max,omitempty"`
+	// Count is the count of items that fit the condition
+	Count int64 `json:"count"`
 }
 
 type ttlUsageCounter struct {
