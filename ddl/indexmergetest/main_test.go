@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,37 +12,44 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package telemetry
+package indexmergetest
 
 import (
-	"context"
 	"testing"
+	"time"
 
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
-var (
-	GetTxnUsageInfo = getTxnUsageInfo
-)
-
-func GetFeatureUsage(sctx sessionctx.Context) (*featureUsage, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry)
-	return getFeatureUsage(ctx, sctx)
-}
-
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+	tikv.EnableFailpoints()
+
+	domain.SchemaOutOfDateRetryInterval.Store(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryTimes.Store(50)
+
+	autoid.SetStep(5000)
+	ddl.RunInGoTest = true
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.SlowThreshold = 10000
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
-		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)

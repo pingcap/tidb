@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,27 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package callback
 
 import (
 	"context"
 	"sync/atomic"
-	"testing"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
+// TestInterceptor is a test interceptor in the ddl
 type TestInterceptor struct {
-	*BaseInterceptor
+	*ddl.BaseInterceptor
 
 	OnGetInfoSchemaExported func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
 }
 
+// OnGetInfoSchema is to run when to call GetInfoSchema
 func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 	if ti.OnGetInfoSchemaExported != nil {
 		return ti.OnGetInfoSchemaExported(ctx, is)
@@ -43,10 +44,10 @@ func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema
 
 // TestDDLCallback is used to customize user callback themselves.
 type TestDDLCallback struct {
-	*BaseCallback
+	*ddl.BaseCallback
 	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
 	// domain to reload schema before your ddl stepping into the next state change.
-	Do DomainReloader
+	Do ddl.DomainReloader
 
 	onJobRunBefore          func(*model.Job)
 	OnJobRunBeforeExported  func(*model.Job)
@@ -148,12 +149,4 @@ func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
 // Clone copies the callback and take its reference
 func (tc *TestDDLCallback) Clone() *TestDDLCallback {
 	return &*tc
-}
-
-func TestCallback(t *testing.T) {
-	cb := &BaseCallback{}
-	require.Nil(t, cb.OnChanged(nil))
-	cb.OnJobRunBefore(nil)
-	cb.OnJobUpdated(nil)
-	cb.OnWatched(context.TODO())
 }
