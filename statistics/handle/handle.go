@@ -502,8 +502,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
-	}
-	handle.mu.ctx.GetSessionVars().InRestrictedSQL = true
+
 	return handle, nil
 }
 
