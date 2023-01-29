@@ -73,6 +73,7 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"github.com/tiancaiamao/sched"
 )
 
 var (
@@ -326,7 +327,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		registerSQLAndPlanInExecForTopSQL(sessVars)
 	}
 	err := e.Next(ctx, req)
-
+	sched.CheckPoint(ctx)
 	if err != nil {
 		return err
 	}

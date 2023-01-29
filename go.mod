@@ -106,7 +106,7 @@ require (
 	go.etcd.io/etcd/tests/v3 v3.5.2
 	go.opencensus.io v0.24.0
 	go.uber.org/atomic v1.10.0
-	go.uber.org/automaxprocs v1.4.0
+	go.uber.org/automaxprocs v1.5.1
 	go.uber.org/goleak v1.2.0
 	go.uber.org/multierr v1.9.0
 	go.uber.org/zap v1.24.0
@@ -225,6 +225,7 @@ require (
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a // indirect
+	github.com/tiancaiamao/sched v0.0.0-20230120055155-071bd84b1ce4 // indirect
 	github.com/tikv/pd v1.1.0-beta.0.20230119114149-402c2bfee2f3 // indirect
 	github.com/tklauser/go-sysconf v0.3.10 // indirect
 	github.com/tklauser/numcpus v0.4.0 // indirect
@@ -265,3 +266,5 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
+
+replace github.com/tiancaiamao/sched => ../../tiancaiamao/sched

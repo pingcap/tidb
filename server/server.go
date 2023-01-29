@@ -73,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"github.com/tiancaiamao/sched"
 )
 
 var (
@@ -560,6 +561,7 @@ func (s *Server) onConn(conn *clientConn) {
 	}
 
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
+	ctx, _ = sched.NewTaskGroup(ctx)
 	if err := conn.handshake(ctx); err != nil {
 		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {

@@ -1275,6 +1275,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+github.com/tiancaiamao/sched v0.0.0-20230120055155-071bd84b1ce4 h1:vJi+egH1yj0RCiHYGSqMNfcPrXYzh6ypqpWYpPg6NzM=
+github.com/tiancaiamao/sched v0.0.0-20230120055155-071bd84b1ce4/go.mod h1:cH49QdwG8pvUoEPEm63d+uVH1jIeTmDOS3hBOjuj/kA=
 github.com/tikv/client-go/v2 v2.0.5-0.20230120021435-f89383775234 h1:2BmijiUk1Hcv0z58DVk4ypwaNmgutzLc2YJm0SHPEWE=
 github.com/tikv/client-go/v2 v2.0.5-0.20230120021435-f89383775234/go.mod h1:jc7J2EbNeVvU6eXmB50wAGrTPyJwdi+0ENccMXMFSpw=
 github.com/tikv/pd v1.1.0-beta.0.20230119114149-402c2bfee2f3 h1:cj3bhdIBJcLL2304EDEmd3eX+r73+hbGSYRFn/APiDU=
@@ -1390,6 +1392,8 @@ go.uber.org/atomic v1.10.0 h1:9qC72Qh0+3MqyJbAn8YU5xVq1frD8bn3JtD2oXtafVQ=
 go.uber.org/atomic v1.10.0/go.mod h1:LUxbIzbOniOlMKjJjyPfpl4v+PKK2cNJn91OQbhoJI0=
 go.uber.org/automaxprocs v1.4.0 h1:CpDZl6aOlLhReez+8S3eEotD7Jx0Os++lemPlMULQP0=
 go.uber.org/automaxprocs v1.4.0/go.mod h1:/mTEdr7LvHhs0v7mjdxDreTz1OG5zdZGqgOnhWiR/+Q=
+go.uber.org/automaxprocs v1.5.1 h1:e1YG66Lrk73dn4qhg8WFSvhF0JuFQF0ERIp4rpuV8Qk=
+go.uber.org/automaxprocs v1.5.1/go.mod h1:BF4eumQw0P9GtnuxxovUd06vwm1o18oMzFtK66vU6XU=
 go.uber.org/goleak v1.1.10/go.mod h1:8a7PlsEVH3e/a/GLqe5IIrQx6GzcnRmZEufDUTk4A7A=
 go.uber.org/goleak v1.1.11/go.mod h1:cwTWslyiVhfpKIDGSZEM2HlOvcqm+tG4zioyIeLoqMQ=
 go.uber.org/goleak v1.2.0 h1:xqgm/S+aQvhWFTtR0XK3Jvg7z8kGV8P4X14IzwN3Eqk=

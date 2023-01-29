@@ -46,6 +46,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"github.com/tiancaiamao/sched"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -296,7 +297,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if planCounter == 0 {
 		planCounter = -1
 	}
-	physical, cost, err := physicalOptimize(logic, &planCounter)
+	physical, cost, err := physicalOptimize(ctx, logic, &planCounter)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -395,6 +396,7 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
+	sched.CheckPoint(ctx)
 	return plan, nil
 }
 
@@ -1066,6 +1068,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		}
 	}
 	opt.recordFinalLogicalPlan(logic)
+	sched.CheckPoint(ctx)
 	return logic, err
 }
 
@@ -1074,7 +1077,7 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan PhysicalPlan, cost float64, err error) {
+func physicalOptimize(ctx context.Context, logic LogicalPlan, planCounter *PlanCounterTp) (plan PhysicalPlan, cost float64, err error) {
 	if _, err := logic.recursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
@@ -1118,6 +1121,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		return nil, 0, err
 	}
 	cost, err = getPlanCost(t.plan(), property.RootTaskType, NewDefaultPlanCostOption())
+	sched.CheckPoint(ctx)
 	return t.plan(), cost, err
 }
 

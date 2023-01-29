@@ -111,6 +111,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"github.com/tiancaiamao/sched"
 )
 
 var (
@@ -1550,6 +1551,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	p.SetSQLMode(s.sessionVars.SQLMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
+	sched.CheckPoint(ctx)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
 	res := make([]ast.StmtNode, len(tmp))
 	copy(res, tmp)
