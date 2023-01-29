@@ -101,7 +101,6 @@ func StartRegionEx(ctx context.Context, regionType string) (Region, context.Cont
 type Region struct {
 	*trace.Region
 	opentracing.Span
-	context.Context
 }
 
 // End marks the end of the traced code region.

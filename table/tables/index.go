@@ -169,9 +169,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	indexedValues := c.getIndexedValue(indexedValue)
 	ctx := opt.Ctx
 	if ctx != nil {
-		r := tracing.StartRegion(ctx, "index.Create")
+		var r tracing.Region
+		r, ctx = tracing.StartRegionEx(ctx, "index.Create")
 		defer r.End()
-		ctx = r.Context
 	} else {
 		ctx = context.TODO()
 	}
