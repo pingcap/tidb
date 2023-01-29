@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -67,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 const (
@@ -717,11 +715,6 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 }
 
 func isTiFlashComputeNodeAvailable(ctx sessionctx.Context) bool {
-	bo := backoff.NewBackofferWithVars(context.Background(), 5000, nil)
-	stores, err := ctx.GetStore().(tikv.Storage).GetRegionCache().GetTiFlashComputeStores(bo.TiKVBackoffer())
-	if err != nil || len(stores) == 0 {
-		return false
-	}
 	return true
 }
 
