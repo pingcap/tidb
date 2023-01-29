@@ -79,6 +79,7 @@ const (
 	TableRestoreCmd = "Table Restore"
 	PointRestoreCmd = "Point Restore"
 	RawRestoreCmd   = "Raw Restore"
+	TxnRestoreCmd   = "Txn Restore"
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.

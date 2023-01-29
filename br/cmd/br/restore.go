@@ -117,7 +117,7 @@ func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 	if err := task.RunRestoreTxn(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
-		log.Error("failed to restore raw kv", zap.Error(err))
+		log.Error("failed to restore txn kv", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil
@@ -215,7 +215,7 @@ func newTxnRestoreCommand() *cobra.Command {
 		Short: "(experimental) restore txn kv to TiKV cluster",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreTxnCommand(cmd, task.RawRestoreCmd)
+			return runRestoreTxnCommand(cmd, task.TxnRestoreCmd)
 		},
 	}
 

@@ -341,14 +341,18 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	return nil
 }
 
-func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
+func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
 	rc.rawKVClient = c
+}
+
+func (rc *Client) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
+	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
@@ -357,7 +361,7 @@ func (rc *Client) InitBackupMeta(
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
-	if !backupMeta.IsRawKv {
+	if rc.needLoadSchemas(backupMeta) {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
 			return errors.Trace(err)
@@ -380,7 +384,7 @@ func (rc *Client) InitBackupMeta(
 	}
 	rc.backupMeta = backupMeta
 
-	rc.InitClients(backend, backupMeta.IsRawKv)
+	rc.InitClients(backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
@@ -1040,7 +1044,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 

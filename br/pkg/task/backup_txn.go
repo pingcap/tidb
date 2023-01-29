@@ -5,9 +5,6 @@ package task
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
-
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -102,6 +99,8 @@ func (cfg *TxnKvConfig) Adjust() {
 // RunBackupTxn starts a backup task inside the current goroutine.
 func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConfig) error {
 	cfg.Adjust()
+	defer summary.Summary(cmdName)
+
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
@@ -133,24 +132,14 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 		return errors.Trace(err)
 	}
 
-	ranges := ranger.FullNotNullRange()
-	backupRanges := make([]rtree.Range, 0, len(ranges))
-
+	backupRanges := make([]rtree.Range, 0, 1)
 	// current just build full txn range to support full txn backup
-	for _, ran := range ranges {
-		low, err := codec.EncodeKey(nil, nil, ran.LowVal...)
-		if err != nil {
-			return err
-		}
-		high, err := codec.EncodeKey(nil, nil, ran.HighVal...)
-		if err != nil {
-			return err
-		}
-		backupRanges = append(backupRanges, rtree.Range{
-			StartKey: low,
-			EndKey:   high,
-		})
-	}
+	minStartKey := []byte{}
+	maxEndKey := []byte{}
+	backupRanges = append(backupRanges, rtree.Range{
+		StartKey: minStartKey,
+		EndKey:   maxEndKey,
+	})
 
 	if cfg.RemoveSchedulers {
 		restore, e := mgr.RemoveSchedulers(ctx)
@@ -175,7 +164,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 	}
 
 	// The number of regions need to backup
-	approximateRegions, err := mgr.GetRegionCount(ctx, backupRanges[0].StartKey, backupRanges[0].EndKey)
+	approximateRegions, err := mgr.GetRegionCount(ctx, minStartKey, maxEndKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -223,7 +212,8 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.StartVersion = req.StartVersion
 		m.EndVersion = req.EndVersion
-		m.IsRawKv = req.IsRawKv
+		m.IsRawKv = false
+		m.IsTxnKv = true
 		m.ClusterId = req.ClusterId
 		m.ClusterVersion = clusterVersion
 		m.BrVersion = brVersion
@@ -238,7 +228,6 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	g.Record(summary.BackupDataSize, metaWriter.ArchiveSize())
 
 	// Set task summary to success status.

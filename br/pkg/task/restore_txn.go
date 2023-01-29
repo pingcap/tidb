@@ -18,6 +18,9 @@ import (
 // RunRestoreTxn starts a txn kv restore task inside the current goroutine.
 func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) (err error) {
 	cfg.adjust()
+	if cfg.Concurrency == 0 {
+		cfg.Concurrency = defaultRestoreConcurrency
+	}
 
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)

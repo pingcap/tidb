@@ -42,6 +42,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+type KvMode int
+
+const (
+	TiDB KvMode = iota
+	Raw
+	Txn
+)
+
 const (
 	importScanRegionTime = 10 * time.Second
 	gRPCBackOffMaxDelay  = 3 * time.Second
@@ -245,7 +253,7 @@ type FileImporter struct {
 	importClient ImporterClient
 	backend      *backuppb.StorageBackend
 
-	isRawKvMode        bool
+	kvMode             KvMode
 	rawStartKey        []byte
 	rawEndKey          []byte
 	supportMultiIngest bool
@@ -259,12 +267,20 @@ func NewFileImporter(
 	importClient ImporterClient,
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
+	isTxnKvMode bool,
 ) FileImporter {
+	kvMode := TiDB
+	if isRawKvMode {
+		kvMode = Raw
+	}
+	if isTxnKvMode {
+		kvMode = Txn
+	}
 	return FileImporter{
 		metaClient:   metaClient,
 		backend:      backend,
 		importClient: importClient,
-		isRawKvMode:  isRawKvMode,
+		kvMode:       kvMode,
 		cacheKey:     fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 	}
 }
@@ -294,7 +310,7 @@ func (importer *FileImporter) CheckMultiIngestSupport(ctx context.Context, pdCli
 
 // SetRawRange sets the range to be restored in raw kv mode.
 func (importer *FileImporter) SetRawRange(startKey, endKey []byte) error {
-	if !importer.isRawKvMode {
+	if importer.kvMode != Raw {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "file importer is not in raw kv mode")
 	}
 	importer.rawStartKey = startKey
@@ -314,7 +330,7 @@ func (importer *FileImporter) getKeyRangeForFiles(
 	)
 
 	for _, f := range files {
-		if importer.isRawKvMode {
+		if importer.kvMode == Raw || importer.kvMode == Txn {
 			start, end = f.GetStartKey(), f.GetEndKey()
 		} else {
 			start, end, err = GetRewriteRawKeys(f, rewriteRules)
@@ -577,7 +593,7 @@ func (importer *FileImporter) download(
 		var e error
 		for i, f := range remainFiles {
 			var downloadMeta *import_sstpb.SSTMeta
-			if importer.isRawKvMode {
+			if importer.kvMode == Raw {
 				downloadMeta, e = importer.downloadRawKVSST(ctx, regionInfo, f, cipher, apiVersion)
 			} else {
 				downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, cipher)
@@ -594,7 +610,7 @@ func (importer *FileImporter) download(
 			})
 			if isDecryptSstErr(e) {
 				log.Info("fail to decrypt when download sst, try again with no-crypt", logutil.File(f))
-				if importer.isRawKvMode {
+				if importer.kvMode == Raw {
 					downloadMeta, e = importer.downloadRawKVSST(ctx, regionInfo, f, nil, apiVersion)
 				} else {
 					downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, nil)
