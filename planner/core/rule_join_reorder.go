@@ -527,7 +527,7 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 	var preferredJoinMethodHint uint
 	var joinMethodHintInfo *tableHintInfo
 	if joinMethodHint, ok := s.joinMethodHintInfo[lChild.ID()]; ok {
-		preferredJoinMethodHint = joinMethodHint.preferredJoinMethod
+		preferredJoinMethodHint = adjustPreferredJoinMethodHint(joinMethodHint.preferredJoinMethod, true)
 		joinMethodHintInfo = joinMethodHint.joinMethodHintInfo
 	}
 	if joinMethodHint, ok := s.joinMethodHintInfo[rChild.ID()]; ok {
@@ -538,7 +538,7 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 			joinMethodHintInfo = nil
 			newJoin.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		} else {
-			preferredJoinMethodHint = joinMethodHint.preferredJoinMethod
+			preferredJoinMethodHint = adjustPreferredJoinMethodHint(joinMethodHint.preferredJoinMethod, false)
 			joinMethodHintInfo = joinMethodHint.joinMethodHintInfo
 		}
 	}
@@ -546,6 +546,46 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 		newJoin.preferJoinType = preferredJoinMethodHint
 		newJoin.hintInfo = joinMethodHintInfo
 	}
+}
+
+func adjustPreferredJoinMethodHint(preferredJoinMethodHint uint, isLeft bool) uint {
+	if preferredJoinMethodHint == preferLeftAsINLJInner || preferredJoinMethodHint == preferRightAsINLJInner {
+		if preferredJoinMethodHint == preferLeftAsINLJInner && !isLeft {
+			return preferRightAsINLJInner
+		}
+		if preferredJoinMethodHint == preferRightAsINLJInner && isLeft {
+			return preferLeftAsINLJInner
+		}
+	} else if preferredJoinMethodHint == preferLeftAsINLHJInner || preferredJoinMethodHint == preferRightAsINLHJInner {
+		if preferredJoinMethodHint == preferLeftAsINLHJInner && !isLeft {
+			return preferRightAsINLHJInner
+		}
+		if preferredJoinMethodHint == preferRightAsINLHJInner && isLeft {
+			return preferLeftAsINLHJInner
+		}
+	} else if preferredJoinMethodHint == preferLeftAsINLMJInner || preferredJoinMethodHint == preferRightAsINLMJInner {
+		if preferredJoinMethodHint == preferLeftAsINLMJInner && !isLeft {
+			return preferRightAsINLMJInner
+		}
+		if preferredJoinMethodHint == preferRightAsINLMJInner && isLeft {
+			return preferLeftAsINLMJInner
+		}
+	} else if preferredJoinMethodHint == preferLeftAsHJBuild || preferredJoinMethodHint == preferRightAsHJBuild {
+		if preferredJoinMethodHint == preferLeftAsHJBuild && !isLeft {
+			return preferRightAsHJBuild
+		}
+		if preferredJoinMethodHint == preferRightAsHJBuild && isLeft {
+			return preferLeftAsHJBuild
+		}
+	} else if preferredJoinMethodHint == preferLeftAsHJProbe || preferredJoinMethodHint == preferRightAsHJProbe {
+		if preferredJoinMethodHint == preferLeftAsHJProbe && !isLeft {
+			return preferRightAsHJProbe
+		}
+		if preferredJoinMethodHint == preferRightAsHJProbe && isLeft {
+			return preferLeftAsHJProbe
+		}
+	}
+	return preferredJoinMethodHint
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
