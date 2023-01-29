@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -88,7 +89,7 @@ func withTiKVConnection(ctx context.Context, tls *common.TLS, tikvAddr string, a
 	// Connect to the ImportSST service on the given TiKV node.
 	// The connection is needed for executing `action` and will be tear down
 	// when this function exits.
-	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption())
+	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption(), config.DefaultGrpcKeepaliveParams)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -172,7 +173,8 @@ var fetchModeRegexp = regexp.MustCompile(`\btikv_config_rocksdb\{cf="default",na
 
 // FetchMode obtains the import mode status of the TiKV node.
 func FetchMode(ctx context.Context, tls *common.TLS, tikvAddr string) (import_sstpb.SwitchMode, error) {
-	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption())
+	conn, err := grpc.DialContext(ctx, tikvAddr, tls.ToGRPCDialOption(),
+		config.DefaultGrpcKeepaliveParams)
 	if err != nil {
 		return 0, err
 	}

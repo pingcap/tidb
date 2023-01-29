@@ -14,6 +14,7 @@ go_library(
         "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/httputil",
+        "//br/pkg/lightning/config",
         "//br/pkg/logutil",
         "//br/pkg/redact",
         "//br/pkg/utils",
