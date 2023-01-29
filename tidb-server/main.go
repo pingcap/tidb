@@ -331,6 +331,9 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
 	dom, err := session.BootstrapSession(storage)
+	if err != nil {
+		fmt.Println("ErrorStack", errors.ErrorStack(err))
+	}
 	terror.MustNil(err)
 	return storage, dom
 }
