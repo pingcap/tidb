@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "concurrentddltest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "switch_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 2,
+    deps = [
+        "//config",
+        "//ddl",
+        "//kv",
+        "//meta",
+        "//sessionctx/variable",
+        "//testkit",
+        "//testkit/testsetup",
+        "//util",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
