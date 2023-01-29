@@ -86,7 +86,7 @@ func runBackupTxnCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 	if err := task.RunBackupTxn(ctx, gluetikv.Glue{}, cmdName, &cfg); err != nil {
-		log.Error("failed to backup raw kv", zap.Error(err))
+		log.Error("failed to backup txn kv", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil

@@ -120,8 +120,8 @@ func (bc *Client) SetCipher(cipher *backuppb.CipherInfo) {
 	bc.cipher = cipher
 }
 
-// GetTS gets a new timestamp from PD.
-func (bc *Client) GetCurerntTS(ctx context.Context) (uint64, error) {
+// GetCurrentTS gets a new timestamp from PD.
+func (bc *Client) GetCurrentTS(ctx context.Context) (uint64, error) {
 	p, l, err := bc.mgr.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)

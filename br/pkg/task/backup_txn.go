@@ -91,16 +91,22 @@ func (cfg *TxnKvConfig) ParseBackupConfigFromFlags(flags *pflag.FlagSet) error {
 	return nil
 }
 
+// Adjust Txn kv config for backup
+func (cfg *TxnKvConfig) Adjust() {
+	cfg.adjust()
+	if cfg.Config.Concurrency == 0 {
+		cfg.Config.Concurrency = defaultBackupConcurrency
+	}
+}
+
 // RunBackupTxn starts a backup task inside the current goroutine.
 func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConfig) error {
-	cfg.adjust()
-
-	defer summary.Summary(cmdName)
+	cfg.Adjust()
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("task.RunBackupRaw", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("task.RunBackupTxn", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -109,7 +115,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Backup raw does not need domain.
+	// Backup txn does not need domain.
 	needDomain := false
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
@@ -187,11 +193,16 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 		}
 		updateCh.Inc()
 	}
+	backupTS, err := client.GetCurrentTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	g.Record("BackupTS", backupTS)
 
 	req := backuppb.BackupRequest{
 		ClusterId:        client.GetClusterID(),
 		StartVersion:     0,
-		EndVersion:       0,
+		EndVersion:       backupTS,
 		RateLimit:        cfg.RateLimit,
 		Concurrency:      cfg.Concurrency,
 		StorageBackend:   client.GetStorageBackend(),
