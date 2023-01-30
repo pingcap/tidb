@@ -1,5 +1,16 @@
 [
   {
+    "name": "TestEnforceMVIndex",
+    "cases": [
+      "select /*+ use_index(t, kj) */ * from t",
+      "select /*+ use_index(t, kj) */ a from t",
+      "select /*+ use_index(t, kj) */ * from t where a<10",
+      "select /*+ use_index(t, kj) */ * from t where (1 member of (j))",
+      "select /*+ use_index(t, kj) */ * from t where (1 member of (j)) and a=10",
+      "select /*+ use_index(t, kj) */ * from t where (1 member of (j)) or a=10"
+    ]
+  },
+  {
     "name": "TestIndexMergeJSONMemberOf",
     "cases": [
       "select /*+ use_index_merge(t, j0_0) */ * from t where (1 member of (j0->'$.path0'))",

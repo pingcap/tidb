@@ -211,3 +211,29 @@ func TestMVIndexPointGet(t *testing.T) {
 		require.True(t, !hasPointGet) // no point-get plan
 	}
 }
+
+func TestEnforceMVIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, j json, index kj((cast(j as signed array))))`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	planSuiteData := core.GetIndexMergeSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, query := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = query
+		})
+		result := tk.MustQuery("explain format = 'brief' " + query)
+		testdata.OnRecord(func() {
+			output[i].Plan = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		result.Check(testkit.Rows(output[i].Plan...))
+	}
+}
