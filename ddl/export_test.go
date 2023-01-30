@@ -28,7 +28,7 @@ func SetBatchInsertDeleteRangeSize(i int) {
 
 var NewCopContext4Test = newCopContext
 
-func FetchRowsFromCop4Test(copCtx *copContext, startKey, endKey kv.Key, startTS uint64,
+func FetchRowsFromCop4Test(copCtx *copContext, startKey, endKey kv.Key, store kv.Storage,
 	batchSize int) ([]*indexRecord, bool, error) {
 	variable.SetDDLReorgBatchSize(int32(batchSize))
 	task := &reorgBackfillTask{
@@ -36,7 +36,7 @@ func FetchRowsFromCop4Test(copCtx *copContext, startKey, endKey kv.Key, startTS 
 		startKey: startKey,
 		endKey:   endKey,
 	}
-	pool := newCopReqSenderPool(context.Background(), copCtx, startTS)
+	pool := newCopReqSenderPool(context.Background(), copCtx, store)
 	pool.adjustSize(1)
 	pool.tasksCh <- task
 	idxRec, _, _, done, err := pool.fetchRowColValsFromCop(*task)

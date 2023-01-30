@@ -427,6 +427,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	defer func() {
 		// don't reset the gc-safe-point if checkpoint mode is used and backup is not finished
 		if cfg.UseCheckpoint && !gcSafePointKeeperRemovable {
+			log.Info("skip removing gc-safepoint keeper for next retry", zap.String("gc-id", sp.ID))
 			return
 		}
 		log.Info("start to remove gc-safepoint keeper")
@@ -596,7 +597,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		defer func() {
 			if !gcSafePointKeeperRemovable {
 				log.Info("wait for flush checkpoint...")
-				client.WaitForFinishCheckpoint()
+				client.WaitForFinishCheckpoint(ctx)
 			}
 		}()
 	}

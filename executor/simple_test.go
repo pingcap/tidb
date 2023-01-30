@@ -21,13 +21,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
-	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestKillStmt(t *testing.T) {
@@ -86,7 +86,7 @@ func TestKillStmt(t *testing.T) {
 func TestUserAttributes(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	rootTK := testkit.NewTestKit(t, store)
-	ctx := context.WithValue(context.Background(), tikvutil.RequestSourceKey, tikvutil.RequestSource{RequestSourceInternal: true})
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 
 	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html#create-user-comments-attributes
 	rootTK.MustExec(`CREATE USER testuser COMMENT '1234'`)
@@ -128,6 +128,8 @@ func TestUserAttributes(t *testing.T) {
 	rootTK.MustExec("create user usr1@'%' identified by 'passord'")
 	rootTK.MustExec("alter user usr1 comment 'comment1'")
 	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "default"}`))
-	rootTK.MustExec("alter user usr1 resource group 'rg1'")
+	rootTK.MustExec("set global tidb_enable_resource_control = 'on'")
+	rootTK.MustExec("CREATE RESOURCE GROUP rg1 rru_per_sec = 100 wru_per_sec = 200")
+	rootTK.MustExec("alter user usr1 resource group rg1")
 	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}`))
 }

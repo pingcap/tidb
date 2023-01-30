@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/cpu",
     visibility = ["//visibility:public"],
     deps = [
+        "//metrics",
         "//util/cgroup",
         "//util/mathutil",
         "@com_github_cloudfoundry_gosigar//:gosigar",
@@ -19,5 +20,7 @@ go_test(
     name = "cpu_test",
     srcs = ["cpu_test.go"],
     embed = [":cpu"],
+    flaky = True,
+    race = "on",
     deps = ["@com_github_stretchr_testify//require"],
 )

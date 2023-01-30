@@ -119,13 +119,18 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 			zap.Error(err))
 		return err
 	}
+	err = domain.GetDomain(e.ctx).GetPlanReplayerHandle().CollectPlanReplayerTask()
+	if err != nil {
+		logutil.BgLogger().Warn("collect task failed", zap.Error(err))
+	}
+	logutil.BgLogger().Info("collect plan replayer task success")
 	e.endFlag = true
 	return nil
 }
 
 func (e *PlanReplayerExec) createFile() error {
 	var err error
-	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile()
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(false, false, false)
 	if err != nil {
 		return err
 	}

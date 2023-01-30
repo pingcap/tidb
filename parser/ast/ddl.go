@@ -1096,7 +1096,8 @@ func (n *CreateTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	for i, option := range n.Options {
+	options := tableOptionsWithRestoreTTLFlag(ctx.Flags, n.Options)
+	for i, option := range options {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing CreateTableStmt TableOption: [%v]", i)
@@ -2099,20 +2100,20 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 
 // ResourceGroupOption is used for parsing resource group option.
 type ResourceGroupOption struct {
-	Tp       ResourceUnitType
-	StrValue string
+	Tp        ResourceUnitType
+	StrValue  string
+	UintValue uint64
 }
 
 type ResourceUnitType int
 
 const (
-	ResourceUnitCPU ResourceUnitType = iota
-	ResourceRRURate
+	ResourceRRURate ResourceUnitType = iota
 	ResourceWRURate
-	// Only valied when read/wirte not setting.
-	ResourceUnitIORate
-	ResourceUnitIOReadRate
-	ResourceUnitIOWriteRate
+	// Native mode
+	ResourceUnitCPU
+	ResourceUnitIOReadBandwidth
+	ResourceUnitIOWriteBandwidth
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -2121,23 +2122,23 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	}
 	fn := func() error {
 		switch n.Tp {
+		case ResourceRRURate:
+			ctx.WriteKeyWord("RRU_PER_SEC ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+		case ResourceWRURate:
+			ctx.WriteKeyWord("WRU_PER_SEC ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
 		case ResourceUnitCPU:
 			ctx.WriteKeyWord("CPU ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
-		case ResourceRRURate:
-			ctx.WriteKeyWord("RRU_PER_SEC ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-		case ResourceWRURate:
-			ctx.WriteKeyWord("WRU_PER_SEC ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-		case ResourceUnitIOReadRate:
+		case ResourceUnitIOReadBandwidth:
 			ctx.WriteKeyWord("IO_READ_BANDWIDTH ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
-		case ResourceUnitIOWriteRate:
+		case ResourceUnitIOWriteBandwidth:
 			ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
@@ -2147,7 +2148,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 		return nil
 	}
 	// WriteSpecialComment
-	return ctx.WriteWithSpecialComments(tidb.FeatureIDResouceGroup, fn)
+	return ctx.WriteWithSpecialComments(tidb.FeatureIDResourceGroup, fn)
 }
 
 type StatsOptionType int
@@ -2202,6 +2203,7 @@ const (
 	TableOptionEncryption
 	TableOptionTTL
 	TableOptionTTLEnable
+	TableOptionTTLJobInterval
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2558,6 +2560,13 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			} else {
 				ctx.WriteString("OFF")
 			}
+			return nil
+		})
+	case TableOptionTTLJobInterval:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("TTL_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
 			return nil
 		})
 	default:
@@ -3573,11 +3582,21 @@ func (n *AlterTableStmt) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore AlterTableStmt.Table")
 	}
-	var specs []*AlterTableSpec
+	specs := make([]*AlterTableSpec, 0, len(n.Specs))
 	for _, spec := range n.Specs {
-		if !(spec.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag()) {
-			specs = append(specs, spec)
+		if spec.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+			continue
 		}
+		if spec.Tp == AlterTableOption {
+			newOptions := tableOptionsWithRestoreTTLFlag(ctx.Flags, spec.Options)
+			if len(newOptions) == 0 {
+				continue
+			}
+			newSpec := *spec
+			newSpec.Options = newOptions
+			spec = &newSpec
+		}
+		specs = append(specs, spec)
 	}
 	for i, spec := range specs {
 		if i == 0 || spec.Tp == AlterTablePartition || spec.Tp == AlterTableRemovePartitioning || spec.Tp == AlterTableImportTablespace || spec.Tp == AlterTableDiscardTablespace {
@@ -4509,4 +4528,26 @@ func restorePlacementStmtInSpecialComment(ctx *format.RestoreCtx, n DDLNode) err
 		ctx.Flags &= ^format.RestoreTiDBSpecialComment
 		return n.Restore(ctx)
 	})
+}
+
+func tableOptionsWithRestoreTTLFlag(flags format.RestoreFlags, options []*TableOption) []*TableOption {
+	if !flags.HasRestoreWithTTLEnableOff() {
+		return options
+	}
+
+	newOptions := make([]*TableOption, 0, len(options))
+	for _, opt := range options {
+		if opt.Tp == TableOptionTTLEnable {
+			continue
+		}
+
+		newOptions = append(newOptions, opt)
+		if opt.Tp == TableOptionTTL {
+			newOptions = append(newOptions, &TableOption{
+				Tp:        TableOptionTTLEnable,
+				BoolValue: false,
+			})
+		}
+	}
+	return newOptions
 }

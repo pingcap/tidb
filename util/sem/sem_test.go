@@ -81,8 +81,8 @@ func TestIsInvisibleSysVar(t *testing.T) {
 
 	assert.False(IsInvisibleSysVar(variable.Hostname))                   // changes the value to default, but is not invisible
 	assert.False(IsInvisibleSysVar(variable.TiDBEnableEnhancedSecurity)) // should be able to see the mode is on.
+	assert.False(IsInvisibleSysVar(variable.TiDBAllowRemoveAutoInc))
 
-	assert.True(IsInvisibleSysVar(variable.TiDBAllowRemoveAutoInc))
 	assert.True(IsInvisibleSysVar(variable.TiDBCheckMb4ValueInUTF8))
 	assert.True(IsInvisibleSysVar(variable.TiDBConfig))
 	assert.True(IsInvisibleSysVar(variable.TiDBEnableSlowLog))

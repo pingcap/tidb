@@ -26,8 +26,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -686,7 +687,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2.MustExec("use test")
 
 	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
@@ -2371,6 +2372,43 @@ func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
 	// NOTE (#18150): In creating generated column, row value is not allowed.
 	tk.MustGetErrCode("create table t (a int, b int as ((a, a)))", errno.ErrGeneratedColumnRowValueIsNotAllowed)
 	tk.MustExec("create table t (a int, b int as ((a)))")
+}
+
+func TestSchemaNameAndTableNameInGeneratedExpr(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t(a int, b int as (lower(test.t.a)))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("alter table t add column b int as (lower(test.t.a))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustGetErrCode("alter table t add index idx((lower(test.t1.a)))", errno.ErrBadField)
+
+	tk.MustExec("drop table t")
+	tk.MustGetErrCode("create table t(a int, b int as (lower(test1.t.a)))", errno.ErrWrongDBName)
+
+	tk.MustExec("create table t(a int)")
+	tk.MustGetErrCode("alter table t add column b int as (lower(test.t1.a))", errno.ErrWrongTableName)
+
+	tk.MustExec("alter table t add column c int")
+	tk.MustGetErrCode("alter table t modify column c int as (test.t1.a + 1) stored", errno.ErrWrongTableName)
+
+	tk.MustExec("alter table t add column d int as (lower(test.T.a))")
+	tk.MustExec("alter table t add column e int as (lower(Test.t.a))")
 }
 
 func TestParserIssue284(t *testing.T) {

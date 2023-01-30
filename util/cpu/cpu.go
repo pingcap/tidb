@@ -21,6 +21,7 @@ import (
 
 	"github.com/cloudfoundry/gosigar"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/cgroup"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/atomic"
@@ -55,17 +56,20 @@ func NewCPUObserver() *Observer {
 
 // Start starts the cpu observer.
 func (c *Observer) Start() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
 	c.wg.Add(1)
 	go func() {
-		defer c.wg.Done()
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer func() {
+			ticker.Stop()
+			c.wg.Done()
+		}()
 		for {
 			select {
 			case <-ticker.C:
 				curr := c.observe()
 				c.cpu.Add(curr)
 				cpuUsage.Store(c.cpu.Get())
+				metrics.EMACPUUsageGauge.Set(c.cpu.Get())
 			case <-c.exit:
 				return
 			}

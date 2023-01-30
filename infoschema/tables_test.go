@@ -56,8 +56,7 @@ func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
 
 func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100,
-		0.1, math.MaxUint64, plannercore.PickPlanFromBucket, tk.Session())})
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session())})
 	require.NoError(t, err)
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
@@ -264,6 +263,8 @@ func TestCurrentTimestampAsDefault(t *testing.T) {
 					c_timestamp timestamp,
 					c_timestamp_default timestamp default current_timestamp,
 					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
+					c_date_default date default current_date,
+					c_date_default_2 date default curdate(),
 					c_varchar_default varchar(20) default "current_timestamp",
 					c_varchar_default_3 varchar(20) default "current_timestamp(3)",
 					c_varchar_default_on_update datetime default current_timestamp on update current_timestamp,
@@ -276,6 +277,8 @@ func TestCurrentTimestampAsDefault(t *testing.T) {
 					WHERE table_schema = "default_time_test" AND table_name = "default_time_table"
 					ORDER BY column_name`,
 	).Check(testkit.Rows(
+		"c_date_default CURRENT_DATE ",
+		"c_date_default_2 CURRENT_DATE ",
 		"c_datetime <nil> ",
 		"c_datetime_default CURRENT_TIMESTAMP ",
 		"c_datetime_default_2 CURRENT_TIMESTAMP(2) ",
@@ -531,18 +534,168 @@ func TestSlowQuery(t *testing.T) {
 	slowLogFileName := "tidb_slow.log"
 	prepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
+	expectedRes := [][]interface{}{
+		{"2019-02-12 19:33:56.571953",
+			"406315658548871171",
+			"root",
+			"localhost",
+			"6",
+			"57",
+			"0.12",
+			"4.895492",
+			"0.4",
+			"0.2",
+			"0.000000003",
+			"2",
+			"0.000000002",
+			"0.00000001",
+			"0.000000003",
+			"0.19",
+			"0.21",
+			"0.01",
+			"0",
+			"0.18",
+			"[txnLock]",
+			"0.03",
+			"0",
+			"15",
+			"480",
+			"1",
+			"8",
+			"0.3824278",
+			"0.161",
+			"0.101",
+			"0.092",
+			"1.71",
+			"1",
+			"100001",
+			"100000",
+			"100",
+			"10",
+			"10",
+			"10",
+			"100",
+			"test",
+			"",
+			"0",
+			"42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772",
+			"t1:1,t2:2",
+			"0.1",
+			"0.2",
+			"0.03",
+			"127.0.0.1:20160",
+			"0.05",
+			"0.6",
+			"0.8",
+			"0.0.0.0:20160",
+			"70724",
+			"65536",
+			"0",
+			"0",
+			"0",
+			"0",
+			"10",
+			"",
+			"",
+			"0",
+			"1",
+			"0",
+			"0",
+			"1",
+			"0",
+			"0",
+			"abcd",
+			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
+			"",
+			"update t set i = 2;",
+			"select * from t_slim;"},
+		{"2021-09-08 14:39:54.506967",
+			"427578666238083075",
+			"root",
+			"172.16.0.0",
+			"40507",
+			"0",
+			"0",
+			"25.571605962",
+			"0.002923536",
+			"0.006800973",
+			"0.002100764",
+			"0",
+			"0",
+			"0",
+			"0.000015801",
+			"25.542014572",
+			"0",
+			"0.002294647",
+			"0.000605473",
+			"12.483",
+			"[tikvRPC regionMiss tikvRPC regionMiss regionMiss]",
+			"0",
+			"0",
+			"624",
+			"172064",
+			"60",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"rtdb",
+			"",
+			"0",
+			"124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc",
+			"",
+			"0",
+			"0",
+			"0",
+			"",
+			"0",
+			"0",
+			"0",
+			"",
+			"856544",
+			"0",
+			"86.635049185",
+			"0.015486658",
+			"100.054",
+			"0",
+			"0",
+			"",
+			"",
+			"0",
+			"1",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"",
+			"",
+			"",
+			"",
+			"INSERT INTO ...;",
+		},
+	}
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4||update t set i = 2;|select * from t_slim;",
-		"2021-09-08|14:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0|||||INSERT INTO ...;",
-	))
+	re.Check(expectedRes)
+
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testkit.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4||update t set i = 2;|select * from t_slim;",
-		"2021-09-08|06:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0|0|||||INSERT INTO ...;",
-	))
+	expectedRes[0][0] = "2019-02-12 11:33:56.571953"
+	expectedRes[1][0] = "2021-09-08 06:39:54.506967"
+	re.Check(expectedRes)
 
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
@@ -1521,10 +1674,6 @@ func TestVariablesInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skip("skip test when concurrent DDL is disabled")
-	}
 
 	tk.MustExec("use information_schema")
 	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")

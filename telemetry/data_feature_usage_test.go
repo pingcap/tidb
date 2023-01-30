@@ -15,11 +15,16 @@
 package telemetry_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
@@ -336,6 +341,45 @@ func TestPlacementPolicies(t *testing.T) {
 	require.Equal(t, uint64(1), usage.PlacementPolicyUsage.NumPartitionWithExplicitPolicies)
 }
 
+func TestResourceGroups(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, false, usage.ResourceControlUsage.Enabled)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'ON'")
+	tk.MustExec("create resource group x rru_per_sec=100 wru_per_sec=200")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, true, usage.ResourceControlUsage.Enabled)
+	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+
+	tk.MustExec("create resource group y rru_per_sec=100 wru_per_sec=200")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
+
+	tk.MustExec("alter resource group y rru_per_sec=100 wru_per_sec=300")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), usage.ResourceControlUsage.NumResourceGroups)
+
+	tk.MustExec("drop resource group y")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'OFF'")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), usage.ResourceControlUsage.NumResourceGroups)
+	require.Equal(t, false, usage.ResourceControlUsage.Enabled)
+}
+
 func TestAutoCapture(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -499,10 +543,6 @@ func TestFlashbackCluster(t *testing.T) {
 }
 
 func TestAddIndexAccelerationAndMDL(t *testing.T) {
-	if !variable.EnableConcurrentDDL.Load() {
-		t.Skipf("test requires concurrent ddl")
-	}
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
@@ -582,4 +622,158 @@ func TestIndexMergeUsage(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
+}
+
+func TestTTLTelemetry(t *testing.T) {
+	timeFormat := "2006-01-02 15:04:05"
+	dateFormat := "2006-01-02"
+
+	now := time.Now()
+	curDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if interval := curDate.Add(time.Hour * 24).Sub(now); interval > 0 && interval < 5*time.Minute {
+		// make sure testing is not running at the end of one day
+		time.Sleep(interval)
+	}
+
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_ttl_job_enable=0")
+
+	getTTLTable := func(name string) *model.TableInfo {
+		tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(name))
+		require.NoError(t, err)
+		require.NotNil(t, tbl.Meta().TTLInfo)
+		return tbl.Meta()
+	}
+
+	jobIDIdx := 1
+	insertTTLHistory := func(tblName string, partitionName string, createTime, finishTime, ttlExpire time.Time, scanError string, totalRows, errorRows int64, status string) {
+		defer func() {
+			jobIDIdx++
+		}()
+
+		tbl := getTTLTable(tblName)
+		tblID := tbl.ID
+		partitionID := tbl.ID
+		if partitionName != "" {
+			for _, def := range tbl.Partition.Definitions {
+				if def.Name.L == strings.ToLower(partitionName) {
+					partitionID = def.ID
+				}
+			}
+			require.NotEqual(t, tblID, partitionID)
+		}
+
+		summary := make(map[string]interface{})
+		summary["total_rows"] = totalRows
+		summary["success_rows"] = totalRows - errorRows
+		summary["error_rows"] = errorRows
+		summary["total_scan_task"] = 1
+		summary["scheduled_scan_task"] = 1
+		summary["finished_scan_task"] = 1
+		if scanError != "" {
+			summary["scan_task_err"] = scanError
+		}
+
+		summaryText, err := json.Marshal(summary)
+		require.NoError(t, err)
+
+		tk.MustExec("insert into "+
+			"mysql.tidb_ttl_job_history ("+
+			"	job_id, table_id, parent_table_id, table_schema, table_name, partition_name, "+
+			"	create_time, finish_time, ttl_expire, summary_text, "+
+			"	expired_rows, deleted_rows, error_delete_rows, status) "+
+			"VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			jobIDIdx, partitionID, tblID, "test", tblName, partitionName,
+			createTime.Format(timeFormat), finishTime.Format(timeFormat), ttlExpire.Format(timeFormat), summaryText,
+			totalRows, totalRows-errorRows, errorRows, status,
+		)
+	}
+
+	oneDayAgoDate := curDate.Add(-24 * time.Hour)
+	// start today, end today
+	times11 := []time.Time{curDate.Add(time.Hour), curDate.Add(2 * time.Hour), curDate}
+	// start yesterday, end today
+	times21 := []time.Time{curDate.Add(-2 * time.Hour), curDate, curDate.Add(-3 * time.Hour)}
+	// start yesterday, end yesterday
+	times31 := []time.Time{oneDayAgoDate, oneDayAgoDate.Add(time.Hour), oneDayAgoDate.Add(-time.Hour)}
+	times32 := []time.Time{oneDayAgoDate.Add(2 * time.Hour), oneDayAgoDate.Add(3 * time.Hour), oneDayAgoDate.Add(time.Hour)}
+	times33 := []time.Time{oneDayAgoDate.Add(4 * time.Hour), oneDayAgoDate.Add(5 * time.Hour), oneDayAgoDate.Add(3 * time.Hour)}
+	// start 2 days ago, end yesterday
+	times41 := []time.Time{oneDayAgoDate.Add(-2 * time.Hour), oneDayAgoDate.Add(time.Hour), oneDayAgoDate.Add(-3 * time.Hour)}
+	// start two days ago, end two days ago
+	times51 := []time.Time{oneDayAgoDate.Add(-5 * time.Hour), oneDayAgoDate.Add(-4 * time.Hour), oneDayAgoDate.Add(-6 * time.Hour)}
+
+	tk.MustExec("create table t1 (t timestamp) TTL=`t` + interval 1 hour")
+	insertTTLHistory("t1", "", times11[0], times11[1], times11[2], "", 100000000, 0, "finished")
+	insertTTLHistory("t1", "", times21[0], times21[1], times21[2], "", 100000000, 0, "finished")
+	insertTTLHistory("t1", "", times31[0], times31[1], times31[2], "err1", 112600, 110000, "finished")
+	insertTTLHistory("t1", "", times32[0], times32[1], times32[2], "", 2600, 0, "timeout")
+	insertTTLHistory("t1", "", times33[0], times33[1], times33[2], "", 2600, 0, "finished")
+	insertTTLHistory("t1", "", times41[0], times41[1], times41[2], "", 2600, 0, "finished")
+	insertTTLHistory("t1", "", times51[0], times51[1], times51[2], "", 100000000, 1, "finished")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	checkTableHistWithDeleteRows := func(vals ...int64) {
+		require.Equal(t, 5, len(vals))
+		require.Equal(t, 5, len(usage.TTLUsage.TableHistWithDeleteRows))
+		require.Equal(t, int64(10*1000), *usage.TTLUsage.TableHistWithDeleteRows[0].LessThan)
+		require.Equal(t, vals[0], usage.TTLUsage.TableHistWithDeleteRows[0].Count)
+		require.Equal(t, int64(100*1000), *usage.TTLUsage.TableHistWithDeleteRows[1].LessThan)
+		require.Equal(t, vals[1], usage.TTLUsage.TableHistWithDeleteRows[1].Count)
+		require.Equal(t, int64(1000*1000), *usage.TTLUsage.TableHistWithDeleteRows[2].LessThan)
+		require.Equal(t, vals[2], usage.TTLUsage.TableHistWithDeleteRows[2].Count)
+		require.Equal(t, int64(10*1000*1000), *usage.TTLUsage.TableHistWithDeleteRows[3].LessThan)
+		require.Equal(t, vals[3], usage.TTLUsage.TableHistWithDeleteRows[3].Count)
+		require.True(t, usage.TTLUsage.TableHistWithDeleteRows[4].LessThanMax)
+		require.Nil(t, usage.TTLUsage.TableHistWithDeleteRows[4].LessThan)
+		require.Equal(t, vals[4], usage.TTLUsage.TableHistWithDeleteRows[4].Count)
+	}
+
+	checkTableHistWithDelay := func(vals ...int64) {
+		require.Equal(t, 5, len(vals))
+		require.Equal(t, 5, len(usage.TTLUsage.TableHistWithDelayTime))
+		require.Equal(t, int64(1), *usage.TTLUsage.TableHistWithDelayTime[0].LessThan)
+		require.Equal(t, vals[0], usage.TTLUsage.TableHistWithDelayTime[0].Count)
+		require.Equal(t, int64(6), *usage.TTLUsage.TableHistWithDelayTime[1].LessThan)
+		require.Equal(t, vals[1], usage.TTLUsage.TableHistWithDelayTime[1].Count)
+		require.Equal(t, int64(24), *usage.TTLUsage.TableHistWithDelayTime[2].LessThan)
+		require.Equal(t, vals[2], usage.TTLUsage.TableHistWithDelayTime[2].Count)
+		require.Equal(t, int64(72), *usage.TTLUsage.TableHistWithDelayTime[3].LessThan)
+		require.Equal(t, vals[3], usage.TTLUsage.TableHistWithDelayTime[3].Count)
+		require.True(t, usage.TTLUsage.TableHistWithDelayTime[4].LessThanMax)
+		require.Nil(t, usage.TTLUsage.TableHistWithDelayTime[4].LessThan)
+		require.Equal(t, vals[4], usage.TTLUsage.TableHistWithDelayTime[4].Count)
+	}
+
+	require.False(t, usage.TTLUsage.TTLJobEnabled)
+	require.Equal(t, int64(1), usage.TTLUsage.TTLTables)
+	require.Equal(t, int64(1), usage.TTLUsage.TTLJobEnabledTables)
+	require.Equal(t, oneDayAgoDate.Format(dateFormat), usage.TTLUsage.TTLHistDate)
+	checkTableHistWithDeleteRows(0, 1, 0, 0, 0)
+	checkTableHistWithDelay(0, 0, 1, 0, 0)
+
+	tk.MustExec("create table t2 (t timestamp) TTL=`t` + interval 20 hour")
+	tk.MustExec("set @@global.tidb_ttl_job_enable=1")
+	insertTTLHistory("t2", "", times31[0], times31[1], times31[2], "", 9999, 0, "finished")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.TTLUsage.TTLJobEnabled)
+	require.Equal(t, int64(2), usage.TTLUsage.TTLTables)
+	require.Equal(t, int64(2), usage.TTLUsage.TTLJobEnabledTables)
+	require.Equal(t, oneDayAgoDate.Format(dateFormat), usage.TTLUsage.TTLHistDate)
+	checkTableHistWithDeleteRows(1, 1, 0, 0, 0)
+	checkTableHistWithDelay(0, 1, 1, 0, 0)
+
+	tk.MustExec("create table t3 (t timestamp) TTL=`t` + interval 1 hour TTL_ENABLE='OFF'")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.TTLUsage.TTLJobEnabled)
+	require.Equal(t, int64(3), usage.TTLUsage.TTLTables)
+	require.Equal(t, int64(2), usage.TTLUsage.TTLJobEnabledTables)
+	require.Equal(t, oneDayAgoDate.Format(dateFormat), usage.TTLUsage.TTLHistDate)
+	checkTableHistWithDeleteRows(1, 1, 0, 0, 0)
+	checkTableHistWithDelay(0, 1, 1, 0, 1)
 }

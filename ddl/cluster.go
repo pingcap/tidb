@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -66,6 +67,8 @@ const (
 	totalLockedRegionsOffset
 	startTSOffset
 	commitTSOffset
+	ttlJobEnableOffSet
+	keyRangesOffset
 )
 
 func closePDSchedule() error {
@@ -122,6 +125,18 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
+func getTiDBTTLJobEnable(sess sessionctx.Context) (string, error) {
+	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBTTLJobEnable)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return val, nil
+}
+
+func setTiDBTTLJobEnable(ctx context.Context, sess sessionctx.Context, value string) error {
+	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBTTLJobEnable, value)
+}
+
 func setTiDBEnableAutoAnalyze(ctx context.Context, sess sessionctx.Context, value string) error {
 	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, variable.TiDBEnableAutoAnalyze, value)
 }
@@ -146,6 +161,31 @@ func getTiDBSuperReadOnly(sess sessionctx.Context) (string, error) {
 	return val, nil
 }
 
+func isFlashbackSupportedDDLAction(action model.ActionType) bool {
+	switch action {
+	case model.ActionSetTiFlashReplica, model.ActionUpdateTiFlashReplicaStatus, model.ActionAlterPlacementPolicy,
+		model.ActionAlterTablePlacement, model.ActionAlterTablePartitionPlacement, model.ActionCreatePlacementPolicy,
+		model.ActionDropPlacementPolicy, model.ActionModifySchemaDefaultPlacement:
+		return false
+	default:
+		return true
+	}
+}
+
+func checkSystemSchemaID(t *meta.Meta, schemaID int64, flashbackTSString string) error {
+	if schemaID <= 0 {
+		return nil
+	}
+	DBInfo, err := t.GetDatabase(schemaID)
+	if err != nil || DBInfo == nil {
+		return errors.Trace(err)
+	}
+	if filter.IsSystemSchema(DBInfo.Name.L) {
+		return errors.Errorf("Detected modified system table during [%s, now), can't do flashback", flashbackTSString)
+	}
+	return nil
+}
+
 func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta.Meta, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(d.ctx, sess, flashbackTS); err != nil {
 		return err
@@ -163,25 +203,63 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	if err = setTiDBSuperReadOnly(d.ctx, sess, variable.On); err != nil {
 		return err
 	}
+	if err = setTiDBTTLJobEnable(d.ctx, sess, variable.Off); err != nil {
+		return err
+	}
 
 	nowSchemaVersion, err := t.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	flashbackSchemaVersion, err := meta.NewSnapshotMeta(d.store.GetSnapshot(kv.NewVersion(flashbackTS))).GetSchemaVersion()
+	flashbackSnapshotMeta := meta.NewSnapshotMeta(d.store.GetSnapshot(kv.NewVersion(flashbackTS)))
+	flashbackSchemaVersion, err := flashbackSnapshotMeta.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// If flashbackSchemaVersion not same as nowSchemaVersion, we've done ddl during [flashbackTs, now).
+	flashbackTSString := oracle.GetTimeFromTS(flashbackTS).String()
+
+	// Check if there is an upgrade during [flashbackTS, now)
+	sql := fmt.Sprintf("select VARIABLE_VALUE from mysql.tidb as of timestamp '%s' where VARIABLE_NAME='tidb_server_version'", flashbackTSString)
+	rows, err := newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	if err != nil || len(rows) == 0 {
+		return errors.Errorf("Get history `tidb_server_version` failed, can't do flashback")
+	}
+	sql = fmt.Sprintf("select 1 from mysql.tidb where VARIABLE_NAME='tidb_server_version' and VARIABLE_VALUE=%s", rows[0].GetString(0))
+	rows, err = newSession(sess).execute(d.ctx, sql, "check_tidb_server_version")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("Detected TiDB upgrade during [%s, now), can't do flashback", flashbackTSString)
+	}
+
+	// Check is there a DDL task at flashbackTS.
+	sql = fmt.Sprintf("select count(*) from mysql.%s as of timestamp '%s'", JobTable, flashbackTSString)
+	rows, err = newSession(sess).execute(d.ctx, sql, "check_history_job")
+	if err != nil || len(rows) == 0 {
+		return errors.Errorf("Get history ddl jobs failed, can't do flashback")
+	}
+	if rows[0].GetInt64(0) != 0 {
+		return errors.Errorf("Detected another DDL job at %s, can't do flashback", flashbackTSString)
+	}
+
+	// If flashbackSchemaVersion not same as nowSchemaVersion, we should check all schema diffs during [flashbackTs, now).
 	for i := flashbackSchemaVersion + 1; i <= nowSchemaVersion; i++ {
 		diff, err := t.GetSchemaDiff(i)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if diff != nil && diff.Type != model.ActionFlashbackCluster {
-			return errors.Errorf("Detected schema change due to another DDL job during [%s, now), can't do flashback", oracle.GetTimeFromTS(flashbackTS))
+		if diff == nil {
+			continue
+		}
+		if !isFlashbackSupportedDDLAction(diff.Type) {
+			return errors.Errorf("Detected unsupported DDL job type(%s) during [%s, now), can't do flashback", diff.Type.String(), flashbackTSString)
+		}
+		err = checkSystemSchemaID(flashbackSnapshotMeta, diff.SchemaID, flashbackTSString)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 
@@ -203,73 +281,100 @@ func checkAndSetFlashbackClusterInfo(sess sessionctx.Context, d *ddlCtx, t *meta
 	return nil
 }
 
-type flashbackID struct {
-	id       int64
-	excluded bool
-}
-
-func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []flashbackID) []flashbackID {
-	var excluded bool
-	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") {
-		excluded = true
+func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []int64) []int64 {
+	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") && tableName != "gc_delete_range" {
+		flashbackIDs = append(flashbackIDs, tableID)
 	}
-	flashbackIDs = append(flashbackIDs, flashbackID{
-		id:       tableID,
-		excluded: excluded,
-	})
 	return flashbackIDs
 }
 
-// GetFlashbackKeyRanges make keyRanges efficiently for flashback cluster when many tables in cluster,
+// GetTableDataKeyRanges get keyRanges by `flashbackIDs`.
+// This func will return all flashback table data key ranges.
+func GetTableDataKeyRanges(nonFlashbackTableIDs []int64) []kv.KeyRange {
+	var keyRanges []kv.KeyRange
+
+	nonFlashbackTableIDs = append(nonFlashbackTableIDs, -1)
+
+	slices.SortFunc(nonFlashbackTableIDs, func(a, b int64) bool {
+		return a < b
+	})
+
+	for i := 1; i < len(nonFlashbackTableIDs); i++ {
+		keyRanges = append(keyRanges, kv.KeyRange{
+			StartKey: tablecodec.EncodeTablePrefix(nonFlashbackTableIDs[i-1] + 1),
+			EndKey:   tablecodec.EncodeTablePrefix(nonFlashbackTableIDs[i]),
+		})
+	}
+
+	// Add all other key ranges.
+	keyRanges = append(keyRanges, kv.KeyRange{
+		StartKey: tablecodec.EncodeTablePrefix(nonFlashbackTableIDs[len(nonFlashbackTableIDs)-1] + 1),
+		EndKey:   tablecodec.EncodeTablePrefix(meta.MaxGlobalID),
+	})
+
+	return keyRanges
+}
+
+// GetFlashbackKeyRanges get keyRanges for flashback cluster.
+// It contains all non system table key ranges and meta data key ranges.
 // The time complexity is O(nlogn).
-func GetFlashbackKeyRanges(sess sessionctx.Context) ([]kv.KeyRange, error) {
+func GetFlashbackKeyRanges(sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
 	schemas := sess.GetDomainInfoSchema().(infoschema.InfoSchema).AllSchemas()
 
 	// The semantic of keyRanges(output).
-	var keyRanges []kv.KeyRange
+	keyRanges := make([]kv.KeyRange, 0)
 
-	var flashbackIDs []flashbackID
+	// get snapshot schema IDs.
+	flashbackSnapshotMeta := meta.NewSnapshotMeta(sess.GetStore().GetSnapshot(kv.NewVersion(flashbackTS)))
+	snapshotSchemas, err := flashbackSnapshotMeta.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	schemaIDs := make(map[int64]struct{})
+	for _, schema := range schemas {
+		if !filter.IsSystemSchema(schema.Name.L) {
+			schemaIDs[schema.ID] = struct{}{}
+		}
+	}
+	for _, schema := range snapshotSchemas {
+		if !filter.IsSystemSchema(schema.Name.L) {
+			schemaIDs[schema.ID] = struct{}{}
+		}
+	}
+
+	// The meta data key ranges.
+	for schemaID := range schemaIDs {
+		metaStartKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID))
+		metaEndKey := tablecodec.EncodeMetaKeyPrefix(meta.DBkey(schemaID + 1))
+		keyRanges = append(keyRanges, kv.KeyRange{
+			StartKey: metaStartKey,
+			EndKey:   metaEndKey,
+		})
+	}
+
+	startKey := tablecodec.EncodeMetaKeyPrefix([]byte("DBs"))
+	keyRanges = append(keyRanges, kv.KeyRange{
+		StartKey: startKey,
+		EndKey:   startKey.PrefixNext(),
+	})
+
+	var nonFlashbackTableIDs []int64
 	for _, db := range schemas {
 		for _, table := range db.Tables {
 			if !table.IsBaseTable() || table.ID > meta.MaxGlobalID {
 				continue
 			}
-			flashbackIDs = addToSlice(db.Name.L, table.Name.L, table.ID, flashbackIDs)
+			nonFlashbackTableIDs = addToSlice(db.Name.L, table.Name.L, table.ID, nonFlashbackTableIDs)
 			if table.Partition != nil {
 				for _, partition := range table.Partition.Definitions {
-					flashbackIDs = addToSlice(db.Name.L, table.Name.L, partition.ID, flashbackIDs)
+					nonFlashbackTableIDs = addToSlice(db.Name.L, table.Name.L, partition.ID, nonFlashbackTableIDs)
 				}
 			}
 		}
 	}
 
-	slices.SortFunc(flashbackIDs, func(a, b flashbackID) bool {
-		return a.id < b.id
-	})
-
-	lastExcludeIdx := -1
-	for i, id := range flashbackIDs {
-		if id.excluded {
-			// Found a range [lastExcludeIdx, i) needs to be added.
-			if i > lastExcludeIdx+1 {
-				keyRanges = append(keyRanges, kv.KeyRange{
-					StartKey: tablecodec.EncodeTablePrefix(flashbackIDs[lastExcludeIdx+1].id),
-					EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[i-1].id + 1),
-				})
-			}
-			lastExcludeIdx = i
-		}
-	}
-
-	// The last part needs to be added.
-	if lastExcludeIdx < len(flashbackIDs)-1 {
-		keyRanges = append(keyRanges, kv.KeyRange{
-			StartKey: tablecodec.EncodeTablePrefix(flashbackIDs[lastExcludeIdx+1].id),
-			EndKey:   tablecodec.EncodeTablePrefix(flashbackIDs[len(flashbackIDs)-1].id + 1),
-		})
-	}
-
-	return keyRanges, nil
+	return append(keyRanges, GetTableDataKeyRanges(nonFlashbackTableIDs)...), nil
 }
 
 // SendPrepareFlashbackToVersionRPC prepares regions for flashback, the purpose is to put region into flashback state which region stop write
@@ -324,15 +429,36 @@ func SendPrepareFlashbackToVersionRPC(
 		if err != nil {
 			return taskStat, err
 		}
+		failpoint.Inject("mockPrepareMeetsEpochNotMatch", func(val failpoint.Value) {
+			if val.(bool) && bo.ErrorsNum() == 0 {
+				regionErr = &errorpb.Error{
+					Message:       "stale epoch",
+					EpochNotMatch: &errorpb.EpochNotMatch{},
+				}
+			}
+		})
 		if regionErr != nil {
-			return taskStat, errors.Errorf(regionErr.String())
+			err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String()))
+			if err != nil {
+				return taskStat, err
+			}
+			continue
 		}
 		if resp.Resp == nil {
-			return taskStat, errors.Errorf("prepare flashback missing resp body")
+			logutil.BgLogger().Warn("prepare flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
+			err = bo.Backoff(tikv.BoTiKVRPC(), errors.New("prepare flashback rpc miss resp body"))
+			if err != nil {
+				return taskStat, err
+			}
+			continue
 		}
 		prepareFlashbackToVersionResp := resp.Resp.(*kvrpcpb.PrepareFlashbackToVersionResponse)
 		if err := prepareFlashbackToVersionResp.GetError(); err != "" {
-			return taskStat, errors.Errorf(err)
+			boErr := bo.Backoff(tikv.BoTiKVRPC(), errors.New(err))
+			if boErr != nil {
+				return taskStat, boErr
+			}
+			continue
 		}
 		taskStat.CompletedRegions++
 		if isLast {
@@ -483,9 +609,10 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue, readOnlyValue string
+	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 	var gcEnabledValue bool
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
+	var keyRanges []kv.KeyRange
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue, &keyRanges); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -525,6 +652,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		job.Args[readOnlyOffset] = &readOnlyValue
+		ttlJobEnableValue, err = getTiDBTTLJobEnable(sess)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		job.Args[ttlJobEnableOffSet] = &ttlJobEnableValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule.
@@ -540,6 +673,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, errors.Trace(err)
 		}
 		job.Args[startTSOffset] = startTS
+		keyRanges, err = GetFlashbackKeyRanges(sess, flashbackTS)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.Args[keyRangesOffset] = keyRanges
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	// Stage 3, get key ranges and get locks.
@@ -548,10 +686,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		if inFlashbackTest {
 			job.SchemaState = model.StateWriteReorganization
 			return updateSchemaVersion(d, t, job)
-		}
-		keyRanges, err := GetFlashbackKeyRanges(sess)
-		if err != nil {
-			return ver, errors.Trace(err)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
 		splitRegionsByKeyRanges(d, keyRanges)
@@ -586,10 +720,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
-		keyRanges, err := GetFlashbackKeyRanges(sess)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
@@ -611,7 +741,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
-		return ver, nil
+		return updateSchemaVersion(d, t, job)
 	}
 	return ver, nil
 }
@@ -624,10 +754,10 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 
 	var flashbackTS, lockedRegions, startTS, commitTS uint64
 	var pdScheduleValue map[string]interface{}
-	var autoAnalyzeValue, readOnlyValue string
+	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 	var gcEnabled bool
 
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS); err != nil {
+	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabled, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue); err != nil {
 		return errors.Trace(err)
 	}
 	sess, err := w.sessPool.get()
@@ -648,6 +778,14 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 		if err = setTiDBSuperReadOnly(w.ctx, sess, readOnlyValue); err != nil {
 			return err
 		}
+
+		if job.IsCancelled() {
+			// only restore `tidb_ttl_job_enable` when flashback failed
+			if err = setTiDBTTLJobEnable(w.ctx, sess, ttlJobEnableValue); err != nil {
+				return err
+			}
+		}
+
 		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
 	})
 	if err != nil {

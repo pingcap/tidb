@@ -192,6 +192,7 @@ go_library(
         "//util/servermemorylimit",
         "//util/set",
         "//util/size",
+        "//util/slice",
         "//util/sqlexec",
         "//util/stmtsummary",
         "//util/stringutil",
@@ -238,6 +239,7 @@ go_library(
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//status",
         "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",
@@ -249,7 +251,7 @@ go_library(
 
 go_test(
     name = "executor_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "adapter_test.go",
         "admin_test.go",
@@ -332,7 +334,6 @@ go_test(
         "utils_test.go",
         "window_test.go",
         "write_concurrent_test.go",
-        "write_test.go",
     ],
     data = glob(["testdata/**"]),
     embed = [":executor"],
@@ -373,6 +374,7 @@ go_test(
         "//sessionctx/binloginfo",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
+        "//sessionctx/variable/featuretag/distributereorg",
         "//sessiontxn",
         "//sessiontxn/staleread",
         "//statistics",

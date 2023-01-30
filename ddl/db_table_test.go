@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -185,7 +186,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -871,8 +872,7 @@ func TestDDLWithInvalidTableInfo(t *testing.T) {
 
 	tk.MustExec("create table t (a bigint, b int, c int generated always as (b+1)) partition by hash(a) partitions 4;")
 	// Test drop partition column.
-	// TODO: refine the error message to compatible with MySQL
-	tk.MustGetErrMsg("alter table t drop column a;", "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustGetErrMsg("alter table t drop column a;", "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	// Test modify column with invalid expression.
 	tk.MustGetErrMsg("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));", "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near \"then (b / a) end));\" ")
 	// Test add column with invalid expression.
@@ -889,7 +889,7 @@ func TestAddColumn2(t *testing.T) {
 
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var writeOnlyTable table.Table
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
@@ -918,7 +918,7 @@ func TestAddColumn2(t *testing.T) {
 	require.NoError(t, err)
 	_, err = writeOnlyTable.AddRecord(tk.Session(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	require.NoError(t, err)
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(ctx)
 	err = tk.Session().CommitTxn(ctx)
 	require.NoError(t, err)
 

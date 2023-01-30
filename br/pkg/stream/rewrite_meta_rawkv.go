@@ -336,6 +336,11 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 		}
 	}
 
+	// Force to disable TTL_ENABLE when restore
+	if newTableInfo.TTLInfo != nil {
+		newTableInfo.TTLInfo.Enable = false
+	}
+
 	if sr.AfterTableRewritten != nil {
 		sr.AfterTableRewritten(false, newTableInfo)
 	}

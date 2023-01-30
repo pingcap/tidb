@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
@@ -267,14 +268,9 @@ func TestMppExecution(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustQuery("select count(*) from ( select * from t2 group by a, b) A group by A.b").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 where t1.a+100 > ( select count(*) from t2 where t1.a=t2.a and t1.b=t2.b) group by t1.b").Check(testkit.Rows("4"))
-	txn, err := tk.Session().Txn(true)
-	require.NoError(t, err)
-	ts := txn.StartTS()
-	taskID := tk.Session().GetSessionVars().AllocMPPTaskID(ts)
-	require.Equal(t, int64(6), taskID)
-	tk.MustExec("commit")
-	taskID = tk.Session().GetSessionVars().AllocMPPTaskID(ts + 1)
+	taskID := plannercore.AllocMPPTaskID(tk.Session())
 	require.Equal(t, int64(1), taskID)
+	tk.MustExec("commit")
 
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(3)`)
 	// all the data is related to one store, so there are three tasks.
@@ -1043,7 +1039,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	}
 }
 
-func TestForbidTiflashDuringStaleRead(t *testing.T) {
+func TestTiflashSupportStaleRead(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1075,8 +1071,8 @@ func TestForbidTiflashDuringStaleRead(t *testing.T) {
 		fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	res = resBuff.String()
-	require.NotContains(t, res, "tiflash")
-	require.Contains(t, res, "tikv")
+	require.Contains(t, res, "tiflash")
+	require.NotContains(t, res, "tikv")
 }
 
 func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
@@ -1280,4 +1276,60 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 		conf.DisaggregatedTiFlash = false
 	})
 	tk.MustQuery("select * from t;").Check(testkit.Rows())
+}
+
+func TestDisaggregatedTiFlashQuery(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = true
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
+
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl_1")
+	tk.MustExec(`create table tbl_1 ( col_1 bigint not null default -1443635317331776148,
+		col_2 text ( 176 ) collate utf8mb4_bin not null,
+		col_3 decimal ( 8, 3 ),
+		col_4 varchar ( 128 ) collate utf8mb4_bin not null,
+		col_5 varchar ( 377 ) collate utf8mb4_bin,
+		col_6 double,
+		col_7 varchar ( 459 ) collate utf8mb4_bin,
+		col_8 tinyint default -88 ) charset utf8mb4 collate utf8mb4_bin ;`)
+	tk.MustExec("alter table tbl_1 set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "tbl_1")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+
+	needCheckTiFlashComputeNode := "false"
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery", fmt.Sprintf("return(%s)", needCheckTiFlashComputeNode))
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery")
+	tk.MustExec("explain select max( tbl_1.col_1 ) as r0 , sum( tbl_1.col_1 ) as r1 , sum( tbl_1.col_8 ) as r2 from tbl_1 where tbl_1.col_8 != 68 or tbl_1.col_3 between null and 939 order by r0,r1,r2;")
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("create table t1(c1 int, c2 int) partition by hash(c1) partitions 3")
+	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "t1")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustQuery("explain select * from t1 where c1 < 2").Check(testkit.Rows(
+		"PartitionUnion_10 9970.00 root  ",
+		"├─TableReader_15 3323.33 root  data:ExchangeSender_14",
+		"│ └─ExchangeSender_14 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"│   └─Selection_13 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
+		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
+		"├─TableReader_19 3323.33 root  data:ExchangeSender_18",
+		"│ └─ExchangeSender_18 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"│   └─Selection_17 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
+		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
+		"└─TableReader_23 3323.33 root  data:ExchangeSender_22",
+		"  └─ExchangeSender_22 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
+		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
+	// tk.MustQuery("select * from t1 where c1 < 2").Check(testkit.Rows("1 1"))
 }
