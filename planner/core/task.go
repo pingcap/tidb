@@ -1165,7 +1165,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 		if _, ok := t.(*mppTask); ok && p.TP() == plancodec.TypePartitionUnion {
 			// In attach2MppTasks(), will attach Union to mppTask directly.
 			// But PartitionUnion cannot pushdown to tiflash, so disable PartitionUnion pushdown to tiflash explicitly.
-			// TODO: Let mppTask convertToRootTask instread of return invalidTask directly.
+			// TODO: Let mppTask convertToRootTask instead of return invalidTask directly.
 			return invalidTask
 		}
 	}
