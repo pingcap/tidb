@@ -144,7 +144,7 @@ func (t *tuner) getGCPercent() uint32 {
 // tuning check the memory inuse and tune GC percent dynamically.
 // Go runtime ensure that it will be called serially.
 func (t *tuner) tuning() {
-	if EnableGOGCTuner.Load() {
+	if !EnableGOGCTuner.Load() {
 		return
 	}
 
