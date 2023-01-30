@@ -7617,10 +7617,12 @@ func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResour
 			return err
 		}
 	}
-	if !stmt.IfNotExists {
-		if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
-			return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+
+	if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
+		if stmt.IfNotExists {
+			return nil
 		}
+		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
 	if groupName.L == defaultResourceGroupName {

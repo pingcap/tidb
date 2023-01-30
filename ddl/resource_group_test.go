@@ -72,6 +72,14 @@ func TestResourceGroupBasic(t *testing.T) {
 	g := testResourceGroupNameFromIS(t, tk.Session(), "x")
 	checkFunc(g)
 
+	// test create if not exists
+	tk.MustExec("create resource group if not exists x " +
+		"RRU_PER_SEC=10000 " +
+		"WRU_PER_SEC=20000")
+	// Check the resource group is not changed
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	checkFunc(g)
+
 	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
 	tk.MustGetErrCode("alter resource group x "+
 		"RRU_PER_SEC=2000 "+
