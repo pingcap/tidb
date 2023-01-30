@@ -42,7 +42,7 @@ const (
 	// NewestMppVersion means the latest version used in MPP tasks
 	NewestMppVersion MppVersion = mppVersionMax - 1
 
-	// MppVersionUnspecified means the illegal version
+	// MppVersionUnspecified means the illegal or unspecified version, it only used in TiDB.
 	MppVersionUnspecified MppVersion = -1
 
 	// MppVersionUnspecifiedName denotes name of UNSPECIFIED mpp version
@@ -74,10 +74,6 @@ func ToMppVersion(name string) (MppVersion, bool) {
 // GetTiDBMppVersion returns the mpp-version can be used in mpp plan
 func GetTiDBMppVersion() MppVersion {
 	return NewestMppVersion
-}
-
-var mppVersionFeatures = map[MppVersion]string{
-	MppVersionV1: "exchange data compression",
 }
 
 // MPPTaskMeta means the meta info such as location of a mpp task.
@@ -192,7 +188,7 @@ func (t ExchangeCompressionMode) Name() string {
 	if t == ExchangeCompressionModeUnspecified {
 		return exchangeCompressionModeUnspecifiedName
 	}
-	return t.ToMppCompressionMode().String()
+	return t.ToTipbCompressionMode().String()
 }
 
 // ToExchangeCompressionMode returns the ExchangeCompressionMode from name
@@ -208,8 +204,8 @@ func ToExchangeCompressionMode(name string) (ExchangeCompressionMode, bool) {
 	return ExchangeCompressionModeNONE, false
 }
 
-// ToMppCompressionMode returns tipb.CompressionMode from kv.ExchangeCompressionMode
-func (t ExchangeCompressionMode) ToMppCompressionMode() tipb.CompressionMode {
+// ToTipbCompressionMode returns tipb.CompressionMode from kv.ExchangeCompressionMode
+func (t ExchangeCompressionMode) ToTipbCompressionMode() tipb.CompressionMode {
 	switch t {
 	case ExchangeCompressionModeNONE:
 		return tipb.CompressionMode_NONE

@@ -309,7 +309,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		Child:           child,
 		Types:           hashColTypes,
 		AllFieldTypes:   allFieldTypes,
-		Compression:     e.CompressionMode.ToMppCompressionMode(),
+		Compression:     e.CompressionMode.ToTipbCompressionMode(),
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{

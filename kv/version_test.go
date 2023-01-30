@@ -83,5 +83,5 @@ func TestExchangeCompressionMode(t *testing.T) {
 	}
 	// default `FAST`
 	assert.Equal(t, ExchangeCompressionModeFast, RecommendedExchangeCompressionMode)
-	assert.Equal(t, tipb.CompressionMode_FAST, RecommendedExchangeCompressionMode.ToMppCompressionMode())
+	assert.Equal(t, tipb.CompressionMode_FAST, RecommendedExchangeCompressionMode.ToTipbCompressionMode())
 }
