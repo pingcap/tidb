@@ -1291,6 +1291,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		bufferPool:            membuf.NewPool(),
 		supportMultiIngest:    true,
 		shouldCheckWriteStall: true,
+		tikvCodec:             keyspace.CodecV1,
 	}
 
 	db, tmpPath := makePebbleDB(t, nil)
