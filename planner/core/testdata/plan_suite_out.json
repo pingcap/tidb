@@ -7549,6 +7549,34 @@
         "Warning": null
       },
       {
+        "SQL": "select  /*+ agg_to_cop() hash_agg() */  count(1) from tbl_15 ;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─PartitionUnion 4.00 root  ",
+          "  ├─HashAgg 1.00 root  funcs:count(Column#13)->Column#12",
+          "  │ └─TableReader 1.00 root  data:ExchangeSender",
+          "  │   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#13",
+          "  │       └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p0 keep order:false, stats:pseudo",
+          "  ├─HashAgg 1.00 root  funcs:count(Column#14)->Column#12",
+          "  │ └─TableReader 1.00 root  data:ExchangeSender",
+          "  │   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#14",
+          "  │       └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p1 keep order:false, stats:pseudo",
+          "  ├─HashAgg 1.00 root  funcs:count(Column#15)->Column#12",
+          "  │ └─TableReader 1.00 root  data:ExchangeSender",
+          "  │   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#15",
+          "  │       └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p2 keep order:false, stats:pseudo",
+          "  └─HashAgg 1.00 root  funcs:count(Column#16)->Column#12",
+          "    └─TableReader 1.00 root  data:ExchangeSender",
+          "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#16",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:tbl_15, partition:p3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
         "SQL": "select  /*+ agg_to_cop() stream_agg() */  avg(   tbl_16.col_100 ) as r0 from tbl_16 where tbl_16.col_100 in ( 10672141 ) or tbl_16.col_104 in ( 'yfEG1t!*b' ,'C1*bqx_qyO' ,'vQ^yUpKHr&j#~' ) group by tbl_16.col_100  order by r0 limit 20 ;",
         "Plan": [
           "TopN 20.00 root  Column#10, offset:0, count:20",
