@@ -7,7 +7,10 @@
       "select /*+ use_index(t, kj) */ * from t where a<10",
       "select /*+ use_index(t, kj) */ * from t where (1 member of (j))",
       "select /*+ use_index(t, kj) */ * from t where (1 member of (j)) and a=10",
-      "select /*+ use_index(t, kj) */ * from t where (1 member of (j)) or a=10"
+      "select /*+ use_index(t, kj) */ * from t where (1 member of (j)) or a=10",
+      "select /*+ use_index(t, kj1) */ * from t where json_contains(j, '[\"1\"]')",
+      "select /*+ use_index(t, kj1) */ * from t where json_contains(j, '[\"11\"]')",
+      "select /*+ use_index(t, kj1) */ * from t where json_contains(j, '[\"111\"]')"
     ]
   },
   {

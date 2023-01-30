@@ -54,6 +54,31 @@
           "  ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select /*+ use_index(t, kj1) */ * from t where json_contains(j, '[\"1\"]')",
+        "Plan": [
+          "IndexMerge 10.00 root  type: intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj1(cast(`j` as char(2) array)) range:[0x31,0x31], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index(t, kj1) */ * from t where json_contains(j, '[\"11\"]')",
+        "Plan": [
+          "IndexMerge 10.00 root  type: intersection",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj1(cast(`j` as char(2) array)) range:[0x3131,0x3131], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index(t, kj1) */ * from t where json_contains(j, '[\"111\"]')",
+        "Plan": [
+          "IndexMerge 8000.00 root  type: union",
+          "├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:kj1(cast(`j` as char(2) array)) keep order:false, stats:pseudo",
+          "└─Selection(Probe) 8000.00 cop[tikv]  json_contains(test.t.j, cast(\"[\"111\"]\", json BINARY))",
+          "  └─TableRowIDScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },

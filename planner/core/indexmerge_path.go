@@ -597,7 +597,20 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			return err
 		}
 		if !ok {
-			continue
+			if !ds.possibleAccessPaths[idx].Forced {
+				continue
+			}
+
+			// if cannot generate an IndexMerge for this index with the above accessFilters and this index is forced,
+			// generate an IndexMerge with FullScan for this index to avoid `Can't find PhysicalPlan` error.
+			accessFilters, remainingFilters = nil, filters
+			partialPaths, isIntersection, ok, err = ds.buildPartialPaths4MVIndex(accessFilters, idxCols, ds.possibleAccessPaths[idx].Index)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
 		}
 
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, ds.buildPartialPathUp4MVIndex(partialPaths, isIntersection, remainingFilters))
