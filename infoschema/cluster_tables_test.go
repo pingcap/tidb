@@ -1053,6 +1053,7 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	tk.MustExec(sql)
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 	tk.MustGetErrMsg("set binding enabled for sql digest '2'", "can't find any binding for '2'")
+	tk.MustGetErrMsg("set binding enabled for sql digest ''", "sql digest is empty")
 }
 
 func TestCreateBindingWhenCloseStmtSummaryTable(t *testing.T) {
