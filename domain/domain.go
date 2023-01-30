@@ -75,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topklimiter"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -891,6 +892,7 @@ func (do *Domain) Close() {
 	if do.onClose != nil {
 		do.onClose()
 	}
+	topklimiter.GlobalTopKLimiter.Stop()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -933,6 +935,7 @@ func (do *Domain) Init(
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
 	ddlInjector func(ddl.DDL) *schematracker.Checker,
 ) error {
+	topklimiter.GlobalTopKLimiter.Start()
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
