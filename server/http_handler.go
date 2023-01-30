@@ -206,7 +206,7 @@ func (t *tikvHandlerTool) getHandle(tb table.PhysicalTable, params map[string]st
 	return handle, nil
 }
 
-func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) (*helper.MvccKV, error) {
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) ([]*helper.MvccKV, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -227,7 +227,18 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, err
 	}
-	return &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}, err
+	idxData := &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}
+	tablecodec.IndexKey2TempIndexKey(idx.Meta().ID, encodedKey)
+	data, err = t.GetMvccByEncodedKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	regionID, err = t.getRegionIDByKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	tempIdxData := &helper.MvccKV{Key: strings.ToUpper(hex.EncodeToString(encodedKey)), RegionID: regionID, Value: data}
+	return append([]*helper.MvccKV{}, idxData, tempIdxData), err
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
