@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package indexmergetest
 
 import (
 	"testing"
@@ -21,15 +21,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/ddl/internal/callback"
+	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestAddIndexMergeProcess(t *testing.T) {
@@ -47,12 +46,12 @@ func TestAddIndexMergeProcess(t *testing.T) {
 	var checkErr error
 	var runDML, backfillDone bool
 	originHook := dom.DDL().GetHook()
-	callback := &ddl.TestDDLCallback{
+	callback := &callback.TestDDLCallback{
 		Do: dom,
 	}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
-			idx := findIdxInfo(dom, "test", "t", "idx")
+			idx := testutil.FindIdxInfo(dom, "test", "t", "idx")
 			if idx == nil || idx.BackfillState != model.BackfillStateRunning {
 				return
 			}
@@ -94,13 +93,13 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	var checkErr error
 	var runDML, backfillDone bool
 	originHook := dom.DDL().GetHook()
-	callback := &ddl.TestDDLCallback{
+	callback := &callback.TestDDLCallback{
 		Do: nil, // We'll reload the schema manually.
 
 	}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
-			idx := findIdxInfo(dom, "test", "t", "primary")
+			idx := testutil.FindIdxInfo(dom, "test", "t", "primary")
 			if idx == nil || idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer == 0 {
 				return
 			}
@@ -143,12 +142,12 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	var runDML bool
 	var tblID, idxID int64
 	originHook := dom.DDL().GetHook()
-	callback := &ddl.TestDDLCallback{
+	callback := &callback.TestDDLCallback{
 		Do: dom,
 	}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
-			idx := findIdxInfo(dom, "test", "t", "idx")
+			idx := testutil.FindIdxInfo(dom, "test", "t", "idx")
 			if idx == nil || idx.BackfillState != model.BackfillStateReadyToMerge {
 				return
 			}
@@ -198,14 +197,14 @@ func TestAddIndexMergeIndexUntouchedValue(t *testing.T) {
 	var runInsert bool
 	var runUpdate bool
 	originHook := dom.DDL().GetHook()
-	callback := &ddl.TestDDLCallback{
+	callback := &callback.TestDDLCallback{
 		Do: dom,
 	}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.Type != model.ActionAddIndex || job.SchemaState != model.StateWriteReorganization {
 			return
 		}
-		idx := findIdxInfo(dom, "test", "t", "idx")
+		idx := testutil.FindIdxInfo(dom, "test", "t", "idx")
 		if idx == nil {
 			return
 		}
@@ -243,15 +242,6 @@ func TestAddIndexMergeIndexUntouchedValue(t *testing.T) {
 	tk.MustQuery("select * from t ignore index (idx);").Check(testkit.Rows("1 1 a a", "100 2 a a"))
 }
 
-func findIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
-	if err != nil {
-		logutil.BgLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
-		return nil
-	}
-	return tbl.Meta().FindIndexByName(idxName)
-}
-
 // TestCreateUniqueIndexKeyExist this case will test below things:
 // Create one unique index idx((a*b+1));
 // insert (0, 6) and delete it;
@@ -279,7 +269,7 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -346,7 +336,7 @@ func TestAddIndexMergeIndexUpdateOnDeleteOnly(t *testing.T) {
 
 	var checkErrs []error
 	originHook := dom.DDL().GetHook()
-	callback := &ddl.TestDDLCallback{
+	callback := &callback.TestDDLCallback{
 		Do: dom,
 	}
 	onJobUpdatedBefore := func(job *model.Job) {
@@ -383,7 +373,7 @@ func TestAddIndexMergeDeleteUniqueOnWriteOnly(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -441,7 +431,7 @@ func TestAddIndexMergeDoubleDelete(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{}
+	callback := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -490,7 +480,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_metadata_lock = 0;")
 
 	originHook := dom.DDL().GetHook()
-	callback := &ddl.TestDDLCallback{Do: dom}
+	callback := &callback.TestDDLCallback{Do: dom}
 
 	runPessimisticTxn := false
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
@@ -503,7 +493,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 			assert.NoError(t, err)
 		}
 		if !runPessimisticTxn && job.SchemaState == model.StateWriteReorganization {
-			idx := findIdxInfo(dom, "test", "t", "idx")
+			idx := testutil.FindIdxInfo(dom, "test", "t", "idx")
 			if idx == nil {
 				return
 			}

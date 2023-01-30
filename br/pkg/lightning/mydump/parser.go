@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -285,7 +286,13 @@ func (parser *blockParser) readBlock() error {
 		parser.remainBuf.Write(parser.buf)
 		parser.appendBuf.Reset()
 		parser.appendBuf.Write(parser.remainBuf.Bytes())
-		parser.appendBuf.Write(parser.blockBuf[:n])
+		blockData := parser.blockBuf[:n]
+		if parser.pos == 0 {
+			bomCleanedData := bom.Clean(blockData)
+			parser.pos += int64(n - len(bomCleanedData))
+			blockData = bomCleanedData
+		}
+		parser.appendBuf.Write(blockData)
 		parser.buf = parser.appendBuf.Bytes()
 		if parser.metrics != nil {
 			parser.metrics.ChunkParserReadBlockSecondsHistogram.Observe(time.Since(startTime).Seconds())

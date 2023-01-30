@@ -44,7 +44,7 @@ func (k lockStatsVarKeyType) String() string {
 const LockStatsVarKey lockStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
-func (e *LockStatsExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *LockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	do := domain.GetDomain(e.ctx)
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -87,7 +87,7 @@ func (e *LockStatsExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *LockStatsExec) Open(ctx context.Context) error {
+func (e *LockStatsExec) Open(_ context.Context) error {
 	return nil
 }
 
@@ -109,7 +109,7 @@ func (k unlockStatsVarKeyType) String() string {
 const UnlockStatsVarKey unlockStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
-func (e *UnlockStatsExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *UnlockStatsExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	do := domain.GetDomain(e.ctx)
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -152,6 +152,6 @@ func (e *UnlockStatsExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *UnlockStatsExec) Open(ctx context.Context) error {
+func (e *UnlockStatsExec) Open(_ context.Context) error {
 	return nil
 }

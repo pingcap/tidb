@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/util/cpu"
 )
 
-// GlobalResourceManager is a global resource manager
-var GlobalResourceManager = NewResourceManger()
+// InstanceResourceManager is a local instance resource manager
+var InstanceResourceManager = NewResourceManger()
 
 // RandomName is to get a random name for register pool. It is just for test.
 func RandomName() string {
@@ -78,7 +78,7 @@ func (r *ResourceManager) Stop() {
 }
 
 // Register is to register pool into resource manager
-func (r *ResourceManager) Register(pool util.GorotinuePool, name string, component util.Component) error {
+func (r *ResourceManager) Register(pool util.GoroutinePool, name string, component util.Component) error {
 	p := util.PoolContainer{Pool: pool, Component: component}
 	return r.registerPool(name, &p)
 }

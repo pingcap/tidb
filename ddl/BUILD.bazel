@@ -122,6 +122,7 @@ go_library(
         "//util/slice",
         "//util/sqlexec",
         "//util/stringutil",
+        "//util/syncutil",
         "//util/timeutil",
         "//util/topsql",
         "//util/topsql/state",
@@ -154,7 +155,6 @@ go_test(
     srcs = [
         "attributes_sql_test.go",
         "backfilling_test.go",
-        "callback_test.go",
         "cancel_test.go",
         "cluster_test.go",
         "column_change_test.go",
@@ -181,7 +181,6 @@ go_test(
         "foreign_key_test.go",
         "index_change_test.go",
         "index_cop_test.go",
-        "index_merge_tmp_test.go",
         "index_modify_test.go",
         "integration_test.go",
         "job_table_test.go",
@@ -215,7 +214,7 @@ go_test(
     deps = [
         "//autoid_service",
         "//config",
-        "//ddl/ingest",
+        "//ddl/internal/callback",
         "//ddl/placement",
         "//ddl/resourcegroup",
         "//ddl/schematracker",

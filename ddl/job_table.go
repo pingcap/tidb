@@ -316,7 +316,6 @@ func (d *ddl) markJobProcessing(sess *session, job *model.Job) error {
 
 func (d *ddl) startDispatchBackfillJobsLoop() {
 	d.backfillCtx.jobCtxMap = make(map[int64]*JobContext)
-	d.backfillCtx.backfillCtxMap = make(map[int64]struct{})
 
 	var notifyBackfillJobByEtcdCh clientv3.WatchChan
 	if d.etcdCli != nil {

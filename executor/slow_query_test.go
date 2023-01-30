@@ -666,7 +666,7 @@ select * from t;`
 	retriever, err := newSlowQueryRetriever()
 	require.NoError(t, err)
 	var signal1, signal2 = make(chan int, 1), make(chan int, 1)
-	ctx := context.WithValue(context.Background(), "signals", []chan int{signal1, signal2})
+	ctx := context.WithValue(context.Background(), signalsKey{}, []chan int{signal1, signal2})
 	ctx, cancel := context.WithCancel(ctx)
 	err = failpoint.Enable("github.com/pingcap/tidb/executor/mockReadSlowLogSlow", "return(true)")
 	require.NoError(t, err)

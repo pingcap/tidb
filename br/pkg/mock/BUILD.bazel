@@ -27,8 +27,6 @@ go_library(
         "//parser",
         "//parser/ast",
         "//parser/model",
-        "//resourcemanager",
-        "//resourcemanager/util",
         "//server",
         "//session",
         "//store/mockstore",

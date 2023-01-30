@@ -21,7 +21,6 @@ package ddl
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -353,8 +352,7 @@ type ddlCtx struct {
 	// backfillCtx is used for backfill workers.
 	backfillCtx struct {
 		syncutil.RWMutex
-		jobCtxMap      map[int64]*JobContext
-		backfillCtxMap map[int64]struct{}
+		jobCtxMap map[int64]*JobContext
 	}
 
 	jobCtx struct {
@@ -1340,12 +1338,6 @@ var (
 	// RunInGoTest is used to identify whether ddl in running in the test.
 	RunInGoTest bool
 )
-
-func init() {
-	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-		RunInGoTest = true
-	}
-}
 
 // GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
 func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {

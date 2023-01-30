@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
@@ -75,7 +76,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	var currJob *model.Job
 	var elements []*meta.Element
@@ -207,7 +208,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
@@ -262,7 +263,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
