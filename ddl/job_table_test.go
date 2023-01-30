@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -62,7 +63,7 @@ func TestDDLScheduling(t *testing.T) {
 		"ALTER TABLE e EXCHANGE PARTITION p1 WITH TABLE e3;",
 	}
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	var wg util.WaitGroupWrapper
 	wg.Add(1)
 	var once sync.Once
