@@ -35,6 +35,9 @@ type HistoricalStatsWorker struct {
 
 // SendTblToDumpHistoricalStats send tableID to worker to dump historical stats
 func (w *HistoricalStatsWorker) SendTblToDumpHistoricalStats(tableID int64) {
+	if !enableDumpHistoricalStats.Load() {
+		return
+	}
 	w.tblCH <- tableID
 }
 
