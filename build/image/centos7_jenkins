@@ -1,0 +1,10 @@
+FROM hub.pingcap.net/wangweizhen/base_image:go11920230111
+USER root
+WORKDIR /root
+COPY .ci_bazel /data/bazel
+RUN mkdir -p /data/tikv1 /data/tikv2 /data/tikv3 /data/pd && \ 
+    chown -R jenkins:jenkins /data
+USER jenkins
+WORKDIR /home/jenkins
+RUN go install github.com/hawkingrei/bazel_collect@latest && \
+    go install github.com/bazelbuild/bazel-gazelle/cmd/gazelle@latest
