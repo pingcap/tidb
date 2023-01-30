@@ -137,11 +137,11 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN, opt *logicalOptimize
 			}
 		}
 
-		// if the projection contains a column in topN.ByItems, projection will prevent the optimizer from pushing topN down.
+		// if the projection contains a column(with ID=0) in topN.ByItems, projection will prevent the optimizer from pushing topN down.
 		for _, by := range topN.ByItems {
 			cols := expression.ExtractColumns(by.Expr)
 			for _, col := range cols {
-				if p.Schema().Contains(col) {
+				if p.Schema().Contains(col) && col.ID == 0 {
 					p.children[0] = p.children[0].pushDownTopN(nil, opt)
 					return topN.setChild(p, opt)
 				}
