@@ -163,7 +163,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if err != nil {
 			return nil, err
 		}
-		stmt.limiter = &doneFunc
+		stmt.limiterDoneFunc = &doneFunc
 	}
 
 	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
