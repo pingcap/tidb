@@ -111,7 +111,6 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 			StartTs:    e.startTS,
 			MppQueryID: mppTask.MppQueryID,
 			State:      kv.MppTaskReady,
-			MppVersion: mppTask.MppVersion,
 		}
 		e.mppReqs = append(e.mppReqs, req)
 	}

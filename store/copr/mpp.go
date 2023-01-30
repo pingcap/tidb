@@ -225,7 +225,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// meta for current task.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
 		Address:    req.Meta.GetAddress(),
-		MppVersion: req.MppVersion.ToInt64(),
+		MppVersion: m.mppVersion.ToInt64(),
 	}
 
 	mppReq := &mpp.DispatchTaskRequest{
@@ -386,7 +386,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 			QueryTs:      m.mppQueryID.QueryTs,
 			LocalQueryId: m.mppQueryID.LocalQueryID,
 			ServerId:     m.mppQueryID.ServerID,
-			MppVersion:   req.MppVersion.ToInt64(),
+			MppVersion:   m.mppVersion.ToInt64(),
 			TaskId:       -1,
 		},
 	}
@@ -470,7 +470,7 @@ func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDa
 		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", req.StartTs),
 			zap.String("storeAddr", req.Meta.GetAddress()),
-			zap.Int64("mpp-version", req.MppVersion.ToInt64()),
+			zap.Int64("mpp-version", m.mppVersion.ToInt64()),
 			zap.Error(err))
 		return err
 	}

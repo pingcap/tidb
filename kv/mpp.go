@@ -148,7 +148,6 @@ type MPPDispatchRequest struct {
 	MppQueryID MPPQueryID
 	ID         int64 // identify a single task
 	State      MppTaskStates
-	MppVersion MppVersion // mpp version
 }
 
 // MPPClient accepts and processes mpp requests.
