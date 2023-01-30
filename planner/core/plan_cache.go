@@ -287,7 +287,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		checkPlanCacheability(sctx, p, len(paramTypes))
+		checkPlanCacheability(sctx, p, len(paramTypes), len(limitParams))
 	}
 
 	// put this plan into the plan cache.
@@ -312,7 +312,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 }
 
 // checkPlanCacheability checks whether this plan is cacheable and set to skip plan cache if it's uncacheable.
-func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int) {
+func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int, limitParamNum int) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	var pp PhysicalPlan
 	switch x := p.(type) {
@@ -346,6 +346,11 @@ func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int) {
 	if accessMVIndexWithIndexMerge(pp) {
 		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"))
 		return
+	}
+
+	// before cache the param limit plan, check switch
+	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
 	}
 }
 
