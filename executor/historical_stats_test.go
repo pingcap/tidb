@@ -17,11 +17,11 @@ package executor_test
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
