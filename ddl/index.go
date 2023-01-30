@@ -884,8 +884,8 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	case model.BackfillStateMerging:
 		failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
 			//nolint:forcetypeassert
-			if val.(bool) && MockDMLExecution != nil {
-				MockDMLExecution()
+			if val.(bool) && MockDMLExecutionMerging != nil {
+				MockDMLExecutionMerging()
 			}
 		})
 		done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, true)
@@ -1794,6 +1794,9 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 // MockDMLExecution is only used for test.
 var MockDMLExecution func()
+
+// MockDMLExecutionMerging is only used for test.
+var MockDMLExecutionMerging func()
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
