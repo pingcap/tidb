@@ -470,9 +470,9 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	tk.MustExec(`INSERT INTO t VALUES (1, 1);`)
 
 	// Make shorten the conversion time from ReorgTypeLitMerge to BackfillStateReadyToMerge.
-	interval := ddl.GetCheckInterval()
-	ddl.SetCheckInterval(50 * time.Millisecond)
-	defer ddl.SetCheckInterval(interval)
+	interval := ddl.CheckBackfillJobFinishInterval
+	ddl.CheckBackfillJobFinishInterval = 50 * time.Millisecond
+	defer func() { ddl.CheckBackfillJobFinishInterval = interval }()
 
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false

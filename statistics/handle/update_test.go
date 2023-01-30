@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -2352,7 +2351,6 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 				require.True(t, rows[0][4].(string) != "<nil>")
 				require.True(t, rows[0][5].(string) == "<nil>")
 			}
-			resourcemanager.GlobalResourceManager.Reset()
 		}(val)
 	}
 }

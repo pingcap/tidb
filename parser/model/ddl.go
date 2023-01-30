@@ -226,6 +226,15 @@ func (h *HistoryInfo) Clean() {
 	h.MultipleTableInfos = nil
 }
 
+const (
+	// DistReorgFalse means it's not distributed reorganization.
+	DistReorgFalse int8 = -1
+	// DistReorgNone means it's not be set.
+	DistReorgNone int8 = 0
+	// DistReorgTrue means it is distributed reorganization.
+	DistReorgTrue int8 = 1
+)
+
 // DDLReorgMeta is meta info of DDL reorganization.
 type DDLReorgMeta struct {
 	// EndHandle is the last handle of the adding indices table.
@@ -237,6 +246,7 @@ type DDLReorgMeta struct {
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
 	ReorgTp       ReorgType                        `json:"reorg_tp"`
+	IsDistReorg   int8                             `json:"is_dist_reorg"`
 }
 
 // ReorgType indicates which process is used for the data reorganization.

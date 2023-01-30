@@ -667,9 +667,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if job.MultiSchemaInfo != nil {
 			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, indexInfo)
 		} else {
-			// TODO: Support typeAddIndexMergeTmpWorker and partitionTable.
-			isDistReorg := variable.DDLEnableDistributeReorg.Load()
-			if isDistReorg {
+			initDistReorg(job.ReorgMeta, tbl)
+			if job.ReorgMeta.IsDistReorg == model.DistReorgTrue {
 				done, ver, err = doReorgWorkForCreateIndexWithDistReorg(w, d, t, job, tbl, indexInfo)
 			} else {
 				done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
@@ -927,9 +926,6 @@ func doReorgWorkForCreateIndexWithDistReorg(w *worker, d *ddlCtx, t *meta.Meta, 
 		logutil.BgLogger().Info("[ddl] index backfill state ready to merge", zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O), zap.String("index", indexInfo.Name.O))
 		indexInfo.BackfillState = model.BackfillStateMerging
-		if bfProcess == model.ReorgTypeLitMerge {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
@@ -1367,8 +1363,8 @@ func (w *baseIndexWorker) UpdateTask(bfJob *BackfillJob) error {
 	s := newSession(w.backfillCtx.sessCtx)
 
 	return s.runInTxn(func(se *session) error {
-		jobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s' and id = %d",
-			bfJob.JobID, bfJob.EleID, bfJob.EleKey, bfJob.ID), "update_backfill_task")
+		jobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s and id = %d",
+			bfJob.JobID, bfJob.EleID, wrapKey2String(bfJob.EleKey), bfJob.ID), "update_backfill_task")
 		if err != nil {
 			return err
 		}
@@ -1822,9 +1818,9 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	} else {
 		//nolint:forcetypeassert
 		phyTbl := t.(table.PhysicalTable)
-		// TODO: Support typeAddIndexMergeTmpWorker and partitionTable.
-		isDistReorg := variable.DDLEnableDistributeReorg.Load()
-		if isDistReorg && !reorgInfo.mergingTmpIdx && reorgInfo.Job.Type == model.ActionAddIndex {
+		// TODO: Support typeAddIndexMergeTmpWorker.
+		isDistReorg := reorgInfo.Job.ReorgMeta.IsDistReorg == model.DistReorgTrue
+		if isDistReorg && !reorgInfo.mergingTmpIdx {
 			sCtx, err := w.sessPool.get()
 			if err != nil {
 				return errors.Trace(err)
@@ -2091,13 +2087,14 @@ func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, job
 		return err
 	}
 
-	tbl, err := runBackfillJobs(d, sess, bfJob, jobCtx)
+	tbl, err := runBackfillJobs(d, bc, sess, bfJob, jobCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs error", zap.Error(err))
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)
 		return err
 	}
 
+	bc.EngMgr.ResetWorkers(bc, bfJob.JobID, bfJob.EleID)
 	err = bc.FinishImport(bfJob.EleID, bfJob.Meta.IsUnique, tbl)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning import error", zap.String("first backfill job", bfJob.AbbrStr()), zap.Error(err))

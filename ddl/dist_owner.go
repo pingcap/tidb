@@ -24,13 +24,32 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-var checkBackfillJobFinishInterval = 300 * time.Millisecond
+// CheckBackfillJobFinishInterval is export for test.
+var CheckBackfillJobFinishInterval = 300 * time.Millisecond
+
+func initDistReorg(reorgMeta *model.DDLReorgMeta, tbl table.Table) {
+	if reorgMeta.IsDistReorg != model.DistReorgNone {
+		return
+	}
+
+	isDistReorg := variable.DDLEnableDistributeReorg.Load()
+	// TODO: Support partitionTable.
+	if _, ok := tbl.(table.PartitionedTable); ok {
+		isDistReorg = false
+	}
+	if isDistReorg {
+		reorgMeta.IsDistReorg = model.DistReorgTrue
+	} else {
+		reorgMeta.IsDistReorg = model.DistReorgFalse
+	}
+}
 
 func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
@@ -81,7 +100,7 @@ func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgC
 	var times int64
 	var bfJob *BackfillJob
 	var backfillJobFinished bool
-	ticker := time.NewTicker(checkBackfillJobFinishInterval)
+	ticker := time.NewTicker(CheckBackfillJobFinishInterval)
 	defer ticker.Stop()
 	for {
 		if getReorgCtx(reorgCtxs, ddlJobID).isReorgCanceled() {

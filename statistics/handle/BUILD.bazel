@@ -81,7 +81,6 @@ go_test(
         "//metrics",
         "//parser/model",
         "//parser/mysql",
-        "//resourcemanager",
         "//session",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",

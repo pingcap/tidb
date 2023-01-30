@@ -839,6 +839,11 @@ func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
 }
 
 func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) error {
+	// Unify the TimeZone settings in newContext.
+	if sessCtx.GetSessionVars().StmtCtx.TimeZone == nil {
+		tz := *time.UTC
+		sessCtx.GetSessionVars().StmtCtx.TimeZone = &tz
+	}
 	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 	// Set the row encode format version.
 	rowFormat := variable.GetDDLReorgRowFormat()

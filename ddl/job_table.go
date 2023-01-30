@@ -416,7 +416,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 			err = runBackfillJobsWithLightning(d, sess, bfJob, jobCtx)
 		} else {
 			logutil.BgLogger().Info("[ddl] run backfill jobs with txn-merge in this instance", zap.String("bfJob", bfJob.AbbrStr()))
-			_, err = runBackfillJobs(d, sess, bfJob, jobCtx)
+			_, err = runBackfillJobs(d, nil, sess, bfJob, jobCtx)
 		}
 
 		if err == nil {
@@ -630,7 +630,7 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 
 func syncBackfillHistoryJobs(sess *session, uuid string, backfillJob *BackfillJob) error {
 	sql := fmt.Sprintf("update mysql.%s set state = %d where ddl_job_id = %d and ele_id = %d and ele_key = %s and exec_id = '%s' limit 1;",
-		BackfillHistoryTable, model.JobStateSynced, backfillJob.JobID, backfillJob.EleID, (backfillJob.EleKey), uuid)
+		BackfillHistoryTable, model.JobStateSynced, backfillJob.JobID, backfillJob.EleID, wrapKey2String(backfillJob.EleKey), uuid)
 	_, err := sess.execute(context.Background(), sql, "sync_backfill_history_job")
 	return err
 }

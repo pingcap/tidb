@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
@@ -98,7 +99,7 @@ func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
 	return bw
 }
 
-func runBackfillJobs(d *ddl, sess *session, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
+func runBackfillJobs(d *ddl, ingestBackendCtx *ingest.BackendContext, sess *session, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
 	dbInfo, tbl, err := d.getTableByTxn(d.store, bJob.Meta.SchemaID, bJob.Meta.TableID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs gets table failed", zap.String("bfJob", bJob.AbbrStr()), zap.Error(err))
@@ -122,7 +123,7 @@ func runBackfillJobs(d *ddl, sess *session, bJob *BackfillJob, jobCtx *JobContex
 	}
 	// add new task
 	resultCh, control := d.backfillWorkerPool.AddProduceBySlice(proFunc, 0, workerCtx, spmc.WithConcurrency(workerCnt))
-	bwMgr.waitFinalResult(resultCh, control)
+	bwMgr.waitFinalResult(resultCh, ingestBackendCtx, workerCnt, bJob.EleID, control)
 
 	// waiting task finishing
 	control.Wait()
@@ -154,9 +155,10 @@ func newBackfilWorkerManager(bwCtx *backfillWorkerContext) *backfilWorkerManager
 	}
 }
 
-func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult,
+func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult, ingestBackendCtx *ingest.BackendContext, workerCnt int, eleID int64,
 	tControl pooltask.TaskController[*reorgBackfillTask, *backfillResult, int, *backfillWorker, *backfillWorkerContext]) {
 	bwm.wg.Run(func() {
+		i := 0
 		for {
 			select {
 			case result, ok := <-resultCh:
@@ -169,6 +171,15 @@ func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult
 					tControl.Stop()
 					return
 				}
+
+				if ingestBackendCtx != nil && i%workerCnt == 0 {
+					err := ingestBackendCtx.Flush(eleID)
+					if err != nil {
+						bwm.unsyncErr = err
+						return
+					}
+				}
+				i++
 			case <-bwm.exitCh:
 				return
 			}
