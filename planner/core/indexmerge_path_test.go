@@ -24,6 +24,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestAnalyzeMVIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, b int, c int, j json,
+index(a), index(b),
+index idx(a, b, (cast(j as signed array)), c),
+index idx2(a, b, (cast(j->'$.str' as char(10) array)), c))`)
+
+	tk.MustExec("set tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx",
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx",
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
+
+	tk.MustExec("set tidb_analyze_version=1")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx",
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx"))
+	tk.MustExec("analyze table t index a")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustExec("analyze table t index a, idx, idx2")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx",
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
+}
+
 func TestIndexMergeJSONMemberOf(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -171,5 +209,31 @@ func TestMVIndexPointGet(t *testing.T) {
 			}
 		}
 		require.True(t, !hasPointGet) // no point-get plan
+	}
+}
+
+func TestEnforceMVIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, j json, index kj((cast(j as signed array))))`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	planSuiteData := core.GetIndexMergeSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, query := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = query
+		})
+		result := tk.MustQuery("explain format = 'brief' " + query)
+		testdata.OnRecord(func() {
+			output[i].Plan = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		result.Check(testkit.Rows(output[i].Plan...))
 	}
 }

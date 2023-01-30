@@ -1188,11 +1188,28 @@ var defaultSysVars = []*SysVar{
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuesCapture, Value: BoolToOnOff(false), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
+			historicalStatsEnabled, err := s.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableHistoricalStats)
+			if err != nil {
+				return err
+			}
+			if !TiDBOptOn(historicalStatsEnabled) && TiDBOptOn(val) {
+				return errors.Errorf("%v should be enabled before enabling %v", TiDBEnableHistoricalStats, TiDBEnablePlanReplayerContinuesCapture)
+			}
 			s.EnablePlanReplayedContinuesCapture = TiDBOptOn(val)
 			return nil
 		},
 		GetSession: func(vars *SessionVars) (string, error) {
 			return BoolToOnOff(vars.EnablePlanReplayedContinuesCapture), nil
+		},
+		Validation: func(vars *SessionVars, s string, s2 string, flag ScopeFlag) (string, error) {
+			historicalStatsEnabled, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableHistoricalStats)
+			if err != nil {
+				return "", err
+			}
+			if !TiDBOptOn(historicalStatsEnabled) && TiDBOptOn(s) {
+				return "", errors.Errorf("%v should be enabled before enabling %v", TiDBEnableHistoricalStats, TiDBEnablePlanReplayerContinuesCapture)
+			}
+			return s, nil
 		},
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerCapture, Value: BoolToOnOff(true), Type: TypeBool,
@@ -2265,6 +2282,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionAggressiveLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionAggressiveLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PessimisticTransactionAggressiveLocking = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanCacheForParamLimit, Value: BoolToOnOff(DefTiDBEnablePlanCacheForParamLimit), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePlanCacheForParamLimit = TiDBOptOn(val)
 		return nil
 	}},
 }
