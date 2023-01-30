@@ -16,6 +16,7 @@ package domain
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -35,7 +36,13 @@ type HistoricalStatsWorker struct {
 
 // SendTblToDumpHistoricalStats send tableID to worker to dump historical stats
 func (w *HistoricalStatsWorker) SendTblToDumpHistoricalStats(tableID int64) {
-	if !enableDumpHistoricalStats.Load() {
+	send := enableDumpHistoricalStats.Load()
+	failpoint.Inject("sendHistoricalStats", func(val failpoint.Value) {
+		if val.(bool) {
+			send = true
+		}
+	})
+	if !send {
 		return
 	}
 	w.tblCH <- tableID

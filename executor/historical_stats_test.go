@@ -17,6 +17,7 @@ package executor_test
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"strconv"
 	"testing"
 	"time"
@@ -30,6 +31,8 @@ import (
 )
 
 func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -150,6 +153,8 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 }
 
 func TestGCHistoryStatsAfterDropTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -185,6 +190,8 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 }
 
 func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -230,6 +237,8 @@ func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
 }
 
 func TestGCOutdatedHistoryStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -265,6 +274,8 @@ func TestGCOutdatedHistoryStats(t *testing.T) {
 }
 
 func TestPartitionTableHistoricalStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -292,6 +303,8 @@ PARTITION p0 VALUES LESS THAN (6)
 }
 
 func TestDumpHistoricalStatsByTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
