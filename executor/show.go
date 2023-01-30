@@ -316,9 +316,9 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	bindRecords := make([]*bindinfo.BindRecord, 0, len(tmp))
-	for i, bindRecord := range tmp {
-		bindRecords[i] = bindRecord.Copy()
+	bindRecords := make([]*bindinfo.BindRecord, 0)
+	for _, bindRecord := range tmp {
+		bindRecords = append(bindRecords, bindRecord.Copy())
 	}
 	// Remove the invalid bindRecord.
 	ind := 0

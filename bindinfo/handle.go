@@ -1130,9 +1130,9 @@ const (
 func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 	cache := h.bindInfo.Value.Load().(*bindCache)
 	tmp := cache.GetAllBindRecords()
-	bindRecords := make([]*BindRecord, 0, len(tmp))
-	for i, bindRecord := range tmp {
-		bindRecords[i] = bindRecord.Copy()
+	bindRecords := make([]*BindRecord, 0)
+	for _, bindRecord := range tmp {
+		bindRecords = append(bindRecords, bindRecord.Copy())
 	}
 	for _, bindRecord := range bindRecords {
 		for _, bind := range bindRecord.Bindings {
