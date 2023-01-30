@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/topklimiter"
 	"go.uber.org/zap"
 )
 
@@ -122,6 +123,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 
 	if preparedObj != nil {
 		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL)
+
 	} else {
 		CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
 	}
@@ -130,6 +132,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	stmtCtx.SetPlan(finalPlan)
+
 	stmt := &ExecStmt{
 		GoCtx:         ctx,
 		InfoSchema:    is,
@@ -154,6 +157,15 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
+	_, planDigest := stmtCtx.GetPlanDigest()
+	if planDigest.String() != "" {
+		doneFunc, err := topklimiter.GlobalTopKLimiter.Allow(planDigest.String())
+		if err != nil {
+			return nil, err
+		}
+		stmt.limiter = &doneFunc
+	}
+
 	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
 		return nil, err
 	}

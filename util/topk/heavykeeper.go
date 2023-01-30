@@ -20,12 +20,12 @@ import (
 
 	"github.com/pingcap/tidb/util/minheap"
 	"github.com/spaolacci/murmur3"
-	"golang.org/x/exp/constraints"
 )
 
-const LOOKUP_TABLE = 256
+// LookupTable is the size of lookup table
+const LookupTable = 256
 
-// Topk implement by heavykeeper algorithm.
+// HeavyKeeper is an accurate algorithm for finding top-k elephant flows
 type HeavyKeeper struct {
 	k           uint32
 	width       uint32
@@ -39,7 +39,8 @@ type HeavyKeeper struct {
 	expelled chan string
 }
 
-func NewHeavyKeeper[T constraints.Ordered](k, width, depth uint32, decay float64) *HeavyKeeper {
+// NewHeavyKeeper creates a new HeavyKeeper
+func NewHeavyKeeper(k, width, depth uint32, decay float64) *HeavyKeeper {
 	arrays := make([][]bucket, depth)
 	for i := range arrays {
 		arrays[i] = make([]bucket, width)
@@ -50,22 +51,24 @@ func NewHeavyKeeper[T constraints.Ordered](k, width, depth uint32, decay float64
 		width:       width,
 		depth:       depth,
 		decay:       decay,
-		lookupTable: make([]float64, LOOKUP_TABLE),
+		lookupTable: make([]float64, LookupTable),
 		buckets:     arrays,
 		r:           rand.New(rand.NewSource(0)),
 		minHeap:     minheap.NewHeap[string](k),
 		expelled:    make(chan string, 32),
 	}
-	for i := 0; i < LOOKUP_TABLE; i++ {
+	for i := 0; i < LookupTable; i++ {
 		topk.lookupTable[i] = math.Pow(decay, float64(i))
 	}
 	return topk
 }
 
+// Expelled returns the expelled item
 func (topk *HeavyKeeper) Expelled() <-chan string {
 	return topk.expelled
 }
 
+// Contains returns if item is in topk
 func (topk *HeavyKeeper) Contains(val string) bool {
 	items := topk.minHeap.Sorted()
 	for _, item := range items {
@@ -85,8 +88,7 @@ func (topk *HeavyKeeper) Add(key string, incr uint32) bool {
 
 	// compute d hashes
 	for i, row := range topk.buckets {
-
-		bucketNumber := murmur3.Sum32WithSeed(keyBytes, uint32(i)) % uint32(topk.width)
+		bucketNumber := murmur3.Sum32WithSeed(keyBytes, uint32(i)) % topk.width
 		fingerprint := row[bucketNumber].fingerprint
 		count := row[bucketNumber].count
 
@@ -94,20 +96,18 @@ func (topk *HeavyKeeper) Add(key string, incr uint32) bool {
 			row[bucketNumber].fingerprint = itemFingerprint
 			row[bucketNumber].count = incr
 			maxCount = max(maxCount, incr)
-
 		} else if fingerprint == itemFingerprint {
 			row[bucketNumber].count += incr
 			maxCount = max(maxCount, row[bucketNumber].count)
-
 		} else {
 			for localIncr := incr; localIncr > 0; localIncr-- {
 				var decay float64
 				curCount := row[bucketNumber].count
-				if row[bucketNumber].count < LOOKUP_TABLE {
+				if row[bucketNumber].count < LookupTable {
 					decay = topk.lookupTable[curCount]
 				} else {
 					// decr pow caculate cost
-					decay = topk.lookupTable[LOOKUP_TABLE-1]
+					decay = topk.lookupTable[LookupTable-1]
 				}
 				if topk.r.Float64() < decay {
 					row[bucketNumber].count--
@@ -133,12 +133,12 @@ func (topk *HeavyKeeper) Add(key string, incr uint32) bool {
 	}
 	expelled := topk.minHeap.Add(&minheap.Node[string]{Key: key, Count: maxCount})
 	if expelled != nil {
-		topk.expell(expelled.Key)
+		topk.expel(expelled.Key)
 	}
 	return true
 }
 
-func (topk *HeavyKeeper) expell(item string) {
+func (topk *HeavyKeeper) expel(item string) {
 	select {
 	case topk.expelled <- item:
 	default:
@@ -150,7 +150,7 @@ type bucket struct {
 	count       uint32
 }
 
-func (b *bucket) Get() (uint32, uint32) {
+func (b *bucket) Get() (fingerprint, count uint32) {
 	return b.fingerprint, b.count
 }
 

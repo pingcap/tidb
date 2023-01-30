@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/topk",
-        "@com_github_go_kratos_aegis//ratelimit:go_default_library",
-        "@com_github_go_kratos_aegis//ratelimit/bbr:go_default_library",
+        "@com_github_go_kratos_aegis//ratelimit",
+        "@com_github_go_kratos_aegis//ratelimit/bbr",
     ],
 )

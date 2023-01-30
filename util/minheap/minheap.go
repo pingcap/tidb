@@ -21,17 +21,20 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
+// Heap is a min heap.
 type Heap[T constraints.Ordered] struct {
 	Nodes Nodes[T]
 	K     uint32
 }
 
+// NewHeap creates a new min heap.
 func NewHeap[T constraints.Ordered](k uint32) *Heap[T] {
 	h := Nodes[T]{}
 	heap.Init(&h)
 	return &Heap[T]{Nodes: h, K: k}
 }
 
+// Add adds a new node to the heap.
 func (h *Heap[T]) Add(val *Node[T]) *Node[T] {
 	if h.K > uint32(len(h.Nodes)) {
 		heap.Push(&h.Nodes, val)
@@ -44,16 +47,19 @@ func (h *Heap[T]) Add(val *Node[T]) *Node[T] {
 	return nil
 }
 
+// Pop pops the minimum node from the heap.
 func (h *Heap[T]) Pop() *Node[T] {
 	expelled := heap.Pop(&h.Nodes)
 	return expelled.(*Node[T])
 }
 
+// Fix fixes the count of the node at idx.
 func (h *Heap[T]) Fix(idx int, count uint32) {
 	h.Nodes[idx].Count = count
 	heap.Fix(&h.Nodes, idx)
 }
 
+// Min returns the minimum count of the heap.
 func (h *Heap[T]) Min() uint32 {
 	if len(h.Nodes) == 0 {
 		return 0
@@ -61,6 +67,7 @@ func (h *Heap[T]) Min() uint32 {
 	return h.Nodes[0].Count
 }
 
+// Find returns the index of the node with the given key.
 func (h *Heap[T]) Find(key T) (int, bool) {
 	for i := range h.Nodes {
 		if h.Nodes[i].Key == key {
@@ -70,35 +77,43 @@ func (h *Heap[T]) Find(key T) (int, bool) {
 	return 0, false
 }
 
+// Sorted returns the sorted nodes.
 func (h *Heap[T]) Sorted() Nodes[T] {
 	nodes := append([]*Node[T](nil), h.Nodes...)
 	sort.Sort(sort.Reverse(Nodes[T](nodes)))
 	return nodes
 }
 
+// Nodes is a list of nodes.
 type Nodes[T constraints.Ordered] []*Node[T]
 
+// Node is a node in the min heap.
 type Node[T constraints.Ordered] struct {
 	Key   T
 	Count uint32
 }
 
+// Len returns the length of the list.
 func (n Nodes[T]) Len() int {
 	return len(n)
 }
 
+// Less returns true if the count of the node at i is less than the count of the node at j.
 func (n Nodes[T]) Less(i, j int) bool {
 	return (n[i].Count < n[j].Count) || (n[i].Count == n[j].Count && n[i].Key > n[j].Key)
 }
 
+// Swap swaps the nodes at i and j.
 func (n Nodes[T]) Swap(i, j int) {
 	n[i], n[j] = n[j], n[i]
 }
 
+// Push appends the given node to the list.
 func (n *Nodes[T]) Push(val any) {
 	*n = append(*n, val.(*Node[T]))
 }
 
+// Pop pops the last element from the list.
 func (n *Nodes[T]) Pop() any {
 	var val *Node[T]
 	val, *n = (*n)[len((*n))-1], (*n)[:len((*n))-1]

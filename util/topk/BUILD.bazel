@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//util/minheap",
         "@com_github_spaolacci_murmur3//:murmur3",
-        "@org_golang_x_exp//constraints",
     ],
 )
 

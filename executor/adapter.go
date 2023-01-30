@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-kratos/aegis/ratelimit"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -271,9 +272,10 @@ type ExecStmt struct {
 	phaseLockDurations  [2]time.Duration
 
 	// OutputNames will be set if using cached plan
-	OutputNames []*types.FieldName
-	PsStmt      *plannercore.PlanCacheStmt
-	Ti          *TelemetryInfo
+	OutputNames     []*types.FieldName
+	PsStmt          *plannercore.PlanCacheStmt
+	Ti              *TelemetryInfo
+	limiterDoneFunc *ratelimit.DoneFunc
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -1413,7 +1415,7 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 // 5. reset `DurationParse` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults bool) {
 	a.checkPlanReplayerCapture(txnTS)
-
+	(*a.limiterDoneFunc)(ratelimit.DoneInfo{Err: err})
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
