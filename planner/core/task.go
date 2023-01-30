@@ -2009,17 +2009,13 @@ func aggFuncModeSame(p PhysicalPlan) bool {
 	funcs := make([]*aggregation.AggFuncDesc, 0, 8)
 	sa, ok := p.(*PhysicalStreamAgg)
 	if ok {
-		for _, f := range sa.AggFuncs {
-			funcs = append(funcs, f)
-		}
+		funcs = append(funcs, sa.AggFuncs...)
 	} else {
 		ha, ok := p.(*PhysicalHashAgg)
 		if !ok {
 			return false
 		}
-		for _, f := range ha.AggFuncs {
-			funcs = append(funcs, f)
-		}
+		funcs = append(funcs, ha.AggFuncs...)
 	}
 	if len(funcs) == 0 {
 		return true
