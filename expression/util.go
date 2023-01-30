@@ -415,6 +415,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		if v.InOperand {
 			newExpr = SetExprColumnInOperand(newExpr)
 		}
+		newExpr.SetCoercibility(v.Coercibility())
 		return true, false, newExpr
 	case *ScalarFunction:
 		substituted := false
@@ -437,7 +438,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
-		coll, _ := v.CharsetAndCollation()
+		_, coll := v.CharsetAndCollation()
 		var tmpArgForCollCheck []Expression
 		if collate.NewCollationEnabled() {
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
