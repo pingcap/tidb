@@ -769,7 +769,8 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 		}, nil
 	case variable.SlowLogExecRetryTime, variable.SlowLogQueryTimeStr, variable.SlowLogParseTimeStr,
 		variable.SlowLogCompileTimeStr, variable.SlowLogRewriteTimeStr, variable.SlowLogPreProcSubQueryTimeStr,
-		variable.SlowLogOptimizeTimeStr, variable.SlowLogWaitTSTimeStr, execdetails.PreWriteTimeStr,
+		variable.SlowLogOptimizeTimeStr, variable.SlowLogWaitTSTimeStr, variable.SlowLogExecuteTimeStr,
+		variable.SlowLogBuildExecutorTimeStr, variable.SlowLogOpenExecutorTimeStr, variable.SlowLogRunExecutorTimeStr, execdetails.PreWriteTimeStr,
 		execdetails.WaitPrewriteBinlogTimeStr, execdetails.CommitTimeStr, execdetails.GetCommitTSTimeStr,
 		execdetails.CommitBackoffTimeStr, execdetails.ResolveLockTimeStr, execdetails.LocalLatchWaitTimeStr,
 		execdetails.CopTimeStr, execdetails.ProcessTimeStr, execdetails.WaitTimeStr, execdetails.BackoffTimeStr,
