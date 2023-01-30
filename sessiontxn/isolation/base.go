@@ -205,8 +205,8 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (*kv.RefreshableReadTS, er
 
 // InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
 // is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
-func (p *baseTxnContextProvider) InvalidateForUpdateTS() error {
-	return errors.New("InvalidateForUpdateTS not applicable for this kind of transaction")
+func (p *baseTxnContextProvider) InvalidateForUpdateTS(context.Context) (bool, error) {
+	return false, errors.New("InvalidateForUpdateTS not applicable for this kind of transaction")
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
@@ -568,12 +568,6 @@ func (f funcFuture) Wait() (uint64, error) {
 // actually works in RC semantics, these are many common logics in these two kinds.
 type basePessimisticRCTxnContextProvider struct {
 	baseTxnContextProvider
-}
-
-// InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
-// is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
-func (p *basePessimisticRCTxnContextProvider) InvalidateForUpdateTS() error {
-	return nil
 }
 
 // OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or

@@ -79,8 +79,8 @@ func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (*kv.RefreshableReadT
 	return nil, errors.New("GetForUpdateTS not supported for stalenessTxnProvider")
 }
 
-func (p *StalenessTxnContextProvider) InvalidateForUpdateTS() error {
-	return errors.New("InvalidateForUpdateTS not supported for stalenessTxnProvider")
+func (p *StalenessTxnContextProvider) InvalidateForUpdateTS(context.Context) (bool, error) {
+	return false, errors.New("InvalidateForUpdateTS not supported for stalenessTxnProvider")
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider

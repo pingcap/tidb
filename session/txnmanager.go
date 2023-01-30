@@ -105,8 +105,8 @@ func (m *txnManager) GetStmtForUpdateTS() (*kv.RefreshableReadTS, error) {
 
 // InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
 // is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
-func (m *txnManager) InvalidateForUpdateTS() error {
-	return m.ctxProvider.InvalidateForUpdateTS()
+func (m *txnManager) InvalidateForUpdateTS(ctx context.Context) (bool, error) {
+	return m.ctxProvider.InvalidateForUpdateTS(ctx)
 }
 
 func (m *txnManager) GetTxnScope() string {

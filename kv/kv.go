@@ -573,6 +573,10 @@ func (t *RefreshableReadTS) TryRefreshWithOracle(ctx context.Context, tsOracle o
 		return false
 	}
 
+	// NOTE: The call to the oracle must be done after locking the mutex. Write-locking the mutex is exclusives to any
+	// accesses, so we can guarantee the time of allocating the new timestamp is strictly later than any other `Get`
+	// operations called previously. This is why the function accepts the oracle as the argument instead of allowing
+	// the caller to get an oracle.Future by itself and pass it in.
 	t.tsFuture = tsOracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: scope})
 	t.Seal()
 

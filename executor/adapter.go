@@ -1068,7 +1068,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
-		err = handleErrLockedWithConflict(sctx, err)
+		err = handleErrLockedWithConflict(ctx, sctx, err)
 		a.phaseLockDurations[0] += time.Since(startLocking)
 		if lockKeyStats != nil {
 			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)

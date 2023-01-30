@@ -136,6 +136,16 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 	return nil
 }
 
+// InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
+// is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
+func (p *PessimisticRRTxnContextProvider) InvalidateForUpdateTS(ctx context.Context) (bool, error) {
+	ts, err := p.getForUpdateTs()
+	if err != nil {
+		return false, err
+	}
+	return ts.TryRefreshWithOracle(ctx, p.sctx.GetStore().GetOracle(), p.GetTxnScope()), nil
+}
+
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	if err := p.basePessimisticRCTxnContextProvider.OnStmtStart(ctx, node); err != nil {

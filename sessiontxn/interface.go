@@ -129,7 +129,7 @@ type TxnContextProvider interface {
 	GetStmtForUpdateTS() (*kv.RefreshableReadTS, error)
 	// InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
 	// is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
-	InvalidateForUpdateTS() error
+	InvalidateForUpdateTS(ctx context.Context) (bool, error)
 	// GetSnapshotWithStmtReadTS gets snapshot with read ts
 	GetSnapshotWithStmtReadTS() (kv.Snapshot, error)
 	// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
@@ -177,7 +177,7 @@ type TxnManager interface {
 	GetStmtForUpdateTS() (*kv.RefreshableReadTS, error)
 	// InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
 	// is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
-	InvalidateForUpdateTS() error
+	InvalidateForUpdateTS(ctx context.Context) (bool, error)
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
 	// GetSnapshotWithStmtReadTS gets snapshot with read ts
