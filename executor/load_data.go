@@ -233,11 +233,7 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 		int64(config.ReadBlockSize),
 		nil,
 		false,
-		// TODO: Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		//		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
-		//		if err != nil {
-		//			return nil, err
-		//		}
+		// these arguments can only be ASCII
 		nil)
 	csvParser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
