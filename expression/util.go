@@ -438,7 +438,11 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
-		_, coll := v.CharsetAndCollation()
+		oldCollEt, err := CheckAndDeriveCollationFromExprs(v.GetCtx(), v.FuncName.L, v.RetType.EvalType(), v.GetArgs()...)
+		if err != nil {
+			logutil.BgLogger().Error("should not happen", zap.Stack("stack"))
+			return false, false, v
+		}
 		var tmpArgForCollCheck []Expression
 		if collate.NewCollationEnabled() {
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
@@ -459,12 +463,12 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					logutil.BgLogger().Error("should not happen", zap.Stack("stack"))
 					return false, failed, v
 				}
-				if coll == newCollEt.Collation {
+				if oldCollEt.Collation == newCollEt.Collation {
 					if newFuncExpr.GetType().GetCollate() == arg.GetType().GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
 						// It's safe to use the new expression, otherwise some cases in projection push-down will be wrong.
 						changed = true
 					} else {
-						changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
+						changed = checkCollationStrictness(oldCollEt.Collation, newFuncExpr.GetType().GetCollate())
 					}
 				}
 			}
