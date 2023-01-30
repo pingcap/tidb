@@ -4009,13 +4009,13 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	if v.IsCommonHandle {
 		if len(keyColOffsets) > 0 {
-			locateKey := make([]types.Datum, e.Schema().Len())
+			locateKey := make([]types.Datum, len(pt.Cols()))
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 			// lookUpContentsByPID groups lookUpContents by pid(partition) so that kv ranges for same partition can be merged.
 			lookUpContentsByPID := make(map[int64][]*indexJoinLookUpContent)
 			for _, content := range lookUpContents {
-				for i, date := range content.keys {
-					locateKey[content.keyCols[i]] = date
+				for i, data := range content.keys {
+					locateKey[keyColOffsets[i]] = data
 				}
 				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
 				if err != nil {
@@ -4051,11 +4051,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	handles, lookUpContents := dedupHandles(lookUpContents)
 
 	if len(keyColOffsets) > 0 {
-		locateKey := make([]types.Datum, e.Schema().Len())
+		locateKey := make([]types.Datum, len(pt.Cols()))
 		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 		for _, content := range lookUpContents {
-			for i, date := range content.keys {
-				locateKey[content.keyCols[i]] = date
+			for i, data := range content.keys {
+				locateKey[keyColOffsets[i]] = data
 			}
 			p, err := pt.GetPartitionByRow(e.ctx, locateKey)
 			if err != nil {
