@@ -19,7 +19,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -36,7 +36,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("use test")
 	re := require.New(t)
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var groupID int64
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		// job.SchemaID will be assigned when the group is created.
@@ -160,6 +160,10 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustExec("create user user2")
 	tk.MustGetErrCode("alter user user2 resource group nil_group", mysql.ErrResourceGroupNotExists)
+
+	tk.MustExec("create resource group do_not_delete_rg rru_per_sec=100 wru_per_sec=200")
+	tk.MustExec("create user usr3 resource group do_not_delete_rg")
+	tk.MustContainErrMsg("drop resource group do_not_delete_rg", "user [usr3] depends on the resource group to drop")
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
