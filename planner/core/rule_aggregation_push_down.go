@@ -405,6 +405,7 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 		if err != nil {
 			return nil, err
 		}
+		firstRow.Mode = aggregation.Partial1Mode
 		newAgg.AggFuncs = append(newAgg.AggFuncs, firstRow)
 	}
 	tmpSchema := expression.NewSchema(newAgg.GetGroupByCols()...)

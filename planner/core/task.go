@@ -1828,10 +1828,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	}
 	switch p.MppRunMode {
 	case Mpp1Phase:
-		// TiFlash will check if agg func mode are all same. Otherwise will give error.
-		if !aggFuncModeSame(p) {
-			return invalidTask
-		}
 		// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 		// only push down the original agg
 		proj := p.convertAvgForMPP()
@@ -1845,9 +1841,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
-			return invalidTask
-		}
-		if !aggFuncModeSame(finalAgg) {
 			return invalidTask
 		}
 		attachPlan2Task(partialAgg, mpp)
@@ -1895,9 +1888,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
-			return invalidTask
-		}
-		if !aggFuncModeSame(finalAgg) {
 			return invalidTask
 		}
 
@@ -2003,30 +1993,6 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	default:
 		return invalidTask
 	}
-}
-
-func aggFuncModeSame(p PhysicalPlan) bool {
-	funcs := make([]*aggregation.AggFuncDesc, 0, 8)
-	sa, ok := p.(*PhysicalStreamAgg)
-	if ok {
-		funcs = append(funcs, sa.AggFuncs...)
-	} else {
-		ha, ok := p.(*PhysicalHashAgg)
-		if !ok {
-			return false
-		}
-		funcs = append(funcs, ha.AggFuncs...)
-	}
-	if len(funcs) == 0 {
-		return true
-	}
-	expFuncMode := funcs[0].Mode
-	for _, f := range funcs {
-		if f.Mode != expFuncMode {
-			return false
-		}
-	}
-	return true
 }
 
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
