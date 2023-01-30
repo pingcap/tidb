@@ -52,8 +52,8 @@ type baseTxnContextProvider struct {
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
 	onTxnActiveFunc        func(kv.Transaction, sessiontxn.EnterNewTxnType)
-	getStmtReadTSFunc      func() (uint64, error)
-	getStmtForUpdateTSFunc func() (uint64, error)
+	getStmtReadTSFunc      func() (*kv.RefreshableReadTS, error)
+	getStmtForUpdateTSFunc func() (*kv.RefreshableReadTS, error)
 
 	// Runtime states
 	ctx             context.Context
@@ -180,25 +180,25 @@ func (p *baseTxnContextProvider) GetReadReplicaScope() string {
 }
 
 // GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
-func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
+func (p *baseTxnContextProvider) GetStmtReadTS() (*kv.RefreshableReadTS, error) {
 	if _, err := p.ActivateTxn(); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return snapshotTS, nil
+		return kv.NewRefreshableReadTS(snapshotTS), nil
 	}
 	return p.getStmtReadTSFunc()
 }
 
 // GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
-func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
+func (p *baseTxnContextProvider) GetStmtForUpdateTS() (*kv.RefreshableReadTS, error) {
 	if _, err := p.ActivateTxn(); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return snapshotTS, nil
+		return kv.NewRefreshableReadTS(snapshotTS), nil
 	}
 	return p.getStmtForUpdateTSFunc()
 }
@@ -265,6 +265,14 @@ func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
 		return 0, err
 	}
 	return txn.StartTS(), nil
+}
+
+func (p *baseTxnContextProvider) getTxnStartTSAsRefreshableReadTS() (*kv.RefreshableReadTS, error) {
+	ts, err := p.getTxnStartTS()
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewRefreshableReadTS(ts), err
 }
 
 // ActivateTxn activates the transaction and set the relevant context variables.
@@ -425,8 +433,12 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error
 	if err != nil {
 		return nil, err
 	}
+	tsValue, err := ts.Get()
+	if err != nil {
+		return nil, err
+	}
 
-	return p.getSnapshotByTS(ts)
+	return p.getSnapshotByTS(tsValue)
 }
 
 // GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
@@ -435,8 +447,12 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, 
 	if err != nil {
 		return nil, err
 	}
+	tsValue, err := ts.Get()
+	if err != nil {
+		return nil, err
+	}
 
-	return p.getSnapshotByTS(ts)
+	return p.getSnapshotByTS(tsValue)
 }
 
 // getSnapshotByTS get snapshot from store according to the snapshotTS and set the transaction related
@@ -448,7 +464,11 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
+	txnCtxForUpdateTS, err := txnCtx.GetForUpdateTSValue()
+	if err != nil {
+		return nil, err
+	}
+	if txn.Valid() && txnCtx.StartTS == txnCtxForUpdateTS && txnCtx.StartTS == snapshotTS {
 		return txn.GetSnapshot(), nil
 	}
 

@@ -154,7 +154,7 @@ func buildTableRequest(
 	tableID int64,
 	oldTable *metautil.Table,
 	oldTableID int64,
-	startTS uint64,
+	readTS uint64,
 	concurrency uint,
 ) (*kv.Request, error) {
 	var rule *tipb.ChecksumRewriteRule
@@ -182,7 +182,7 @@ func buildTableRequest(
 	// Use low priority to reducing impact to other requests.
 	builder.Request.Priority = kv.PriorityLow
 	return builder.SetHandleRanges(nil, tableID, tableInfo.IsCommonHandle, ranges, nil).
-		SetConstantReadTS(startTS).
+		SetReadTS(readTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		Build()
@@ -215,7 +215,7 @@ func buildIndexRequest(
 	// Use low priority to reducing impact to other requests.
 	builder.Request.Priority = kv.PriorityLow
 	return builder.SetIndexRanges(nil, tableID, indexInfo.ID, ranges).
-		SetConstantReadTS(startTS).
+		SetReadTS(startTS).
 		SetChecksumRequest(checksum).
 		SetConcurrency(int(concurrency)).
 		Build()

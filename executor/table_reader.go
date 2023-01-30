@@ -332,6 +332,10 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 		return nil, err
 	}
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
+	readTS, err := e.readTS.Get()
+	if err != nil {
+		return nil, err
+	}
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
@@ -341,7 +345,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 		reqBuilder := builder.SetKeyRanges(kvRange)
 		kvReq, err := reqBuilder.
 			SetDAGRequest(e.dagPB).
-			SetReadTS(e.readTS).
+			SetReadTS(readTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetTxnScope(e.txnScope).
@@ -378,11 +382,15 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
 		return nil, err
 	}
+	readTS, err := e.readTS.Get()
+	if err != nil {
+		return nil, err
+	}
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetPartitionIDAndRanges(partitionIDAndRanges)
 	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
-		SetReadTS(e.readTS).
+		SetReadTS(readTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -428,9 +436,13 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 			reqBuilder.SetTiDBServerID(serverInfo.ServerIDGetter())
 		}
 	}
+	readTS, err := e.readTS.Get()
+	if err != nil {
+		return nil, err
+	}
 	reqBuilder.
 		SetDAGRequest(e.dagPB).
-		SetReadTS(e.readTS).
+		SetReadTS(readTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).

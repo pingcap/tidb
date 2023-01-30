@@ -2333,12 +2333,17 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		if showStmt, ok := stmt.(*ast.ShowStmt); !ok || showStmt.Tp != ast.ShowSessionStates {
 			defer func() {
 				sessVars.LastQueryInfo = sessionstates.QueryInfo{
-					TxnScope:    sessVars.CheckAndGetTxnScope(),
-					StartTS:     sessVars.TxnCtx.StartTS,
-					ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
+					TxnScope: sessVars.CheckAndGetTxnScope(),
+					StartTS:  sessVars.TxnCtx.StartTS,
 				}
 				if err != nil {
 					sessVars.LastQueryInfo.ErrMsg = err.Error()
+				}
+				forUpdateTS, err := sessVars.TxnCtx.GetForUpdateTSValue()
+				if err != nil {
+					logutil.BgLogger().Warn("failed to fetch the forUpdateTS to record in last_query_info", zap.Uint64("startTS", sessVars.TxnCtx.StartTS), zap.Error(err))
+				} else {
+					sessVars.LastQueryInfo.ForUpdateTS = forUpdateTS
 				}
 			}()
 		}
@@ -3839,7 +3844,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.String("user", vars.User.LoginString()),
 			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
-			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
+			zap.Stringer("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
 			zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
 			zap.String("currentDB", vars.CurrentDB),
 			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),

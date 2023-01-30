@@ -897,12 +897,7 @@ func (b *batchCopIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.Trace(resp.err)
 	}
 
-	readTS, err := b.req.ReadTS.Get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	err = b.store.CheckVisibility(readTS)
+	err := b.store.CheckVisibility(b.req.ReadTS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1001,14 +996,9 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())
 	}
 
-	readTS, err := b.req.ReadTS.Get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	copReq := coprocessor.BatchRequest{
 		Tp:           b.req.Tp,
-		StartTs:      readTS,
+		StartTs:      b.req.ReadTS,
 		Data:         b.req.Data,
 		SchemaVer:    b.req.SchemaVar,
 		Regions:      regionInfos,
@@ -1081,7 +1071,7 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 		// TODO: The readTS may be different from the transaction's startTS in pessimistic transactions, so the log may
 		// be inaccurate.
 		logutil.BgLogger().Warn("other error",
-			zap.Stringer("txnStartTS", b.req.ReadTS),
+			zap.Uint64("txnStartTS", b.req.ReadTS),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		return errors.Trace(err)

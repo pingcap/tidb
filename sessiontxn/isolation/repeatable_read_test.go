@@ -350,7 +350,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	tk.MustExec("insert into t values (1,1), (2,2)")
 	se := tk.Session()
 	provider := initializeRepeatableReadProvider(t, tk, true)
-	lastFetchedForUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
+	lastFetchedForUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTSValue()
 	txnManager := sessiontxn.GetTxnManager(se)
 
 	type testStruct struct {

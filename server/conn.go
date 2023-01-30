@@ -2002,7 +2002,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			// TODO: to support READ-COMMITTED, we need to avoid getting new TS for each statement in the query.
 			return nil, nil
 		}
-		if vars.TxnCtx.GetForUpdateTS() != vars.TxnCtx.StartTS {
+		if vars.TxnCtx.GetForUpdateTS() != nil && !vars.TxnCtx.GetForUpdateTS().EqualsToConstant(vars.TxnCtx.StartTS) {
 			// Do not handle the case that ForUpdateTS is changed for simplicity.
 			return nil, nil
 		}

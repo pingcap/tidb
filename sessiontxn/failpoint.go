@@ -105,7 +105,12 @@ func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
 		panic(err)
 	}
 
-	if actual != expected {
+	tsValue, err := actual.Get()
+	if err != nil {
+		panic(err)
+	}
+
+	if tsValue != expected {
 		panic(fmt.Sprintf("Txn read ts not match, expect:%d, got:%d", expected, actual))
 	}
 }

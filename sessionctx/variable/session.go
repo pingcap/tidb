@@ -188,11 +188,12 @@ type TxnCtxNeedToRestore struct {
 
 // TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
 type TxnCtxNoNeedToRestore struct {
-	forUpdateTS uint64
-	Binlog      interface{}
-	InfoSchema  interface{}
-	History     interface{}
-	StartTS     uint64
+	forUpdateTS        *kv.RefreshableReadTS
+	largestForUpdateTS uint64
+	Binlog             interface{}
+	InfoSchema         interface{}
+	History            interface{}
+	StartTS            uint64
 
 	// ShardStep indicates the max size of continuous rowid shard in one transaction.
 	ShardStep    int
@@ -349,18 +350,32 @@ func (tc *TransactionContext) ClearDelta() {
 }
 
 // GetForUpdateTS returns the ts for update.
-func (tc *TransactionContext) GetForUpdateTS() uint64 {
-	if tc.forUpdateTS > tc.StartTS {
-		return tc.forUpdateTS
+func (tc *TransactionContext) GetForUpdateTS() *kv.RefreshableReadTS {
+	return tc.forUpdateTS
+}
+
+// GetForUpdateTSValue returns the ts value for update. The function blocks if the ts is not ready anf needs to wait.
+func (tc *TransactionContext) GetForUpdateTSValue() (uint64, error) {
+	if tc.forUpdateTS != nil {
+		ts, err := tc.forUpdateTS.Get()
+		if err != nil {
+			return 0, err
+		}
+		if ts < tc.largestForUpdateTS {
+			return tc.largestForUpdateTS, nil
+		}
+		if ts > tc.largestForUpdateTS {
+			tc.largestForUpdateTS = ts
+		}
+		return ts, nil
 	}
-	return tc.StartTS
+	return tc.StartTS, nil
 }
 
 // SetForUpdateTS sets the ts for update.
-func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
-	if forUpdateTS > tc.forUpdateTS {
-		tc.forUpdateTS = forUpdateTS
-	}
+func (tc *TransactionContext) SetForUpdateTS(forUpdateTS *kv.RefreshableReadTS) {
+	// TODO: Is it possible that this function is called after a logically later invocation?
+	tc.forUpdateTS = forUpdateTS
 }
 
 // GetCurrentSavepoint gets TransactionContext's savepoint.

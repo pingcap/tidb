@@ -37,7 +37,7 @@ type PessimisticRRTxnContextProvider struct {
 	basePessimisticRCTxnContextProvider
 
 	// Used for ForUpdateRead statement
-	forUpdateTS       uint64
+	forUpdateTS       *kv.RefreshableReadTS
 	latestForUpdateTS uint64
 	// It may decide whether to update forUpdateTs when calling provider's getForUpdateTs
 	// See more details in the comments of optimizeWithPlan
@@ -62,24 +62,24 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 		},
 	}
 
-	provider.getStmtReadTSFunc = provider.getTxnStartTS
+	provider.getStmtReadTSFunc = provider.getTxnStartTSAsRefreshableReadTS
 	provider.getStmtForUpdateTSFunc = provider.getForUpdateTs
 
 	return provider
 }
 
-func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error) {
-	if p.forUpdateTS != 0 {
+func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts *kv.RefreshableReadTS, err error) {
+	if p.forUpdateTS != nil {
 		return p.forUpdateTS, nil
 	}
 
 	var txn kv.Transaction
 	if txn, err = p.ActivateTxn(); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	if p.optimizeForNotFetchingLatestTS {
-		p.forUpdateTS = p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+		p.forUpdateTS = p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS().Seal()
 		return p.forUpdateTS, nil
 	}
 
@@ -87,13 +87,16 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	futureTS := newOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
 
 	start := time.Now()
-	if ts, err = futureTS.Wait(); err != nil {
-		return 0, err
+	tsValue, err := futureTS.Wait()
+	if err != nil {
+		return nil, err
 	}
 	p.sctx.GetSessionVars().DurationWaitTS += time.Since(start)
 
+	ts = kv.NewRefreshableReadTS(tsValue)
+
 	txnCtx.SetForUpdateTS(ts)
-	txn.SetOption(kv.SnapshotTS, ts)
+	txn.SetOption(kv.SnapshotTSGetter, func() (uint64, error) { return ts.Get() })
 
 	p.forUpdateTS = ts
 
@@ -124,9 +127,11 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 		return err
 	}
 
-	sctx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
+	refreshableTS := kv.NewRefreshableReadTS(version.Ver)
+
+	sctx.GetSessionVars().TxnCtx.SetForUpdateTS(refreshableTS)
 	p.latestForUpdateTS = version.Ver
-	txn.SetOption(kv.SnapshotTS, version.Ver)
+	txn.SetOption(kv.SnapshotTSGetter, func() (uint64, error) { return refreshableTS.Get() })
 
 	return nil
 }
@@ -137,7 +142,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context, node 
 		return err
 	}
 
-	p.forUpdateTS = 0
+	p.forUpdateTS = nil
 	p.optimizeForNotFetchingLatestTS = false
 
 	return nil
@@ -150,10 +155,15 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 	}
 
 	// If TxnCtx.forUpdateTS is updated in OnStmtErrorForNextAction, we assign the value to the provider
-	if p.latestForUpdateTS > p.forUpdateTS {
-		p.forUpdateTS = p.latestForUpdateTS
+	// The ts should have already been waited so no waiting is expected here.
+	lastForUpdateTS, err := p.forUpdateTS.GetForNonRead()
+	if err != nil {
+		return err
+	}
+	if p.latestForUpdateTS > lastForUpdateTS {
+		p.forUpdateTS = kv.NewRefreshableReadTS(p.latestForUpdateTS)
 	} else {
-		p.forUpdateTS = 0
+		p.forUpdateTS = nil
 	}
 
 	p.optimizeForNotFetchingLatestTS = false
@@ -259,7 +269,7 @@ func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockEr
 
 		logutil.Logger(p.ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
-			zap.Uint64("forUpdateTS", forUpdateTS),
+			zap.Stringer("forUpdateTS", forUpdateTS),
 			zap.String("err", errStr))
 	} else {
 		// This branch: if err is not nil, always update forUpdateTS to avoid problem described below.

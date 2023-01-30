@@ -260,7 +260,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	forUpdateTS, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Equal(t, readTS, forUpdateTS)
-	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTS())
+	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTSValue())
 	require.Greater(t, readTS, compareTS)
 
 	// second read should use the newest ts
@@ -273,7 +273,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	forUpdateTS, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Equal(t, readTS, forUpdateTS)
-	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTS())
+	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTSValue())
 	require.Greater(t, readTS, compareTS)
 
 	// if we should retry, the ts should be updated
@@ -288,7 +288,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	forUpdateTS, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Equal(t, readTS, forUpdateTS)
-	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTS())
+	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTSValue())
 	require.Greater(t, readTS, compareTS)
 }
 

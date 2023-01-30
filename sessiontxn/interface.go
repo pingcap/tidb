@@ -124,9 +124,9 @@ type TxnContextProvider interface {
 	// GetReadReplicaScope returns the read replica scope
 	GetReadReplicaScope() string
 	//GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
-	GetStmtReadTS() (uint64, error)
+	GetStmtReadTS() (*kv.RefreshableReadTS, error)
 	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
-	GetStmtForUpdateTS() (uint64, error)
+	GetStmtForUpdateTS() (*kv.RefreshableReadTS, error)
 	// InvalidateForUpdateTS makes the current statement's forUpdateTS invalidated. The next time the forUpdateTS
 	// is needed, it will get a new ts that's allocated AFTER the most recent invocation to InvalidateForUpdateTS.
 	InvalidateForUpdateTS() error

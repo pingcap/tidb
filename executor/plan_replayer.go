@@ -140,12 +140,16 @@ func (e *PlanReplayerExec) createFile() error {
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
-	startTS, err := sessiontxn.GetTxnManager(e.ctx).GetStmtReadTS()
+	readTS, err := sessiontxn.GetTxnManager(e.ctx).GetStmtReadTS()
+	if err != nil {
+		return err
+	}
+	readTSValue, err := readTS.Get()
 	if err != nil {
 		return err
 	}
 	task := &domain.PlanReplayerDumpTask{
-		StartTS:     startTS,
+		StartTS:     readTSValue,
 		FileName:    fileName,
 		Zf:          zf,
 		SessionVars: e.ctx.GetSessionVars(),

@@ -28,10 +28,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -41,10 +39,12 @@ var (
 )
 
 type stmtState struct {
-	stmtTS         uint64
-	stmtTSFuture   oracle.Future
+	stmtTS         *kv.RefreshableReadTS
+	stmtTSFuture   refreshableTSFuture
 	stmtUseStartTS bool
 }
+
+type refreshableTSFuture = func() (*kv.RefreshableReadTS, error)
 
 func (s *stmtState) prepareStmt(useStartTS bool) error {
 	*s = stmtState{
@@ -148,12 +148,14 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 		return
 	}
 	sessVars := p.sctx.GetSessionVars()
-	var stmtTSFuture oracle.Future
+	var stmtTSFuture refreshableTSFuture
 	switch {
 	case p.stmtUseStartTS:
-		stmtTSFuture = funcFuture(p.getTxnStartTS)
+		stmtTSFuture = p.getTxnStartTSAsRefreshableReadTS
 	case p.latestOracleTSValid && sessVars.StmtCtx.RCCheckTS:
-		stmtTSFuture = types.ConstantFuture(p.latestOracleTS)
+		stmtTSFuture = func() (*kv.RefreshableReadTS, error) {
+			return kv.NewRefreshableReadTS(p.latestOracleTS), nil
+		}
 	default:
 		stmtTSFuture = p.getOracleFuture()
 	}
@@ -161,42 +163,48 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	p.stmtTSFuture = stmtTSFuture
 }
 
-func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
+func (p *PessimisticRCTxnContextProvider) getOracleFuture() refreshableTSFuture {
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	future := newOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
-	return func() (ts uint64, err error) {
-		if ts, err = future.Wait(); err != nil {
+	return func() (ts *kv.RefreshableReadTS, err error) {
+		var tsValue uint64
+		if tsValue, err = future.Wait(); err != nil {
 			return
 		}
 		failpoint.Inject("waitTsoOfOracleFuture", func() {
 			sessiontxn.TsoWaitCountInc(p.sctx)
 		})
+		ts = kv.NewRefreshableReadTS(tsValue)
 		txnCtx.SetForUpdateTS(ts)
-		ts = txnCtx.GetForUpdateTS()
-		p.latestOracleTS = ts
+		// Is it possible that txnCtx have a larger forUpdateTS now?
+		//tsValue = txnCtx.GetForUpdateTSValue()
+		p.latestOracleTS = tsValue
 		p.latestOracleTSValid = true
 		return
 	}
 }
 
-func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
-	if p.stmtTS != 0 {
+func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts *kv.RefreshableReadTS, err error) {
+	if p.stmtTS != nil {
 		return p.stmtTS, nil
 	}
 
 	var txn kv.Transaction
 	if txn, err = p.ActivateTxn(); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	p.prepareStmtTS()
+	// TODO: Return future directly instead of waiting
 	start := time.Now()
-	if ts, err = p.stmtTSFuture.Wait(); err != nil {
-		return 0, err
+	ts, err = p.stmtTSFuture()
+	if err != nil {
+		return nil, err
 	}
+
 	p.sctx.GetSessionVars().DurationWaitTS += time.Since(start)
 
-	txn.SetOption(kv.SnapshotTS, ts)
+	txn.SetOption(kv.SnapshotTSGetter, func() (uint64, error) { return ts.Get() })
 	p.stmtTS = ts
 	return
 }
@@ -229,7 +237,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
 		logutil.Logger(p.ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
-			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
+			zap.Stringer("forUpdateTS", txnCtx.GetForUpdateTS()),
 			zap.String("err", lockErr.Error()))
 		retryable = true
 		if p.checkTSInWriteStmt {
@@ -315,7 +323,9 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 			sessiontxn.TsoUseConstantCountInc(p.sctx)
 		})
 		p.checkTSInWriteStmt = true
-		p.stmtTSFuture = types.ConstantFuture(p.latestOracleTS)
+		p.stmtTSFuture = func() (*kv.RefreshableReadTS, error) {
+			return kv.NewRefreshableReadTS(p.latestOracleTS).Seal(), nil
+		}
 	}
 
 	return nil

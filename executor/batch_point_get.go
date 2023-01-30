@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"golang.org/x/exp/slices"
 )
 
@@ -65,6 +66,7 @@ type BatchPointGetExec struct {
 	keepOrder   bool
 	desc        bool
 	batchGetter kv.BatchGetter
+	avgRowSize  float64
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -74,8 +76,9 @@ type BatchPointGetExec struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	snapshot kv.Snapshot
-	stats    *runtimeStatsWithSnapshot
+	snapshotBuilder snapshotBuilder
+	snapshot        kv.Snapshot
+	stats           *runtimeStatsWithSnapshot
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -89,8 +92,36 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 	}
 }
 
+func (e *BatchPointGetExec) initSnapshot() error {
+	if e.snapshot != nil {
+		return nil
+	}
+	var err error
+	e.snapshot, err = e.snapshotBuilder.build()
+	if err != nil {
+		return err
+	}
+
+	if e.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
+		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, e.avgRowSize))
+	}
+	e.snapshot.SetOption(kv.ResourceGroupName, e.ctx.GetSessionVars().ResourceGroupName)
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+	}
+	return nil
+}
+
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
+	if err := e.initSnapshot(); err != nil {
+		return err
+	}
+
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	txn, err := e.ctx.Txn(false)

@@ -240,11 +240,15 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 		ranges = ranger.FullIntRange(false)
 	}
 
+	readTS, err := c.ReadTS.Get()
+	if err != nil {
+		return nil, err
+	}
 	var builder distsql.RequestBuilder
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
 		SetChecksumRequest(checksum).
-		SetReadTS(c.ReadTS).
+		SetReadTS(readTS).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
 		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
 		Build()
@@ -258,11 +262,15 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 
 	ranges := ranger.FullRange()
 
+	readTS, err := c.ReadTS.Get()
+	if err != nil {
+	}
+	return nil, err
 	var builder distsql.RequestBuilder
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, tableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
-		SetReadTS(c.ReadTS).
+		SetReadTS(readTS).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
 		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
 		Build()

@@ -80,7 +80,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		// Note: Do not assume this callback will be invoked within the same goroutine.
 		if copMeetLock := event.GetCopMeetLock(); copMeetLock != nil {
 			logutil.Logger(ctx).Debug("coprocessor encounters lock",
-				zap.Stringer("startTS", kvReq.ReadTS),
+				zap.Uint64("startTS", kvReq.ReadTS),
 				zap.Stringer("lock", copMeetLock.LockInfo),
 				zap.String("stmt", originalSQL))
 		}

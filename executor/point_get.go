@@ -60,28 +60,13 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
+		avgRowSize:       p.GetAvgRowSize(),
 	}
 
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
 	e.Init(p)
-
-	e.snapshot, err = b.getSnapshot()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
-		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, p.GetAvgRowSize()))
-	}
-	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
-	if e.runtimeStats != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-	}
+	e.snapshotBuilder = b.getSnapshotBuilder()
 
 	if p.IndexInfo != nil {
 		sctx := b.ctx.GetSessionVars().StmtCtx
@@ -133,11 +118,13 @@ type PointGetExecutor struct {
 	readReplicaScope string
 	isStaleness      bool
 	txn              kv.Transaction
+	snapshotBuilder  snapshotBuilder
 	snapshot         kv.Snapshot
 	done             bool
 	lock             bool
 	lockWaitTime     int64
 	rowDecoder       *rowcodec.ChunkDecoder
+	avgRowSize       float64
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -183,8 +170,35 @@ func (e *PointGetExecutor) buildVirtualColumnInfo() {
 	}
 }
 
+func (e *PointGetExecutor) initSnapshot() error {
+	if e.snapshot != nil {
+		return nil
+	}
+	var err error
+	e.snapshot, err = e.snapshotBuilder.build()
+	if err != nil {
+		return err
+	}
+
+	if e.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
+		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, e.avgRowSize))
+	}
+	e.snapshot.SetOption(kv.ResourceGroupName, e.ctx.GetSessionVars().ResourceGroupName)
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+	}
+	return nil
+}
+
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
+	if err := e.initSnapshot(); err != nil {
+		return err
+	}
 	var err error
 	e.txn, err = e.ctx.Txn(false)
 	if err != nil {

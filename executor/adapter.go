@@ -302,14 +302,18 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	})
 
 	ctx = a.observeStmtBeginForTopSQL(ctx)
-	startTs, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
+	readTS, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
+	readTSValue, err := readTS.Get()
 	if err != nil {
 		return nil, err
 	}
 	a.Ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityHigh
 
 	var pointExecutor *PointGetExecutor
-	useMaxTS := startTs == math.MaxUint64
+	useMaxTS := readTSValue == math.MaxUint64
 
 	// try to reuse point get executor
 	// We should only use the cached the executor when the readTS is MaxUint64
@@ -362,7 +366,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	return &recordSet{
 		executor:   pointExecutor,
 		stmt:       a,
-		txnStartTS: startTs,
+		txnStartTS: readTSValue,
 	}, nil
 }
 
@@ -483,7 +487,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			if err != nil {
 				panic(err)
 			}
-			startTS := oracle.ExtractPhysical(ts) / 1000
+			tsValue, err := ts.Get()
+			if err != nil {
+				panic(err)
+			}
+			startTS := oracle.ExtractPhysical(tsValue) / 1000
 			if n != int(startTS) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
@@ -997,7 +1005,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) (err er
 				zap.String("statement", stmtText),
 				zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
 				zap.Uint64("txnStartTS", txnCtx.StartTS),
-				zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
+				zap.Stringer("forUpdateTS", txnCtx.GetForUpdateTS()),
 			)
 			sctx.GetSessionVars().SetInTxn(false)
 			err = ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())

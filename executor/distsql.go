@@ -318,10 +318,14 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
+	readTS, err := e.readTS.Get()
+	if err != nil {
+		return err
+	}
 	var builder distsql.RequestBuilder
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
-		SetReadTS(e.readTS).
+		SetReadTS(readTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -582,6 +586,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
+	readTS, err := e.readTS.Get()
+	if err != nil {
+		return err
+	}
 	go func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		worker := &indexWorker{
@@ -597,7 +605,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		}
 		var builder distsql.RequestBuilder
 		builder.SetDAGRequest(e.dagPB).
-			SetReadTS(e.readTS).
+			SetReadTS(readTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetPaging(e.indexPaging).

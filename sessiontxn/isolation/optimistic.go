@@ -41,8 +41,8 @@ func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, c
 	p.sctx = sctx
 	p.causalConsistencyOnly = causalConsistencyOnly
 	p.onTxnActiveFunc = p.onTxnActive
-	p.getStmtReadTSFunc = p.getTxnStartTS
-	p.getStmtForUpdateTSFunc = p.getTxnStartTS
+	p.getStmtReadTSFunc = p.getTxnStartTSAsRefreshableReadTS
+	p.getStmtForUpdateTSFunc = p.getTxnStartTSAsRefreshableReadTS
 }
 
 func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
@@ -90,19 +90,19 @@ func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp sessiontxn.Ente
 }
 
 // GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
-func (p *OptimisticTxnContextProvider) GetStmtReadTS() (uint64, error) {
+func (p *OptimisticTxnContextProvider) GetStmtReadTS() (*kv.RefreshableReadTS, error) {
 	// If `math.MaxUint64` is used for point get optimization, it is not necessary to activate the txn.
 	// Just return `math.MaxUint64` to save the performance.
 	if p.optimizeWithMaxTS {
-		return math.MaxUint64, nil
+		return kv.NewRefreshableReadTS(math.MaxUint64).Seal(), nil
 	}
 	return p.baseTxnContextProvider.GetStmtReadTS()
 }
 
 // GetStmtForUpdateTS returns the read timestamp used by select statement (not for select ... for update)
-func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
+func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (*kv.RefreshableReadTS, error) {
 	if p.optimizeWithMaxTS {
-		return math.MaxUint64, nil
+		return kv.NewRefreshableReadTS(math.MaxUint64).Seal(), nil
 	}
 	return p.baseTxnContextProvider.GetStmtForUpdateTS()
 }

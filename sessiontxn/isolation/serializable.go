@@ -44,8 +44,8 @@ func NewPessimisticSerializableTxnContextProvider(sctx sessionctx.Context,
 		},
 	}
 
-	provider.getStmtForUpdateTSFunc = provider.getTxnStartTS
-	provider.getStmtReadTSFunc = provider.getTxnStartTS
+	provider.getStmtForUpdateTSFunc = provider.getTxnStartTSAsRefreshableReadTS
+	provider.getStmtReadTSFunc = provider.getTxnStartTSAsRefreshableReadTS
 	return provider
 }
 

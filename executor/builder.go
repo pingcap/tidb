@@ -71,7 +71,6 @@ import (
 	clientkv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
-	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"golang.org/x/exp/slices"
 )
 
@@ -1759,37 +1758,18 @@ func (b *executorBuilder) getSnapshotTS() (ts *kv.RefreshableReadTS, err error) 
 	return txnManager.GetStmtReadTS()
 }
 
-// getSnapshot get the appropriate snapshot from txnManager and set
-// the relevant snapshot options before return.
-func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
-	var snapshot kv.Snapshot
-	var err error
-
-	txnManager := sessiontxn.GetTxnManager(b.ctx)
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
-		snapshot, err = txnManager.GetSnapshotWithStmtForUpdateTS()
-	} else {
-		snapshot, err = txnManager.GetSnapshotWithStmtReadTS()
+// getSnapshotBuilder gets a separated builder for building the snapshot from txnManager and set
+// the relevant snapshot options before return. The snapshotBuilder can be used after finishing
+// building the executor.
+func (b *executorBuilder) getSnapshotBuilder() snapshotBuilder {
+	return snapshotBuilder{
+		ctx:              b.ctx,
+		readReplicaScope: b.readReplicaScope,
+		inUpdateStmt:     b.inUpdateStmt,
+		inDeleteStmt:     b.inDeleteStmt,
+		inInsertStmt:     b.inInsertStmt,
+		inSelectLockStmt: b.inSelectLockStmt,
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	sessVars := b.ctx.GetSessionVars()
-	replicaReadType := sessVars.GetReplicaRead()
-	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
-	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
-
-	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
-		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: b.readReplicaScope,
-			},
-		})
-	}
-
-	return snapshot, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
@@ -4373,9 +4353,13 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
+	readTSValue, err := readTS.Get()
+	if err != nil {
+		return nil, err
+	}
 	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
-		SetReadTS(readTS).
+		SetReadTS(readTSValue).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -4943,24 +4927,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		singlePart:   plan.SinglePart,
 		partTblID:    plan.PartTblID,
 		columns:      plan.Columns,
+		avgRowSize:   plan.GetAvgRowSize(),
 	}
 
-	e.snapshot, err = b.getSnapshot()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	if e.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
-		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, plan.GetAvgRowSize()))
-	}
-	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
-	if e.runtimeStats != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-	}
+	e.snapshotBuilder = b.getSnapshotBuilder()
 
 	if plan.IndexInfo != nil {
 		sctx := b.ctx.GetSessionVars().StmtCtx
@@ -5372,4 +5342,44 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executo
 		partitionIDs: partitionIDs,
 		tikvStore:    tikvStore,
 	}
+}
+
+type snapshotBuilder struct {
+	ctx              sessionctx.Context
+	readReplicaScope string
+	inUpdateStmt     bool
+	inDeleteStmt     bool
+	inInsertStmt     bool
+	inSelectLockStmt bool
+}
+
+func (b *snapshotBuilder) build() (kv.Snapshot, error) {
+	var snapshot kv.Snapshot
+	var err error
+
+	txnManager := sessiontxn.GetTxnManager(b.ctx)
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+		snapshot, err = txnManager.GetSnapshotWithStmtForUpdateTS()
+	} else {
+		snapshot, err = txnManager.GetSnapshotWithStmtReadTS()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	sessVars := b.ctx.GetSessionVars()
+	replicaReadType := sessVars.GetReplicaRead()
+	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
+	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+
+	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
+		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: b.readReplicaScope,
+			},
+		})
+	}
+
+	return snapshot, nil
 }

@@ -79,25 +79,24 @@ func (m *txnManager) SetTxnInfoSchema(is infoschema.InfoSchema) {
 
 func (m *txnManager) GetStmtReadTS() (*kv.RefreshableReadTS, error) {
 	if m.ctxProvider == nil {
-		return 0, errors.New("context provider not set")
+		return nil, errors.New("context provider not set")
 	}
 	return m.ctxProvider.GetStmtReadTS()
 }
 
 func (m *txnManager) GetStmtForUpdateTS() (*kv.RefreshableReadTS, error) {
 	if m.ctxProvider == nil {
-		return 0, errors.New("context provider not set")
+		return nil, errors.New("context provider not set")
 	}
-
 	ts, err := m.ctxProvider.GetStmtForUpdateTS()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	failpoint.Inject("assertTxnManagerForUpdateTSEqual", func() {
 		sessVars := m.sctx.GetSessionVars()
 		if txnCtxForUpdateTS := sessVars.TxnCtx.GetForUpdateTS(); sessVars.SnapshotTS == 0 && ts != txnCtxForUpdateTS {
-			panic(fmt.Sprintf("forUpdateTS not equal %d != %d", ts, txnCtxForUpdateTS))
+			panic(fmt.Sprintf("forUpdateTS not equal %s != %s", ts.String(), txnCtxForUpdateTS.String()))
 		}
 	})
 

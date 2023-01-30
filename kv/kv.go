@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -490,23 +491,49 @@ func (rr *KeyRanges) TotalRangeNum() int {
 // RefreshableReadTS is a container of a timestamp that's allowed to update even it's already passed around among many
 // modules. Some restrictions are applied to protect the consistency of reading:
 //   - Once the value of the ts is used (by calling `Get` method), further updating will be disallowed.
-//   - There's only one chance
+//   - There's only one chance to update it (the purpose is to avoid the complexity of handling the case when multiple
+//     threads want to update it concurrently).
 type RefreshableReadTS struct {
-	mu       sync.RWMutex
-	tsFuture oracle.Future
+	mu        sync.RWMutex
+	tsFuture  oracle.Future
+	initialTS uint64
 
 	sealed atomic.Bool
 }
 
 func NewRefreshableReadTS(initialValue uint64) *RefreshableReadTS {
 	return &RefreshableReadTS{
-		tsFuture: util2.ConstantFuture(initialValue),
+		tsFuture:  util2.ConstantFuture(initialValue),
+		initialTS: initialValue,
 	}
 }
 
-func (t *RefreshableReadTS) Get() (uint64, error) {
-	t.sealed.Store(true)
+func NewRefreshableReadTSFromFuture(tsFuture oracle.Future) *RefreshableReadTS {
+	return &RefreshableReadTS{
+		tsFuture: tsFuture,
+	}
+}
 
+func (t *RefreshableReadTS) Seal() *RefreshableReadTS {
+	t.sealed.Store(true)
+	return t
+}
+
+func (t *RefreshableReadTS) GetInitialValue() uint64 {
+	return t.initialTS
+}
+
+func (t *RefreshableReadTS) Get() (uint64, error) {
+	t.Seal()
+	return t.getImpl()
+}
+
+func (t *RefreshableReadTS) GetForNonRead() (uint64, error) {
+	// Do not fix the ts value in the ts is only used for acquiring locks.
+	return t.getImpl()
+}
+
+func (t *RefreshableReadTS) getImpl() (uint64, error) {
 	t.mu.RLock()
 	var ts uint64
 	var err error
@@ -522,6 +549,21 @@ func (t *RefreshableReadTS) Get() (uint64, error) {
 	return ts, err
 }
 
+func (t *RefreshableReadTS) EqualsToConstant(anotherTS uint64) bool {
+	if _, ok := t.tsFuture.(util2.ConstantFuture); ok {
+		ts, err := t.tsFuture.Wait()
+		if err != nil {
+			panic(err)
+		}
+		return ts == anotherTS
+	}
+	return false
+}
+
+func (t *RefreshableReadTS) GetInnerForTest() oracle.Future {
+	return t.tsFuture
+}
+
 func (t *RefreshableReadTS) TryRefreshWithOracle(ctx context.Context, tsOracle oracle.Oracle, scope string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -532,7 +574,7 @@ func (t *RefreshableReadTS) TryRefreshWithOracle(ctx context.Context, tsOracle o
 	}
 
 	t.tsFuture = tsOracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: scope})
-	t.sealed.Store(true)
+	t.Seal()
 
 	return true
 }
@@ -541,7 +583,7 @@ func (t *RefreshableReadTS) String() string {
 	if value, ok := t.tsFuture.(util2.ConstantFuture); ok {
 		return strconv.FormatUint(uint64(value), 10)
 	} else {
-		return "(future)"
+		return fmt.Sprintf("(future, initial value: %v)", t.initialTS)
 	}
 }
 
@@ -549,7 +591,7 @@ func (t *RefreshableReadTS) String() string {
 type Request struct {
 	// Tp is the request type.
 	Tp     int64
-	ReadTS *RefreshableReadTS
+	ReadTS uint64
 	Data   []byte
 
 	// KeyRanges makes sure that the request is sent first by partition then by region.

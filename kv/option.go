@@ -38,6 +38,10 @@ const (
 	Pessimistic
 	// SnapshotTS is defined to set snapshot ts.
 	SnapshotTS
+	// SnapshotTSGetter is defined to set snapshot getter to indicate the Transaction or Snapshot to set its read ts
+	// lazily. The value should be a function type `func () (uint64, error)`, and it should be guaranteed to return the
+	// same result when called multiple times.
+	SnapshotTSGetter
 	// Set replica read
 	ReplicaRead
 	// Set task ID

@@ -59,7 +59,8 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, readTS, updateTS)
 	require.Greater(t, readTS, compareTS)
-	compareTS = readTS
+	compareTS, err = readTS.GetInnerForTest().Wait()
+	require.NoError(t, err)
 
 	// for optimistic mode ts, ts should be the same for all statements
 	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))

@@ -297,7 +297,10 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	failpoint.Inject("startPartialIndexWorkerErr", func() error {
 		return errors.New("inject an error before start partialIndexWorker")
 	})
-
+	readTS, err := e.readTS.Get()
+	if err != nil {
+		return err
+	}
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialIndexWorker").End()
 		defer e.idxWorkerWg.Done()
@@ -323,7 +326,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 				var builder distsql.RequestBuilder
 				builder.SetDAGRequest(e.dagPBs[workID]).
-					SetReadTS(e.readTS).
+					SetReadTS(readTS).
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
 					SetTxnScope(e.txnScope).
