@@ -144,15 +144,18 @@ func (t *tuner) getGCPercent() uint32 {
 // tuning check the memory inuse and tune GC percent dynamically.
 // Go runtime ensure that it will be called serially.
 func (t *tuner) tuning() {
+	if EnableGOGCTuner.Load() {
+		return
+	}
+
 	inuse := readMemoryInuse()
 	threshold := t.getThreshold()
 	// stop gc tuning
 	if threshold <= 0 {
 		return
 	}
-	if EnableGOGCTuner.Load() {
-		t.setGCPercent(calcGCPercent(inuse, threshold))
-	}
+
+	t.setGCPercent(calcGCPercent(inuse, threshold))
 }
 
 // threshold = inuse + inuse * (gcPercent / 100)
