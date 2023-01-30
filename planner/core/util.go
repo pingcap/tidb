@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
 	"golang.org/x/exp/slices"
@@ -233,6 +232,9 @@ func (s *baseSchemaProducer) MemoryUsage() (sum int64) {
 	if s.schema != nil {
 		sum += s.schema.MemoryUsage()
 	}
+	for _, name := range s.names {
+		sum += name.MemoryUsage()
+	}
 	return
 }
 
@@ -391,38 +393,6 @@ func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bo
 		}
 	}
 	return false
-}
-
-func cloneExprs(exprs []expression.Expression) []expression.Expression {
-	cloned := make([]expression.Expression, 0, len(exprs))
-	for _, e := range exprs {
-		cloned = append(cloned, e.Clone())
-	}
-	return cloned
-}
-
-func cloneCols(cols []*expression.Column) []*expression.Column {
-	cloned := make([]*expression.Column, 0, len(cols))
-	for _, c := range cols {
-		cloned = append(cloned, c.Clone().(*expression.Column))
-	}
-	return cloned
-}
-
-func cloneColInfos(cols []*model.ColumnInfo) []*model.ColumnInfo {
-	cloned := make([]*model.ColumnInfo, 0, len(cols))
-	for _, c := range cols {
-		cloned = append(cloned, c.Clone())
-	}
-	return cloned
-}
-
-func cloneRanges(ranges []*ranger.Range) []*ranger.Range {
-	cloned := make([]*ranger.Range, 0, len(ranges))
-	for _, r := range ranges {
-		cloned = append(cloned, r.Clone())
-	}
-	return cloned
 }
 
 func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {

@@ -120,14 +120,6 @@ var (
 			Help:      "Counter of system time jumps backward.",
 		})
 
-	KeepAliveCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "monitor",
-			Name:      "keep_alive_total",
-			Help:      "Counter of TiDB keep alive.",
-		})
-
 	PlanCacheCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -142,6 +134,22 @@ var (
 			Subsystem: "server",
 			Name:      "plan_cache_miss_total",
 			Help:      "Counter of plan cache miss.",
+		}, []string{LblType})
+
+	PlanCacheInstanceMemoryUsage = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_instance_memory_usage",
+			Help:      "Total plan cache memory usage of all sessions in a instance",
+		}, []string{LblType})
+
+	PlanCacheInstancePlanNumCounter = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_instance_plan_num_total",
+			Help:      "Counter of plan of all prepared plan cache in a instance",
 		}, []string{LblType})
 
 	ReadFromTableCacheCounter = prometheus.NewCounter(
@@ -169,6 +177,15 @@ var (
 			Name:      "get_token_duration_seconds",
 			Help:      "Duration (us) for getting token, it should be small until concurrency limit is reached.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
+		})
+
+	NumOfMultiQueryHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "multi_query_num",
+			Help:      "The number of queries contained in a multi-query statement.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1 ~ 1048576
 		})
 
 	TotalQueryProcHistogram = prometheus.NewHistogramVec(
@@ -253,6 +270,14 @@ var (
 			Name:      "tiflash_query_total",
 			Help:      "Counter of TiFlash queries.",
 		}, []string{LblType, LblResult})
+
+	TiFlashFailedMPPStoreState = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tiflash_failed_store",
+			Help:      "Statues of failed tiflash mpp store,-1 means detector heartbeat,0 means reachable,1 means abnormal.",
+		}, []string{LblAddress})
 
 	PDAPIExecutionHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{

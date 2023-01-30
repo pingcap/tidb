@@ -359,7 +359,7 @@ func TestErrorNoRollback(t *testing.T) {
 func TestPrepareCount(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
 	ctx := context.Background()
@@ -382,7 +382,7 @@ func TestPrepareCount(t *testing.T) {
 func TestPrepareExecute(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -424,7 +424,7 @@ func TestDefaultCharacterAndCollation(t *testing.T) {
 
 	// issue #21194
 	// 255 is the collation id of mysql client 8 default collation_connection
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil, nil)
 	require.NoError(t, err)
 	testCase := []struct {
 		variable string

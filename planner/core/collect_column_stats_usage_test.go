@@ -256,7 +256,7 @@ func TestCollectPredicateColumns(t *testing.T) {
 		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
@@ -331,9 +331,14 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		if len(tt.pruneMode) > 0 {
 			s.ctx.GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
 		}
+		if s.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			s.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = true
+		} else {
+			s.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
+		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)

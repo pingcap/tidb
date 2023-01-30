@@ -15,6 +15,7 @@
 package kv
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	"golang.org/x/exp/slices"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -201,8 +203,13 @@ type LockCtx = tikvstore.LockCtx
 type Transaction interface {
 	RetrieverMutator
 	AssertionProto
+	AggressiveLockingController
 	// Size returns sum of keys and values length.
 	Size() int
+	// Mem returns the memory consumption of the transaction.
+	Mem() uint64
+	// SetMemoryFootprintChangeHook sets the hook that will be called when the memory footprint changes.
+	SetMemoryFootprintChangeHook(func(uint64))
 	// Len returns the number of entries in the DB.
 	Len() int
 	// Reset reset the Transaction to initial states.
@@ -216,6 +223,10 @@ type Transaction interface {
 	// LockKeys tries to lock the entries with the keys in KV store.
 	// Will block until all keys are locked successfully or an error occurs.
 	LockKeys(ctx context.Context, lockCtx *LockCtx, keys ...Key) error
+	// LockKeysFunc tries to lock the entries with the keys in KV store.
+	// Will block until all keys are locked successfully or an error occurs.
+	// fn is called before LockKeys unlocks the keys.
+	LockKeysFunc(ctx context.Context, lockCtx *LockCtx, fn func(), keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt int, val interface{})
@@ -269,6 +280,15 @@ type AssertionProto interface {
 	// TODO: Use a special type instead of `FlagsOp`. Otherwise there's risk that the assertion flag is incorrectly used
 	// in other places like `MemBuffer.SetWithFlags`.
 	SetAssertion(key []byte, assertion ...FlagsOp) error
+}
+
+// AggressiveLockingController is the interface that defines aggressive locking related operations.
+type AggressiveLockingController interface {
+	StartAggressiveLocking() error
+	RetryAggressiveLocking(ctx context.Context) error
+	CancelAggressiveLocking(ctx context.Context) error
+	DoneAggressiveLocking(ctx context.Context) error
+	IsInAggressiveLockingMode() bool
 }
 
 // Client is used to send request to KV layer.
@@ -331,13 +351,168 @@ func (t StoreType) Name() string {
 	return "unspecified"
 }
 
+// KeyRanges wrap the ranges for partitioned table cases.
+// We might send ranges from different in the one request.
+type KeyRanges struct {
+	ranges        [][]KeyRange
+	rowCountHints [][]int
+
+	isPartitioned bool
+}
+
+// NewPartitionedKeyRanges constructs a new RequestRange for partitioned table.
+func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
+	return NewPartitionedKeyRangesWithHints(ranges, nil)
+}
+
+// NewNonParitionedKeyRanges constructs a new RequestRange for a non partitioned table.
+func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
+	return NewNonParitionedKeyRangesWithHint(ranges, nil)
+}
+
+// NewPartitionedKeyRangesWithHints constructs a new RequestRange for partitioned table with row count hint.
+func NewPartitionedKeyRangesWithHints(ranges [][]KeyRange, hints [][]int) *KeyRanges {
+	return &KeyRanges{
+		ranges:        ranges,
+		rowCountHints: hints,
+		isPartitioned: true,
+	}
+}
+
+// NewNonParitionedKeyRangesWithHint constructs a new RequestRange for a non partitioned table with rou count hint.
+func NewNonParitionedKeyRangesWithHint(ranges []KeyRange, hints []int) *KeyRanges {
+	rr := &KeyRanges{
+		ranges:        [][]KeyRange{ranges},
+		isPartitioned: false,
+	}
+	if hints != nil {
+		rr.rowCountHints = [][]int{hints}
+	}
+	return rr
+}
+
+// FirstPartitionRange returns the the result of first range.
+// We may use some func to generate ranges for both partitioned table and non partitioned table.
+// This method provides a way to fallback to non-partitioned ranges.
+func (rr *KeyRanges) FirstPartitionRange() []KeyRange {
+	if len(rr.ranges) == 0 {
+		return []KeyRange{}
+	}
+	return rr.ranges[0]
+}
+
+// SetToNonPartitioned set the status to non-partitioned.
+func (rr *KeyRanges) SetToNonPartitioned() error {
+	if len(rr.ranges) > 1 {
+		return errors.Errorf("you want to change the partitioned ranges to non-partitioned ranges")
+	}
+	rr.isPartitioned = false
+	return nil
+}
+
+// AppendSelfTo appends itself to another slice.
+func (rr *KeyRanges) AppendSelfTo(ranges []KeyRange) []KeyRange {
+	for _, r := range rr.ranges {
+		ranges = append(ranges, r...)
+	}
+	return ranges
+}
+
+// SortByFunc sorts each partition's ranges.
+// Since the ranges are sorted in most cases, we check it first.
+func (rr *KeyRanges) SortByFunc(sortFunc func(i, j KeyRange) bool) {
+	if !slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
+		// A simple short-circuit since the empty range actually won't make anything wrong.
+		if len(i) == 0 || len(j) == 0 {
+			return true
+		}
+		return sortFunc(i[0], j[0])
+	}) {
+		slices.SortFunc(rr.ranges, func(i, j []KeyRange) bool {
+			if len(i) == 0 {
+				return true
+			}
+			if len(j) == 0 {
+				return false
+			}
+			return sortFunc(i[0], j[0])
+		})
+	}
+	for i := range rr.ranges {
+		if !slices.IsSortedFunc(rr.ranges[i], sortFunc) {
+			slices.SortFunc(rr.ranges[i], sortFunc)
+		}
+	}
+}
+
+// ForEachPartitionWithErr runs the func for each partition with an error check.
+func (rr *KeyRanges) ForEachPartitionWithErr(theFunc func([]KeyRange, []int) error) (err error) {
+	for i := range rr.ranges {
+		var hints []int
+		if len(rr.rowCountHints) > i {
+			hints = rr.rowCountHints[i]
+		}
+		err = theFunc(rr.ranges[i], hints)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ForEachPartition runs the func for each partition without error check.
+func (rr *KeyRanges) ForEachPartition(theFunc func([]KeyRange)) {
+	for i := range rr.ranges {
+		theFunc(rr.ranges[i])
+	}
+}
+
+// PartitionNum returns how many partition is involved in the ranges.
+func (rr *KeyRanges) PartitionNum() int {
+	return len(rr.ranges)
+}
+
+// IsFullySorted checks whether the ranges are sorted inside partition and each partition is also sorated.
+func (rr *KeyRanges) IsFullySorted() bool {
+	sortedByPartition := slices.IsSortedFunc(rr.ranges, func(i, j []KeyRange) bool {
+		// A simple short-circuit since the empty range actually won't make anything wrong.
+		if len(i) == 0 || len(j) == 0 {
+			return true
+		}
+		return bytes.Compare(i[0].StartKey, j[0].StartKey) < 0
+	})
+	if !sortedByPartition {
+		return false
+	}
+	for _, ranges := range rr.ranges {
+		if !slices.IsSortedFunc(ranges, func(i, j KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+// TotalRangeNum returns how many ranges there are.
+func (rr *KeyRanges) TotalRangeNum() int {
+	ret := 0
+	for _, r := range rr.ranges {
+		ret += len(r)
+	}
+	return ret
+}
+
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
-	Tp        int64
-	StartTs   uint64
-	Data      []byte
-	KeyRanges []KeyRange
+	Tp      int64
+	StartTs uint64
+	Data    []byte
+
+	// KeyRanges makes sure that the request is sent first by partition then by region.
+	// When the table is small, it's possible that multiple partitions are in the same region.
+	KeyRanges *KeyRanges
 
 	// For PartitionTableScan used by tiflash.
 	PartitionIDAndRanges []PartitionIDAndRanges
@@ -394,6 +569,10 @@ type Request struct {
 	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
+	// StoreBatchSize indicates the batch size of coprocessor in the same store.
+	StoreBatchSize int
+	// ResourceGroupName is the name of the bind resource group.
+	ResourceGroupName string
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
@@ -502,6 +681,8 @@ type Storage interface {
 	GetMinSafeTS(txnScope string) uint64
 	// GetLockWaits return all lock wait information
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
+	// GetCodec gets the codec of the storage.
+	GetCodec() tikv.Codec
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

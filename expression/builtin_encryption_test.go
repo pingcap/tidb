@@ -15,12 +15,14 @@
 package expression
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -621,6 +623,55 @@ func TestUncompressLength(t *testing.T) {
 	}
 
 	fc := funcs[ast.UncompressedLength]
+	for _, test := range tests {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoErrorf(t, err, "%v", test)
+		out, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoErrorf(t, err, "%v", test)
+		require.Equalf(t, types.NewDatum(test.expect), out, "%v", test)
+	}
+}
+
+func TestValidatePasswordStrength(t *testing.T) {
+	ctx := createContext(t)
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testuser"}
+	globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
+	ctx.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
+	err := globalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "1234")
+	require.NoError(t, err)
+
+	tests := []struct {
+		in     interface{}
+		expect interface{}
+	}{
+		{nil, nil},
+		{"123", 0},
+		{"testuser123", 0},
+		{"resutset123", 0},
+		{"12345", 25},
+		{"12345678", 50},
+		{"!Abc12345678", 75},
+		{"!Abc87654321", 100},
+	}
+
+	fc := funcs[ast.ValidatePasswordStrength]
+	// disable password validation
+	for _, test := range tests {
+		arg := types.NewDatum(test.in)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoErrorf(t, err, "%v", test)
+		out, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoErrorf(t, err, "%v", test)
+		if test.expect == nil {
+			require.Equal(t, types.NewDatum(nil), out)
+		} else {
+			require.Equalf(t, types.NewDatum(0), out, "%v", test)
+		}
+	}
+	// enable password validation
+	err = globalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordEnable, "ON")
+	require.NoError(t, err)
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))

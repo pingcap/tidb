@@ -107,7 +107,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.hasMatch = make([]bool, e.concurrency)
 	e.hasNull = make([]bool, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.innerChunk[i] = newFirstChunk(e.innerExecs[i])
+		e.innerChunk[i] = tryNewCacheChunk(e.innerExecs[i])
 		e.innerList[i] = chunk.NewList(retTypes(e.innerExecs[i]), e.initCap, e.maxChunkSize)
 		e.innerList[i].GetMemTracker().SetLabel(memory.LabelForInnerList)
 		e.innerList[i].GetMemTracker().AttachTo(e.memTracker)
@@ -176,7 +176,6 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats()
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.useCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
@@ -187,6 +186,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 			runtimeStats.setCacheInfo(false, 0)
 		}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return err
 }
@@ -206,7 +206,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 	var err error
 	for {
 		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
-		chk := newFirstChunk(e.outerExec)
+		chk := tryNewCacheChunk(e.outerExec)
 		if err := Next(ctx, e.outerExec, chk); err != nil {
 			e.putResult(nil, err)
 			return

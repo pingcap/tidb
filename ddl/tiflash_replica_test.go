@@ -18,23 +18,28 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 const tiflashReplicaLease = 600 * time.Millisecond
@@ -138,6 +143,44 @@ func TestSetTableFlashReplica(t *testing.T) {
 	tk.MustGetErrMsg("alter table t_flash set tiflash replica 2 location labels 'a','b';", "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
 
+// setUpRPCService setup grpc server to handle cop request for test.
+func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm util.SessionManager) (*grpc.Server, string) {
+	lis, err := net.Listen("tcp", addr)
+	require.NoError(t, err)
+	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
+	port := lis.Addr().(*net.TCPAddr).Port
+	addr = fmt.Sprintf("127.0.0.1:%d", port)
+	go func() {
+		err = srv.Serve(lis)
+		require.NoError(t, err)
+	}()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.StatusPort = uint(port)
+	})
+	return srv, addr
+}
+
+func TestInfoSchemaForTiFlashReplica(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	defer rpcserver.Stop()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0"))
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica.Available = true
+	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 0"))
+}
+
 func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 	// test for tiflash replica
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
@@ -146,8 +189,9 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 	}()
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
-
 	tk := testkit.NewTestKit(t, store)
+	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	defer rpcserver.Stop()
 	tk.MustExec("use test")
 	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
 	tk.MustExec("create temporary table temp2(id int)")
@@ -242,7 +286,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 
 	tbl1 := external.GetTableByName(t, tk, "test", "t1")
 	doneCh := make(chan error, 2)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var onceChecker sync.Map
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&

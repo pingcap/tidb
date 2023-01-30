@@ -16,6 +16,7 @@ package ingest
 
 import (
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -26,12 +27,18 @@ import (
 	"go.uber.org/zap"
 )
 
+// ImporterRangeConcurrencyForTest is only used for test.
+var ImporterRangeConcurrencyForTest *atomic.Int32
+
 func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config.Config, error) {
 	tidbCfg := tidbconf.GetGlobalConfig()
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
 	// Each backend will build a single dir in lightning dir.
 	cfg.TikvImporter.SortedKVDir = filepath.Join(LitSortPath, encodeBackendTag(jobID))
+	if ImporterRangeConcurrencyForTest != nil {
+		cfg.TikvImporter.RangeConcurrency = int(ImporterRangeConcurrencyForTest.Load())
+	}
 	_, err := cfg.AdjustCommon()
 	if err != nil {
 		logutil.BgLogger().Warn(LitWarnConfigError, zap.Error(err))
@@ -40,7 +47,7 @@ func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config
 	adjustImportMemory(memRoot, cfg)
 	cfg.Checkpoint.Enable = true
 	if unique {
-		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRecord
+		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgErr
 	} else {
 		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 	}

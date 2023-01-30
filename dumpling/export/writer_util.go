@@ -242,6 +242,7 @@ func WriteInsert(
 			failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
 				failpoint.Return(0, errors.New("connection is closed"))
 			})
+			failpoint.Inject("AtEveryRow", nil)
 
 			fileRowIter.Next()
 			shouldSwitch := wp.ShouldSwitchStatement()
@@ -590,6 +591,10 @@ func compressFileSuffix(compressType storage.CompressType) string {
 		return ""
 	case storage.Gzip:
 		return ".gz"
+	case storage.Snappy:
+		return ".snappy"
+	case storage.Zstd:
+		return ".zst"
 	default:
 		return ""
 	}

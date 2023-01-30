@@ -280,11 +280,11 @@ func TestPreparedLimitOffset(t *testing.T) {
 		r.Check(testkit.Rows("2"))
 
 		tk.MustExec(`set @a=1.1`)
-		r = tk.MustQuery(`execute stmt_test_1 using @a, @b;`)
-		r.Check(testkit.Rows("2"))
+		_, err := tk.Exec(`execute stmt_test_1 using @a, @b;`)
+		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
 		tk.MustExec(`set @c="-1"`)
-		_, err := tk.Exec("execute stmt_test_1 using @c, @c")
+		_, err = tk.Exec("execute stmt_test_1 using @c, @c")
 		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
@@ -334,7 +334,7 @@ func TestPrepareWithAggregation(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
 
 		se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-			PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
+			PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session()),
 		})
 		require.NoError(t, err)
 		tk.SetSession(se)
@@ -420,14 +420,14 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(1), hit)
+			require.Equal(t, float64(0), hit) // insert-values-stmt cannot use the plan cache
 		}
 		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(0), hit)
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -443,21 +443,21 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(0), hit)
 		}
 		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(3), hit)
+			require.Equal(t, float64(1), hit)
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(4), hit)
+			require.Equal(t, float64(2), hit)
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)
@@ -599,7 +599,7 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=true`)
 
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, plannercore.PickPlanFromBucket),
+		PreparedPlanCache: plannercore.NewLRUPlanCache(3, 0.1, math.MaxUint64, tk.Session()),
 	})
 	require.NoError(t, err)
 	tk.SetSession(se)
@@ -766,4 +766,43 @@ func TestPreparedIssue17419(t *testing.T) {
 	// require.NotNil(t, tk1.Session().ShowProcess().Plan)
 	// _, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
 	// require.True(t, ok)
+}
+
+func TestLimitUnsupportedCase(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+
+	tk.MustExec("set @a = 1.2")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = 1.")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = '0'")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = '1'")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = 1_2")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+}
+
+func TestIssue38323(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, k int);")
+
+	tk.MustExec("prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a, @a")
+	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where id = 1 and k = 1 group by id, k").Rows())
+
+	tk.MustExec("prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
+	tk.MustExec("set @a = 1;")
+	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where 1 = id and 1 = k group by id, k").Rows())
 }

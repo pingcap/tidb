@@ -38,11 +38,11 @@ import (
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
-func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64) (SelectResult, error) {
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64, mppQueryID kv.MPPQueryID) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	ctx = SetTiFlashMaxThreadsInContext(ctx, sctx)
-	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs)
+	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs, mppQueryID)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -88,10 +88,10 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	option := &kv.ClientSendOption{
-		SessionMemTracker:          sctx.GetSessionVars().StmtCtx.MemTracker,
+		SessionMemTracker:          sctx.GetSessionVars().MemTracker,
 		EnabledRateLimitAction:     enabledRateLimitAction,
 		EventCb:                    eventCb,
-		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo,
+		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
 	}
 
 	if kvReq.StoreType == kv.TiFlash {

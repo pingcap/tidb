@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/sessionctx",
     visibility = ["//visibility:public"],
     deps = [
+        "//extension",
         "//kv",
         "//metrics",
         "//parser/model",
@@ -32,6 +33,7 @@ go_test(
     ],
     embed = [":sessionctx"],
     flaky = True,
+    race = "on",
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

@@ -79,7 +79,7 @@ type GCWorker struct {
 		batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
 		resolveLocks      func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 	}
-	logBackupEnabled bool
+	logBackupEnabled bool // check log-backup task existed.
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -912,6 +912,10 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 		// skip physical resolve locks for it.
 		return false, nil
 
+	case placement.EngineLabelTiFlashCompute:
+		logutil.BgLogger().Debug("[gc worker] will ignore gc tiflash_compute node")
+		return false, nil
+
 	case placement.EngineLabelTiKV, "":
 		// If no engine label is set, it should be a TiKV node.
 		return true, nil
@@ -1194,6 +1198,7 @@ func (w *GCWorker) resolveLocksForRange(
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 		sleep := v.(int)
 		// cooperate with github.com/tikv/client-go/v2/locate/invalidCacheAndRetry
+		//nolint: SA1029
 		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
 		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
 	})
@@ -1790,7 +1795,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	se := createSession(w.store)
 	defer se.Close()
 
-	w.logBackupEnabled = utils.CheckLogBackupEnabled(se)
+	w.logBackupEnabled = utils.IsLogBackupInUse(se)
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -2028,7 +2033,6 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 			zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
 		ruleID := fmt.Sprintf("table-%v-r", id)
 		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
-			// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
 			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc",
 				zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))
 		} else {

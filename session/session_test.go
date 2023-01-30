@@ -15,10 +15,14 @@
 package session_test
 
 import (
+	"fmt"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
@@ -50,4 +54,32 @@ func TestInitMetaTable(t *testing.T) {
 		metaInMySQL.UpdateTS = metaInTest.UpdateTS
 		require.True(t, reflect.DeepEqual(metaInMySQL, metaInTest))
 	}
+}
+
+func TestMetaTableRegion(t *testing.T) {
+	enableSplitTableRegionVal := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, enableSplitTableRegionVal)
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	ddlReorgTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_reorg regions").Rows()[0][0]
+	ddlReorgTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_reorg regions").Rows()[0][1]
+	require.Equal(t, ddlReorgTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.ReorgTableID))
+
+	ddlJobTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_job regions").Rows()[0][0]
+	ddlJobTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_job regions").Rows()[0][1]
+	require.Equal(t, ddlJobTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.JobTableID))
+
+	require.NotEqual(t, ddlJobTableRegionID, ddlReorgTableRegionID)
+
+	ddlBackfillTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_backfill regions").Rows()[0][0]
+	ddlBackfillTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_backfill regions").Rows()[0][1]
+	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackfillTableID))
+	ddlBackfillHistoryTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_backfill_history regions").Rows()[0][0]
+	ddlBackfillHistoryTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_backfill_history regions").Rows()[0][1]
+	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackfillHistoryTableID))
+
+	require.NotEqual(t, ddlBackfillTableRegionID, ddlBackfillHistoryTableRegionID)
 }

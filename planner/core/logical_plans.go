@@ -123,9 +123,12 @@ const (
 	preferRightAsHJProbe
 	preferMergeJoin
 	preferBCJoin
+	preferShuffleJoin
 	preferRewriteSemiJoin
 	preferHashAgg
 	preferStreamAgg
+	preferMPP1PhaseAgg
+	preferMPP2PhaseAgg
 )
 
 const (
@@ -1217,6 +1220,10 @@ type DataSource struct {
 	// contain unique index and the first field is tidb_shard(),
 	// such as (tidb_shard(a), a ...), the fields are more than 2
 	containExprPrefixUk bool
+
+	// colsRequiringFullLen is the columns that must be fetched with full length.
+	// It is used to decide whether single scan is enough when reading from an index.
+	colsRequiringFullLen []*expression.Column
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1340,7 +1347,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
-			if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo) {
+			if ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
 			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
@@ -1545,7 +1552,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		}
 	}
 	var indexFilters []expression.Expression
-	indexFilters, path.TableFilters = ds.splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	indexFilters, path.TableFilters = ds.splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
 	path.IndexFilters = append(path.IndexFilters, indexFilters...)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
@@ -1871,15 +1878,16 @@ func ExtractCorColumnsBySchema4PhysicalPlan(p PhysicalPlan, schema *expression.S
 
 // ShowContents stores the contents for the `SHOW` statement.
 type ShowContents struct {
-	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName    string
-	Table     *ast.TableName  // Used for showing columns.
-	Partition model.CIStr     // Use for showing partition
-	Column    *ast.ColumnName // Used for `desc table column`.
-	IndexName model.CIStr
-	Flag      int                  // Some flag parsed from sql, such as FULL.
-	User      *auth.UserIdentity   // Used for show grants.
-	Roles     []*auth.RoleIdentity // Used for show grants.
+	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName            string
+	Table             *ast.TableName  // Used for showing columns.
+	Partition         model.CIStr     // Use for showing partition
+	Column            *ast.ColumnName // Used for `desc table column`.
+	IndexName         model.CIStr
+	ResourceGroupName string               // Used for showing resource group
+	Flag              int                  // Some flag parsed from sql, such as FULL.
+	User              *auth.UserIdentity   // Used for show grants.
+	Roles             []*auth.RoleIdentity // Used for show grants.
 
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
@@ -1888,6 +1896,19 @@ type ShowContents struct {
 	GlobalScope bool       // Used by show variables.
 	Extended    bool       // Used for `show extended columns from ...`
 	Limit       *ast.Limit // Used for limit Result Set row number.
+}
+
+const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))
+
+// MemoryUsage return the memory usage of ShowContents
+func (s *ShowContents) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = emptyShowContentsSize + int64(len(s.DBName)) + s.Partition.MemoryUsage() + s.IndexName.MemoryUsage() +
+		int64(cap(s.Roles))*size.SizeOfPointer
+	return
 }
 
 // LogicalShow represents a show plan.

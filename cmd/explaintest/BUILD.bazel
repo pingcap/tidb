@@ -28,7 +28,6 @@ go_test(
     name = "explaintest_test",
     timeout = "short",
     srcs = ["main_test.go"],
-    data = ["//tidb-server:tidb-server-raw"],
     embed = [":explaintest_lib"],
     flaky = True,
 )

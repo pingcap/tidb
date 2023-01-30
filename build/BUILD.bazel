@@ -55,6 +55,7 @@ STATICHECK_ANALYZERS = [
     "S1039",
     "S1040",
     "SA1019",
+    "SA1029",
     "SA2000",
     "SA2001",
     "SA2003",
@@ -124,7 +125,6 @@ nogo(
                "//build/linter/bodyclose:bodyclose",
                "//build/linter/durationcheck:durationcheck",
                "//build/linter/exportloopref:exportloopref",
-               "//build/linter/filepermission:filepermission",
                "//build/linter/forcetypeassert:forcetypeassert",
                "//build/linter/gofmt:gofmt",
                "//build/linter/gci:gci",
@@ -140,6 +140,7 @@ nogo(
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
                "//build:with_nogo": [
+                   "//build/linter/filepermission:filepermission",
                    "//build/linter/allrevive:allrevive",
                    "//build/linter/errcheck:errcheck",
                    "//build/linter/revive:revive",

@@ -15,7 +15,6 @@
 package tables
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 
@@ -153,11 +152,11 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			value       []byte
 			orgKey      []byte
 			indexHandle kv.Handle
-			err         error
 		)
 		if idxID != m.indexID {
-			value = append(value, m.value[:len(m.value)-1]...)
-			if len(value) == 0 || (bytes.Equal(value, []byte("delete")) || bytes.Equal(value, []byte("deleteu"))) {
+			value = tablecodec.DecodeTempIndexOriginValue(m.value)
+			if len(value) == 0 {
+				// Skip the deleted operation values.
 				continue
 			}
 			orgKey = append(orgKey, m.key...)
@@ -237,7 +236,7 @@ func checkIndexKeys(
 		}
 
 		for i, v := range decodedIndexValues {
-			fieldType := &t.Columns[indexInfo.Columns[i].Offset].FieldType
+			fieldType := t.Columns[indexInfo.Columns[i].Offset].FieldType.ArrayType()
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
 			if err != nil {
 				return errors.Trace(err)
@@ -246,7 +245,7 @@ func checkIndexKeys(
 		}
 
 		// When it is in add index new backfill state.
-		if len(value) == 0 || (idxID != m.indexID && (bytes.Equal(value, []byte("deleteu")) || bytes.Equal(value, []byte("delete")))) {
+		if len(value) == 0 || (idxID != m.indexID && (tablecodec.CheckTempIndexValueIsDelete(value))) {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
@@ -348,7 +347,9 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
-		comparison, err := decodedMutationDatum.Compare(sc, &expectedDatum, collate.GetCollator(decodedMutationDatum.Collation()))
+		comparison, err := CompareIndexAndVal(sc, expectedDatum, decodedMutationDatum,
+			collate.GetCollator(decodedMutationDatum.Collation()),
+			cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -363,6 +364,30 @@ func compareIndexData(
 		}
 	}
 	return nil
+}
+
+// CompareIndexAndVal compare index valued and row value.
+func CompareIndexAndVal(sctx *stmtctx.StatementContext, rowVal types.Datum, idxVal types.Datum, collator collate.Collator, cmpMVIndex bool) (int, error) {
+	var cmpRes int
+	var err error
+	if cmpMVIndex {
+		// If it is multi-valued index, we should check the JSON contains the indexed value.
+		bj := rowVal.GetMysqlJSON()
+		count := bj.GetElemCount()
+		for elemIdx := 0; elemIdx < count; elemIdx++ {
+			jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
+			cmpRes, err = jsonDatum.Compare(sctx, &idxVal, collate.GetBinaryCollator())
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			if cmpRes == 0 {
+				break
+			}
+		}
+	} else {
+		cmpRes, err = idxVal.Compare(sctx, &rowVal, collator)
+	}
+	return cmpRes, err
 }
 
 // getColumnMaps tries to get the columnMaps from transaction options. If there isn't one, it builds one and stores it.

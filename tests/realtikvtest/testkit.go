@@ -19,6 +19,7 @@ package realtikvtest
 import (
 	"flag"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,6 +56,7 @@ func RunTestMain(m *testing.M) {
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
@@ -109,8 +111,12 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", variable.DefInnodbLockWaitTimeout))
 		tk.MustExec("use test")
 		rs := tk.MustQuery("show tables")
+		tables := []string{}
 		for _, row := range rs.Rows() {
-			tk.MustExec(fmt.Sprintf("drop table %s", row[0]))
+			tables = append(tables, fmt.Sprintf("`%v`", row[0]))
+		}
+		if len(tables) > 0 {
+			tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
 		}
 	} else {
 		store, err = mockstore.NewMockStore(opts...)

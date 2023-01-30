@@ -32,7 +32,7 @@ func TestGCS(t *testing.T) {
 		PredefinedAcl:   "private",
 		CredentialsBlob: "Fake Credentials",
 	}
-	stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+	stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 		SendCredentials:  false,
 		CheckPermissions: []Permission{AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
@@ -86,7 +86,7 @@ func TestGCS(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, exist)
 
-	checkWalkDir := func(stg *gcsStorage, opt *WalkOption) {
+	checkWalkDir := func(stg *GCSStorage, opt *WalkOption) {
 		var totalSize int64 = 0
 		err = stg.WalkDir(ctx, opt, func(name string, size int64) error {
 			totalSize += size
@@ -112,7 +112,7 @@ func TestGCS(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -130,7 +130,7 @@ func TestGCS(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -147,7 +147,7 @@ func TestGCS(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -254,7 +254,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "FakeCredentials",
 		}
-		_, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  true,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -271,7 +271,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "FakeCredentials",
 		}
-		_, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -302,7 +302,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "",
 		}
-		_, err = newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		_, err = NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  true,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -333,7 +333,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "",
 		}
-		s, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		s, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -352,7 +352,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "",
 		}
-		_, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  true,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
@@ -368,7 +368,7 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "FakeCredentials",
 		}
-		s, err := newGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		s, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
 			SendCredentials:  false,
 			CheckPermissions: []Permission{AccessBuckets},
 			HTTPClient:       server.HTTPClient(),

@@ -626,8 +626,8 @@ func (cli *testServerClient) runTestLoadDataForListPartition(t *testing.T) {
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		rows = dbt.MustQuery("show warnings")
 		cli.checkRows(t, rows,
-			"Warning 1062 Duplicate entry '1' for key 'idx'",
-			"Warning 1062 Duplicate entry '2' for key 'idx'")
+			"Warning 1062 Duplicate entry '1' for key 't.idx'",
+			"Warning 1062 Duplicate entry '2' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
@@ -680,8 +680,8 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(t *testing.T) {
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
 		rows = dbt.MustQuery("show warnings")
 		cli.checkRows(t, rows,
-			"Warning 1062 Duplicate entry '1-2' for key 'idx'",
-			"Warning 1062 Duplicate entry '2-2' for key 'idx'")
+			"Warning 1062 Duplicate entry '1-2' for key 't.idx'",
+			"Warning 1062 Duplicate entry '2-2' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select id,name from t order by id")
 		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
@@ -735,8 +735,8 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(t *testing.T)
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		rows = dbt.MustQuery("show warnings")
 		cli.checkRows(t, rows,
-			"Warning 1062 Duplicate entry '1' for key 'idx'",
-			"Warning 1062 Duplicate entry '2' for key 'idx'")
+			"Warning 1062 Duplicate entry '1' for key 't.idx'",
+			"Warning 1062 Duplicate entry '2' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
@@ -789,7 +789,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(t *testing.T
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("show warnings")
-		cli.checkRows(t, rows, "Warning 1062 Duplicate entry 'w-1' for key 'idx'")
+		cli.checkRows(t, rows, "Warning 1062 Duplicate entry 'w-1' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
@@ -807,7 +807,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(t *testing.T
 		rows = dbt.MustQuery("show warnings")
 		cli.checkRows(t, rows,
 			"Warning 1526 Table has no partition for value from column_list",
-			"Warning 1062 Duplicate entry 'w-1' for key 'idx'")
+			"Warning 1062 Duplicate entry 'w-1' for key 't.idx'")
 		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")

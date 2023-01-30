@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 use test;
 drop table if exists tbl_0;
 create table tbl_0(a int);
@@ -90,7 +91,7 @@ c1	c2
 1	1
 1	2
 with recursive tbl_0 (col_943,col_944,col_945,col_946,col_947) AS ( with recursive tbl_0 (col_948,col_949,col_950,col_951,col_952) AS ( select 1, 2,3,4,5 UNION ALL select col_948 + 1,col_949 + 1,col_950 + 1,col_951 + 1,col_952 + 1 from tbl_0 where col_948 < 5 ) select col_948,col_949,col_951,col_950,col_952 from tbl_0 UNION ALL select col_943 + 1,col_944 + 1,col_945 + 1,col_946 + 1,col_947 + 1 from tbl_0 where col_943 < 5 ) select * from tbl_0;
-Error 1054: Unknown column 'col_943' in 'where clause'
+Error 1054 (42S22): Unknown column 'col_943' in 'where clause'
 with recursive cte1 (c1, c2) as (select 1, '1' union select concat(c1, 1), c2 + 1 from cte1 where c1 < 100) select * from cte1;
 c1	c2
 1	1
@@ -282,15 +283,15 @@ union all
 select 3, 0 from qn
 )
 select * from qn;
-Error 1222: The used SELECT statements have a different number of columns
+Error 1222 (21000): The used SELECT statements have a different number of columns
 with recursive cte1 as (select 1 union all (select 1 from cte1 limit 10)) select * from cte1;
-Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive qn as (select 123 as a union all select null from qn where a is not null) select * from qn;
 a
 123
 NULL
 with recursive q (b) as (select 1, 1 union all select 1, 1 from q) select b from q;
-Error 1353: In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 drop table if exists t1;
 create table t1(a int);
 insert into t1 values(1);
@@ -355,7 +356,7 @@ drop table if exists t1;
 create table t1(c1 bigint unsigned);
 insert into t1 values(0);
 with recursive cte1 as (select c1 - 1 c1 from t1 union all select c1 - 1 c1 from cte1 where c1 != 0) select * from cte1 dt1, cte1 dt2;
-Error 1690: BIGINT UNSIGNED value is out of range in '(test.t1.c1 - 1)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(test.t1.c1 - 1)'
 drop table if exists t;
 create table t(a int, b int, key (b));
 desc with cte as (select * from t) select * from cte;
@@ -594,11 +595,11 @@ Projection_16	10000.00	root		test.t1.c1, test.t1.c2
 └─Apply_18	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#11), if(ne(Column#12, 0), NULL, 1)), or(eq(Column#13, 0), if(isnull(test.t1.c1), NULL, 0)))
   ├─TableReader_20(Build)	10000.00	root		data:TableFullScan_19
   │ └─TableFullScan_19	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg_35(Probe)	1.00	root		funcs:max(Column#19)->Column#11, funcs:sum(Column#20)->Column#12, funcs:count(Column#21)->Column#13
-    └─TableReader_36	1.00	root		data:StreamAgg_24
-      └─StreamAgg_24	1.00	cop[tikv]		funcs:max(test.t2.c1)->Column#19, funcs:sum(isnull(test.t2.c1))->Column#20, funcs:count(1)->Column#21
-        └─Selection_34	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
-          └─TableFullScan_33	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─StreamAgg_35(Probe)	10000.00	root		funcs:max(Column#19)->Column#11, funcs:sum(Column#20)->Column#12, funcs:count(Column#21)->Column#13
+    └─TableReader_36	10000.00	root		data:StreamAgg_24
+      └─StreamAgg_24	10000.00	cop[tikv]		funcs:max(test.t2.c1)->Column#19, funcs:sum(isnull(test.t2.c1))->Column#20, funcs:count(1)->Column#21
+        └─Selection_34	100000.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
+          └─TableFullScan_33	100000000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 c1	c2
 2	1
@@ -624,9 +625,9 @@ Projection_26	10000.00	root		test.t1.c1, test.t1.c2
 └─Apply_28	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(test.t1.c1), NULL, 0)))
   ├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
   │ └─TableFullScan_29	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg_31(Probe)	1.00	root		funcs:max(Column#19)->Column#14, funcs:sum(Column#20)->Column#15, funcs:count(1)->Column#16
-    └─Projection_35	20.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#20
-      └─CTEFullScan_33	20.00	root	CTE:cte1	data:CTE_0
+  └─HashAgg_31(Probe)	10000.00	root		funcs:max(Column#19)->Column#14, funcs:sum(Column#20)->Column#15, funcs:count(1)->Column#16
+    └─Projection_35	200000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#20
+      └─CTEFullScan_33	200000.00	root	CTE:cte1	data:CTE_0
 CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:1)
 ├─Projection_19(Seed Part)	10.00	root		test.t2.c1
 │ └─TableReader_22	10.00	root		data:Selection_21
@@ -643,7 +644,7 @@ id	estRows	task	access object	operator info
 Apply_25	10000.00	root		CARTESIAN semi join
 ├─TableReader_27(Build)	10000.00	root		data:TableFullScan_26
 │ └─TableFullScan_26	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─CTEFullScan_28(Probe)	20.00	root	CTE:cte1	data:CTE_0
+└─CTEFullScan_28(Probe)	200000.00	root	CTE:cte1	data:CTE_0
 CTE_0	20.00	root		Recursive CTE, limit(offset:0, count:10)
 ├─Projection_17(Seed Part)	10.00	root		test.t2.c1
 │ └─TableReader_20	10.00	root		data:Selection_19
@@ -662,9 +663,9 @@ Projection_24	10000.00	root		test.t1.c1, test.t1.c2
 └─Apply_26	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#18), if(ne(Column#19, 0), NULL, 1)), or(eq(Column#20, 0), if(isnull(test.t1.c1), NULL, 0)))
   ├─TableReader_28(Build)	10000.00	root		data:TableFullScan_27
   │ └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg_29(Probe)	1.00	root		funcs:max(Column#23)->Column#18, funcs:sum(Column#24)->Column#19, funcs:count(1)->Column#20
-    └─Projection_33	18000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#24
-      └─CTEFullScan_31	18000.00	root	CTE:cte1	data:CTE_0
+  └─HashAgg_29(Probe)	10000.00	root		funcs:max(Column#23)->Column#18, funcs:sum(Column#24)->Column#19, funcs:count(1)->Column#20
+    └─Projection_33	180000000.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#24
+      └─CTEFullScan_31	180000000.00	root	CTE:cte1	data:CTE_0
 CTE_0	18000.00	root		Recursive CTE
 ├─TableReader_19(Seed Part)	10000.00	root		data:TableFullScan_18
 │ └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -678,7 +679,7 @@ id	estRows	task	access object	operator info
 Apply_23	10000.00	root		CARTESIAN semi join
 ├─TableReader_25(Build)	10000.00	root		data:TableFullScan_24
 │ └─TableFullScan_24	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─CTEFullScan_26(Probe)	18000.00	root	CTE:cte1	data:CTE_0
+└─CTEFullScan_26(Probe)	180000000.00	root	CTE:cte1	data:CTE_0
 CTE_0	18000.00	root		Recursive CTE
 ├─TableReader_17(Seed Part)	10000.00	root		data:TableFullScan_16
 │ └─TableFullScan_16	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -785,3 +786,19 @@ INSERT INTO `t_dnmxh` VALUES (104,571000,NULL),(104,572000,44.37),(104,573000,59
 WITH cte_0 AS (select distinct ref_0.wkey as c0, ref_0.pkey as c1, ref_0.c_xhsndb as c2 from t_dnmxh as ref_0 where (1 <= ( select ref_1.pkey not in ( select ref_5.wkey as c0 from t_dnmxh as ref_5 where (ref_5.wkey < ( select ref_6.pkey as c0 from t_cqmg3b as ref_6 where 88 between 96 and 76)) ) as c0 from (t_cqmg3b as ref_1 left outer join t_dnmxh as ref_2 on (ref_1.wkey = ref_2.wkey )) where ref_0.c_xhsndb is NULL union select 33 <= 91 as c0 from t_cqmg3b as ref_8 ))), cte_1 AS (select ref_9.wkey as c0, ref_9.pkey as c1, ref_9.c_anpf_c as c2, ref_9.c_b_fp_c as c3, ref_9.c_ndccfb as c4, ref_9.c_8rswc as c5 from t_cqmg3b as ref_9) select count(1) from cte_0 as ref_10 where case when 56 < 50 then case when 100 in ( select distinct ref_11.c4 as c0 from cte_1 as ref_11 where (ref_11.c4 > ( select ref_13.pkey as c0 from t_dnmxh as ref_13 where (ref_13.wkey > ( select distinct ref_11.c1 as c0 from cte_0 as ref_14)) )) or (1 = 1)) then null else null end else '7mxv6' end not like 'ki4%vc';
 count(1)
 24
+with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) order by 1;
+1
+1
+3
+explain with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2);
+id	estRows	task	access object	operator info
+HashAgg_24	3.00	root		group by:Column#9, funcs:firstrow(Column#9)->Column#9
+└─Union_25	3.00	root		
+  ├─Projection_26	1.00	root		1->Column#9
+  │ └─TableDual_27	1.00	root		rows:1
+  └─Union_29	2.00	root		
+    ├─CTEFullScan_31	1.00	root	CTE:cte2	data:CTE_2
+    └─CTEFullScan_33	1.00	root	CTE:cte2	data:CTE_2
+CTE_2	1.00	root		Non-Recursive CTE
+└─Projection_22(Seed Part)	1.00	root		3->Column#5
+  └─TableDual_23	1.00	root		rows:1

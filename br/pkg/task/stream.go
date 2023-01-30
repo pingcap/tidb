@@ -307,6 +307,8 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		mgr: mgr,
 	}
 	if isStreamStart {
+		client := backup.NewBackupClient(ctx, mgr)
+
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -316,11 +318,6 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 			NoCredentials:   cfg.NoCreds,
 			SendCredentials: cfg.SendCreds,
 		}
-		client, err := backup.NewBackupClient(ctx, mgr)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
 		if err = client.SetStorage(ctx, backend, &opts); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -334,6 +331,10 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 
 func (s *streamMgr) close() {
 	s.mgr.Close()
+}
+
+func (s *streamMgr) checkLock(ctx context.Context) (bool, error) {
+	return s.bc.GetStorage().FileExists(ctx, metautil.LockFile)
 }
 
 func (s *streamMgr) setLock(ctx context.Context) error {
@@ -352,7 +353,7 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 		s.cfg.StartTS = currentTS
 	}
 
-	if currentTS < s.cfg.StartTS || s.cfg.EndTS <= currentTS {
+	if currentTS < s.cfg.StartTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"invalid timestamps, startTS %d should be smaller than currentTS %d",
 			s.cfg.StartTS, currentTS)
@@ -423,7 +424,7 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	}
 
 	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
-	err = schemas.BackupSchemas(ctx, metaWriter, s.mgr.GetStorage(), nil,
+	err = schemas.BackupSchemas(ctx, metaWriter, nil, s.mgr.GetStorage(), nil,
 		s.cfg.StartTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -433,6 +434,61 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
+	se, err := g.CreateSession(s.mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	supportStream, err := utils.IsLogBackupEnabled(execCtx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !supportStream {
+		return errors.New("Unable to create task about log-backup. " +
+			"please set TiKV config `log-backup.enable` to true and restart TiKVs.")
+	}
+	if !ddl.IngestJobsNotExisted(se.GetSessionCtx()) {
+		return errors.Annotate(berrors.ErrUnknown,
+			"Unable to create log backup task. Please wait until the DDL jobs(add index with ingest method) are finished.")
+	}
+
+	return nil
+}
+
+type RestoreFunc func() error
+
+// KeepGcDisabled keeps GC disabled and return a function that used to gc enabled.
+// gc.ratio-threshold = "-1.0", which represents disable gc in TiKV.
+func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	oldRatio, err := utils.GetGcRatio(execCtx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	newRatio := "-1.0"
+	err = utils.SetGcRatio(execCtx, newRatio)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// If the oldRatio is negative, which is not normal status.
+	// It should set default value "1.1" after PiTR finished.
+	if strings.HasPrefix(oldRatio, "-") {
+		oldRatio = "1.1"
+	}
+
+	return func() error {
+		return utils.SetGcRatio(execCtx, oldRatio)
+	}, nil
 }
 
 // RunStreamCommand run all kinds of `stream task`
@@ -485,35 +541,10 @@ func RunStreamStart(
 	}
 	defer streamMgr.close()
 
-	se, err := g.CreateSession(streamMgr.mgr.GetStorage())
-	if err != nil {
+	if err = streamMgr.checkStreamStartEnable(g); err != nil {
 		return errors.Trace(err)
 	}
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
-	supportStream, err := utils.IsLogBackupEnabled(execCtx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !supportStream {
-		return errors.New("Unable to create task about log-backup. " +
-			"please set TiKV config `log-backup.enable` to true and restart TiKVs.")
-	}
-	if !ddl.IngestJobsNotExisted(se.GetSessionCtx()) {
-		return errors.Annotate(berrors.ErrUnknown, "Unable to create log backup task. Please wait until the DDL jobs(add index with ingest method) are finished.")
-	}
-
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
-		return errors.Trace(err)
-	}
-
-	if err = streamMgr.setGCSafePoint(
-		ctx,
-		utils.BRServiceSafePoint{
-			ID:       utils.MakeSafePointID(),
-			TTL:      cfg.SafePointTTL,
-			BackupTS: cfg.StartTS,
-		},
-	); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -525,12 +556,50 @@ func RunStreamStart(
 		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task currently")
 	}
 
-	if err = streamMgr.setLock(ctx); err != nil {
+	exist, err := streamMgr.checkLock(ctx)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	// exist is true, which represents restart a stream task. Or create a new stream task.
+	if exist {
+		logInfo, err := getLogRange(ctx, &cfg.Config)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if logInfo.clusterID > 0 && logInfo.clusterID != streamMgr.bc.GetClusterID() {
+			return errors.Annotatef(berrors.ErrInvalidArgument,
+				"the stream log files from cluster ID:%v and current cluster ID:%v ",
+				logInfo.clusterID, streamMgr.bc.GetClusterID())
+		}
 
-	if err = streamMgr.backupFullSchemas(ctx, g); err != nil {
-		return errors.Trace(err)
+		cfg.StartTS = logInfo.logMaxTS
+		if err = streamMgr.setGCSafePoint(
+			ctx,
+			utils.BRServiceSafePoint{
+				ID:       utils.MakeSafePointID(),
+				TTL:      cfg.SafePointTTL,
+				BackupTS: cfg.StartTS,
+			},
+		); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		if err = streamMgr.setGCSafePoint(
+			ctx,
+			utils.BRServiceSafePoint{
+				ID:       utils.MakeSafePointID(),
+				TTL:      cfg.SafePointTTL,
+				BackupTS: cfg.StartTS,
+			},
+		); err != nil {
+			return errors.Trace(err)
+		}
+		if err = streamMgr.setLock(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		if err = streamMgr.backupFullSchemas(ctx, g); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	ranges, err := streamMgr.buildObserveRanges(ctx)
@@ -556,7 +625,6 @@ func RunStreamStart(
 		Ranges:  ranges,
 		Pausing: false,
 	}
-
 	if err = cli.PutTask(ctx, ti); err != nil {
 		return errors.Trace(err)
 	}
@@ -636,7 +704,7 @@ func RunStreamStop(
 	if err := streamMgr.setGCSafePoint(ctx,
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      0,
+			TTL:      utils.DefaultStreamStartSafePointTTL,
 			BackupTS: 0,
 		},
 	); err != nil {
@@ -690,7 +758,7 @@ func RunStreamPause(
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      cfg.SafePointTTL,
-			BackupTS: globalCheckPointTS - 1,
+			BackupTS: globalCheckPointTS,
 		},
 	); err != nil {
 		return errors.Trace(err)
@@ -763,7 +831,7 @@ func RunStreamResume(
 	if err := streamMgr.setGCSafePoint(ctx,
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      0,
+			TTL:      utils.DefaultStreamStartSafePointTTL,
 			BackupTS: globalCheckPointTS,
 		},
 	); err != nil {
@@ -896,31 +964,24 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
 		Helper: stream.NewMetadataHelper(),
-		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
-			log.Info("Updating metadata.", zap.String("file", path),
-				zap.Int("data-file-before", len(last.GetFileGroups())),
-				zap.Int("data-file-after", len(current.GetFileGroups())))
-			return cfg.DryRun
-		},
+		DryRun: cfg.DryRun,
 	}
-	if err := metas.LoadUntil(ctx, storage, cfg.Until); err != nil {
+	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, storage, cfg.Until)
+	if err != nil {
 		return err
 	}
 	readMetaDone()
 
 	var (
-		fileCount    uint64 = 0
-		kvCount      int64  = 0
-		totalSize    uint64 = 0
-		shiftUntilTS        = metas.CalculateShiftTS(cfg.Until)
+		fileCount int    = 0
+		kvCount   int64  = 0
+		totalSize uint64 = 0
 	)
 
-	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileGroup) (shouldBreak bool) {
+	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *restore.FileGroupInfo) (shouldBreak bool) {
 		fileCount++
 		totalSize += d.Length
-		for _, f := range d.DataFilesInfo {
-			kvCount += f.NumberOfEntries
-		}
+		kvCount += d.KVCount
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
@@ -938,40 +999,38 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-	removed := metas.RemoveDataBefore(shiftUntilTS)
-
-	// remove log
-	clearDataFileDone := console.ShowTask(
-		"Clearing data files... ", glue.WithTimeCost(),
+	// begin to remove
+	p := console.StartProgressBar(
+		"Clearing Data Files and Metadata", fileCount,
+		glue.WithTimeCost(),
 		glue.WithConstExtraField("kv-count", kvCount),
 		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
 	)
-	worker := utils.NewWorkerPool(128, "delete files")
-	wg := new(sync.WaitGroup)
-	for _, f := range removed {
-		if !cfg.DryRun {
-			wg.Add(1)
-			finalFile := f
-			worker.Apply(func() {
-				defer wg.Done()
-				if err := storage.DeleteFile(ctx, finalFile.Path); err != nil {
-					log.Warn("File not deleted.", zap.String("path", finalFile.Path), logutil.ShortError(err))
-					console.Print("\n"+em(finalFile.Path), "not deleted, you may clear it manually:", warn(err))
-				}
-			})
-		}
-	}
-	wg.Wait()
-	clearDataFileDone()
+	defer p.Close()
 
-	// remove metadata
-	removeMetaDone := console.ShowTask("Removing metadata... ", glue.WithTimeCost())
-	if !cfg.DryRun {
-		if err := metas.DoWriteBack(ctx, storage); err != nil {
-			return err
+	notDeleted, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, storage, p.IncBy)
+	if err != nil {
+		return err
+	}
+
+	if err := p.Wait(ctx); err != nil {
+		return err
+	}
+
+	if len(notDeleted) > 0 {
+		const keepFirstNFailure = 16
+		console.Println("Files below are not deleted due to error, you may clear it manually, check log for detail error:")
+		console.Println("- Total", em(len(notDeleted)), "items.")
+		if len(notDeleted) > keepFirstNFailure {
+			console.Println("-", em(len(notDeleted)-keepFirstNFailure), "items omitted.")
+			// TODO: maybe don't add them at the very first.
+			notDeleted = notDeleted[:keepFirstNFailure]
+		}
+		for _, f := range notDeleted {
+			console.Println(f)
 		}
 	}
-	removeMetaDone()
+
 	return nil
 }
 
@@ -1103,7 +1162,7 @@ func restoreStream(
 	}
 	defer client.Close()
 
-	currentTS, err := client.GetTS(ctx)
+	currentTS, err := client.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1117,31 +1176,21 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restorePostWork(ctx, client, restoreSchedulers)
 
-	shiftStartTS, err := client.GetShiftTS(ctx, cfg.StartTS, cfg.RestoreTS)
-	if err != nil {
-		return errors.Annotate(err, "failed to get shift TS")
-	}
-
-	// read meta by given ts.
-	metas, err := client.ReadStreamMetaByTS(ctx, shiftStartTS, cfg.RestoreTS)
+	// It need disable GC in TiKV when PiTR.
+	// because the process of PITR is concurrent and kv events isn't sorted by tso.
+	restoreGc, err := KeepGcDisabled(g, mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(metas) == 0 {
-		log.Info("nothing to restore.")
-		return nil
-	}
+	defer func() {
+		if err := restoreGc(); err != nil {
+			log.Error("failed to set gc enabled", zap.Error(err))
+		}
+	}()
 
-	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
-
-	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
+	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(dmlFiles) == 0 && len(ddlFiles) == 0 {
-		log.Info("nothing to restore.")
-		return nil
+		return err
 	}
 
 	// get full backup meta to generate rewrite rules.
@@ -1173,6 +1222,11 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
+	dataFileCount := 0
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx, &dataFileCount)
+	if err != nil {
+		return err
+	}
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
@@ -1188,9 +1242,17 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
+	logFilesIter, err := client.LoadDMLFiles(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.Inc)
+		return client.RestoreKVFiles(ctx, rewriteRules, logFilesIterWithSplit, cfg.PitrBatchCount, cfg.PitrBatchSize, updateStats, p.IncBy)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
@@ -1275,8 +1337,6 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 		return nil, errors.Trace(err)
 	}
 
-	client.InitMetadataHelper()
-
 	return client, nil
 }
 
@@ -1335,6 +1395,11 @@ func getLogRange(
 	backupMeta := &backuppb.BackupMeta{}
 	if err = backupMeta.Unmarshal(metaData); err != nil {
 		return backupLogInfo{}, errors.Trace(err)
+	}
+	// endVersion > 0 represents that the storage has been used for `br backup`
+	if backupMeta.GetEndVersion() > 0 {
+		return backupLogInfo{}, errors.Annotate(berrors.ErrStorageUnknown,
+			"the storage has been used for full backup")
 	}
 	logStartTS := backupMeta.GetStartVersion()
 
@@ -1533,7 +1598,7 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 			zap.Stringer("database", t.DB.Name),
 			zap.Int("old-id", int(t.Info.ID)),
 			zap.Array("rewrite-rules", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
-				for _, r := range rules {
+				for _, r := range tableRules {
 					for _, rule := range r.Data {
 						if err := ae.AppendObject(logutil.RewriteRuleObject(rule)); err != nil {
 							return err

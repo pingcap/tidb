@@ -22,7 +22,10 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -58,7 +61,7 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error)
+	buildKeyRange(ranges []*ranger.Range) ([][]kv.KeyRange, error)
 	buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error)
 }
 
@@ -202,13 +205,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+		e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		if len(secondPartRanges) != 0 {
 			kvReq, err = e.buildKVReq(ctx, secondPartRanges)
 			if err != nil {
 				return err
 			}
-			e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+			e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 		}
 		return nil
 	}
@@ -253,7 +256,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema.Columns, e.columns, e.ctx, req)
 	if err != nil {
 		return err
 	}
@@ -311,10 +314,10 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
-	slices.SortFunc(kvReq.KeyRanges, func(i, j kv.KeyRange) bool {
+	kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
-	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
@@ -406,9 +409,24 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		if err != nil {
 			return nil, err
 		}
-		reqBuilder = builder.SetKeyRanges(kvRange)
+		reqBuilder = builder.SetPartitionKeyRanges(kvRange)
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
+	}
+	if e.table != nil && e.table.Type().IsClusterTable() {
+		copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)
+		if copDestination == infoschema.DDLOwner {
+			ownerManager := domain.GetDomain(e.ctx).DDL().OwnerManager()
+			ddlOwnerID, err := ownerManager.GetOwnerID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			serverInfo, err := infosync.GetServerInfoByID(ctx, ddlOwnerID)
+			if err != nil {
+				return nil, err
+			}
+			reqBuilder.SetTiDBServerID(serverInfo.ServerIDGetter())
+		}
 	}
 	reqBuilder.
 		SetDAGRequest(e.dagPB).

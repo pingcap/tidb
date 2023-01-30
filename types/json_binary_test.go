@@ -50,6 +50,8 @@ func TestBinaryJSONExtract(t *testing.T) {
 	bj8 := mustParseBinaryFromString(t, `{ "a": { "b" : [ 1, 2, 3 ] } }`)
 	bj9 := mustParseBinaryFromString(t, `[[0,1],[2,3],[4,[5,6]]]`)
 	bj10 := mustParseBinaryFromString(t, `[1]`)
+	bj11 := mustParseBinaryFromString(t, `{"metadata": {"comment": "1234"}}`)
+	bj12 := mustParseBinaryFromString(t, `{"metadata": {"age": 19, "name": "Tom"}}`)
 
 	var tests = []struct {
 		bj              BinaryJSON
@@ -74,6 +76,16 @@ func TestBinaryJSONExtract(t *testing.T) {
 		{bj4, []string{`$.properties.$type$type.$a$a`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
 		{bj5, []string{`$.properties.$type.$a.$b`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
 		{bj5, []string{`$.properties.$type.$a.*[0]`}, mustParseBinaryFromString(t, `["TiDB"]`), true, nil},
+		{bj11, []string{"$.metadata.comment"}, mustParseBinaryFromString(t, `"1234"`), true, nil},
+		{bj9, []string{"$[0]"}, mustParseBinaryFromString(t, `[0, 1] `), true, nil},
+		{bj9, []string{"$[last][last]"}, mustParseBinaryFromString(t, `[5,6]`), true, nil},
+		{bj9, []string{"$[last-1][last]"}, mustParseBinaryFromString(t, `3`), true, nil},
+		{bj9, []string{"$[last-1][last-1]"}, mustParseBinaryFromString(t, `2`), true, nil},
+		{bj9, []string{"$[1 to 2]"}, mustParseBinaryFromString(t, `[[2,3],[4,[5,6]]]`), true, nil},
+		{bj9, []string{"$[1 to 2][1 to 2]"}, mustParseBinaryFromString(t, `[3,[5,6]]`), true, nil},
+		{bj9, []string{"$[1 to last][1 to last]"}, mustParseBinaryFromString(t, `[3,[5,6]]`), true, nil},
+		{bj9, []string{"$[1 to last][1 to last - 1]"}, bj9, false, nil},
+		{bj9, []string{"$[1 to last][0 to last - 1]"}, mustParseBinaryFromString(t, `[2,4]`), true, nil},
 
 		// test extract with multi path expressions.
 		{bj1, []string{"$.a", "$[5]"}, mustParseBinaryFromString(t, `[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
@@ -84,6 +96,7 @@ func TestBinaryJSONExtract(t *testing.T) {
 		{bj8, []string{"$**[0]"}, mustParseBinaryFromString(t, `[{"a": {"b": [1, 2, 3]}}, {"b": [1, 2, 3]}, 1, 2, 3]`), true, nil},
 		{bj9, []string{"$**[0]"}, mustParseBinaryFromString(t, `[[0, 1], 0, 1, 2, 3, 4, 5, 6] `), true, nil},
 		{bj10, []string{"$**[0]"}, mustParseBinaryFromString(t, `[1]`), true, nil},
+		{bj12, []string{"$.metadata.age", "$.metadata.name"}, mustParseBinaryFromString(t, `[19, "Tom"]`), true, nil},
 	}
 
 	for _, test := range tests {
@@ -95,7 +108,7 @@ func TestBinaryJSONExtract(t *testing.T) {
 		}
 
 		result, found := test.bj.Extract(pathExprList)
-		require.Equal(t, test.found, found)
+		require.Equal(t, test.found, found, test.bj.String())
 		if found {
 			require.Equal(t, test.expected.String(), result.String())
 		}
@@ -191,6 +204,16 @@ func TestBinaryJSONModify(t *testing.T) {
 		{`{"a": [3]}`, "$[0]", `4`, `4`, true, JSONModifySet},
 		{`{"a": [3]}`, "$[1]", `4`, `[{"a": [3]}, 4]`, true, JSONModifySet},
 		{`{"b": true}`, "$.b", `false`, `{"b": false}`, true, JSONModifySet},
+
+		// These tests illustrate the differences among the three JSONModifyType
+		{`{"foo": "bar"}`, "$.foo", `"moo"`, `{"foo": "bar"}`, true, JSONModifyInsert},
+		{`{"foo": "bar"}`, "$.foo", `"moo"`, `{"foo": "moo"}`, true, JSONModifyReplace},
+		{`{"foo": "bar"}`, "$.foo", `"moo"`, `{"foo": "moo"}`, true, JSONModifySet},
+		{`{"foo": "bar"}`, "$.foo", `null`, `{"foo": null}`, true, JSONModifySet},
+		{`{"foo": "bar"}`, "$.baz", `"moo"`, `{"foo": "bar", "baz": "moo"}`, true, JSONModifyInsert},
+		{`{"foo": "bar"}`, "$.baz", `"moo"`, `{"foo": "bar"}`, true, JSONModifyReplace},
+		{`{"foo": "bar"}`, "$.baz", `"moo"`, `{"foo": "bar", "baz": "moo"}`, true, JSONModifySet},
+		{`{"foo": "bar"}`, "$.baz", `null`, `{"foo": "bar", "baz": null}`, true, JSONModifySet},
 
 		// nothing changed because the path is empty and we want to insert.
 		{`{}`, "$", `1`, `{}`, true, JSONModifyInsert},
@@ -342,6 +365,9 @@ func TestBinaryJSONMerge(t *testing.T) {
 		{[]string{`4`, `{"a": 1}`}, `[4, {"a": 1}]`},
 		{[]string{`4`, `1`}, `[4, 1]`},
 		{[]string{`{}`, `[]`}, `[{}]`},
+		{[]string{`{"comment": "1234"}`, `{"age": 19, "name": "Tom"}`}, `{"age": 19, "comment": "1234", "name": "Tom"}`},
+		{[]string{`{"metadata": {"comment": "1234"}}`, `{"metadata": {"age": 19, "name": "Tom"}}`}, `{"metadata": {"age": 19, "comment": "1234", "name": "Tom"}}`},
+		{[]string{`{"comment": "1234"}`, `{"comment": "abc"}`}, `{"comment": ["1234", "abc"]}`},
 	}
 
 	for _, test := range tests {
@@ -351,7 +377,7 @@ func TestBinaryJSONMerge(t *testing.T) {
 		}
 		result := MergeBinaryJSON(suffixes)
 		cmp := CompareBinaryJSON(result, mustParseBinaryFromString(t, test.expected))
-		require.Equal(t, 0, cmp)
+		require.Equal(t, 0, cmp, result.String())
 	}
 }
 
@@ -418,6 +444,11 @@ func TestGetKeys(t *testing.T) {
 	require.Equal(t, "[]", parsedBJ.GetKeys().String())
 	parsedBJ = mustParseBinaryFromString(t, "{}")
 	require.Equal(t, "[]", parsedBJ.GetKeys().String())
+	parsedBJ = mustParseBinaryFromString(t, "{\"comment\": \"1234\"}")
+	require.Equal(t, "[\"comment\"]", parsedBJ.GetKeys().String())
+	parsedBJ = mustParseBinaryFromString(t, "{\"name\": \"Tom\", \"age\": 19}")
+	require.Equal(t, "[\"age\", \"name\"]", parsedBJ.GetKeys().String())
+	require.Equal(t, 2, parsedBJ.GetKeys().GetElemCount())
 
 	b := strings.Builder{}
 	b.WriteString("{\"")

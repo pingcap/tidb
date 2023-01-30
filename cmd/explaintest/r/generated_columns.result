@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,

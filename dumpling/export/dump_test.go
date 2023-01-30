@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
@@ -18,7 +19,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func TestDumpBlock(t *testing.T) {
+func TestDumpExit(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -56,7 +57,6 @@ func TestDumpBlock(t *testing.T) {
 	})
 
 	writerCtx := tctx.WithContext(writingCtx)
-	// simulate taskChan is full
 	taskChan := make(chan Task, 1)
 	taskChan <- &TaskDatabaseMeta{}
 	d.conf.Tables = DatabaseTables{}.AppendTable(database, nil)
@@ -224,4 +224,68 @@ func TestUnregisterMetrics(t *testing.T) {
 	_, err = NewDumper(ctx, conf)
 	// should not panic
 	require.Error(t, err)
+}
+
+func TestSetDefaultSessionParams(t *testing.T) {
+	testCases := []struct {
+		si             version.ServerInfo
+		sessionParams  map[string]interface{}
+		expectedParams map[string]interface{}
+	}{
+		{
+			si: version.ServerInfo{
+				ServerType:    version.ServerTypeTiDB,
+				HasTiKV:       true,
+				ServerVersion: semver.New("6.1.0"),
+			},
+			sessionParams: map[string]interface{}{
+				"tidb_snapshot": "2020-01-01 00:00:00",
+			},
+			expectedParams: map[string]interface{}{
+				"tidb_snapshot": "2020-01-01 00:00:00",
+			},
+		},
+		{
+			si: version.ServerInfo{
+				ServerType:    version.ServerTypeTiDB,
+				HasTiKV:       true,
+				ServerVersion: semver.New("6.2.0"),
+			},
+			sessionParams: map[string]interface{}{
+				"tidb_snapshot": "2020-01-01 00:00:00",
+			},
+			expectedParams: map[string]interface{}{
+				"tidb_enable_paging": "ON",
+				"tidb_snapshot":      "2020-01-01 00:00:00",
+			},
+		},
+		{
+			si: version.ServerInfo{
+				ServerType:    version.ServerTypeTiDB,
+				HasTiKV:       true,
+				ServerVersion: semver.New("6.2.0"),
+			},
+			sessionParams: map[string]interface{}{
+				"tidb_enable_paging": "OFF",
+				"tidb_snapshot":      "2020-01-01 00:00:00",
+			},
+			expectedParams: map[string]interface{}{
+				"tidb_enable_paging": "OFF",
+				"tidb_snapshot":      "2020-01-01 00:00:00",
+			},
+		},
+		{
+			si: version.ServerInfo{
+				ServerType:    version.ServerTypeMySQL,
+				ServerVersion: semver.New("8.0.32"),
+			},
+			sessionParams:  map[string]interface{}{},
+			expectedParams: map[string]interface{}{},
+		},
+	}
+
+	for _, testCase := range testCases {
+		setDefaultSessionParams(testCase.si, testCase.sessionParams)
+		require.Equal(t, testCase.expectedParams, testCase.sessionParams)
+	}
 }

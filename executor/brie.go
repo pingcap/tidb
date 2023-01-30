@@ -515,7 +515,7 @@ func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBI
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error {
+func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	d := domain.GetDomain(gs.se).DDL()
 
 	// 512 is defaultCapOfCreateTable.
@@ -533,7 +533,7 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 		table.Partition = &newPartition
 	}
 
-	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
+	return d.CreateTableWithInfo(gs.se, dbName, table, append(cs, ddl.OnExistIgnore)...)
 }
 
 // CreatePlacementPolicy implements glue.Session

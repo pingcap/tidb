@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 CREATE DATABASE IF NOT EXISTS TPCH;
 USE TPCH;
 CREATE TABLE IF NOT EXISTS nation  ( N_NATIONKEY  INTEGER NOT NULL,
@@ -26,16 +27,13 @@ S_NATIONKEY   INTEGER NOT NULL,
 S_PHONE       CHAR(15) NOT NULL,
 S_ACCTBAL     DECIMAL(15,2) NOT NULL,
 S_COMMENT     VARCHAR(101) NOT NULL,
-PRIMARY KEY (S_SUPPKEY),
-CONSTRAINT FOREIGN KEY SUPPLIER_FK1 (S_NATIONKEY) references nation(N_NATIONKEY));
+PRIMARY KEY (S_SUPPKEY));
 CREATE TABLE IF NOT EXISTS partsupp ( PS_PARTKEY     INTEGER NOT NULL,
 PS_SUPPKEY     INTEGER NOT NULL,
 PS_AVAILQTY    INTEGER NOT NULL,
 PS_SUPPLYCOST  DECIMAL(15,2)  NOT NULL,
 PS_COMMENT     VARCHAR(199) NOT NULL,
-PRIMARY KEY (PS_PARTKEY,PS_SUPPKEY),
-CONSTRAINT FOREIGN KEY PARTSUPP_FK1 (PS_SUPPKEY) references supplier(S_SUPPKEY),
-CONSTRAINT FOREIGN KEY PARTSUPP_FK2 (PS_PARTKEY) references part(P_PARTKEY));
+PRIMARY KEY (PS_PARTKEY,PS_SUPPKEY));
 CREATE TABLE IF NOT EXISTS customer  ( C_CUSTKEY     INTEGER NOT NULL,
 C_NAME        VARCHAR(25) NOT NULL,
 C_ADDRESS     VARCHAR(40) NOT NULL,
@@ -44,8 +42,7 @@ C_PHONE       CHAR(15) NOT NULL,
 C_ACCTBAL     DECIMAL(15,2)   NOT NULL,
 C_MKTSEGMENT  CHAR(10) NOT NULL,
 C_COMMENT     VARCHAR(117) NOT NULL,
-PRIMARY KEY (C_CUSTKEY),
-CONSTRAINT FOREIGN KEY CUSTOMER_FK1 (C_NATIONKEY) references nation(N_NATIONKEY));
+PRIMARY KEY (C_CUSTKEY));
 CREATE TABLE IF NOT EXISTS orders  ( O_ORDERKEY       INTEGER NOT NULL,
 O_CUSTKEY        INTEGER NOT NULL,
 O_ORDERSTATUS    CHAR(1) NOT NULL,
@@ -55,8 +52,7 @@ O_ORDERPRIORITY  CHAR(15) NOT NULL,
 O_CLERK          CHAR(15) NOT NULL,
 O_SHIPPRIORITY   INTEGER NOT NULL,
 O_COMMENT        VARCHAR(79) NOT NULL,
-PRIMARY KEY (O_ORDERKEY),
-CONSTRAINT FOREIGN KEY ORDERS_FK1 (O_CUSTKEY) references customer(C_CUSTKEY));
+PRIMARY KEY (O_ORDERKEY));
 CREATE TABLE IF NOT EXISTS lineitem ( L_ORDERKEY    INTEGER NOT NULL,
 L_PARTKEY     INTEGER NOT NULL,
 L_SUPPKEY     INTEGER NOT NULL,
@@ -73,9 +69,7 @@ L_RECEIPTDATE DATE NOT NULL,
 L_SHIPINSTRUCT CHAR(25) NOT NULL,
 L_SHIPMODE     CHAR(10) NOT NULL,
 L_COMMENT      VARCHAR(44) NOT NULL,
-PRIMARY KEY (L_ORDERKEY,L_LINENUMBER),
-CONSTRAINT FOREIGN KEY LINEITEM_FK1 (L_ORDERKEY)  references orders(O_ORDERKEY),
-CONSTRAINT FOREIGN KEY LINEITEM_FK2 (L_PARTKEY,L_SUPPKEY) references partsupp(PS_PARTKEY, PS_SUPPKEY));
+PRIMARY KEY (L_ORDERKEY,L_LINENUMBER));
 load stats 's/tpch_stats/nation.json';
 load stats 's/tpch_stats/region.json';
 load stats 's/tpch_stats/part.json';
@@ -262,10 +256,10 @@ Projection	10.00	root		tpch.lineitem.l_orderkey, Column#35, tpch.orders.o_orderd
         │ └─TableReader(Probe)	36870000.00	root		data:Selection
         │   └─Selection	36870000.00	cop[tikv]		lt(tpch.orders.o_orderdate, 1995-03-13 00:00:00.000000)
         │     └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-        └─IndexLookUp(Probe)	4.05	root		
-          ├─IndexRangeScan(Build)	7.45	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
-          └─Selection(Probe)	4.05	cop[tikv]		gt(tpch.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)
-            └─TableRowIDScan	7.45	cop[tikv]	table:lineitem	keep order:false
+        └─IndexLookUp(Probe)	91515927.49	root		
+          ├─IndexRangeScan(Build)	168388203.74	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+          └─Selection(Probe)	91515927.49	cop[tikv]		gt(tpch.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)
+            └─TableRowIDScan	168388203.74	cop[tikv]	table:lineitem	keep order:false
 /*
 Q4 Order Priority Checking Query
 This query determines how well the order priority system is working and gives an assessment of customer satisfaction.
@@ -303,10 +297,10 @@ Sort	1.00	root		tpch.orders.o_orderpriority
       ├─TableReader(Build)	2925937.50	root		data:Selection
       │ └─Selection	2925937.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-04-01 00:00:00.000000)
       │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-      └─IndexLookUp(Probe)	4.05	root		
-        ├─IndexRangeScan(Build)	5.06	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
-        └─Selection(Probe)	4.05	cop[tikv]		lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate)
-          └─TableRowIDScan	5.06	cop[tikv]	table:lineitem	keep order:false
+      └─IndexLookUp(Probe)	11851908.75	root		
+        ├─IndexRangeScan(Build)	14814885.94	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+        └─Selection(Probe)	11851908.75	cop[tikv]		lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate)
+          └─TableRowIDScan	14814885.94	cop[tikv]	table:lineitem	keep order:false
 /*
 Q5 Local Supplier Volume Query
 This query lists the revenue volume done through local suppliers.
@@ -469,8 +463,8 @@ Sort	769.96	root		tpch.nation.n_name, tpch.nation.n_name, Column#50
               │ └─TableReader(Probe)	91446230.29	root		data:Selection
               │   └─Selection	91446230.29	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1995-01-01 00:00:00.000000), le(tpch.lineitem.l_shipdate, 1996-12-31 00:00:00.000000)
               │     └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
-              └─TableReader(Probe)	1.00	root		data:TableRangeScan
-                └─TableRangeScan	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false
+              └─TableReader(Probe)	24465505.20	root		data:TableRangeScan
+                └─TableRangeScan	24465505.20	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false
 /*
 Q8 National Market Share Query
 This query determines how the market share of a given nation within a given region has changed over two years for
@@ -548,9 +542,9 @@ Sort	719.02	root		Column#62
                 │ └─TableReader(Probe)	22413367.93	root		data:Selection
                 │   └─Selection	22413367.93	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), le(tpch.orders.o_orderdate, 1996-12-31 00:00:00.000000)
                 │     └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-                └─IndexLookUp(Probe)	4.05	root		
-                  ├─IndexRangeScan(Build)	4.05	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
-                  └─TableRowIDScan(Probe)	4.05	cop[tikv]	table:lineitem	keep order:false
+                └─IndexLookUp(Probe)	90788402.51	root		
+                  ├─IndexRangeScan(Build)	90788402.51	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+                  └─TableRowIDScan(Probe)	90788402.51	cop[tikv]	table:lineitem	keep order:false
 /*
 Q9 Product Type Profit Measure Query
 This query determines how much profit is made on a given line of parts, broken out by supplier nation and year.
@@ -677,10 +671,10 @@ Projection	20.00	root		tpch.customer.c_custkey, tpch.customer.c_name, Column#39,
           │   │ └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
           │   └─TableReader(Probe)	7500000.00	root		data:TableFullScan
           │     └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
-          └─IndexLookUp(Probe)	4.05	root		
-            ├─IndexRangeScan(Build)	16.44	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
-            └─Selection(Probe)	4.05	cop[tikv]		eq(tpch.lineitem.l_returnflag, "R")
-              └─TableRowIDScan	16.44	cop[tikv]	table:lineitem	keep order:false
+          └─IndexLookUp(Probe)	12222016.17	root		
+            ├─IndexRangeScan(Build)	49605980.10	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+            └─Selection(Probe)	12222016.17	cop[tikv]		eq(tpch.lineitem.l_returnflag, "R")
+              └─TableRowIDScan	49605980.10	cop[tikv]	table:lineitem	keep order:false
 /*
 Q11 Important Stock Identification Query
 This query finds the most important subset of suppliers' stock in a given nation.
@@ -780,8 +774,8 @@ Sort	1.00	root		tpch.lineitem.l_shipmode
           ├─TableReader(Build)	10023369.01	root		data:Selection
           │ └─Selection	10023369.01	cop[tikv]		ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
           │   └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
-          └─TableReader(Probe)	1.00	root		data:TableRangeScan
-            └─TableRangeScan	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false
+          └─TableReader(Probe)	10023369.01	root		data:TableRangeScan
+            └─TableRangeScan	10023369.01	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false
 /*
 Q13 Customer Distribution Query
 This query seeks relationships between customers and the size of their orders.
@@ -851,8 +845,8 @@ Projection	1.00	root		div(mul(100.00, Column#27), Column#28)->Column#29
       ├─TableReader(Build)	4121984.49	root		data:Selection
       │ └─Selection	4121984.49	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1996-12-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1997-01-01 00:00:00.000000)
       │   └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
-      └─TableReader(Probe)	1.00	root		data:TableRangeScan
-        └─TableRangeScan	1.00	cop[tikv]	table:part	range: decided by [tpch.lineitem.l_partkey], keep order:false
+      └─TableReader(Probe)	4121984.49	root		data:TableRangeScan
+        └─TableRangeScan	4121984.49	cop[tikv]	table:part	range: decided by [tpch.lineitem.l_partkey], keep order:false
 /*
 Q15 Top Supplier Query
 This query determines the top supplier so it can be rewarded, given more business, or identified for special recognition.
@@ -945,8 +939,8 @@ Sort	14.41	root		Column#23:desc, tpch.part.p_brand, tpch.part.p_type, tpch.part.
           ├─TableReader(Build)	1200618.43	root		data:Selection
           │ └─Selection	1200618.43	cop[tikv]		in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
           │   └─TableFullScan	10000000.00	cop[tikv]	table:part	keep order:false
-          └─IndexReader(Probe)	4.02	root		index:IndexRangeScan
-            └─IndexRangeScan	4.02	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
+          └─IndexReader(Probe)	4829985.30	root		index:IndexRangeScan
+            └─IndexRangeScan	4829985.30	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
 /*
 Q17 Small-Quantity-Order Revenue Query
 This query determines how much average yearly revenue would be lost if orders were no longer filled for small
@@ -1167,9 +1161,9 @@ Sort	20000.00	root		tpch.supplier.s_name
           │ ├─TableReader(Build)	80007.93	root		data:Selection
           │ │ └─Selection	80007.93	cop[tikv]		like(tpch.part.p_name, "green%", 92)
           │ │   └─TableFullScan	10000000.00	cop[tikv]	table:part	keep order:false
-          │ └─IndexLookUp(Probe)	4.02	root		
-          │   ├─IndexRangeScan(Build)	4.02	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
-          │   └─TableRowIDScan(Probe)	4.02	cop[tikv]	table:partsupp	keep order:false
+          │ └─IndexLookUp(Probe)	321865.05	root		
+          │   ├─IndexRangeScan(Build)	321865.05	cop[tikv]	table:partsupp, index:PRIMARY(PS_PARTKEY, PS_SUPPKEY)	range: decided by [eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)], keep order:false
+          │   └─TableRowIDScan(Probe)	321865.05	cop[tikv]	table:partsupp	keep order:false
           └─TableReader(Probe)	44189356.65	root		data:Selection
             └─Selection	44189356.65	cop[tikv]		ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000)
               └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
@@ -1238,16 +1232,16 @@ Projection	100.00	root		tpch.supplier.s_name, Column#72
       │ │ │ └─TableReader(Probe)	240004648.80	root		data:Selection
       │ │ │   └─Selection	240004648.80	cop[tikv]		gt(tpch.lineitem.l_receiptdate, tpch.lineitem.l_commitdate)
       │ │ │     └─TableFullScan	300005811.00	cop[tikv]	table:l1	keep order:false
-      │ │ └─TableReader(Probe)	0.49	root		data:Selection
-      │ │   └─Selection	0.49	cop[tikv]		eq(tpch.orders.o_orderstatus, "F")
-      │ │     └─TableRangeScan	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false
-      │ └─IndexLookUp(Probe)	4.05	root		
-      │   ├─IndexRangeScan(Build)	4.05	cop[tikv]	table:l2, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
-      │   └─TableRowIDScan(Probe)	4.05	cop[tikv]	table:l2	keep order:false
-      └─IndexLookUp(Probe)	4.05	root		
-        ├─IndexRangeScan(Build)	5.06	cop[tikv]	table:l3, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
-        └─Selection(Probe)	4.05	cop[tikv]		gt(tpch.lineitem.l_receiptdate, tpch.lineitem.l_commitdate)
-          └─TableRowIDScan	5.06	cop[tikv]	table:l3	keep order:false
+      │ │ └─TableReader(Probe)	5956106.20	root		data:Selection
+      │ │   └─Selection	5956106.20	cop[tikv]		eq(tpch.orders.o_orderstatus, "F")
+      │ │     └─TableRangeScan	12232752.60	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false
+      │ └─IndexLookUp(Probe)	49550432.16	root		
+      │   ├─IndexRangeScan(Build)	49550432.16	cop[tikv]	table:l2, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
+      │   └─TableRowIDScan(Probe)	49550432.16	cop[tikv]	table:l2	keep order:false
+      └─IndexLookUp(Probe)	39640345.73	root		
+        ├─IndexRangeScan(Build)	49550432.16	cop[tikv]	table:l3, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey)], keep order:false
+        └─Selection(Probe)	39640345.73	cop[tikv]		gt(tpch.lineitem.l_receiptdate, tpch.lineitem.l_commitdate)
+          └─TableRowIDScan	49550432.16	cop[tikv]	table:l3	keep order:false
 /*
 Q22 Global Sales Opportunity Query
 The Global Sales Opportunity Query identifies geographies where there are customers who may be likely to make a

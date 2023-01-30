@@ -53,7 +53,9 @@ func TestCacheable(t *testing.T) {
 
 	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: tbl}}}
 	// test InsertStmt
-	stmt = &ast.InsertStmt{Table: tableRefsClause}
+	stmt = &ast.InsertStmt{Table: tableRefsClause} // insert-values-stmt
+	require.False(t, core.Cacheable(stmt, is))
+	stmt = &ast.InsertStmt{Table: tableRefsClause, Select: &ast.SelectStmt{}} // insert-select-stmt
 	require.True(t, core.Cacheable(stmt, is))
 
 	// test DeleteStmt
@@ -85,7 +87,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -94,7 +96,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.DeleteStmt{
@@ -137,7 +139,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -146,7 +148,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.UpdateStmt{
@@ -186,7 +188,7 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -194,7 +196,7 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	require.True(t, core.Cacheable(stmt, is))
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.SelectStmt{
@@ -247,7 +249,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 }
 
-func TestGeneralPlanCacheable(t *testing.T) {
+func TestNonPreparedPlanCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -297,12 +299,12 @@ func TestGeneralPlanCacheable(t *testing.T) {
 	for _, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.False(t, core.GeneralPlanCacheable(stmt, is))
+		require.False(t, core.NonPreparedPlanCacheable(stmt, is))
 	}
 
 	for _, q := range supported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.True(t, core.GeneralPlanCacheable(stmt, is))
+		require.True(t, core.NonPreparedPlanCacheable(stmt, is))
 	}
 }

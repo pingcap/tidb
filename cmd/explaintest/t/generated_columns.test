@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 -- Tests of using stored generated column as index and partition column.
 -- Most of the cases are ported from other tests to make sure generated columns behaves the same.
 

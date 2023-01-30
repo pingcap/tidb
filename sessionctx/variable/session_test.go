@@ -23,10 +23,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -127,16 +130,9 @@ func TestSession(t *testing.T) {
 
 func TestAllocMPPID(t *testing.T) {
 	ctx := mock.NewContext()
-
-	seVar := ctx.GetSessionVars()
-	require.NotNil(t, seVar)
-
-	require.Equal(t, int64(1), seVar.AllocMPPTaskID(1))
-	require.Equal(t, int64(2), seVar.AllocMPPTaskID(1))
-	require.Equal(t, int64(3), seVar.AllocMPPTaskID(1))
-	require.Equal(t, int64(1), seVar.AllocMPPTaskID(2))
-	require.Equal(t, int64(2), seVar.AllocMPPTaskID(2))
-	require.Equal(t, int64(3), seVar.AllocMPPTaskID(2))
+	require.Equal(t, int64(1), plannercore.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(2), plannercore.AllocMPPTaskID(ctx))
+	require.Equal(t, int64(3), plannercore.AllocMPPTaskID(ctx))
 }
 
 func TestSlowLogFormat(t *testing.T) {
@@ -161,9 +157,11 @@ func TestSlowLogFormat(t *testing.T) {
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},
-		TimeDetail: util.TimeDetail{
-			ProcessTime: time.Second * time.Duration(2),
-			WaitTime:    time.Minute,
+		DetailsNeedP90: execdetails.DetailsNeedP90{
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(2),
+				WaitTime:    time.Minute,
+			},
 		},
 	}
 	statsInfos := make(map[string]uint64)
@@ -393,21 +391,21 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	require.Equal(t, 0, len(tc.Savepoints))
 }
 
-func TestGeneralPlanCacheStmt(t *testing.T) {
+func TestNonPreparedPlanCacheStmt(t *testing.T) {
 	sessVars := variable.NewSessionVars(nil)
-	sessVars.GeneralPlanCacheSize = 100
+	sessVars.NonPreparedPlanCacheSize = 100
 	sql1 := "select * from t where a>?"
 	sql2 := "select * from t where a<?"
-	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
-	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 
-	sessVars.AddGeneralPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
-	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
-	require.Nil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+	sessVars.AddNonPreparedPlanCacheStmt(sql1, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.Nil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 
-	sessVars.AddGeneralPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
-	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql1))
-	require.NotNil(t, sessVars.GetGeneralPlanCacheStmt(sql2))
+	sessVars.AddNonPreparedPlanCacheStmt(sql2, new(plannercore.PlanCacheStmt))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql1))
+	require.NotNil(t, sessVars.GetNonPreparedPlanCacheStmt(sql2))
 }
 
 func TestHookContext(t *testing.T) {
@@ -421,4 +419,117 @@ func TestHookContext(t *testing.T) {
 	variable.RegisterSysVar(&sv)
 
 	ctx.GetSessionVars().SetSystemVar("testhooksysvar", "test")
+}
+
+func TestGetReuseChunk(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
+	}
+
+	sessVars := variable.NewSessionVars(nil)
+
+	// SetAlloc efficient
+	sessVars.SetAlloc(nil)
+	require.Nil(t, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.GetUseChunkAlloc())
+	// alloc is nil ，Allocate memory from the system
+	chk1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	require.NotNil(t, chk1)
+
+	chunkReuseMap := make(map[*chunk.Chunk]struct{}, 14)
+	columnReuseMap := make(map[*chunk.Column]struct{}, 14)
+
+	alloc := chunk.NewAllocator()
+	sessVars.EnableReuseCheck = true
+	sessVars.SetAlloc(alloc)
+	require.NotNil(t, sessVars.ChunkPool.Alloc)
+	require.Equal(t, alloc, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.GetUseChunkAlloc())
+
+	//tries to apply from the cache
+	initCap := 10
+	chk1 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap, sessVars.ChunkPool.Alloc)
+	require.NotNil(t, chk1)
+	chunkReuseMap[chk1] = struct{}{}
+	for i := 0; i < chk1.NumCols(); i++ {
+		columnReuseMap[chk1.Column(i)] = struct{}{}
+	}
+
+	alloc.Reset()
+	chkres1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	require.NotNil(t, chkres1)
+	_, exist := chunkReuseMap[chkres1]
+	require.True(t, exist)
+	for i := 0; i < chkres1.NumCols(); i++ {
+		_, exist := columnReuseMap[chkres1.Column(i)]
+		require.True(t, exist)
+	}
+	allocpool := variable.ReuseChunkPool{Alloc: alloc}
+
+	sessVars.ClearAlloc(&allocpool.Alloc, false)
+	require.Equal(t, alloc, allocpool.Alloc)
+
+	sessVars.ClearAlloc(&allocpool.Alloc, true)
+	require.NotEqual(t, allocpool.Alloc, alloc)
+	require.Nil(t, sessVars.ChunkPool.Alloc)
+}
+
+func TestPretectedTSList(t *testing.T) {
+	lst := &variable.NewSessionVars(nil).ProtectedTSList
+
+	// empty set
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+	require.Equal(t, 0, lst.Size())
+
+	// hold 1
+	unhold1 := lst.HoldTS(1)
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+
+	// hold 2 twice
+	unhold2a := lst.HoldTS(2)
+	unhold2b := lst.HoldTS(2)
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 2, lst.Size())
+
+	// unhold 2a
+	unhold2a()
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 2, lst.Size())
+	// unhold 2a again
+	unhold2a()
+	require.Equal(t, uint64(1), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 2, lst.Size())
+
+	// unhold 1
+	unhold1()
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(2), lst.GetMinProtectedTS(1))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(2))
+	require.Equal(t, 1, lst.Size())
+
+	// unhold 2b
+	unhold2b()
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+	require.Equal(t, 0, lst.Size())
+
+	// unhold 2b again
+	unhold2b()
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
+	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
+	require.Equal(t, 0, lst.Size())
 }

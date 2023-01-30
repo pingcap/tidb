@@ -12,12 +12,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
@@ -124,6 +127,41 @@ func TestNotLeader(t *testing.T) {
 		require.NotEqual(t, 42, idEqualsTo2Regions[0].Leader.Id)
 	}
 	require.EqualValues(t, 42, idEqualsTo2Regions[1].Leader.Id)
+	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
+}
+
+func TestServerIsBusy(t *testing.T) {
+	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+	cli := initTestClient(false)
+	rs := utils.InitialRetryState(2, 0, 0)
+	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctx := context.Background()
+
+	serverIsBusy := errorpb.Error{
+		Message: "server is busy",
+		ServerIsBusy: &errorpb.ServerIsBusy{
+			Reason: "memory is out",
+		},
+	}
+	// record the regions we didn't touch.
+	meetRegions := []*split.RegionInfo{}
+	// record all regions we meet with id == 2.
+	idEqualsTo2Regions := []*split.RegionInfo{}
+	theFirstRun := true
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+		if theFirstRun && r.Region.Id == 2 {
+			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
+			theFirstRun = false
+			return restore.RPCResult{
+				StoreError: &serverIsBusy,
+			}
+		}
+		meetRegions = append(meetRegions, r)
+		return restore.RPCResultOK()
+	})
+
+	require.NoError(t, err)
+	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
 	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
 }
 
@@ -344,4 +382,167 @@ func TestPaginateScanLeader(t *testing.T) {
 		return restore.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
+}
+
+func TestImportKVFiles(t *testing.T) {
+	var (
+		importer            = restore.FileImporter{}
+		ctx                 = context.Background()
+		shiftStartTS uint64 = 100
+		startTS      uint64 = 200
+		restoreTS    uint64 = 300
+	)
+
+	err := importer.ImportKVFiles(
+		ctx,
+		[]*backuppb.DataFileInfo{
+			{
+				Path: "log3",
+			},
+			{
+				Path: "log1",
+			},
+		},
+		nil,
+		shiftStartTS,
+		startTS,
+		restoreTS,
+		false,
+	)
+	require.True(t, berrors.ErrInvalidArgument.Equal(err))
+}
+
+func TestFilterFilesByRegion(t *testing.T) {
+	files := []*backuppb.DataFileInfo{
+		{
+			Path: "log1",
+		},
+		{
+			Path: "log2",
+		},
+	}
+	ranges := []kv.KeyRange{
+		{
+			StartKey: []byte("1111"),
+			EndKey:   []byte("2222"),
+		}, {
+			StartKey: []byte("3333"),
+			EndKey:   []byte("4444"),
+		},
+	}
+
+	testCases := []struct {
+		r        split.RegionInfo
+		subfiles []*backuppb.DataFileInfo
+		err      error
+	}{
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("0000"),
+					EndKey:   []byte("1110"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{},
+			err:      nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("0000"),
+					EndKey:   []byte("1111"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[0],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("0000"),
+					EndKey:   []byte("2222"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[0],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("2222"),
+					EndKey:   []byte("3332"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[0],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("2223"),
+					EndKey:   []byte("3332"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{},
+			err:      nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("3332"),
+					EndKey:   []byte("3333"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[1],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("4444"),
+					EndKey:   []byte("5555"),
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[1],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("4444"),
+					EndKey:   nil,
+				},
+			},
+			subfiles: []*backuppb.DataFileInfo{
+				files[1],
+			},
+			err: nil,
+		},
+		{
+			r: split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: []byte("0000"),
+					EndKey:   nil,
+				},
+			},
+			subfiles: files,
+			err:      nil,
+		},
+	}
+
+	for _, c := range testCases {
+		subfile, err := restore.FilterFilesByRegion(files, ranges, &c.r)
+		require.Equal(t, err, c.err)
+		require.Equal(t, subfile, c.subfiles)
+	}
 }

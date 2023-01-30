@@ -15,6 +15,8 @@
 package kv
 
 import (
+	"context"
+
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -93,6 +95,10 @@ const (
 	ReplicaReadAdjuster
 	// ScanBatchSize set the iter scan batch size.
 	ScanBatchSize
+	// TxnSource set the source of this transaction.
+	TxnSource
+	// ResourceGroupName set the bind resource group name.
+	ResourceGroupName
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -109,6 +115,8 @@ const (
 	ReplicaReadClosest
 	// ReplicaReadClosestAdaptive stands for 'read from follower which locates in the same zone if the response size exceeds certain threshold'
 	ReplicaReadClosestAdaptive
+	// ReplicaReadLearner stands for 'read from learner'.
+	ReplicaReadLearner
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
@@ -129,6 +137,15 @@ type RequestSource = util.RequestSource
 
 // WithInternalSourceType create context with internal source.
 var WithInternalSourceType = util.WithInternalSourceType
+
+// GetInternalSourceType get internal source
+func GetInternalSourceType(ctx context.Context) string {
+	v := ctx.Value(util.RequestSourceKey)
+	if v == nil {
+		return ""
+	}
+	return v.(util.RequestSource).RequestSourceType
+}
 
 const (
 	// InternalTxnOthers is the type of requests that consume low resources.
@@ -165,4 +182,6 @@ const (
 	InternalTxnBR = InternalTxnTools
 	// InternalTxnTrace handles the trace statement.
 	InternalTxnTrace = "Trace"
+	// InternalTxnTTL is the type of TTL usage
+	InternalTxnTTL = "TTL"
 )

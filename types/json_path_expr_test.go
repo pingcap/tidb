@@ -53,6 +53,12 @@ func TestValidatePathExpr(t *testing.T) {
 		{"   $ .   key1  [  3  ]**[*].*.key3", true, 6},
 		{`$."key1 string"[  3  ][*].*.key3`, true, 5},
 		{`$."hello \"escaped quotes\" world\\n"[3][*].*.key3`, true, 5},
+		{`$[1 to 5]`, true, 1},
+		{`$[2 to 1]`, false, 1},
+		{`$[last]`, true, 1},
+		{`$[1 to last]`, true, 1},
+		{`$[1to3]`, false, 1},
+		{`$[last - 5 to last - 10]`, false, 1},
 
 		{`$.\"escaped quotes\"[3][*].*.key3`, false, 0},
 		{`$.hello \"escaped quotes\" world[3][*].*.key3`, false, 0},
@@ -111,17 +117,19 @@ func TestPathExprToString(t *testing.T) {
 
 func TestPushBackOneIndexLeg(t *testing.T) {
 	var tests = []struct {
-		expression          string
-		index               int
-		expected            string
-		containsAnyAsterisk bool
+		expression                string
+		index                     int
+		expected                  string
+		couldReturnMultipleValues bool
 	}{
 		{"$", 1, "$[1]", false},
 		{"$.a[1]", 1, "$.a[1][1]", false},
-		{"$.a[1]", -1, "$.a[1][*]", true},
 		{"$.a[*]", 10, "$.a[*][10]", true},
 		{"$.*[2]", 2, "$.*[2][2]", true},
 		{"$**.a[3]", 3, "$**.a[3][3]", true},
+		{"$.a[1 to 3]", 3, "$.a[1 to 3][3]", true},
+		{"$.a[last-3 to last-3]", 3, "$.a[last-3 to last-3][3]", true},
+		{"$**.a[3]", -3, "$**.a[3][last-2]", true},
 	}
 
 	for _, test := range tests {
@@ -131,19 +139,19 @@ func TestPushBackOneIndexLeg(t *testing.T) {
 			pe, err := ParseJSONPathExpr(test.expression)
 			require.NoError(t, err)
 
-			pe = pe.pushBackOneIndexLeg(test.index)
+			pe = pe.pushBackOneArraySelectionLeg(jsonPathArraySelectionIndex{index: jsonPathArrayIndexFromStart(test.index)})
 			require.Equal(t, test.expected, pe.String())
-			require.Equal(t, test.containsAnyAsterisk, pe.ContainsAnyAsterisk())
+			require.Equal(t, test.couldReturnMultipleValues, pe.CouldMatchMultipleValues())
 		})
 	}
 }
 
 func TestPushBackOneKeyLeg(t *testing.T) {
 	var tests = []struct {
-		expression          string
-		key                 string
-		expected            string
-		containsAnyAsterisk bool
+		expression                string
+		key                       string
+		expected                  string
+		couldReturnMultipleValues bool
 	}{
 		{"$", "aa", "$.aa", false},
 		{"$.a[1]", "aa", "$.a[1].aa", false},
@@ -160,7 +168,7 @@ func TestPushBackOneKeyLeg(t *testing.T) {
 
 			pe = pe.pushBackOneKeyLeg(test.key)
 			require.Equal(t, test.expected, pe.String())
-			require.Equal(t, test.containsAnyAsterisk, pe.ContainsAnyAsterisk())
+			require.Equal(t, test.couldReturnMultipleValues, pe.CouldMatchMultipleValues())
 		})
 	}
 }

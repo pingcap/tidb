@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
@@ -142,7 +143,8 @@ func TestShowCreateTable(t *testing.T) {
 		"`d` datetime(4) default current_timestamp(4),\n" +
 		"`e` varchar(20) default 'cUrrent_tImestamp',\n" +
 		"`f` datetime(2) default current_timestamp(2) on update current_timestamp(2),\n" +
-		"`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2))")
+		"`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2),\n" +
+		"`h` date default current_date )")
 	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
@@ -152,7 +154,8 @@ func TestShowCreateTable(t *testing.T) {
 			"  `d` datetime(4) DEFAULT CURRENT_TIMESTAMP(4),\n"+
 			"  `e` varchar(20) DEFAULT 'cUrrent_tImestamp',\n"+
 			"  `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
-			"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2)\n"+
+			"  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),\n"+
+			"  `h` date DEFAULT CURRENT_DATE\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table t")
@@ -186,7 +189,7 @@ func TestShowCreateTable(t *testing.T) {
 		"`END_TIME` datetime NOT NULL," +
 		"`USER_TYPE` int(11) DEFAULT NULL," +
 		"`APP_ID` int(11) DEFAULT NULL," +
-		"PRIMARY KEY (`LOG_ID`,`END_TIME`)," +
+		"PRIMARY KEY (`LOG_ID`,`END_TIME`) NONCLUSTERED," +
 		"KEY `IDX_EndTime` (`END_TIME`)," +
 		"KEY `IDX_RoundId` (`ROUND_ID`)," +
 		"KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)" +
@@ -317,9 +320,10 @@ func TestShowCreateTable(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
-	// TiDB defaults (and only supports) foreign_key_checks=0
+	// set @@foreign_key_checks=0,
 	// This means that the child table can be created before the parent table.
 	// This behavior is required for mysqldump restores.
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec(`DROP TABLE IF EXISTS parent, child`)
 	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id))`)
 	tk.MustExec(`CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment )`)
@@ -357,6 +361,7 @@ func TestShowCreateTable(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `fk` (`b`),\n" +
 		"  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
@@ -775,6 +780,7 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_cost_model_version=2`)
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
 	tk.MustExec(testSQL)
 
@@ -796,10 +802,10 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	tk.MustExec("explain select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
-	tk.MustExec("explain select max(md5(value)) from show_warnings_expr_pushdown group by a")
+	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(md5(value)) from show_warnings_expr_pushdown group by a")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))
-	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by md5(value)")
+	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(a) from show_warnings_expr_pushdown group by md5(value)")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
 	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")
@@ -962,6 +968,8 @@ func TestShow2(t *testing.T) {
 					c_timestamp_default timestamp default current_timestamp,
 					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
 					c_timestamp_default_4 timestamp(3) default current_timestamp(3) on update current_timestamp(3),
+					c_date_default date default current_date,
+					c_date_default_2 date default (curdate()),
 					c_blob blob,
 					c_tinyblob tinyblob,
 					c_mediumblob mediumblob,
@@ -998,6 +1006,8 @@ func TestShow2(t *testing.T) {
 			"[c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
 			"[c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ]\n" +
 			"[c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ]\n" +
+			"[c_date_default date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
+			"[c_date_default_2 date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
 			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
 			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
@@ -1056,11 +1066,11 @@ func TestShowCreateUser(t *testing.T) {
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
 	tk.MustQuery("show create user 'test_show_create_user'@'%'").
-		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
 
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED BY 'test';`)
 	tk.MustQuery("show create user 'test_show_create_user'@'localhost';").
-		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*94BDCEBE19083CE2A1F959FD02F964C7AF4CFC29' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*94BDCEBE19083CE2A1F959FD02F964C7AF4CFC29' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
 
 	// Case: the user exists but the host portion doesn't match
 	err := tk.QueryToErr("show create user 'test_show_create_user'@'asdf';")
@@ -1072,10 +1082,10 @@ func TestShowCreateUser(t *testing.T) {
 
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, nil)
 	tk.MustQuery("show create user current_user").
-		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
 	tk.MustQuery("show create user current_user()").
-		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
 	tk.MustExec("create user 'check_priv'")
 
@@ -1088,9 +1098,9 @@ func TestShowCreateUser(t *testing.T) {
 
 	// "show create user" for current user doesn't check privileges.
 	tk1.MustQuery("show create user current_user").
-		Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+		Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
-	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`
+	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`.
 	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' BY 'temp_passwd'")
 
 	// Compare only the start of the output as the salt changes every time.
@@ -1101,17 +1111,57 @@ func TestShowCreateUser(t *testing.T) {
 
 	// Compare only the start of the output as the salt changes every time.
 	rows = tk.MustQuery("SHOW CREATE USER 'sock'@'%'")
-	require.Equal(t, "CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK", rows.Rows()[0][0].(string))
+	require.Equal(t, "CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT", rows.Rows()[0][0].(string))
 	tk.MustExec("CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3'")
 
 	// Compare only the start of the output as the salt changes every time.
 	rows = tk.MustQuery("SHOW CREATE USER 'sock2'@'%'")
-	require.Equal(t, "CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK", rows.Rows()[0][0].(string))
+	require.Equal(t, "CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT", rows.Rows()[0][0].(string))
 
-	// Test ACCOUNT LOCK/UNLOCK
+	// Test ACCOUNT LOCK/UNLOCK.
 	tk.MustExec("CREATE USER 'lockness'@'%' IDENTIFIED BY 'monster' ACCOUNT LOCK")
 	rows = tk.MustQuery("SHOW CREATE USER 'lockness'@'%'")
-	require.Equal(t, "CREATE USER 'lockness'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*BC05309E7FE12AFD4EBB9FFE7E488A6320F12FF3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT LOCK", rows.Rows()[0][0].(string))
+	require.Equal(t, "CREATE USER 'lockness'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*BC05309E7FE12AFD4EBB9FFE7E488A6320F12FF3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT", rows.Rows()[0][0].(string))
+
+	// Test COMMENT and ATTRIBUTE.
+	tk.MustExec("CREATE USER commentUser COMMENT '1234'")
+	tk.MustQuery("SHOW CREATE USER commentUser").Check(testkit.Rows(`CREATE USER 'commentUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT ATTRIBUTE '{"comment": "1234"}'`))
+	tk.MustExec(`CREATE USER attributeUser attribute '{"name": "Tom", "age": 19}'`)
+	tk.MustQuery("SHOW CREATE USER attributeUser").Check(testkit.Rows(`CREATE USER 'attributeUser'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT ATTRIBUTE '{"age": 19, "name": "Tom"}'`))
+
+	// Creating users with IDENTIFIED WITH 'tidb_auth_token'.
+	tk.MustExec(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' ATTRIBUTE '{"email": "user@pingcap.com"}'`)
+	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT ATTRIBUTE '{"email": "user@pingcap.com"}'`))
+	tk.MustExec(`ALTER USER 'token_user'@'%' REQUIRE token_issuer 'issuer-ABC'`)
+	tk.MustQuery("SHOW CREATE USER token_user").Check(testkit.Rows(`CREATE USER 'token_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-ABC PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT ATTRIBUTE '{"email": "user@pingcap.com"}'`))
+
+	// create users with password reuse.
+	tk.MustExec(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' PASSWORD HISTORY 5 PASSWORD REUSE INTERVAL 3 DAY`)
+	tk.MustQuery("SHOW CREATE USER reuse_user").Check(testkit.Rows(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY 5 PASSWORD REUSE INTERVAL 3 DAY`))
+	tk.MustExec(`ALTER USER 'reuse_user'@'%' PASSWORD HISTORY 50`)
+	tk.MustQuery("SHOW CREATE USER reuse_user").Check(testkit.Rows(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY 50 PASSWORD REUSE INTERVAL 3 DAY`))
+	tk.MustExec(`ALTER USER 'reuse_user'@'%' PASSWORD REUSE INTERVAL 31 DAY`)
+	tk.MustQuery("SHOW CREATE USER reuse_user").Check(testkit.Rows(`CREATE USER 'reuse_user'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY 50 PASSWORD REUSE INTERVAL 31 DAY`))
+
+	tk.MustExec("CREATE USER 'jeffrey1'@'localhost' PASSWORD EXPIRE")
+	tk.MustQuery("SHOW CREATE USER 'jeffrey1'@'localhost'").Check(testkit.Rows(`CREATE USER 'jeffrey1'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+	tk.MustExec("CREATE USER 'jeffrey2'@'localhost' PASSWORD EXPIRE DEFAULT")
+	tk.MustQuery("SHOW CREATE USER 'jeffrey2'@'localhost'").Check(testkit.Rows(`CREATE USER 'jeffrey2'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+	tk.MustExec("CREATE USER 'jeffrey3'@'localhost' PASSWORD EXPIRE NEVER")
+	tk.MustQuery("SHOW CREATE USER 'jeffrey3'@'localhost'").Check(testkit.Rows(`CREATE USER 'jeffrey3'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE NEVER ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+	tk.MustExec("CREATE USER 'jeffrey4'@'localhost' PASSWORD EXPIRE INTERVAL 180 DAY")
+	tk.MustQuery("SHOW CREATE USER 'jeffrey4'@'localhost'").Check(testkit.Rows(`CREATE USER 'jeffrey4'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE INTERVAL 180 DAY ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+
+	tk.MustExec("CREATE USER failed_login_user")
+	tk.MustQuery("SHOW CREATE USER failed_login_user").Check(testkit.Rows(`CREATE USER 'failed_login_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+	tk.MustExec("ALTER USER failed_login_user FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 2")
+	tk.MustQuery("SHOW CREATE USER failed_login_user").Check(testkit.Rows(`CREATE USER 'failed_login_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 2`))
+	tk.MustExec("ALTER USER failed_login_user PASSWORD_LOCK_TIME UNBOUNDED")
+	tk.MustQuery("SHOW CREATE USER failed_login_user").Check(testkit.Rows(`CREATE USER 'failed_login_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED`))
+	tk.MustExec("ALTER USER failed_login_user comment 'testcomment'")
+	tk.MustQuery("SHOW CREATE USER failed_login_user").Check(testkit.Rows(`CREATE USER 'failed_login_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED ATTRIBUTE '{"comment": "testcomment"}'`))
+	tk.MustExec("ALTER USER failed_login_user  ATTRIBUTE '{\"attribute\": \"testattribute\"}'")
+	tk.MustQuery("SHOW CREATE USER failed_login_user").Check(testkit.Rows(`CREATE USER 'failed_login_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME UNBOUNDED ATTRIBUTE '{"attribute": "testattribute", "comment": "testcomment"}'`))
 }
 
 func TestUnprivilegedShow(t *testing.T) {
@@ -1472,7 +1522,7 @@ func TestShowBuiltin(t *testing.T) {
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 282
+	const builtinFuncNum = 285
 	require.Equal(t, builtinFuncNum, len(rows))
 	require.Equal(t, rows[0][0].(string), "abs")
 	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")
@@ -1975,4 +2025,56 @@ func TestShowLimitReturnRow(t *testing.T) {
 	result = tk.MustQuery("show index from t1 where key_name='idx_b'")
 	rows = result.Rows()
 	require.Equal(t, rows[0][2], "idx_b")
+}
+
+func TestShowTTLOption(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR ttl_enable = 'OFF'")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL 3.14159 HOUR_MINUTE")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL \"15:20\" HOUR_MINUTE")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JOB_INTERVAL = '1d'")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
+}
+
+func TestShowBindingDigestField(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int, key(id))")
+	tk.MustExec("create table t2(id int, key(id))")
+	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
+	result := tk.MustQuery("show bindings;")
+	rows := result.Rows()[0]
+	require.Equal(t, len(rows), 11)
+	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
+	tk.MustExec("drop binding for select * from t1, t2 where t1.id = t2.id")
+	result = tk.MustQuery("show bindings;")
+	require.Equal(t, len(result.Rows()), 0)
+
+	tk.MustExec("create global binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
+	result = tk.MustQuery("show global bindings;")
+	rows = result.Rows()[0]
+	require.Equal(t, len(rows), 11)
+	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
+	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
+	result = tk.MustQuery("show global bindings;")
+	require.Equal(t, len(result.Rows()), 0)
 }

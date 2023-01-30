@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math/bits"
 	"strings"
@@ -341,6 +342,9 @@ func checkDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo,
 	if err = checkDropColumnWithForeignKeyConstraintInOwner(d, t, job, tblInfo, colName.L); err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}
+	if err = checkDropColumnWithTTLConfig(tblInfo, colName.L); err != nil {
+		return nil, nil, nil, false, errors.Trace(err)
+	}
 	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
 	return tblInfo, colInfo, idxInfos, false, nil
 }
@@ -547,6 +551,10 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	if err = isGeneratedRelatedColumn(tblInfo, modifyInfo.newCol, oldCol); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	if tblInfo.Partition != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
 	}
 
 	changingCol := modifyInfo.changingCol
@@ -802,8 +810,18 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, j
 func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
-	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, BuildElements(changingCol, changingIdxs), false)
+	sctx, err1 := w.sessPool.get()
+	if err1 != nil {
+		err = errors.Trace(err1)
+		return
+	}
+	defer w.sessPool.put(sctx)
+	rh := newReorgHandler(newSession(sctx))
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfo(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, BuildElements(changingCol, changingIdxs), false)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -830,7 +848,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 			// If timeout, we should return, check for the owner and re-wait job done.
 			return false, ver, nil
 		}
-		if kv.IsTxnRetryableError(err) {
+		if kv.IsTxnRetryableError(err) || dbterror.ErrNotOwner.Equal(err) {
 			return false, ver, errors.Trace(err)
 		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
@@ -856,6 +874,9 @@ func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast
 		updateNewIdxColsNameOffset(changingIdxs, internalColName, changingCol)
 		indexesToRemove := filterIndexesToRemove(changingIdxs, newName, tblInfo)
 		replaceOldIndexes(tblInfo, indexesToRemove)
+	}
+	if tblInfo.TTLInfo != nil {
+		updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, changingCol.Name)
 	}
 	// Move the new column to a correct offset.
 	destOffset, err := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
@@ -927,6 +948,17 @@ func updateFKInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model
 			if fk.Cols[i].L == oldCol.L {
 				fk.Cols[i] = newCol
 			}
+		}
+	}
+}
+
+func updateTTLInfoWhenModifyColumn(tblInfo *model.TableInfo, oldCol, newCol model.CIStr) {
+	if oldCol.L == newCol.L {
+		return
+	}
+	if tblInfo.TTLInfo != nil {
+		if tblInfo.TTLInfo.ColumnName.L == oldCol.L {
+			tblInfo.TTLInfo.ColumnName = newCol
 		}
 	}
 }
@@ -1037,7 +1069,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 			TestReorgGoroutineRunning <- a
 			for {
 				time.Sleep(30 * time.Millisecond)
-				if w.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
+				if w.getReorgCtx(reorgInfo.Job.ID).isReorgCanceled() {
 					// Job is cancelled. So it can't be done.
 					failpoint.Return(dbterror.ErrCancelledDDLJob)
 				}
@@ -1059,7 +1091,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		return errors.Trace(err)
 	}
 	//nolint:forcetypeassert
-	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
+	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job.ID), reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1082,21 +1114,22 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
 			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
+			w.getReorgCtx(reorgInfo.Job.ID).setNextKey(reorgInfo.StartKey)
 		}
 
 		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
-		w.getReorgCtx(reorgInfo.Job).setCurrentElement(reorgInfo.elements[i+1])
+		w.getReorgCtx(reorgInfo.Job.ID).setCurrentElement(reorgInfo.elements[i+1])
 
 		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
 		logutil.BgLogger().Info("[ddl] update column and indexes",
-			zap.Int64("jobID", reorgInfo.Job.ID),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
-			zap.Int64("elementID", reorgInfo.currElement.ID),
-			zap.String("startHandle", tryDecodeToHandleString(reorgInfo.StartKey)),
-			zap.String("endHandle", tryDecodeToHandleString(reorgInfo.EndKey)))
+			zap.Int64("job ID", reorgInfo.Job.ID),
+			zap.ByteString("element type", reorgInfo.currElement.TypeKey),
+			zap.Int64("element ID", reorgInfo.currElement.ID),
+			zap.String("start key", hex.EncodeToString(reorgInfo.StartKey)),
+			zap.String("end key", hex.EncodeToString(reorgInfo.EndKey)))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1109,7 +1142,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 }
 
 type updateColumnWorker struct {
-	*backfillWorker
+	*backfillCtx
 	oldColInfo    *model.ColumnInfo
 	newColInfo    *model.ColumnInfo
 	metricCounter prometheus.Counter
@@ -1121,11 +1154,10 @@ type updateColumnWorker struct {
 	rowMap map[int64]types.Datum
 
 	// For SQL Mode and warnings.
-	sqlMode    mysql.SQLMode
 	jobContext *JobContext
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		logutil.BgLogger().Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.String("reorgInfo", reorgInfo.String()))
@@ -1141,19 +1173,38 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
-		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo, typeUpdateColumnWorker),
-		oldColInfo:     oldCol,
-		newColInfo:     newCol,
-		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
-		rowDecoder:     rowDecoder,
-		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		sqlMode:        reorgInfo.ReorgMeta.SQLMode,
-		jobContext:     jc,
+		backfillCtx:   newBackfillCtx(reorgInfo.d, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
+		oldColInfo:    oldCol,
+		newColInfo:    newCol,
+		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
+		rowDecoder:    rowDecoder,
+		rowMap:        make(map[int64]types.Datum, len(decodeColMap)),
+		jobContext:    jc,
 	}
 }
 
 func (w *updateColumnWorker) AddMetricInfo(cnt float64) {
 	w.metricCounter.Add(cnt)
+}
+
+func (*updateColumnWorker) String() string {
+	return typeUpdateColumnWorker.String()
+}
+
+func (*updateColumnWorker) GetTask() (*BackfillJob, error) {
+	panic("[ddl] update column worker GetTask function doesn't implement")
+}
+
+func (*updateColumnWorker) UpdateTask(*BackfillJob) error {
+	panic("[ddl] update column worker UpdateTask function doesn't implement")
+}
+
+func (*updateColumnWorker) FinishTask(*BackfillJob) error {
+	panic("[ddl] update column worker FinishTask function doesn't implement")
+}
+
+func (w *updateColumnWorker) GetCtx() *backfillCtx {
+	return w.backfillCtx
 }
 
 type rowRecord struct {
@@ -1181,8 +1232,8 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err := iterateSnapshotKeys(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table.RecordPrefix(), txn.StartTS(), taskRange.startKey, taskRange.endKey,
-		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
+	err := iterateSnapshotKeys(w.GetCtx().jobContext(taskRange.getJobID()), w.sessCtx.GetStore(), taskRange.priority, taskRange.physicalTable.RecordPrefix(),
+		txn.StartTS(), taskRange.startKey, taskRange.endKey, func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotKeys in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
@@ -1250,8 +1301,8 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if err != nil {
 		return w.reformatErrors(err)
 	}
-	if w.sessCtx.GetSessionVars().StmtCtx.GetWarnings() != nil && len(w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()) != 0 {
-		warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+	warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+	if len(warn) != 0 {
 		//nolint:forcetypeassert
 		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
 	}
@@ -1323,8 +1374,8 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
-		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
+		txn.SetOption(kv.Priority, handleRange.priority)
+		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
@@ -1335,8 +1386,9 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
-		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
+		// Optimize for few warnings!
+		warningsMap := make(map[errors.ErrorID]*terror.Error, 2)
+		warningsCountMap := make(map[errors.ErrorID]int64, 2)
 		for _, rowRecord := range rowRecords {
 			taskCtx.scanCount++
 
@@ -1449,6 +1501,7 @@ func adjustTableInfoAfterModifyColumn(
 	tblInfo.MoveColumnInfo(oldCol.Offset, destOffset)
 	updateNewIdxColsNameOffset(tblInfo.Indices, oldCol.Name, newCol)
 	updateFKInfoWhenModifyColumn(tblInfo, oldCol.Name, newCol.Name)
+	updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, newCol.Name)
 	return nil
 }
 
@@ -1500,7 +1553,7 @@ func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, 
 		return nil
 	}
 	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID)
-	err := checkNewAutoRandomBits(idAcc, oldCol, newCol, newAutoRandBits, tblInfo.AutoRandomRangeBits, tblInfo.Version)
+	err := checkNewAutoRandomBits(idAcc, oldCol, newCol, newAutoRandBits, tblInfo.AutoRandomRangeBits, tblInfo.SepAutoInc())
 	if err != nil {
 		return err
 	}
@@ -1509,13 +1562,17 @@ func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, 
 
 // checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
 func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.ColumnInfo,
-	newCol *model.ColumnInfo, newShardBits, newRangeBits uint64, tblVer uint16) error {
+	newCol *model.ColumnInfo, newShardBits, newRangeBits uint64, sepAutoInc bool) error {
 	shardFmt := autoid.NewShardIDFormat(&newCol.FieldType, newShardBits, newRangeBits)
 
 	idAcc := idAccessors.RandomID()
 	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.GetFlag())
 	if convertedFromAutoInc {
-		idAcc = idAccessors.IncrementID(tblVer)
+		if sepAutoInc {
+			idAcc = idAccessors.IncrementID(model.TableInfoVersion5)
+		} else {
+			idAcc = idAccessors.RowID()
+		}
 	}
 	// Generate a new auto ID first to prevent concurrent update in DML.
 	_, err := idAcc.Inc(1)
@@ -1626,6 +1683,15 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(newCol.Name, tblInfo.Name)
 	}
+
+	if hasDefaultValue, _, err := checkColumnDefaultValue(newContext(d.store), table.ToColumn(oldCol.Clone()), newCol.DefaultValue); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	} else if !hasDefaultValue {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(newCol.Name)
+	}
+
 	// The newCol's offset may be the value of the old schema version, so we can't use newCol directly.
 	oldCol.DefaultValue = newCol.DefaultValue
 	oldCol.DefaultValueBit = newCol.DefaultValueBit

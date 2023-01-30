@@ -386,6 +386,47 @@ func TestJSONRemove(t *testing.T) {
 	}
 }
 
+func TestJSONMemberOf(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONMemberOf]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		err      error
+	}{
+		{[]interface{}{`1`, `a:1`}, 1, types.ErrInvalidJSONText},
+
+		{[]interface{}{1, `[1, 2]`}, 1, nil},
+		{[]interface{}{1, `[1]`}, 1, nil},
+		{[]interface{}{1, `[0]`}, 0, nil},
+		{[]interface{}{1, `[1]`}, 1, nil},
+		{[]interface{}{1, `[[1]]`}, 0, nil},
+		{[]interface{}{"1", `[1]`}, 0, nil},
+		{[]interface{}{"1", `["1"]`}, 1, nil},
+		{[]interface{}{`{"a":1}`, `{"a":1}`}, 0, nil},
+		{[]interface{}{`{"a":1}`, `[{"a":1}]`}, 0, nil},
+		{[]interface{}{`{"a":1}`, `[{"a":1}, 1]`}, 0, nil},
+		{[]interface{}{`{"a":1}`, `["{\"a\":1}"]`}, 1, nil},
+		{[]interface{}{`{"a":1}`, `["{\"a\":1}", 1]`}, 1, nil},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input...)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err, tt.input)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if tt.err == nil {
+			require.NoError(t, err, tt.input)
+			if tt.expected == nil {
+				require.True(t, d.IsNull(), tt.input)
+			} else {
+				require.Equal(t, int64(tt.expected.(int)), d.GetInt64(), tt.input)
+			}
+		} else {
+			require.True(t, tt.err.(*terror.Error).Equal(err), tt.input)
+		}
+	}
+}
+
 func TestJSONContains(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONContains]
@@ -423,9 +464,9 @@ func TestJSONContains(t *testing.T) {
 		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1}`}, 1, nil},
 		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`}, 0, nil},
 		// Tests path expression contains any asterisk
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, types.ErrInvalidJSONPathWildcard},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, types.ErrInvalidJSONPathWildcard},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, types.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, types.ErrInvalidJSONPathMultipleSelection},
 		// Tests path expression does not identify a section of the target document
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.c"}, nil, nil},
 		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, nil},
@@ -463,6 +504,71 @@ func TestJSONContains(t *testing.T) {
 	for _, cs := range cases {
 		_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(cs.arg1, cs.arg2)))
 		require.True(t, types.ErrInvalidJSONData.Equal(err))
+	}
+}
+
+func TestJSONOverlaps(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONOverlaps]
+	tbl := []struct {
+		input    []any
+		expected any
+		err      error
+	}{
+		{[]any{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONText},
+		{[]any{`a:1`, `1`}, 1, types.ErrInvalidJSONText},
+		{[]any{nil, `1`}, nil, nil},
+		{[]any{`1`, nil}, nil, nil},
+
+		{[]any{`[1, 2]`, `[2,3]`}, 1, nil},
+		{[]any{`[1, 2]`, `[2]`}, 1, nil},
+		{[]any{`[1, 2]`, `2`}, 1, nil},
+		{[]any{`[{"a":1}]`, `{"a":1}`}, 1, nil},
+		{[]any{`[{"a":1}]`, `{"a":1,"b":2}`}, 0, nil},
+		{[]any{`[{"a":1}]`, `{"a":2}`}, 0, nil},
+		{[]any{`{"a":[1,2]}`, `{"a":[1]}`}, 0, nil},
+		{[]any{`{"a":[1,2]}`, `{"a":[2,1]}`}, 0, nil},
+		{[]any{`[1,1,1]`, `1`}, 1, nil},
+		{[]any{`1`, `1`}, 1, nil},
+		{[]any{`0`, `1`}, 0, nil},
+		{[]any{`[[1,2], 3]`, `[1,[2,3]]`}, 0, nil},
+		{[]any{`[[1,2], 3]`, `[1,3]`}, 1, nil},
+		{[]any{`{"a":1,"b":10,"d":10}`, `{"a":5,"e":10,"f":1,"d":20}`}, 0, nil},
+		{[]any{`[4,5,"6",7]`, `6`}, 0, nil},
+		{[]any{`[4,5,6,7]`, `"6"`}, 0, nil},
+
+		{[]any{`[2,3]`, `[1, 2]`}, 1, nil},
+		{[]any{`[2]`, `[1, 2]`}, 1, nil},
+		{[]any{`2`, `[1, 2]`}, 1, nil},
+		{[]any{`{"a":1}`, `[{"a":1}]`}, 1, nil},
+		{[]any{`{"a":1,"b":2}`, `[{"a":1}]`}, 0, nil},
+		{[]any{`{"a":2}`, `[{"a":1}]`}, 0, nil},
+		{[]any{`{"a":[1]}`, `{"a":[1,2]}`}, 0, nil},
+		{[]any{`{"a":[2,1]}`, `{"a":[1,2]}`}, 0, nil},
+		{[]any{`1`, `[1,1,1]`}, 1, nil},
+		{[]any{`1`, `1`}, 1, nil},
+		{[]any{`1`, `0`}, 0, nil},
+		{[]any{`[1,[2,3]]`, `[[1,2], 3]`}, 0, nil},
+		{[]any{`[1,3]`, `[[1,2], 3]`}, 1, nil},
+		{[]any{`{"a":5,"e":10,"f":1,"d":20}`, `{"a":1,"b":10,"d":10}`}, 0, nil},
+		{[]any{`6`, `[4,5,"6",7]`}, 0, nil},
+		{[]any{`"6"`, `[4,5,6,7]`}, 0, nil},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input...)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err, tt.input)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if tt.err == nil {
+			require.NoError(t, err, tt.input)
+			if tt.expected == nil {
+				require.True(t, d.IsNull(), tt.input)
+			} else {
+				require.Equal(t, int64(tt.expected.(int)), d.GetInt64(), tt.input)
+			}
+		} else {
+			require.True(t, tt.err.(*terror.Error).Equal(err), tt.input)
+		}
 	}
 }
 
@@ -758,7 +864,7 @@ func TestJSONArrayAppend(t *testing.T) {
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, nil},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, types.ErrInvalidJSONPath},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, types.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, types.ErrInvalidJSONPathMultipleSelection},
 		// Following tests come from MySQL doc.
 		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, nil},
 		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, nil},
@@ -910,7 +1016,7 @@ func TestJSONArrayInsert(t *testing.T) {
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, true, nil},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, false, types.ErrInvalidJSONPath},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, false, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, false, types.ErrInvalidJSONPathWildcard},
+		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, false, types.ErrInvalidJSONPathMultipleSelection},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[0]`, nil, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
 		// Following tests come from MySQL doc.
@@ -982,6 +1088,49 @@ func TestJSONValid(t *testing.T) {
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Expected"][0], d)
+	}
+}
+
+func TestJSONStorageFree(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONStorageFree]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{`null`}, 0, true},
+		{[]interface{}{`true`}, 0, true},
+		{[]interface{}{`1`}, 0, true},
+		{[]interface{}{`"1"`}, 0, true},
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		// Tests valid json documents
+		{[]interface{}{`{}`}, 0, true},
+		{[]interface{}{`{"a":1}`}, 0, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 0, true},
+		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 0, true},
+		// Tests invalid json documents
+		{[]interface{}{`[{"a":1]`}, 0, false},
+		{[]interface{}{`[{a":1]`}, 0, false},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input...)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if tt.success {
+			require.NoError(t, err)
+
+			if tt.expected == nil {
+				require.True(t, d.IsNull())
+			} else {
+				require.Equal(t, int64(tt.expected.(int)), d.GetInt64())
+			}
+		} else {
+			require.Error(t, err)
+		}
 	}
 }
 

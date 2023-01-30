@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -672,8 +672,8 @@ func TestAddColumn(t *testing.T) {
 
 	checkOK := false
 
-	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	tc := &callback.TestDDLCallback{Do: dom}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkOK {
 			return
 		}
@@ -690,7 +690,7 @@ func TestAddColumn(t *testing.T) {
 			checkOK = true
 		}
 	}
-
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 
 	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColName, "", defaultColValue, dom)
@@ -740,8 +740,8 @@ func TestAddColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	tc := &callback.TestDDLCallback{Do: dom}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -762,7 +762,7 @@ func TestAddColumns(t *testing.T) {
 			}
 		}
 	}
-
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 
 	jobID := testCreateColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColNames, positions, defaultColValue, dom)
@@ -810,8 +810,8 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	var mu sync.Mutex
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	tc := &callback.TestDDLCallback{Do: dom}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -824,7 +824,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 			return
 		}
 	}
-
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 
 	jobID := testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colName, false, dom)
@@ -872,8 +872,8 @@ func TestDropColumns(t *testing.T) {
 	var mu sync.Mutex
 
 	d := dom.DDL()
-	tc := &ddl.TestDDLCallback{Do: dom}
-	tc.OnJobUpdatedExported = func(job *model.Job) {
+	tc := &callback.TestDDLCallback{Do: dom}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -888,7 +888,7 @@ func TestDropColumns(t *testing.T) {
 			}
 		}
 	}
-
+	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	d.SetHook(tc)
 
 	jobID := testDropColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colNames, false, dom)
@@ -958,4 +958,66 @@ func TestGetDefaultValueOfColumn(t *testing.T) {
 
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", ""+
 		"1962-03-03 1962-03-03 00:00:00 12:23:23 2020-10-13 2020-03-27"))
+}
+
+func TestIssue39080(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1(id INTEGER PRIMARY KEY, authorId INTEGER AUTO_INCREMENT UNIQUE)")
+
+	tk.MustQuery("show create table t1").Check(testkit.RowsWithSep("|", ""+
+		"t1 CREATE TABLE `t1` (\n"+
+		"  `id` int(11) NOT NULL,\n"+
+		"  `authorId` int(11) NOT NULL AUTO_INCREMENT,\n"+
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
+		"  UNIQUE KEY `authorId` (`authorId`)\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	//Do not affect the specified name
+	tk.MustExec("CREATE TABLE `t2`( `id` INTEGER PRIMARY KEY, `authorId` int(11) AUTO_INCREMENT, UNIQUE KEY `authorIdx` (`authorId`))")
+
+	tk.MustQuery("show create table t2").Check(testkit.RowsWithSep("|", ""+
+		"t2 CREATE TABLE `t2` (\n"+
+		"  `id` int(11) NOT NULL,\n"+
+		"  `authorId` int(11) NOT NULL AUTO_INCREMENT,\n"+
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
+		"  UNIQUE KEY `authorIdx` (`authorId`)\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestWriteDataWriteOnlyMode(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (`col1` bigint(20) DEFAULT 1,`col2` float,UNIQUE KEY `key1` (`col1`))")
+
+	originalCallback := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originalCallback)
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		tk2.MustExec("insert ignore into t values (1, 2)")
+		tk2.MustExec("insert ignore into t values (2, 2)")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t change column `col1` `col1` varchar(20)")
+
+	hook = &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		tk2.MustExec("insert ignore into t values (1)")
+		tk2.MustExec("insert ignore into t values (2)")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t drop column `col1`")
+	dom.DDL().SetHook(originalCallback)
 }
