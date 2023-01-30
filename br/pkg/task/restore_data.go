@@ -172,6 +172,10 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 		return errors.Trace(err)
 	}
 
+	// since we cannot reset tiflash automaticlly. so we should start it manually
+	if err = client.ResetTiFlashReplicas(ctx, g, mgr.GetStorage()); err != nil {
+		return errors.Trace(err)
+	}
 	progress.Close()
 	summary.CollectDuration("restore duration", time.Since(startAll))
 	summary.SetSuccessStatus(true)
