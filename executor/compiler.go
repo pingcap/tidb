@@ -123,7 +123,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 
 	if preparedObj != nil {
 		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL)
-
 	} else {
 		CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
 	}
