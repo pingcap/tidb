@@ -1153,7 +1153,7 @@ func TempIndexKey2IndexKey(originIdxID int64, tempIdxKey []byte) {
 }
 
 // IsTempIndexKey check whether the input key is for a temp index.
-func IsTempIndexKey(indexKey []byte) bool {
+func IsTempIndexKey(indexKey []byte) (bool, int64) {
 	var (
 		indexIDKey  []byte
 		indexID     int64
@@ -1163,7 +1163,7 @@ func IsTempIndexKey(indexKey []byte) bool {
 	indexIDKey = indexKey[prefixLen : prefixLen+8]
 	indexID = codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(indexIDKey))
 	tempIndexID = int64(TempIndexPrefix) | indexID
-	return tempIndexID == indexID
+	return tempIndexID == indexID, indexID & IndexIDMask
 }
 
 // TempIndexValueFlag is the flag of temporary index value.

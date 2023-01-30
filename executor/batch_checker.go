@@ -201,7 +201,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 				continue
 			}
 			// If index is used ingest ways, then we should check key from temp index.
-			if v.Meta().State != model.StatePublic && v.Meta().BackfillState == model.BackfillStateRunning {
+			if v.Meta().State != model.StatePublic && v.Meta().BackfillState != model.BackfillStateInapplicable {
 				_, key, _ = tables.GenTempIdxKeyByState(v.Meta(), key)
 			}
 			colValStr, err1 := formatDataForDupError(colVals)

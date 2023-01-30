@@ -158,11 +158,8 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKey)]; found {
-				if tablecodec.IsTempIndexKey(uk.newKey) {
-					if tablecodec.CheckTempIndexValueIsDelete(val) {
-						continue
-					}
-					val = tablecodec.DecodeTempIndexOriginValue(val)
+				if isTemp, _ := tablecodec.IsTempIndexKey(uk.newKey); isTemp {
+					continue
 				}
 				handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 				if err != nil {
@@ -212,6 +209,31 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 		return nil
 	}
 	return err
+}
+
+func getDuplicatedHandle(uniqueKey kv.Key, val []byte, ctx context.Context, txn kv.Transaction, isCommon bool) (dupHandle kv.Handle, err error) {
+	if isTemp, idxID := tablecodec.IsTempIndexKey(uniqueKey); isTemp {
+		_, h, deleted, _, _ := tablecodec.DecodeTempIndexValue(val, isCommon)
+		if deleted {
+			originKey := uniqueKey.Clone()
+			tablecodec.TempIndexKey2IndexKey(idxID, originKey)
+			originVal, err := txn.Get(ctx, originKey)
+			if err != nil {
+				return nil, err
+			}
+			originHandle, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, isCommon)
+			if err != nil {
+				return nil, err
+			}
+			if originHandle.Equal(h) {
+				// The key has been deleted. This is not a duplicated key.
+				return nil, nil
+			}
+			return originHandle, nil
+		}
+		return h, nil
+	}
+	return tablecodec.DecodeHandleInUniqueIndexValue(val, isCommon)
 }
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
@@ -268,19 +290,13 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
-			// Since the temp index stores deleted key with marked 'deleteu' for unique key at the end
-			// of value, So if return a key we check and skip deleted key.
-			if tablecodec.IsTempIndexKey(uk.newKey) {
-				if tablecodec.CheckTempIndexValueIsDelete(val) {
-					continue
-				}
-				val = tablecodec.DecodeTempIndexOriginValue(val)
-			}
-			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
+			handle, err := getDuplicatedHandle(uk.newKey, val, ctx, txn, uk.commonHandle)
 			if err != nil {
 				return err
 			}
-
+			if handle == nil {
+				continue
+			}
 			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
