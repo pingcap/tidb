@@ -578,7 +578,7 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
 		}
 		if s.totalTikvWallTime > 0 {
-			buf.WriteString(", tot_wall: ")
+			buf.WriteString(", tikv_wall: ")
 			buf.WriteString(execdetails.FormatDuration(s.totalTikvWallTime))
 		}
 		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
