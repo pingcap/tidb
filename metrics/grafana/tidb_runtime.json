@@ -1384,6 +1384,131 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "the time goroutines have spent in the scheduler",
+          "editable": true,
+          "error": false,
+          "fill": 1,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 57
+          },
+          "id": 30,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 2,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [            
+            {
+              "expr": "histogram_quantile(0.999, sum(rate(go_sched_latencies_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "999",
+              "refId": "A",
+              "step": 10
+            },
+			{
+              "expr": "histogram_quantile(0.9999, sum(rate(go_sched_latencies_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "9999",
+              "refId": "B",
+              "step": 10
+            },
+			{
+              "expr": "histogram_quantile(0.99999, sum(rate(go_sched_latencies_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "99999",
+              "refId": "C",
+              "step": 10
+            },
+			{
+              "expr": "histogram_quantile(0.999999, sum(rate(go_sched_latencies_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "999999",
+              "refId": "D",
+              "step": 10
+            },
+			{
+              "expr": "histogram_quantile(1, sum(rate(go_sched_latencies_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le, instance))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "max",
+              "refId": "E",
+              "step": 10
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "goroutine scheduler lattency",
+          "tooltip": {
+            "msResolution": false,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
         }
       ],
       "repeat": "instance",
