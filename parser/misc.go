@@ -588,6 +588,7 @@ var tokenMap = map[string]int{
 	"RELEASE":                  release,
 	"RELOAD":                   reload,
 	"REMOVE":                   remove,
+	"REMOTE":                   remote,
 	"RENAME":                   rename,
 	"REORGANIZE":               reorganize,
 	"REPAIR":                   repair,

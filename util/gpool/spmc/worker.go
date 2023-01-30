@@ -58,14 +58,23 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 			if f == nil {
 				return
 			}
+			if f.GetStatus() == pooltask.PendingTask {
+				f.SetStatus(pooltask.RunningTask)
+			}
 			w.pool.subWaitingTask()
 			ctx := f.GetContextFunc().GetContext()
 			if f.GetResultCh() != nil {
 				for t := range f.GetTaskCh() {
+					if f.GetStatus() == pooltask.StopTask {
+						f.Done()
+						break
+					}
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
 					f.Done()
 				}
+				w.pool.ExitSubTask(f.TaskID())
 			}
+			f.Finish()
 			if ok := w.pool.revertWorker(w); !ok {
 				return
 			}

@@ -79,7 +79,7 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		}
 
 		group.Mode = rmpb.GroupMode_RawMode
-		group.ResourceSettings = &rmpb.GroupResourceSettings{
+		group.RawResourceSettings = &rmpb.GroupRawResourceSettings{
 			Cpu: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
 					FillRate: cpuRate,
