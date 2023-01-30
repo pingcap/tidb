@@ -892,13 +892,7 @@ func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
 	captureFilter := h.extractCaptureFilterFromStorage()
 	emptyCaptureFilter := captureFilter.isEmpty()
-	sessVars := h.sctx.GetSessionVars()
-	var bindableStmts []*stmtsummary.BindableStmt
-	if sessVars.EnablePersistentStmtSummary {
-		bindableStmts = sessVars.StmtSummary.GetMoreThanCntBindableStmt(captureFilter.frequency)
-	} else {
-		bindableStmts = stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(captureFilter.frequency)
-	}
+	bindableStmts := getBindableStmts(h.sctx.GetSessionVars(), captureFilter.frequency)
 	for _, bindableStmt := range bindableStmts {
 		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
@@ -953,6 +947,13 @@ func (h *BindHandle) CaptureBaselines() {
 			logutil.BgLogger().Debug("[sql-bind] create bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}
 	}
+}
+
+func getBindableStmts(sessVars *variable.SessionVars, frequency int64) []*stmtsummary.BindableStmt {
+	if sessVars.EnablePersistentStmtSummary {
+		return sessVars.StmtSummaryV2.GetMoreThanCntBindableStmt(frequency)
+	}
+	return stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(frequency)
 }
 
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {

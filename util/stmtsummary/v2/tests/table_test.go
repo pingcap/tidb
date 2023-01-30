@@ -466,7 +466,7 @@ func TestPerformanceSchemaforPlanCache(t *testing.T) {
 func newTestKit(t *testing.T, store kv.Storage, stmtSummary *stmtsummaryv2.StmtSummary) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().EnablePersistentStmtSummary = true
-	tk.Session().GetSessionVars().StmtSummary = stmtSummary
+	tk.Session().GetSessionVars().StmtSummaryV2 = stmtSummary
 	tk.MustExec("use test")
 	return tk
 }
@@ -484,7 +484,7 @@ func newTestKitWithPlanCache(t *testing.T, store kv.Storage, stmtSummary *stmtsu
 	})
 	require.NoError(t, err)
 	se.GetSessionVars().EnablePersistentStmtSummary = true
-	se.GetSessionVars().StmtSummary = stmtSummary
+	se.GetSessionVars().StmtSummaryV2 = stmtSummary
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
@@ -497,6 +497,6 @@ func enableStmtSummaryV2InBindHandle(t *testing.T, store kv.Storage, stmtSummary
 	ss, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	ss.GetSessionVars().EnablePersistentStmtSummary = true
-	ss.GetSessionVars().StmtSummary = stmtSummary
+	ss.GetSessionVars().StmtSummaryV2 = stmtSummary
 	dom.BindHandle().Reset(ss)
 }

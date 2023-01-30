@@ -1339,9 +1339,9 @@ type SessionVars struct {
 	// EnablePersistentStmtSummary indicates whether to enable the persistence
 	// of statements summary in the current session.
 	EnablePersistentStmtSummary bool
-	// StmtSummary refers to the global StmtSummary instance that will be used when
+	// StmtSummaryV2 refers to the global StmtSummary instance that will be used when
 	// EnablePersistentStmtSummary is true.
-	StmtSummary *stmtsummaryv2.StmtSummary
+	StmtSummaryV2 *stmtsummaryv2.StmtSummary
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1717,7 +1717,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		EnablePersistentStmtSummary:   config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent,
-		StmtSummary:                   stmtsummaryv2.GlobalStmtSummary,
+		StmtSummaryV2:                 stmtsummaryv2.GlobalStmtSummary,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

@@ -1808,12 +1808,12 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	var enabled, enabledInternalQuery bool
 	if sessVars.EnablePersistentStmtSummary {
-		if sessVars.StmtSummary == nil && stmtsummaryv2.GlobalStmtSummary != nil {
-			sessVars.StmtSummary = stmtsummaryv2.GlobalStmtSummary
+		if sessVars.StmtSummaryV2 == nil && stmtsummaryv2.GlobalStmtSummary != nil {
+			sessVars.StmtSummaryV2 = stmtsummaryv2.GlobalStmtSummary
 		}
-		if sessVars.StmtSummary != nil {
-			enabled = sessVars.StmtSummary.Enabled()
-			enabledInternalQuery = sessVars.StmtSummary.EnableInternalQuery()
+		if sessVars.StmtSummaryV2 != nil {
+			enabled = sessVars.StmtSummaryV2.Enabled()
+			enabledInternalQuery = sessVars.StmtSummaryV2.EnableInternalQuery()
 		}
 	} else {
 		enabled = stmtsummary.StmtSummaryByDigestMap.Enabled()
@@ -1938,7 +1938,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
 	if sessVars.EnablePersistentStmtSummary {
-		sessVars.StmtSummary.Add(stmtExecInfo)
+		sessVars.StmtSummaryV2.Add(stmtExecInfo)
 	} else {
 		stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 	}

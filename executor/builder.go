@@ -1985,7 +1985,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 					table:        v.Table,
 					retriever: &stmtSummaryRetrieverV2{
-						stmtSummary: b.ctx.GetSessionVars().StmtSummary,
+						stmtSummary: b.ctx.GetSessionVars().StmtSummaryV2,
 						table:       v.Table,
 						columns:     v.Columns,
 						extractor:   extractor,
