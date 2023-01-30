@@ -41,6 +41,9 @@ type joinMethodHint struct {
 func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
 	otherConds []expression.Expression, joinTypes []*joinTypeWithExtMsg, joinOrderHintInfo []*tableHintInfo, joinMethodHintInfo map[int]*joinMethodHint, hasOuterJoin bool) {
 	join, isJoin := p.(*LogicalJoin)
+	// `joinMethodHintInfo` is used to map the sub-plan's ID to the join method hint.
+	// The sub-plan will join the join reorder process to build the new plan. So after we have finished the join reorder process,
+	// we can reset the join method hint based on the sub-plan's ID.
 	joinMethodHintInfo = make(map[int]*joinMethodHint)
 	if isJoin && join.preferJoinOrder {
 		// When there is a leading hint, the hint may not take effect for other reasons.
@@ -48,14 +51,21 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		// We need to return the hint information to warn
 		joinOrderHintInfo = append(joinOrderHintInfo, join.hintInfo)
 	}
+	// `leftHasHint` and `rightHasHint` are used to record whether the left child and right child are set by the join method hint.
+	leftHasHint := false
+	rightHasHint := false
 	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.preferJoinType > uint(0) {
+		// If the current join node has the join method hint, we should store the hint information and restore it when we have finished the join reorder process.
 		if join.hintFromLeft {
 			joinMethodHintInfo[join.children[0].ID()] = &joinMethodHint{join.preferJoinType, join.hintInfo}
+			leftHasHint = true
 		}
 		if join.hintFromRight {
 			joinMethodHintInfo[join.children[1].ID()] = &joinMethodHint{join.preferJoinType, join.hintInfo}
+			rightHasHint = true
 		}
 	}
+	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.preferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
@@ -70,7 +80,9 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		return []LogicalPlan{p}, nil, nil, nil, joinOrderHintInfo, joinMethodHintInfo, false
 	}
 	hasOuterJoin = hasOuterJoin || (join.JoinType != InnerJoin)
-	if join.JoinType != RightOuterJoin {
+	// If the left child has the hint, it means there are some join method hints want to specify the join method based on the left child.
+	// So we don't need to split the left child part. The right child part is the same, so omit the comments for the right child part.
+	if join.JoinType != RightOuterJoin && !leftHasHint {
 		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsJoinOrderHintInfo, lhsJoinMethodHintInfo, lhsHasOuterJoin := extractJoinGroup(join.children[0])
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
@@ -109,7 +121,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		group = append(group, join.children[0])
 	}
 
-	if join.JoinType != LeftOuterJoin {
+	if join.JoinType != LeftOuterJoin && !rightHasHint {
 		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsJoinOrderHintInfo, rhsJoinMethodHintInfo, rhsHasOuterJoin := extractJoinGroup(join.children[1])
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
@@ -521,18 +533,24 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild Logical
 	return newJoin
 }
 
+// setNewJoinWithHint sets the join method hint for the join node.
+// Before the join reorder process, we split the join node and collect the join method hint.
+// And we record the join method hint and reset the hint after we have finished the join reorder process.
 func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin) {
 	lChild := newJoin.Children()[0]
 	rChild := newJoin.Children()[1]
 	var preferredJoinMethodHint uint
 	var joinMethodHintInfo *tableHintInfo
+	// If the left child part has the join method hint, we should adjust the hint and reset it.
 	if joinMethodHint, ok := s.joinMethodHintInfo[lChild.ID()]; ok {
 		preferredJoinMethodHint = adjustPreferredJoinMethodHint(joinMethodHint.preferredJoinMethod, true)
 		joinMethodHintInfo = joinMethodHint.joinMethodHintInfo
 	}
 	if joinMethodHint, ok := s.joinMethodHintInfo[rChild.ID()]; ok {
+		// If there are more join methods hint set in the same join node after the join reorder,
+		// we should report the warning and clear the join method hint information.
 		if preferredJoinMethodHint > 0 && preferredJoinMethodHint != joinMethodHint.preferredJoinMethod {
-			errMsg := "Join hints are conflict, you can only specify one type of join"
+			errMsg := "Join hints are conflict after the join reorder, you can only specify one type of join"
 			warning := ErrInternal.GenWithStack(errMsg)
 			preferredJoinMethodHint = 0
 			joinMethodHintInfo = nil
@@ -548,6 +566,10 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *LogicalJoin
 	}
 }
 
+// adjustPreferredJoinMethodHint adjusts the `preferredJoinMethodHint` based on the origin `preferredJoinMethodHint` and the position of the sub-plan.
+// For example, if we have the hint `INL_JOIN(t1)` and the join node is `join{t1, t2}`. When we build the join node,
+// the join node gets the value for `preferredJoinMethodHint` which is `preferLeftAsINLJInner. After the join reorder process, the join node becomes `join{t2, t1}`.
+// After the join reorder process, we should adjust the value for `preferredJoinMethodHint` to `preferRightAsINLJInner`.
 func adjustPreferredJoinMethodHint(preferredJoinMethodHint uint, isLeft bool) uint {
 	if preferredJoinMethodHint == preferLeftAsINLJInner || preferredJoinMethodHint == preferRightAsINLJInner {
 		if preferredJoinMethodHint == preferLeftAsINLJInner && !isLeft {
