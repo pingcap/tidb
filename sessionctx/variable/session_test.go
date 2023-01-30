@@ -211,6 +211,7 @@ func TestSlowLogFormat(t *testing.T) {
 # Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
 # Optimize_time: 0.00000001
 # Wait_TS: 0.000000003
+# Execute_time: 0.0000001 Build_executor_time: 0.00000001 Open_executor_time: 0.00000001 Run_executor_time: 0.00000008
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Process_keys: 20001 Total_keys: 10000
 # DB: test
 # Index_names: [t1:a,t2:b]
@@ -249,6 +250,10 @@ func TestSlowLogFormat(t *testing.T) {
 		TimeCompile:       time.Duration(10),
 		TimeOptimize:      time.Duration(10),
 		TimeWaitTS:        time.Duration(3),
+		TimeExecute:       time.Duration(100),
+		TimeBuildExecutor: time.Duration(10),
+		TimeOpenExecutor:  time.Duration(10),
+		TimeRunExecutor:   time.Duration(80),
 		IndexNames:        "[t1:a,t2:b]",
 		StatsInfos:        statsInfos,
 		CopTasks:          copTasks,
