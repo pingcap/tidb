@@ -106,12 +106,12 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tiancaiamao/sched"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"github.com/tiancaiamao/sched"
 )
 
 var (

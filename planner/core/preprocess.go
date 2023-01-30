@@ -48,8 +48,8 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"go.uber.org/zap"
 	"github.com/tiancaiamao/sched"
+	"go.uber.org/zap"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.

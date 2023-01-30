@@ -43,10 +43,10 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/sched"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
-	"github.com/tiancaiamao/sched"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.

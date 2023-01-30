@@ -71,9 +71,9 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tiancaiamao/sched"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"github.com/tiancaiamao/sched"
 )
 
 var (

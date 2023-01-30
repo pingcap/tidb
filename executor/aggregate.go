@@ -42,10 +42,10 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/tiancaiamao/sched"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
-	"github.com/tiancaiamao/sched"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
@@ -706,6 +706,7 @@ func (w *HashAggFinalWorker) consumeIntermData(ctx context.Context, sctx session
 					allMemDelta += memDelta
 				}
 			}
+			sched.CheckPoint(ctx)
 			w.memTracker.Consume(allMemDelta)
 		}
 		if w.stats != nil {
@@ -749,6 +750,7 @@ func (w *HashAggFinalWorker) loadFinalResult(ctx context.Context, sctx sessionct
 				return
 			}
 		}
+		sched.CheckPoint(ctx)
 	}
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 	if w.stats != nil {

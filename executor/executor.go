@@ -68,12 +68,12 @@ import (
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/tiancaiamao/sched"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"github.com/tiancaiamao/sched"
 )
 
 var (
