@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -185,7 +186,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.ClusterTableMemoryUsageOpsHistory:
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
 		case infoschema.TableResourceGroups:
-			err = e.setDataFromResourceGroups(sctx)
+			err = e.setDataFromResourceGroups()
 		}
 		if err != nil {
 			return nil, err
@@ -3388,17 +3389,78 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromResourceGroups(sctx sessionctx.Context) error {
-	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	resourceGroups := is.AllResourceGroups()
+func (e *memtableRetriever) setDataFromResourceGroups() error {
+	resourceGroups, err := infosync.GetAllResourceGroups(context.TODO())
+	if err != nil {
+		return errors.Errorf("failed to access resource group manager, error message is %s", err.Error())
+	}
 	rows := make([][]types.Datum, 0, len(resourceGroups))
 	for _, group := range resourceGroups {
-		row := types.MakeDatums(
-			group.ID,
-			group.Name.O,
-			group.RURate,
-		)
-		rows = append(rows, row)
+		mode := ""
+		switch group.Mode {
+		case rmpb.GroupMode_RUMode:
+			mode = "RU_MODE"
+			rru_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.RRU.Settings.String(), ":")[1], " "))
+			if err != nil {
+				return errors.Errorf("invalid fill rate of RRU for resource group %s", group.Name)
+			}
+			wru_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.WRU.Settings.String(), ":")[1], " "))
+			if err != nil {
+				return errors.Errorf("invalid fill rate of WRU for resource group %s", group.Name)
+			}
+			row := types.MakeDatums(
+				group.Name,
+				mode,
+				rru_setting,
+				int(group.RUSettings.RRU.Tokens),
+				wru_setting,
+				int(group.RUSettings.WRU.Tokens),
+				nil,
+				nil,
+				nil,
+			)
+			rows = append(rows, row)
+		case rmpb.GroupMode_RawMode:
+			mode = "RAW_MODE"
+			cpu_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.Cpu.Settings.String(), ":")[1], " "))
+			if err != nil {
+				return errors.Errorf("invalid fill rate of CPU for resource group %s", group.Name)
+			}
+			read_io_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoRead.Settings.String(), ":")[1], " "))
+			if err != nil {
+				return errors.Errorf("invalid fill rate of READ for resource group %s", group.Name)
+			}
+			write_io_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoWrite.Settings.String(), ":")[1], " "))
+			if err != nil {
+				return errors.Errorf("invalid fill rate of WRITE for resource group %s", group.Name)
+			}
+			row := types.MakeDatums(
+				group.Name,
+				mode,
+				nil,
+				nil,
+				nil,
+				nil,
+				cpu_setting,
+				read_io_setting,
+				write_io_setting,
+			)
+			rows = append(rows, row)
+		default:
+			mode = "UNKNOWN_MODE"
+			row := types.MakeDatums(
+				group.Name,
+				mode,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+			)
+			rows = append(rows, row)
+		}
 	}
 	e.rows = rows
 	return nil
