@@ -3400,20 +3400,20 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
 			mode = "RU_MODE"
-			rru_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.RRU.Settings.String(), ":")[1], " "))
+			rruSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.RRU.Settings.String(), ":")[1], " "))
 			if err != nil {
 				return errors.Errorf("invalid fill rate of RRU for resource group %s", group.Name)
 			}
-			wru_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.WRU.Settings.String(), ":")[1], " "))
+			wruSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.WRU.Settings.String(), ":")[1], " "))
 			if err != nil {
 				return errors.Errorf("invalid fill rate of WRU for resource group %s", group.Name)
 			}
 			row := types.MakeDatums(
 				group.Name,
 				mode,
-				rru_setting,
+				rruSetting,
 				int(group.RUSettings.RRU.Tokens),
-				wru_setting,
+				wruSetting,
 				int(group.RUSettings.WRU.Tokens),
 				nil,
 				nil,
@@ -3422,15 +3422,15 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			rows = append(rows, row)
 		case rmpb.GroupMode_RawMode:
 			mode = "RAW_MODE"
-			cpu_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.Cpu.Settings.String(), ":")[1], " "))
+			cpuSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.Cpu.Settings.String(), ":")[1], " "))
 			if err != nil {
 				return errors.Errorf("invalid fill rate of CPU for resource group %s", group.Name)
 			}
-			read_io_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoRead.Settings.String(), ":")[1], " "))
+			readIoSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoRead.Settings.String(), ":")[1], " "))
 			if err != nil {
 				return errors.Errorf("invalid fill rate of READ for resource group %s", group.Name)
 			}
-			write_io_setting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoWrite.Settings.String(), ":")[1], " "))
+			writeIoSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoWrite.Settings.String(), ":")[1], " "))
 			if err != nil {
 				return errors.Errorf("invalid fill rate of WRITE for resource group %s", group.Name)
 			}
@@ -3441,9 +3441,9 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 				nil,
 				nil,
 				nil,
-				cpu_setting,
-				read_io_setting,
-				write_io_setting,
+				cpuSetting,
+				readIoSetting,
+				writeIoSetting,
 			)
 			rows = append(rows, row)
 		default:
