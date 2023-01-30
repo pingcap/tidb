@@ -1096,7 +1096,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			return infoschema.ErrResourceGroupSupportDisabled
 		}
 
-		resourceGroupName := s.ResourceGroupNameOption.Value
+		resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
 
 		// check if specified resource group exists
 		if resourceGroupName != "default" && resourceGroupName != "" {
@@ -1909,14 +1909,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 
 			// check if specified resource group exists
-			if s.ResourceGroupNameOption.Value != "default" && s.ResourceGroupNameOption.Value != "" {
-				_, exists := e.is.ResourceGroupByName(model.NewCIStr(s.ResourceGroupNameOption.Value))
+			resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
+			if resourceGroupName != "default" && s.ResourceGroupNameOption.Value != "" {
+				_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
 				if !exists {
-					return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.ResourceGroupNameOption.Value)
+					return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
 				}
 			}
 
-			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, s.ResourceGroupNameOption.Value))
+			newAttributes = append(newAttributes, fmt.Sprintf(`"resource_group": "%s"`, resourceGroupName))
 		}
 		if passwordLockingStr != "" {
 			newAttributes = append(newAttributes, passwordLockingStr)
