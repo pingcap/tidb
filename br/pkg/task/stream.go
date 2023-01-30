@@ -1039,6 +1039,7 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig) error {
 		return err
 	}
 	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer cli.Close()
 	tasks, err := cli.GetAllTasks(ctx)
 	if err != nil {
 		return err
