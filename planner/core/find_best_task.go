@@ -2024,7 +2024,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 		if prop.MPPPartitionTp != property.AnyType || (ts.isPartition && !isDisaggregatedTiFlash) {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
-			// But in disaggregated tiflash mode, we can only use mpp, so we add ExchangeSender and ExchangeReceiver above TableScan for static pruning partition table.
+			// But in disaggregated tiflash mode, we enable using mpp for static pruning partition table, because cop and batchCop is deprecated.
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
 			return invalidTask, nil
 		}
@@ -2053,7 +2053,11 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
 				task = invalidTask
 			} else if prop.TaskTp == property.RootTaskType {
-				// when got here, canMppConvertToRootForDisaggregatedTiFlash is true.
+				// When got here, canMppConvertToRootForDisaggregatedTiFlash is true.
+				// This is for situations like cannot generate mppTask for some operators.
+				// Such as when the build side of HashJoin is Projection,
+				// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
+				// So HashJoin cannot pushdown to tiflash. But we still want TableScan to run on tiflash.
 				task = mppTask
 				task = task.convertToRootTask(ds.ctx)
 				if !task.invalid() {
