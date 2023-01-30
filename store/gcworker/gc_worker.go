@@ -1198,6 +1198,7 @@ func (w *GCWorker) resolveLocksForRange(
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 		sleep := v.(int)
 		// cooperate with github.com/tikv/client-go/v2/locate/invalidCacheAndRetry
+		//nolint: SA1029
 		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
 		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
 	})
