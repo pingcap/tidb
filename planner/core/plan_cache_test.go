@@ -469,6 +469,8 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		params []int
 	}{
 		{"prepare stmt from 'select * from t limit ?'", []int{1}},
+		{"prepare stmt from 'select * from t limit 1, ?'", []int{1}},
+		{"prepare stmt from 'select * from t limit ?, 1'", []int{1}},
 		{"prepare stmt from 'select * from t limit ?, ?'", []int{1, 2}},
 		{"prepare stmt from 'delete from t order by a limit ?'", []int{1}},
 		{"prepare stmt from 'insert into t select * from t order by a desc limit ?'", []int{1}},
