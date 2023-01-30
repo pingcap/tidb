@@ -15,6 +15,8 @@
 package kv
 
 import (
+	"context"
+
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -135,6 +137,15 @@ type RequestSource = util.RequestSource
 
 // WithInternalSourceType create context with internal source.
 var WithInternalSourceType = util.WithInternalSourceType
+
+// GetInternalSourceType get internal source
+func GetInternalSourceType(ctx context.Context) string {
+	v := ctx.Value(util.RequestSourceKey)
+	if v == nil {
+		return ""
+	}
+	return v.(util.RequestSource).RequestSourceType
+}
 
 const (
 	// InternalTxnOthers is the type of requests that consume low resources.
