@@ -415,7 +415,6 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		if v.InOperand {
 			newExpr = SetExprColumnInOperand(newExpr)
 		}
-		newExpr.SetCoercibility(v.Coercibility())
 		return true, false, newExpr
 	case *ScalarFunction:
 		substituted := false
