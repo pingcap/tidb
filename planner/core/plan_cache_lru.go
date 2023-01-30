@@ -51,9 +51,6 @@ type LRUPlanCache struct {
 	lruList *list.List
 	// lock make cache thread safe
 	lock sync.Mutex
-
-	// pickFromBucket get one element from bucket. The LRUPlanCache can not work if it is nil
-	pickFromBucket func(map[*list.Element]struct{}, *planCacheMatchOpts) (*list.Element, bool)
 	// onEvict will be called if any eviction happened, only for test use now
 	onEvict func(kvcache.Key, kvcache.Value)
 
@@ -67,21 +64,19 @@ type LRUPlanCache struct {
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint, guard float64, quota uint64,
-	pickFromBucket func(map[*list.Element]struct{}, *planCacheMatchOpts) (*list.Element, bool), sctx sessionctx.Context) *LRUPlanCache {
+func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx.Context) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
 	return &LRUPlanCache{
-		capacity:       capacity,
-		size:           0,
-		buckets:        make(map[string]map[*list.Element]struct{}, 1), //Generally one query has one plan
-		lruList:        list.New(),
-		pickFromBucket: pickFromBucket,
-		quota:          quota,
-		guard:          guard,
-		sctx:           sctx,
+		capacity: capacity,
+		size:     0,
+		buckets:  make(map[string]map[*list.Element]struct{}, 1), //Generally one query has one plan
+		lruList:  list.New(),
+		quota:    quota,
+		guard:    guard,
+		sctx:     sctx,
 	}
 }
 
@@ -260,7 +255,7 @@ func (l *LRUPlanCache) memoryControl() {
 }
 
 // PickPlanFromBucket pick one plan from bucket
-func PickPlanFromBucket(bucket map[*list.Element]struct{}, matchOpts *planCacheMatchOpts) (*list.Element, bool) {
+func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *planCacheMatchOpts) (*list.Element, bool) {
 	for k := range bucket {
 		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
 		ok1 := plan.matchOpts.paramTypes.CheckTypesCompatibility4PC(matchOpts.paramTypes)

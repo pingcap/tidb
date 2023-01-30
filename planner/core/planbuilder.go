@@ -2301,10 +2301,14 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // in tblInfo.Indices, index.Columns[i].Offset is set according to tblInfo.Columns. Since we decode row samples according to colsInfo rather than tbl.Columns
 // in the execution phase of ANALYZE, we need to modify index.Columns[i].Offset according to colInfos.
 // TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
-func getModifiedIndexesInfoForAnalyze(tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
+func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
+			continue
+		}
+		if originIdx.MVIndex {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -2382,7 +2386,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			execColsInfo = colsInfo
 		}
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+		indexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
@@ -2612,6 +2616,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				commonHandleInfo = idx
 				continue
 			}
+			if idx.MVIndex {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				continue
+			}
 			for i, id := range physicalIDs {
 				if id == tbl.TableInfo.ID {
 					id = -1
@@ -2705,6 +2713,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
+		if idx.MVIndex {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+			continue
+		}
 		for i, id := range physicalIDs {
 			if id == tblInfo.ID {
 				id = -1
@@ -2747,6 +2759,11 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
+			if idx.MVIndex {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				continue
+			}
+
 			for i, id := range physicalIDs {
 				if id == tblInfo.ID {
 					id = -1

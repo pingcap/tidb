@@ -944,6 +944,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
 			canConvertPointGet = ds.canConvertToPointGetForPlanCache(path)
 		}
+		if canConvertPointGet && path.Index != nil && path.Index.MVIndex {
+			canConvertPointGet = false // cannot use PointGet upon MVIndex
+		}
 
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
