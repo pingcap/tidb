@@ -2259,7 +2259,7 @@ var defaultSysVars = []*SysVar{
 			}
 			errMsg := fmt.Sprintf("incorrect value: %s. %s options: %d (unspecified)",
 				originalValue, MppVersion, kv.MppVersionUnspecified)
-			for i := kv.MppVersionV0; i <= kv.NewestMppVersion; i += 1 {
+			for i := kv.MppVersionV0; i <= kv.GetNewestMppVersion(); i += 1 {
 				errMsg = fmt.Sprintf("%s, %d", errMsg, i)
 			}
 

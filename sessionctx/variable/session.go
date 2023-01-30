@@ -1466,7 +1466,7 @@ func (s *SessionVars) IsMPPEnforced() bool {
 // ChooseMppVersion indicates the mpp-version used to build mpp plan, if mpp-version is unspecified, use the latest version.
 func (s *SessionVars) ChooseMppVersion() kv.MppVersion {
 	if s.mppVersion == kv.MppVersionUnspecified {
-		return kv.GetTiDBMppVersion()
+		return kv.GetNewestMppVersion()
 	}
 	return s.mppVersion
 }

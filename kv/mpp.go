@@ -39,8 +39,7 @@ const (
 
 	mppVersionMax
 
-	// NewestMppVersion means the latest version used in MPP tasks
-	NewestMppVersion MppVersion = mppVersionMax - 1
+	newestMppVersion MppVersion = mppVersionMax - 1
 
 	// MppVersionUnspecified means the illegal or unspecified version, it only used in TiDB.
 	MppVersionUnspecified MppVersion = -1
@@ -65,15 +64,15 @@ func ToMppVersion(name string) (MppVersion, bool) {
 		return MppVersionUnspecified, false
 	}
 	version := MppVersion(v)
-	if version >= MppVersionUnspecified && version <= NewestMppVersion {
+	if version >= MppVersionUnspecified && version <= newestMppVersion {
 		return version, true
 	}
 	return MppVersionUnspecified, false
 }
 
-// GetTiDBMppVersion returns the mpp-version can be used in mpp plan
-func GetTiDBMppVersion() MppVersion {
-	return NewestMppVersion
+// GetNewestMppVersion returns the mpp-version can be used in mpp plan
+func GetNewestMppVersion() MppVersion {
+	return newestMppVersion
 }
 
 // MPPTaskMeta means the meta info such as location of a mpp task.

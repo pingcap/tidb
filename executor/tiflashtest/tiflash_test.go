@@ -646,7 +646,7 @@ func TestMppVersionError(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	{
-		item := fmt.Sprintf("return(%d)", kv.NewestMppVersion+1)
+		item := fmt.Sprintf("return(%d)", kv.GetNewestMppVersion()+1)
 		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError", item))
 	}
 	{
@@ -655,7 +655,7 @@ func TestMppVersionError(t *testing.T) {
 	}
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError"))
 	{
-		item := fmt.Sprintf("return(%d)", kv.NewestMppVersion)
+		item := fmt.Sprintf("return(%d)", kv.GetNewestMppVersion())
 		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError", item))
 	}
 	{
