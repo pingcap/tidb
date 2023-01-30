@@ -686,12 +686,16 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(err)
 		}
 		newKeyspace := codec.GetKeyspace()
+
+		// If the API V2 data occurs in the restore process, the cluster must
+		// support the keyspace rewrite mode.
 		if (len(oldKeyspace) > 0 || len(newKeyspace) > 0) && client.GetRewriteMode() == restore.RewriteModeLegacy {
 			return errors.Annotate(berrors.ErrRestoreModeMismatch, "cluster only supports legacy rewrite mode")
 		}
 
 		// Hijack the tableStream and rewrite the rewrite rules.
 		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+			// Set the keyspace info for the checksum requests
 			t.RewriteRule.OldKeyspace = oldKeyspace
 			t.RewriteRule.NewKeyspace = newKeyspace
 

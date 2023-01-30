@@ -646,7 +646,15 @@ func (importer *FileImporter) downloadSST(
 		return nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
 	}
 
+	// For the legacy version of TiKV, we need to encode the key prefix, since in the legacy
+	// version, the TiKV will rewrite the key with the encoded prefix without decoding the keys in
+	// the SST file. For the new version of TiKV that support keyspace rewrite, we don't need to
+	// encode the key prefix. The TiKV will decode the keys in the SST file and rewrite the keys
+	// with the plain prefix and encode the keys before writing to SST.
+
+	// for the keyspace rewrite mode
 	rule := *fileRule
+	// for the legacy rewrite mode
 	if importer.rewriteMode == RewriteModeLegacy {
 		rule.OldKeyPrefix = encodeKeyPrefix(fileRule.GetOldKeyPrefix())
 		rule.NewKeyPrefix = encodeKeyPrefix(fileRule.GetNewKeyPrefix())
