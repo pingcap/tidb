@@ -258,14 +258,22 @@ func (l *LRUPlanCache) memoryControl() {
 func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOpts *planCacheMatchOpts) (*list.Element, bool) {
 	for k := range bucket {
 		plan := k.Value.(*planCacheEntry).PlanValue.(*PlanCacheValue)
+		// check param types' compatibility
 		ok1 := plan.matchOpts.paramTypes.CheckTypesCompatibility4PC(matchOpts.paramTypes)
 		if !ok1 {
 			continue
 		}
+
+		// check limit offset and key if equal and check switch if enabled
 		ok2 := checkUint64SliceIfEqual(plan.matchOpts.limitOffsetAndCount, matchOpts.limitOffsetAndCount)
-		if ok2 {
-			return k, true
+		if !ok2 {
+			continue
 		}
+		if len(plan.matchOpts.limitOffsetAndCount) > 0 && !l.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+			// offset and key slice matched, but it is a plan with param limit and the switch is disabled
+			continue
+		}
+		return k, true
 	}
 	return nil, false
 }

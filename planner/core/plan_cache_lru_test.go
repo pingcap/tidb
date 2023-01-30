@@ -47,11 +47,13 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
-	lruA := NewLRUPlanCache(0, 0, 0, MockContext())
+	mockCtx := MockContext()
+	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
+	lruA := NewLRUPlanCache(0, 0, 0, mockCtx)
 	require.Equal(t, lruA.capacity, uint(100))
 
 	maxMemDroppedKv := make(map[kvcache.Key]kvcache.Value)
-	lru := NewLRUPlanCache(3, 0, 0, MockContext())
+	lru := NewLRUPlanCache(3, 0, 0, mockCtx)
 	lru.onEvict = func(key kvcache.Key, value kvcache.Value) {
 		maxMemDroppedKv[key] = value
 	}
@@ -131,7 +133,9 @@ func TestLRUPCPut(t *testing.T) {
 }
 
 func TestLRUPCGet(t *testing.T) {
-	lru := NewLRUPlanCache(3, 0, 0, MockContext())
+	mockCtx := MockContext()
+	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
+	lru := NewLRUPlanCache(3, 0, 0, mockCtx)
 
 	keys := make([]*planCacheKey, 5)
 	vals := make([]*PlanCacheValue, 5)
@@ -185,7 +189,9 @@ func TestLRUPCGet(t *testing.T) {
 }
 
 func TestLRUPCDelete(t *testing.T) {
-	lru := NewLRUPlanCache(3, 0, 0, MockContext())
+	mockCtx := MockContext()
+	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
+	lru := NewLRUPlanCache(3, 0, 0, mockCtx)
 
 	keys := make([]*planCacheKey, 3)
 	vals := make([]*PlanCacheValue, 3)
