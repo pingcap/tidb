@@ -59,6 +59,15 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxR
 			}
 			if !idxRecords[i].delete {
 				idxRecords[i].skip = true
+			} else {
+				// Prevent deleting an unexpected index KV.
+				hdInVal, err := tablecodec.DecodeHandleInUniqueIndexValue(val, w.table.Meta().IsCommonHandle)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !idxRecords[i].handle.Equal(hdInVal) {
+					idxRecords[i].skip = true
+				}
 			}
 		} else if idxRecords[i].distinct {
 			// The keys in w.batchCheckKeys also maybe duplicate,
@@ -76,6 +85,7 @@ type temporaryIndexRecord struct {
 	delete   bool
 	unique   bool
 	distinct bool
+	handle   kv.Handle
 	rowKey   kv.Key
 }
 
@@ -137,7 +147,8 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 
 			// Lock the corresponding row keys so that it doesn't modify the index KVs
 			// that are changing by a pessimistic transaction.
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.rowKey)
+			rowKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), idxRecord.handle)
+			err := txn.LockKeys(context.Background(), new(kv.LockCtx), rowKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -209,14 +220,13 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 					return false, err
 				}
 			}
-			rowKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), handle)
 
 			originIdxKey := make([]byte, len(indexKey))
 			copy(originIdxKey, indexKey)
 			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, originIdxKey)
 
 			idxRecord := &temporaryIndexRecord{
-				rowKey: rowKey,
+				handle: handle,
 				delete: isDelete,
 				unique: unique,
 				skip:   false,
