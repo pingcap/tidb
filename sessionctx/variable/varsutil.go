@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strconv"
@@ -529,6 +530,15 @@ func collectAllowFuncName4ExpressionIndex() string {
 	}
 	slices.Sort(str)
 	return strings.Join(str, ", ")
+}
+
+func updatePasswordValidationLength(s *SessionVars, length int32) error {
+	err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), ValidatePasswordLength, strconv.FormatInt(int64(length), 10), false)
+	if err != nil {
+		return err
+	}
+	PasswordValidationLength.Store(length)
+	return nil
 }
 
 // GAFunction4ExpressionIndex stores functions GA for expression index.

@@ -23,6 +23,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/stmtctx",
         "//types",
+        "//util/chunk",
         "//util/dbterror",
         "//util/hack",
         "//util/logutil",

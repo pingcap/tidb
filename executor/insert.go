@@ -70,7 +70,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		return err
 	}
 	setOptionForTopSQL(sessVars.StmtCtx, txn)
-	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
@@ -113,7 +112,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 
@@ -160,6 +158,12 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKey)]; found {
+				if tablecodec.IsTempIndexKey(uk.newKey) {
+					if tablecodec.CheckTempIndexValueIsDelete(val) {
+						continue
+					}
+					val = tablecodec.DecodeTempIndexOriginValue(val)
+				}
 				handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 				if err != nil {
 					return err
@@ -264,6 +268,14 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
+			// Since the temp index stores deleted key with marked 'deleteu' for unique key at the end
+			// of value, So if return a key we check and skip deleted key.
+			if tablecodec.IsTempIndexKey(uk.newKey) {
+				if tablecodec.CheckTempIndexValueIsDelete(val) {
+					continue
+				}
+				val = tablecodec.DecodeTempIndexOriginValue(val)
+			}
 			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
 				return err
@@ -329,9 +341,10 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
+	if e.runtimeStats != nil && e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	defer e.memTracker.ReplaceBytesUsed(0)
-	e.ctx.GetSessionVars().CurrInsertValues = chunk.Row{}
-	e.ctx.GetSessionVars().CurrInsertBatchExtraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[0:0:0]
 	e.setMessage()
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()

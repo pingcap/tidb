@@ -54,6 +54,8 @@ const (
 	Evolve = "evolve"
 	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
 	Builtin = "builtin"
+	// History indicate the binding is created from statement summary by plan digest
+	History = "history"
 )
 
 // Binding stores the basic bind hint info.
@@ -71,7 +73,9 @@ type Binding struct {
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
 	Hint *hint.HintsSet `json:"-"`
 	// ID is the string form of Hint. It would be non-empty only when the status is `Using` or `PendingVerify`.
-	ID string `json:"-"`
+	ID         string `json:"-"`
+	SQLDigest  string
+	PlanDigest string
 }
 
 func (b *Binding) isSame(rb *Binding) bool {

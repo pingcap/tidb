@@ -134,7 +134,7 @@ func parseCompressionType(t string) (Compression, error) {
 		return CompressionGZ, nil
 	case "lz4":
 		return CompressionLZ4, nil
-	case "zstd":
+	case "zstd", "zst":
 		return CompressionZStd, nil
 	case "xz":
 		return CompressionXZ, nil
@@ -323,6 +323,9 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule, logger log.Logger) (*R
 			compression, err := parseCompressionType(value)
 			if err != nil {
 				return err
+			}
+			if result.Type == SourceTypeParquet && compression != CompressionNone {
+				return errors.Errorf("can't support whole compressed parquet file, should compress parquet files by choosing correct parquet compress writer, path: %s", r.Path)
 			}
 			result.Compression = compression
 			return nil

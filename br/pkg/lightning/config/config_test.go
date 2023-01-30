@@ -279,59 +279,65 @@ func TestAdjustWillBatchImportRatioInvalid(t *testing.T) {
 }
 
 func TestAdjustSecuritySection(t *testing.T) {
-	uuidHolder := "<uuid>"
 	testCases := []struct {
-		input       string
-		expectedCA  string
-		expectedTLS string
+		input          string
+		expectedCA     string
+		hasTLS         bool
+		fallback2NoTLS bool
 	}{
 		{
-			input:       ``,
-			expectedCA:  "",
-			expectedTLS: "false",
+			input:          ``,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
 				[security]
 			`,
-			expectedCA:  "",
-			expectedTLS: "false",
-		},
-		{
-			input: `
-				[security]
-				ca-path = "/path/to/ca.pem"
-			`,
-			expectedCA:  "/path/to/ca.pem",
-			expectedTLS: uuidHolder,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
 				[security]
 				ca-path = "/path/to/ca.pem"
-				[tidb.security]
 			`,
-			expectedCA:  "",
-			expectedTLS: "false",
+			expectedCA:     "/path/to/ca.pem",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
 				[security]
 				ca-path = "/path/to/ca.pem"
 				[tidb.security]
-				ca-path = "/path/to/ca2.pem"
 			`,
-			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: uuidHolder,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
 				[security]
+				ca-path = "/path/to/ca.pem"
 				[tidb.security]
 				ca-path = "/path/to/ca2.pem"
 			`,
-			expectedCA:  "/path/to/ca2.pem",
-			expectedTLS: uuidHolder,
+			expectedCA:     "/path/to/ca2.pem",
+			hasTLS:         false,
+			fallback2NoTLS: false,
+		},
+		{
+			input: `
+				[security]
+				[tidb.security]
+				ca-path = "/path/to/ca2.pem"
+			`,
+			expectedCA:     "/path/to/ca2.pem",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 		{
 			input: `
@@ -340,8 +346,20 @@ func TestAdjustSecuritySection(t *testing.T) {
 				tls = "skip-verify"
 				[tidb.security]
 			`,
-			expectedCA:  "",
-			expectedTLS: "skip-verify",
+			expectedCA:     "",
+			hasTLS:         true,
+			fallback2NoTLS: true,
+		},
+		{
+			input: `
+				[security]
+				[tidb]
+				tls = "false"
+				[tidb.security]
+			`,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
 		},
 	}
 
@@ -357,19 +375,18 @@ func TestAdjustSecuritySection(t *testing.T) {
 		err = cfg.Adjust(context.Background())
 		require.NoError(t, err, comment)
 		require.Equal(t, tc.expectedCA, cfg.TiDB.Security.CAPath, comment)
-		if tc.expectedTLS == uuidHolder {
-			require.NotEmpty(t, cfg.TiDB.TLS, comment)
+		if tc.hasTLS {
+			require.NotNil(t, cfg.TiDB.Security.TLSConfig, comment)
 		} else {
-			require.Equal(t, tc.expectedTLS, cfg.TiDB.TLS, comment)
+			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
 		}
+		require.Equal(t, tc.fallback2NoTLS, cfg.TiDB.Security.AllowFallbackToPlaintext, comment)
 	}
 	// test different tls config name
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.Security.CAPath = "/path/to/ca.pem"
-	cfg.Security.TLSConfigName = "tidb-tls"
 	require.NoError(t, cfg.Adjust(context.Background()))
-	require.Equal(t, cfg.TiDB.TLS, cfg.TiDB.Security.TLSConfigName)
 }
 
 func TestInvalidCSV(t *testing.T) {
@@ -626,7 +643,7 @@ func TestLoadConfig(t *testing.T) {
 	err = taskCfg.Adjust(context.Background())
 	require.NoError(t, err)
 	equivalentDSN := taskCfg.Checkpoint.MySQLParam.ToDriverConfig().FormatDSN()
-	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?tls=false&maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
+	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?readTimeout=30s&writeTimeout=30s&maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
 	require.Equal(t, expectedDSN, equivalentDSN)
 
 	result := taskCfg.String()
@@ -781,6 +798,17 @@ func TestAdjustDiskQuota(t *testing.T) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
+}
+
+func TestRemoveAllowAllFiles(t *testing.T) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	ctx := context.Background()
+
+	cfg.Checkpoint.Driver = config.CheckpointDriverMySQL
+	cfg.Checkpoint.DSN = "guest:12345@tcp(172.16.30.11:4001)/?tls=false&allowAllFiles=true&charset=utf8mb4"
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, "guest:12345@tcp(172.16.30.11:4001)/?tls=false&charset=utf8mb4", cfg.Checkpoint.DSN)
 }
 
 func TestDataCharacterSet(t *testing.T) {

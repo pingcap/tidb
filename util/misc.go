@@ -394,10 +394,10 @@ func TLSCipher2String(n uint16) string {
 }
 
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
-func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool) []*tipb.ColumnInfo {
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
 	for _, c := range columns {
-		col := ColumnToProto(c)
+		col := ColumnToProto(c, forIndex)
 		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
 		// is abandoned.
 		if (pkIsHandle && mysql.HasPriKeyFlag(c.GetFlag())) || c.ID == model.ExtraHandleID {
@@ -411,7 +411,7 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 }
 
 // ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
-func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
+func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
 		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.GetCollate()])),
@@ -420,7 +420,12 @@ func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 		Flag:      int32(c.GetFlag()),
 		Elems:     c.GetElems(),
 	}
-	pc.Tp = int32(c.GetType())
+	if forIndex {
+		// Use array type for read the multi-valued index.
+		pc.Tp = int32(c.FieldType.ArrayType().GetType())
+	} else {
+		pc.Tp = int32(c.GetType())
+	}
 	return pc
 }
 

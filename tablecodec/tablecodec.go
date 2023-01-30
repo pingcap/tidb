@@ -209,6 +209,15 @@ func EncodeMetaKey(key []byte, field []byte) kv.Key {
 	return ek
 }
 
+// EncodeMetaKeyPrefix encodes the key prefix into meta key
+func EncodeMetaKeyPrefix(key []byte) kv.Key {
+	ek := make([]byte, 0, len(metaPrefix)+codec.EncodedBytesLength(len(key))+8)
+	ek = append(ek, metaPrefix...)
+	ek = codec.EncodeBytes(ek, key)
+	ek = codec.EncodeUint(ek, uint64(structure.HashData))
+	return ek
+}
+
 // DecodeMetaKey decodes the key and get the meta key and meta field.
 func DecodeMetaKey(ek kv.Key) (key []byte, field []byte, err error) {
 	var tp uint64
@@ -1143,6 +1152,114 @@ func TempIndexKey2IndexKey(originIdxID int64, tempIdxKey []byte) {
 	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
 }
 
+// IsTempIndexKey check whether the input key is for a temp index.
+func IsTempIndexKey(indexKey []byte) bool {
+	var (
+		indexIDKey  []byte
+		indexID     int64
+		tempIndexID int64
+	)
+	// Get encoded indexID from key, Add uint64 8 byte length.
+	indexIDKey = indexKey[prefixLen : prefixLen+8]
+	indexID = codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(indexIDKey))
+	tempIndexID = int64(TempIndexPrefix) | indexID
+	return tempIndexID == indexID
+}
+
+// TempIndexValueFlag is the flag of temporary index value.
+type TempIndexValueFlag byte
+
+const (
+	// TempIndexValueFlagNormal means the following value is the normal index value.
+	TempIndexValueFlagNormal TempIndexValueFlag = iota
+	// TempIndexValueFlagDeleted means this is a representation of a "delete" operation.
+	TempIndexValueFlagDeleted
+)
+
+// EncodeTempIndexValue encodes the value of temporary index.
+// Note: this function changes the input value.
+func EncodeTempIndexValue(value []byte, keyVer byte) []byte {
+	value = append(value, 0)
+	copy(value[1:], value[:len(value)-1])
+	value[0] = byte(TempIndexValueFlagNormal) // normal flag + value + tempKeyVer
+	value = append(value, keyVer)
+	return value
+}
+
+// EncodeTempIndexValueDeletedUnique encodes the value of temporary index for unique index.
+func EncodeTempIndexValueDeletedUnique(handle kv.Handle, keyVer byte) []byte {
+	var hEncoded []byte
+	var hLen int
+	if handle.IsInt() {
+		var data [8]byte
+		binary.BigEndian.PutUint64(data[:], uint64(handle.IntValue()))
+		hEncoded = data[:]
+		hLen = 8
+	} else {
+		hEncoded = handle.Encoded()
+		hLen = len(hEncoded)
+	}
+	val := make([]byte, 0, 1+hLen+1) // deleted flag + handle + tempKeyVer
+	val = append(val, byte(TempIndexValueFlagDeleted))
+	val = append(val, hEncoded...)
+	val = append(val, keyVer)
+	return val
+}
+
+// EncodeTempIndexValueDeleted encodes the delete operation on origin index to a value for temporary index.
+func EncodeTempIndexValueDeleted(keyVer byte) []byte {
+	// Handle is not needed because it is already in the key.
+	val := make([]byte, 0, 2) // deleted flag + tempKeyVer
+	val = append(val, byte(TempIndexValueFlagDeleted))
+	val = append(val, keyVer)
+	return val
+}
+
+// DecodeTempIndexValue decodes the value of temporary index.
+func DecodeTempIndexValue(value []byte, isCommonHandle bool) (originVal []byte, handle kv.Handle, isDelete bool, isUnique bool, keyVer byte) {
+	if len(value) == 0 {
+		return nil, nil, false, false, 0
+	}
+	switch TempIndexValueFlag(value[0]) {
+	case TempIndexValueFlagNormal:
+		originVal = value[1 : len(value)-1]
+		keyVer = value[len(value)-1]
+	case TempIndexValueFlagDeleted:
+		isDelete = true
+		if len(value) == 2 {
+			keyVer = value[1]
+		} else {
+			isUnique = true
+			if isCommonHandle {
+				handle, _ = kv.NewCommonHandle(value[1 : len(value)-1])
+			} else {
+				handle = decodeIntHandleInIndexValue(value[1 : len(value)-1])
+			}
+			keyVer = value[len(value)-1]
+		}
+	}
+	return
+}
+
+// CheckTempIndexValueIsDelete checks whether the value is a delete operation.
+func CheckTempIndexValueIsDelete(value []byte) bool {
+	if len(value) == 0 {
+		return false
+	}
+	return TempIndexValueFlag(value[0]) == TempIndexValueFlagDeleted
+}
+
+// DecodeTempIndexOriginValue decodes the value of origin index from a temp index value.
+func DecodeTempIndexOriginValue(value []byte) []byte {
+	if len(value) == 0 {
+		return nil
+	}
+	if TempIndexValueFlag(value[0]) == TempIndexValueFlagNormal {
+		return value[1 : len(value)-1]
+	}
+	return nil
+}
+
 // GenIndexValuePortal is the portal for generating index value.
 // Value layout:
 //
@@ -1612,4 +1729,31 @@ func IndexKVIsUnique(value []byte) bool {
 	}
 	segs := SplitIndexValue(value)
 	return segs.IntHandle != nil || segs.CommonHandle != nil
+}
+
+// VerifyTableIDForRanges verifies that all given ranges are valid to decode the table id.
+func VerifyTableIDForRanges(keyRanges *kv.KeyRanges) ([]int64, error) {
+	tids := make([]int64, 0, keyRanges.PartitionNum())
+	collectFunc := func(ranges []kv.KeyRange, _ []int) error {
+		if len(ranges) == 0 {
+			return nil
+		}
+		tid := DecodeTableID(ranges[0].StartKey)
+		if tid <= 0 {
+			return errors.New("Incorrect keyRange is constrcuted")
+		}
+		tids = append(tids, tid)
+		for i := 1; i < len(ranges); i++ {
+			tmpTID := DecodeTableID(ranges[i].StartKey)
+			if tmpTID <= 0 {
+				return errors.New("Incorrect keyRange is constrcuted")
+			}
+			if tid != tmpTID {
+				return errors.Errorf("Using multi partition's ranges as single table's")
+			}
+		}
+		return nil
+	}
+	err := keyRanges.ForEachPartitionWithErr(collectFunc)
+	return tids, err
 }

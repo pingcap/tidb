@@ -28,6 +28,7 @@ func TestLogFormat(t *testing.T) {
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
 	mockTooLongQuery := make([]byte, 1024*9)
 
+	var refCount stmtctx.ReferenceCount = 0
 	info := &ProcessInfo{
 		ID:            233,
 		User:          "PingCAP",
@@ -38,9 +39,10 @@ func TestLogFormat(t *testing.T) {
 		StatsInfo: func(interface{}) map[string]uint64 {
 			return nil
 		},
-		StmtCtx:    &stmtctx.StatementContext{},
-		MemTracker: mem,
-		RedactSQL:  false,
+		StmtCtx:           &stmtctx.StatementContext{},
+		RefCountOfStmtCtx: &refCount,
+		MemTracker:        mem,
+		RedactSQL:         false,
 	}
 	costTime := time.Second * 233
 	logSQLTruncateLen := 1024 * 8

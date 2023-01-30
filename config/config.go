@@ -46,10 +46,13 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// MaxTxnEntrySize is the max value of TxnEntrySizeLimit.
+	MaxTxnEntrySizeLimit = 120 * 1024 * 1024 // 120MB
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
-	DefTxnTotalSizeLimit = 100 * 1024 * 1024
+	DefTxnTotalSizeLimit        = 100 * 1024 * 1024
+	SuperLargeTxnSize    uint64 = 100 * 1024 * 1024 * 1024 * 1024 // 100T, we expect a txn can never be this large
 	// DefMaxIndexLength is the maximum index length(in bytes). This value is consistent with MySQL.
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
@@ -88,6 +91,8 @@ const (
 	DefTempDir = "/tmp/tidb"
 	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
 	DefAuthTokenRefreshInterval = time.Hour
+	// EnvVarKeyspaceName is the system env name for keyspace name.
+	EnvVarKeyspaceName = "KEYSPACE_NAME"
 )
 
 // Valid config maps
@@ -182,6 +187,7 @@ type Config struct {
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
+	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
@@ -260,6 +266,9 @@ type Config struct {
 	// EnableGlobalKill indicates whether to enable global kill.
 	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	// InitializeSQLFile is a file that will be executed after first bootstrap only.
+	// It can be used to set GLOBAL system variable values
+	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -278,10 +287,13 @@ type Config struct {
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
 	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
 	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
+	DisaggregatedTiFlash       bool       `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
 	TiDBMaxReuseColumn uint32 `toml:"tidb-max-reuse-column" json:"tidb-max-reuse-column"`
+	// TiDBEnableExitCheck indicates whether exit-checking in domain for background process
+	TiDBEnableExitCheck bool `toml:"tidb-enable-exit-check" json:"tidb-enable-exit-check"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -556,6 +568,8 @@ type Security struct {
 	AuthTokenJWKS string `toml:"auth-token-jwks" json:"auth-token-jwks"`
 	// The refresh time interval of JWKS
 	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
+	// Disconnect directly when the password is expired
+	DisconnectOnExpiredPassword bool `toml:"disconnect-on-expired-password" json:"disconnect-on-expired-password"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -655,14 +669,15 @@ type Performance struct {
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
-	IndexUsageSyncLease              string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease              string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                             int    `toml:"gogc" json:"gogc"`
-	EnforceMPP                       bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency             uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize               uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
-	AnalyzePartitionConcurrencyQuota uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
-	EnableStatsCacheMemQuota         bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	IndexUsageSyncLease               string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                              int    `toml:"gogc" json:"gogc"`
+	EnforceMPP                        bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency              uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize                uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	AnalyzePartitionConcurrencyQuota  uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
+	PlanReplayerDumpWorkerConcurrency uint   `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
+	EnableStatsCacheMemQuota          bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -920,16 +935,17 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:              "0s",
-		GOGC:                             100,
-		EnforceMPP:                       false,
-		PlanReplayerGCLease:              "10m",
-		StatsLoadConcurrency:             5,
-		StatsLoadQueueSize:               1000,
-		AnalyzePartitionConcurrencyQuota: 16,
-		EnableStatsCacheMemQuota:         false,
-		RunAutoAnalyze:                   true,
-		EnableLoadFMSketch:               false,
+		IndexUsageSyncLease:               "0s",
+		GOGC:                              100,
+		EnforceMPP:                        false,
+		PlanReplayerGCLease:               "10m",
+		StatsLoadConcurrency:              5,
+		StatsLoadQueueSize:                1000,
+		AnalyzePartitionConcurrencyQuota:  16,
+		PlanReplayerDumpWorkerConcurrency: 1,
+		EnableStatsCacheMemQuota:          false,
+		RunAutoAnalyze:                    true,
+		EnableLoadFMSketch:                false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -974,6 +990,7 @@ var defaultConf = Config{
 		RSAKeySize:                  4096,
 		AuthTokenJWKS:               "",
 		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
+		DisconnectOnExpiredPassword: true,
 	},
 	DeprecateIntegerDisplayWidth:         false,
 	EnableEnumLengthLimit:                true,
@@ -982,8 +999,10 @@ var defaultConf = Config{
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
+	DisaggregatedTiFlash:                 false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
+	TiDBEnableExitCheck:                  false,
 }
 
 var (
@@ -1445,4 +1464,10 @@ func ContainHiddenConfig(s string) bool {
 		}
 	}
 	return false
+}
+
+// GetGlobalKeyspaceName is used to get global keyspace name
+// from config file or command line.
+func GetGlobalKeyspaceName() string {
+	return GetGlobalConfig().KeyspaceName
 }

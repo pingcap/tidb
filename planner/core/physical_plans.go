@@ -327,7 +327,7 @@ func (p *PhysicalIndexReader) Clone() (PhysicalPlan, error) {
 	if cloned.IndexPlans, err = clonePhysicalPlan(p.IndexPlans); err != nil {
 		return nil, err
 	}
-	cloned.OutputColumns = cloneCols(p.OutputColumns)
+	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
 	return cloned, err
 }
 
@@ -548,6 +548,12 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
 
+	// IsIntersectionType means whether it's intersection type or union type.
+	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
+	IsIntersectionType bool
+	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
+	AccessMVIndex bool
+
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
 	// TablePlans flats the tablePlan to construct executor pb.
@@ -673,7 +679,12 @@ type PhysicalIndexScan struct {
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
-	prop          *property.PhysicalProperty
+
+	// constColsByCond records the constant part of the index columns caused by the access conds.
+	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
+	constColsByCond []bool
+
+	prop *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -685,18 +696,18 @@ func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.physicalSchemaProducer = *base
-	cloned.AccessCondition = cloneExprs(p.AccessCondition)
+	cloned.AccessCondition = util.CloneExprs(p.AccessCondition)
 	if p.Table != nil {
 		cloned.Table = p.Table.Clone()
 	}
 	if p.Index != nil {
 		cloned.Index = p.Index.Clone()
 	}
-	cloned.IdxCols = cloneCols(p.IdxCols)
+	cloned.IdxCols = util.CloneCols(p.IdxCols)
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.Ranges = cloneRanges(p.Ranges)
-	cloned.Columns = cloneColInfos(p.Columns)
+	cloned.Ranges = util.CloneRanges(p.Ranges)
+	cloned.Columns = util.CloneColInfos(p.Columns)
 	if p.dataSourceSchema != nil {
 		cloned.dataSourceSchema = p.dataSourceSchema.Clone()
 	}
@@ -836,13 +847,13 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	clonedScan.physicalSchemaProducer = *prod
-	clonedScan.AccessCondition = cloneExprs(ts.AccessCondition)
-	clonedScan.filterCondition = cloneExprs(ts.filterCondition)
+	clonedScan.AccessCondition = util.CloneExprs(ts.AccessCondition)
+	clonedScan.filterCondition = util.CloneExprs(ts.filterCondition)
 	if ts.Table != nil {
 		clonedScan.Table = ts.Table.Clone()
 	}
-	clonedScan.Columns = cloneColInfos(ts.Columns)
-	clonedScan.Ranges = cloneRanges(ts.Ranges)
+	clonedScan.Columns = util.CloneColInfos(ts.Columns)
+	clonedScan.Ranges = util.CloneRanges(ts.Ranges)
 	clonedScan.TableAsName = ts.TableAsName
 	if ts.Hist != nil {
 		clonedScan.Hist = ts.Hist.Copy()
@@ -993,7 +1004,7 @@ func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalPlan = *base
-	cloned.Exprs = cloneExprs(p.Exprs)
+	cloned.Exprs = util.CloneExprs(p.Exprs)
 	return cloned, err
 }
 
@@ -1154,16 +1165,16 @@ func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoi
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.JoinType = p.JoinType
-	cloned.LeftConditions = cloneExprs(p.LeftConditions)
-	cloned.RightConditions = cloneExprs(p.RightConditions)
-	cloned.OtherConditions = cloneExprs(p.OtherConditions)
+	cloned.LeftConditions = util.CloneExprs(p.LeftConditions)
+	cloned.RightConditions = util.CloneExprs(p.RightConditions)
+	cloned.OtherConditions = util.CloneExprs(p.OtherConditions)
 	cloned.InnerChildIdx = p.InnerChildIdx
-	cloned.OuterJoinKeys = cloneCols(p.OuterJoinKeys)
-	cloned.InnerJoinKeys = cloneCols(p.InnerJoinKeys)
-	cloned.LeftJoinKeys = cloneCols(p.LeftJoinKeys)
-	cloned.RightJoinKeys = cloneCols(p.RightJoinKeys)
-	cloned.LeftNAJoinKeys = cloneCols(p.LeftNAJoinKeys)
-	cloned.RightNAJoinKeys = cloneCols(p.RightNAJoinKeys)
+	cloned.OuterJoinKeys = util.CloneCols(p.OuterJoinKeys)
+	cloned.InnerJoinKeys = util.CloneCols(p.InnerJoinKeys)
+	cloned.LeftJoinKeys = util.CloneCols(p.LeftJoinKeys)
+	cloned.RightJoinKeys = util.CloneCols(p.RightJoinKeys)
+	cloned.LeftNAJoinKeys = util.CloneCols(p.LeftNAJoinKeys)
+	cloned.RightNAJoinKeys = util.CloneCols(p.RightNAJoinKeys)
 	for _, d := range p.DefaultValues {
 		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
 	}
@@ -1669,7 +1680,7 @@ func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg,
 	for _, aggDesc := range p.AggFuncs {
 		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
 	}
-	cloned.GroupByItems = cloneExprs(p.GroupByItems)
+	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
 	return cloned, nil
 }
 
@@ -1744,6 +1755,10 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
+func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
+}
+
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalHashAgg)
@@ -1776,6 +1791,10 @@ func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, pr
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	basePhysicalAgg
+}
+
+func (p *PhysicalStreamAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1939,7 +1958,7 @@ func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalPlan = *base
-	cloned.Conditions = cloneExprs(p.Conditions)
+	cloned.Conditions = util.CloneExprs(p.Conditions)
 	return cloned, nil
 }
 

@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -325,8 +326,9 @@ type BlockHintProcessor struct {
 	QbHints   map[int][]*ast.TableOptimizerHint // Group all hints at same query block.
 
 	// Used for the view's hint
-	QbNameMap4View map[string][]ast.HintTable           // Map from view's query block name to view's table list.
-	QbHints4View   map[string][]*ast.TableOptimizerHint // Group all hints at same query block for view hints.
+	QbNameMap4View  map[string][]ast.HintTable           // Map from view's query block name to view's table list.
+	QbHints4View    map[string][]*ast.TableOptimizerHint // Group all hints at same query block for view hints.
+	QbNameUsed4View map[string]struct{}                  // Store all the qb_name hints which are used for view
 
 	Ctx              sessionctx.Context
 	selectStmtOffset int
@@ -346,14 +348,13 @@ func (p *BlockHintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 		p.checkQueryBlockHints(node.TableHints, 0)
 	case *ast.SelectStmt:
 		p.selectStmtOffset++
-		// Only support view hints which appear in the outer select part
-		if p.selectStmtOffset == 1 {
-			// Handle the view hints and update the left hint.
-			node.TableHints = p.handleViewHints(node.TableHints)
-		}
 		node.QueryBlockOffset = p.selectStmtOffset
+		// Handle the view hints and update the left hint.
+		node.TableHints = p.handleViewHints(node.TableHints, node.QueryBlockOffset)
 		p.checkQueryBlockHints(node.TableHints, node.QueryBlockOffset)
 	case *ast.ExplainStmt:
+		return in, true
+	case *ast.CreateBindingStmt:
 		return in, true
 	}
 	return in, false
@@ -371,12 +372,6 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 	var qbName string
 	for _, hint := range hints {
 		if hint.HintName.L != hintQBName {
-			continue
-		}
-		if offset > 1 && len(hint.Tables) > 0 {
-			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("The qb_name hint for view only supports to be defined in the first query block"))
-			}
 			continue
 		}
 		if qbName != "" {
@@ -402,7 +397,7 @@ func (p *BlockHintProcessor) checkQueryBlockHints(hints []*ast.TableOptimizerHin
 	}
 }
 
-func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (leftHints []*ast.TableOptimizerHint) {
+func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint, offset int) (leftHints []*ast.TableOptimizerHint) {
 	if len(hints) == 0 {
 		return
 	}
@@ -416,6 +411,7 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (l
 		usedHints[i] = true
 		if p.QbNameMap4View == nil {
 			p.QbNameMap4View = make(map[string][]ast.HintTable)
+			p.QbNameUsed4View = make(map[string]struct{})
 		}
 		qbName := hint.QBName.L
 		if qbName == "" {
@@ -426,6 +422,14 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (l
 				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
 			}
 		} else {
+			if offset != 1 {
+				// If there are some qb_name hints for view are not defined in the first query block,
+				// we should add the query block number where it is located to the first table in the view's qb_name hint table list.
+				qbNum := hint.Tables[0].QBName.L
+				if qbNum == "" {
+					hint.Tables[0].QBName = model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, offset))
+				}
+			}
 			p.QbNameMap4View[qbName] = hint.Tables
 		}
 	}
@@ -473,6 +477,18 @@ func (p *BlockHintProcessor) handleViewHints(hints []*ast.TableOptimizerHint) (l
 		}
 	}
 	return
+}
+
+// HandleUnusedViewHints handle the unused view hints.
+func (p *BlockHintProcessor) HandleUnusedViewHints() {
+	if p.QbNameMap4View != nil {
+		for qbName := range p.QbNameMap4View {
+			_, ok := p.QbNameUsed4View[qbName]
+			if !ok && p.Ctx != nil {
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
+			}
+		}
+	}
 }
 
 const (
@@ -601,4 +617,56 @@ func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
 		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
 	}
 	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
+}
+
+// CheckBindingFromHistoryBindable checks whether the ast and hint string from history is bindable.
+// Not support:
+// 1. query use tiFlash engine
+// 2. query with sub query
+// 3. query with more than 2 table join
+func CheckBindingFromHistoryBindable(node ast.Node, hintStr string) error {
+	// check tiflash
+	contain := strings.Contains(hintStr, "tiflash")
+	if contain {
+		return errors.New("can't create binding for query with tiflash engine")
+	}
+
+	checker := bindableChecker{
+		bindable: true,
+		tables:   make(map[model.CIStr]struct{}, 2),
+	}
+	node.Accept(&checker)
+	return checker.reason
+}
+
+// bindableChecker checks whether a binding from history can be created.
+type bindableChecker struct {
+	bindable bool
+	reason   error
+	tables   map[model.CIStr]struct{}
+}
+
+// Enter implements Visitor interface.
+func (checker *bindableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+		checker.bindable = false
+		checker.reason = errors.New("can't create binding for query with sub query")
+		return in, true
+	case *ast.TableName:
+		if _, ok := checker.tables[node.Schema]; !ok {
+			checker.tables[node.Name] = struct{}{}
+		}
+		if len(checker.tables) >= 3 {
+			checker.bindable = false
+			checker.reason = errors.New("can't create binding for query with more than two table join")
+			return in, true
+		}
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (checker *bindableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.bindable
 }

@@ -39,9 +39,11 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
+	parserformat "github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/parser/tidb"
 	field_types "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
@@ -67,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"golang.org/x/exp/slices"
@@ -78,16 +81,17 @@ var etcdDialTimeout = 5 * time.Second
 type ShowExec struct {
 	baseExecutor
 
-	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName    model.CIStr
-	Table     *ast.TableName       // Used for showing columns.
-	Partition model.CIStr          // Used for showing partition
-	Column    *ast.ColumnName      // Used for `desc table column`.
-	IndexName model.CIStr          // Used for show table regions.
-	Flag      int                  // Some flag parsed from sql, such as FULL.
-	Roles     []*auth.RoleIdentity // Used for show grants.
-	User      *auth.UserIdentity   // Used by show grants, show create user.
-	Extractor plannercore.ShowPredicateExtractor
+	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName            model.CIStr
+	Table             *ast.TableName       // Used for showing columns.
+	Partition         model.CIStr          // Used for showing partition
+	Column            *ast.ColumnName      // Used for `desc table column`.
+	IndexName         model.CIStr          // Used for show table regions.
+	ResourceGroupName model.CIStr          // Used for showing resource group
+	Flag              int                  // Some flag parsed from sql, such as FULL.
+	Roles             []*auth.RoleIdentity // Used for show grants.
+	User              *auth.UserIdentity   // Used by show grants, show create user.
+	Extractor         plannercore.ShowPredicateExtractor
 
 	is infoschema.InfoSchema
 
@@ -179,6 +183,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateDatabase()
 	case ast.ShowCreatePlacementPolicy:
 		return e.fetchShowCreatePlacementPolicy()
+	case ast.ShowCreateResourceGroup:
+		return e.fetchShowCreateResourceGroup()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowDrainerStatus:
@@ -304,13 +310,14 @@ func (v *visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var bindRecords []*bindinfo.BindRecord
+	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		bindRecords = handle.GetAllBindRecord()
+		tmp = handle.GetAllBindRecord()
 	} else {
-		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
+		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
+	bindRecords := slice.Copy(tmp)
 	// Remove the invalid bindRecord.
 	ind := 0
 	for _, bindData := range bindRecords {
@@ -368,6 +375,8 @@ func (e *ShowExec) fetchShowBind() error {
 				hint.Charset,
 				hint.Collation,
 				hint.Source,
+				hint.SQLDigest,
+				hint.PlanDigest,
 			})
 		}
 	}
@@ -1006,8 +1015,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 						}
 						buf.WriteString(" DEFAULT NULL")
 					}
-				case "CURRENT_TIMESTAMP":
-					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+				case "CURRENT_TIMESTAMP", "CURRENT_DATE":
+					buf.WriteString(" DEFAULT ")
+					buf.WriteString(defaultValue.(string))
 					if col.GetDecimal() > 0 {
 						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
 					}
@@ -1222,6 +1232,54 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	// add partition info here.
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+
+	if tableInfo.TTLInfo != nil {
+		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
+		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
+			timeUnit := ast.TimeUnitExpr{Unit: ast.TimeUnitType(tableInfo.TTLInfo.IntervalTimeUnit)}
+			restoreCtx.WriteKeyWord("TTL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteName(columnName.String())
+			restoreCtx.WritePlainf(" + INTERVAL %s ", tableInfo.TTLInfo.IntervalExprStr)
+			return timeUnit.Restore(restoreCtx)
+		})
+
+		if err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			restoreCtx.WriteKeyWord("TTL_ENABLE")
+			restoreCtx.WritePlain("=")
+			if tableInfo.TTLInfo.Enable {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1397,6 +1455,11 @@ func ConstructResultOfShowCreatePlacementPolicy(policyInfo *model.PolicyInfo) st
 	return fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", policyInfo.Name.O, policyInfo.PlacementSettings.String())
 }
 
+// constructResultOfShowCreateResourceGroup constructs the result for show create resource group.
+func constructResultOfShowCreateResourceGroup(resourceGroup *model.ResourceGroupInfo) string {
+	return fmt.Sprintf("CREATE RESOURCE GROUP `%s` %s", resourceGroup.Name.O, resourceGroup.ResourceGroupSettings.String())
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -1427,6 +1490,17 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 	}
 	showCreate := ConstructResultOfShowCreatePlacementPolicy(policy)
 	e.appendRow([]interface{}{e.DBName.O, showCreate})
+	return nil
+}
+
+// fetchShowCreateResourceGroup composes show create resource group result.
+func (e *ShowExec) fetchShowCreateResourceGroup() error {
+	group, found := e.is.ResourceGroupByName(e.ResourceGroupName)
+	if !found {
+		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(e.ResourceGroupName.O)
+	}
+	showCreate := constructResultOfShowCreateResourceGroup(group)
+	e.appendRow([]interface{}{e.ResourceGroupName.O, showCreate})
 	return nil
 }
 
@@ -1487,7 +1561,11 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT plugin, Account_locked, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')), Token_issuer
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
+        Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
+        user_attributes->>'$.Password_locking.failed_login_attempts',
+        user_attributes->>'$.Password_locking.password_lock_time_days'
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1513,7 +1591,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	userAttributes := rows[0].GetString(2)
 	if len(userAttributes) > 0 {
-		userAttributes = " ATTRIBUTE " + userAttributes
+		userAttributes = fmt.Sprintf(" ATTRIBUTE '%s'", userAttributes)
 	}
 
 	tokenIssuer := rows[0].GetString(3)
@@ -1521,6 +1599,47 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		tokenIssuer = " token_issuer " + tokenIssuer
 	}
 
+	var passwordHistory string
+	if rows[0].IsNull(4) {
+		passwordHistory = "DEFAULT"
+	} else {
+		passwordHistory = strconv.FormatUint(rows[0].GetUint64(4), 10)
+	}
+
+	var passwordReuseInterval string
+	if rows[0].IsNull(5) {
+		passwordReuseInterval = "DEFAULT"
+	} else {
+		passwordReuseInterval = strconv.FormatUint(rows[0].GetUint64(5), 10) + " DAY"
+	}
+
+	passwordExpired := rows[0].GetEnum(6).String()
+	passwordLifetime := int64(-1)
+	if !rows[0].IsNull(7) {
+		passwordLifetime = rows[0].GetInt64(7)
+	}
+	passwordExpiredStr := "PASSWORD EXPIRE DEFAULT"
+	if passwordExpired == "Y" {
+		passwordExpiredStr = "PASSWORD EXPIRE"
+	} else if passwordLifetime == 0 {
+		passwordExpiredStr = "PASSWORD EXPIRE NEVER"
+	} else if passwordLifetime > 0 {
+		passwordExpiredStr = fmt.Sprintf("PASSWORD EXPIRE INTERVAL %d DAY", passwordLifetime)
+	}
+
+	failedLoginAttempts := rows[0].GetString(8)
+	if len(failedLoginAttempts) > 0 {
+		failedLoginAttempts = " FAILED_LOGIN_ATTEMPTS " + failedLoginAttempts
+	}
+
+	passwordLockTimeDays := rows[0].GetString(9)
+	if len(passwordLockTimeDays) > 0 {
+		if passwordLockTimeDays == "-1" {
+			passwordLockTimeDays = " PASSWORD_LOCK_TIME UNBOUNDED"
+		} else {
+			passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
+		}
+	}
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1544,8 +1663,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s PASSWORD EXPIRE DEFAULT ACCOUNT %s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, accountLocked, userAttributes)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
@@ -1596,13 +1715,16 @@ func (e *ShowExec) fetchShowGrants() error {
 func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
 	e.appendRow([]interface{}{"Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"})
+	e.appendRow([]interface{}{"Config", "Server Admin", "To use SHOW CONFIG and SET CONFIG statements"})
 	e.appendRow([]interface{}{"Create", "Databases,Tables,Indexes", "To create new databases and tables"})
 	e.appendRow([]interface{}{"Create routine", "Databases", "To use CREATE FUNCTION/PROCEDURE"})
+	e.appendRow([]interface{}{"Create role", "Server Admin", "To create new roles"})
 	e.appendRow([]interface{}{"Create temporary tables", "Databases", "To use CREATE TEMPORARY TABLE"})
 	e.appendRow([]interface{}{"Create view", "Tables", "To create new views"})
 	e.appendRow([]interface{}{"Create user", "Server Admin", "To create new users"})
 	e.appendRow([]interface{}{"Delete", "Tables", "To delete existing rows"})
 	e.appendRow([]interface{}{"Drop", "Databases,Tables", "To drop databases, tables, and views"})
+	e.appendRow([]interface{}{"Drop role", "Server Admin", "To drop roles"})
 	e.appendRow([]interface{}{"Event", "Server Admin", "To create, alter, drop and execute events"})
 	e.appendRow([]interface{}{"Execute", "Functions,Procedures", "To execute stored routines"})
 	e.appendRow([]interface{}{"File", "File access on server", "To read and write files on the server"})

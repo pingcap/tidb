@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -1409,7 +1411,7 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	tk.MustExec(`alter table t drop partition p1`)
-	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "5", "<nil>"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil>", "1", "5"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2247,14 +2249,6 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
-			// foreign key test
-			// Partition table doesn't support to add foreign keys in mysql
-			"create table pt9 (id int not null primary key auto_increment,t_id int not null) partition by hash(id) partitions 1;",
-			"create table nt9 (id int not null primary key auto_increment, t_id int not null,foreign key fk_id (t_id) references pt5(id));",
-			"alter table pt9 exchange partition p0 with table nt9;",
-			dbterror.ErrPartitionExchangeForeignKey,
-		},
-		{
 			// Generated column (virtual)
 			"create table pt10 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) virtual) partition by hash(id) partitions 1;",
 			"create table nt10 (id int not null, lname varchar(30), fname varchar(100));",
@@ -2454,7 +2448,7 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustExec(`insert into pt values (0), (4), (7)`)
 	tk.MustExec("insert into nt values (1)")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	dom.DDL().SetHook(hook)
 
 	hookFunc := func(job *model.Job) {
@@ -3740,7 +3734,7 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	dom.DDL().SetHook(hook)
 	injected := false
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -4536,134 +4530,60 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		` PARTITION "pMax" VALUES LESS THAN (MAXVALUE,MAXVALUE))`))
 }
 
-func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
+func TestIssue40135Ver2(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', index(a)) PARTITION BY HASH (a) PARTITIONS 6")
+	tk.MustExec("insert into t40135 values (1, 'md'), (2, 'ma'), (3, 'md'), (4, 'ma'), (5, 'md'), (6, 'ma')")
+	one := true
+	hook := &callback.TestDDLCallback{Do: dom}
+	var checkErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly {
+			tk3.MustExec("delete from t40135 where a = 1")
+		}
+		if one {
+			one = false
+			go func() {
+				_, checkErr = tk1.Exec("alter table t40135 modify column a int NULL")
+				wg.Done()
+			}()
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
+	wg.Wait()
+	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: table is partition table")
+	tk.MustExec("admin check table t40135")
+}
+
+func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
+	t.Skip("waiting for supporting Modify Partition Column again")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database AlterPartTable")
-	tk.MustExec("use AlterPartTable")
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b))`)
-	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// TODO: Why does it allow 💥 as a latin1 character?
-	tk.MustQuery(`select hex(b) from t where a = 34`).Check(testkit.Rows("3334F09F92A5"))
-	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(200) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery(`select hex(b) from t where a = 34`).Check(testkit.Rows("3334F09F92A5"))
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57",
-		"7 07",
-		"8 08"))
-	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
-		"7 07",
-		"8 08",
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57"))
-	tk.MustExec(`alter table t change b c varchar(200) charset utf8mb4`)
-	tk.MustExec(`drop table t`)
-	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b)) partition by range (a) ` +
-		`(partition p0 values less than (10),` +
-		` partition p1 values less than (20),` +
-		` partition p2 values less than (30),` +
-		` partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57",
-		"7 07",
-		"8 08"))
-	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
-		"7 07",
-		"8 08",
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57"))
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`a`)\n" +
-			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-			" PARTITION `p1` VALUES LESS THAN (20),\n" +
-			" PARTITION `p2` VALUES LESS THAN (30),\n" +
-			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(200) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`b`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`a`)\n" +
-			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-			" PARTITION `p1` VALUES LESS THAN (20),\n" +
-			" PARTITION `p2` VALUES LESS THAN (30),\n" +
-			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57",
-		"7 07",
-		"8 08"))
-	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
-		"7 07",
-		"8 08",
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57"))
-	tk.MustExec(`alter table t change b c varchar(150) charset utf8mb4`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows(
-		"t CREATE TABLE `t` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `c` varchar(150) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `b` (`c`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`a`)\n" +
-			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
-			" PARTITION `p1` VALUES LESS THAN (20),\n" +
-			" PARTITION `p2` VALUES LESS THAN (30),\n" +
-			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57",
-		"7 07",
-		"8 08"))
-	tk.MustQuery(`select * from t order by c`).Check(testkit.Rows(""+
-		"7 07",
-		"8 08",
-		"23 23",
-		"34 34💥",
-		"46 46",
-		"57 57"))
-	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
+	schemaName := "truncWarn"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`set sql_mode = default`)
+	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
+	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
+	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
+	tk.MustExec(`set sql_mode = ''`)
+	tk.MustExec(`alter table t modify a varchar(5)`)
+	// Fix the duplicate warning, see https://github.com/pingcap/tidb/issues/38699
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
+		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
 }
 
 func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
@@ -4673,94 +4593,49 @@ func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
 	tk.MustExec(`create table t (a int, b char) partition by range (a) (partition p0 values less than (10))`)
-	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a char, b char) partition by range columns (a) (partition p0 values less than ('z'))`)
-	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]New column does not match partition definitions: [ddl:1567]partition column name cannot be found")
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int, b char) partition by list (a) (partition p0 values in (10))`)
-	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a char, b char) partition by list columns (a) (partition p0 values in ('z'))`)
-	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:8200]New column does not match partition definitions: [ddl:1567]partition column name cannot be found")
+	tk.MustContainErrMsg(`alter table t change a c char`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a int, b char) partition by hash (a) partitions 3`)
-	tk.MustContainErrMsg(`alter table t change a c int`, "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustContainErrMsg(`alter table t change a c int`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
-func TestAlterModifyColumnOnPartitionedTableFail(t *testing.T) {
+func TestDropPartitionKeyColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	schemaName := "modColPartFail"
-	tk.MustExec("create database " + schemaName)
-	tk.MustExec("use " + schemaName)
-	tk.MustExec(`create table t (a int unsigned, b varchar(255), key (b)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
-	tk.MustGetErrCode(`alter table t modify a varchar(255)`, errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode(`alter table t modify a float`, mysql.ErrFieldTypeNotAllowedAsPartitionField)
-	tk.MustExec(`drop table t`)
-	tk.MustExec(`create table t (b int unsigned, a varchar(255), key (b)) partition by range columns (a) (partition p0 values less than (""), partition p1 values less than ("11111"), partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34 💥💥Longer than 11111"),(46,"46"),(57,"57")`)
-	tk.MustExec(`alter table t modify a varchar(50)`)
-	tk.MustGetErrCode(`alter table t modify a float`, mysql.ErrFieldTypeNotAllowedAsPartitionField)
-	tk.MustGetErrCode(`alter table t modify a int`, errno.ErrUnsupportedDDLOperation)
-	tk.MustContainErrMsg(`alter table t modify a varchar(4)`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
-	tk.MustGetErrCode(`alter table t modify a varchar(5)`, errno.WarnDataTruncated)
-	tk.MustExec(`SET SQL_MODE = ''`)
-	tk.MustExec(`alter table t modify a varchar(5)`)
-	// fix https://github.com/pingcap/tidb/issues/38669 and update this
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
-	tk.MustExec(`SET SQL_MODE = DEFAULT`)
-	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
-		"23 23",
-		"34 34 💥💥",
-		"46 46",
-		"57 57",
-		"7 07",
-		"8 08"))
-	tStr := "" +
-		"CREATE TABLE `t` (\n" +
-		"  `b` int(10) unsigned DEFAULT NULL,\n" +
-		"  `a` varchar(5) DEFAULT NULL,\n" +
-		"  KEY `b` (`b`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE COLUMNS(`a`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (''),\n" +
-		" PARTITION `p1` VALUES LESS THAN ('11111'),\n" +
-		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("t " + tStr))
-	tk.MustExec(`drop table t`)
-	tk.MustExec(tStr)
-	tk.MustExec(`drop table t`)
-	tk.MustExec("create table t (a int, b varchar(255), key (b)) partition by range (a) (partition `p-300` values less than (-300), partition p0 values less than (0), partition p300 values less than (300))")
-	tk.MustExec(`insert into t values (-400, "-400"), (-100, "-100"), (0, "0"), (100, "100"), (290, "290")`)
-	tk.MustContainErrMsg(`alter table t modify a int unsigned`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
-	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
-	tk.MustExec(`set sql_mode = ''`)
-	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
-	tk.MustQuery("select * from t partition (`p-300`)").Sort().Check(testkit.Rows("-400 -400"))
-	tk.MustExec(`set sql_mode = default`)
-	tk.MustContainErrMsg(`alter table t modify a smallint`, "[ddl:8200]Unsupported modify column, decreasing length of int may result in truncation and change of partition")
-	tk.MustExec(`alter table t modify a bigint`)
-	tk.MustExec(`drop table t`)
-	tk.MustExec("create table t (a int, b varchar(255), key (b)) partition by range columns (a) (partition `p-300` values less than (-300), partition p0 values less than (0), partition p300 values less than (300))")
-	tk.MustExec(`insert into t values (-400, "-400"), (-100, "-100"), (0, "0"), (100, "100"), (290, "290")`)
-	tk.MustContainErrMsg(`alter table t modify a int unsigned`, "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions")
-	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
-	tk.MustExec(`set sql_mode = ''`)
-	tk.MustContainErrMsg(`alter table t modify a tinyint`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
-	tk.MustQuery("select * from t partition (`p-300`)").Sort().Check(testkit.Rows("-400 -400"))
-	tk.MustExec(`set sql_mode = default`)
-	// OK to decrease, since with RANGE COLUMNS, it will check the partition definition values against the new type
-	tk.MustExec(`alter table t modify a smallint`)
-	tk.MustExec(`alter table t modify a bigint`)
+	tk.MustExec("create database DropPartitionKeyColumn")
+	defer tk.MustExec("drop database DropPartitionKeyColumn")
+	tk.MustExec("use DropPartitionKeyColumn")
 
-	tk.MustExec(`drop table t`)
+	tk.MustExec("create table t1 (a tinyint, b char) partition by range (a) ( partition p0 values less than (10) )")
+	err := tk.ExecToErr("alter table t1 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t1 drop column b")
 
-	tk.MustExec(`create table t (a int, b varchar(255), key (b)) partition by list columns (b) (partition p1 values in ("1", "ab", "12345"), partition p2 values in ("2", "abc", "999999"))`)
-	tk.MustExec(`insert into t values (1, "1"), (2, "2"), (999999, "999999")`)
-	tk.MustContainErrMsg(`alter table t modify column b varchar(5)`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
-	tk.MustExec(`set sql_mode = ''`)
-	tk.MustContainErrMsg(`alter table t modify column b varchar(5)`, "[ddl:8200]New column does not match partition definitions: [ddl:1654]Partition column values of incorrect type")
-	tk.MustExec(`set sql_mode = default`)
+	tk.MustExec("create table t2 (a tinyint, b char) partition by range (a-1) ( partition p0 values less than (10) )")
+	err = tk.ExecToErr("alter table t2 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t2 drop column b")
+
+	tk.MustExec("create table t3 (a tinyint, b char) partition by hash(a) partitions 4;")
+	err = tk.ExecToErr("alter table t3 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t3 drop column b")
+
+	tk.MustExec("create table t4 (a char, b char) partition by list columns (a) ( partition p0 values in ('0'),  partition p1 values in ('a'), partition p2 values in ('b'));")
+	err = tk.ExecToErr("alter table t4 drop column a")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed", err.Error())
+	tk.MustExec("alter table t4 drop column b")
 }

@@ -75,15 +75,23 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
 	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
+	tasks := make([]*NeededItemTask, 0)
 	for _, item := range remainedItems {
 		task := &NeededItemTask{
 			TableItemID: item,
 			ToTimeout:   time.Now().Local().Add(timeout),
 			ResultCh:    sc.StatsLoad.ResultCh,
 		}
-		err := h.AppendNeededItem(task, timeout)
-		if err != nil {
-			return err
+		tasks = append(tasks, task)
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for _, task := range tasks {
+		select {
+		case h.StatsLoad.NeededItemsCh <- task:
+			continue
+		case <-timer.C:
+			return errors.New("sync load stats channel is full and timeout sending task to channel")
 		}
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
@@ -91,9 +99,9 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 }
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
-func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
+func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
-		return true
+		return nil
 	}
 	var errorMsgs []string
 	defer func() {
@@ -120,15 +128,14 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 				delete(resultCheckMap, result.Item)
 				if len(resultCheckMap) == 0 {
 					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-					return true
+					return nil
 				}
 			} else {
-				return false
+				return errors.New("sync load stats channel closed unexpectedly")
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
-			logutil.BgLogger().Warn("SyncWaitStatsLoad timeout")
-			return false
+			return errors.New("sync load stats timeout")
 		}
 	}
 }
@@ -154,27 +161,34 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 	return remainedItems
 }
 
-// AppendNeededItem appends needed columns/indices to ch, if exists, do not append the duplicated one.
+// AppendNeededItem appends needed columns/indices to ch, it is only used for test
 func (h *Handle) AppendNeededItem(task *NeededItemTask, timeout time.Duration) error {
-	return h.writeToChanWithTimeout(h.StatsLoad.NeededItemsCh, task, timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case h.StatsLoad.NeededItemsCh <- task:
+	case <-timer.C:
+		return errors.New("Channel is full and timeout writing to channel")
+	}
+	return nil
 }
 
 var errExit = errors.New("Stop loading since domain is closed")
 
 // StatsReaderContext exported for testing
 type StatsReaderContext struct {
-	reader      *statsReader
+	reader      *statistics.StatsReader
 	createdTime time.Time
 }
 
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupWrapper) {
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
 	readerCtx := &StatsReaderContext{}
 	defer func() {
 		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
 		if readerCtx.reader != nil {
-			err := h.releaseStatsReader(readerCtx.reader, ctx.(sqlexec.RestrictedSQLExecutor))
+			err := readerCtx.reader.Close()
 			if err != nil {
 				logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err))
 			}
@@ -281,13 +295,13 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
 	if readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now()) {
 		if readerCtx.reader != nil {
-			err := h.releaseStatsReader(readerCtx.reader, ctx)
+			err := readerCtx.reader.Close()
 			if err != nil {
 				logutil.BgLogger().Warn("Fail to release stats loader: ", zap.Error(err))
 			}
 		}
 		for {
-			newReader, err := h.getStatsReader(0, ctx)
+			newReader, err := statistics.GetStatsReader(0, ctx)
 			if err != nil {
 				logutil.BgLogger().Error("Fail to new stats loader, retry after a while.", zap.Error(err))
 				time.Sleep(h.Lease() / 10)
@@ -303,7 +317,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statsReader) (*statsWrapper, error) {
+func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statistics.StatsReader) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
@@ -343,7 +357,7 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 			return nil, errors.Trace(err)
 		}
 	}
-	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
+	rows, _, err := reader.Read("select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

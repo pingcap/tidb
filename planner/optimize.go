@@ -73,23 +73,30 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 	return bindRecord, scope, true
 }
 
-// getPlanFromGeneralPlanCache tries to get an available cached plan from the General Plan Cache for this stmt.
-func getPlanFromGeneralPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (core.Plan, types.NameSlice, bool, error) {
+// getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
+func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p core.Plan, ns types.NameSlice, ok bool, err error) {
 	if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		!core.GeneralPlanCacheableWithCtx(sctx, stmt, is) {
+		!core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is) {
 		return nil, nil, false, nil
 	}
-	paramSQL, params, err := core.ParameterizeAST(sctx, stmt)
+	paramSQL, params, err := core.ParameterizeAST(ctx, sctx, stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	val := sctx.GetSessionVars().GetGeneralPlanCacheStmt(paramSQL)
+	defer func() {
+		if err != nil {
+			// keep the stmt unchanged if err so that it can fallback to the normal optimization path.
+			// TODO: add metrics
+			err = core.RestoreASTWithParams(ctx, sctx, stmt, params)
+		}
+	}()
+	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
 	if val == nil {
-		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, stmt)
+		cachedStmt, _, _, err := core.GeneratePlanCacheStmtWithAST(ctx, sctx, paramSQL, stmt)
 		if err != nil {
 			return nil, nil, false, err
 		}
-		sctx.GetSessionVars().AddGeneralPlanCacheStmt(paramSQL, cachedStmt)
+		sctx.GetSessionVars().AddNonPreparedPlanCacheStmt(paramSQL, cachedStmt)
 		val = cachedStmt
 	}
 	cachedStmt := val.(*core.PlanCacheStmt)
@@ -176,11 +183,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		node = stmtNode
 	}
 
-	// try to get Plan from the General Plan Cache
-	if sctx.GetSessionVars().EnableGeneralPlanCache &&
+	// try to get Plan from the NonPrepared Plan Cache
+	if sctx.GetSessionVars().EnableNonPreparedPlanCache &&
 		isStmtNode &&
 		!useBinding { // TODO: support binding
-		cachedPlan, names, ok, err := getPlanFromGeneralPlanCache(ctx, sctx, stmtNode, is)
+		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -208,6 +215,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
 			sessVars.StmtCtx.StmtHints = curStmtHints
+			// update session var by hint /set_var/
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				err := sessVars.SetStmtVar(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+			}
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
@@ -234,6 +248,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			sessVars.FoundInBinding = true
 			if sessVars.StmtCtx.InVerboseExplain {
 				sessVars.StmtCtx.AppendNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
+			} else {
+				sessVars.StmtCtx.AppendExtraNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
 		// Restore the hint to avoid changing the stmt node.
@@ -287,6 +303,25 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	return bestPlan, names, nil
+}
+
+// OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.
+// The node must be prepared first.
+// Compare to Optimize, OptimizeForForeignKeyCascade only build plan by StmtNode,
+// doesn't consider plan cache and plan binding, also doesn't do privilege check.
+func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
+	builder.Init(sctx, is, hintProcessor)
+	p, err := builder.Build(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
@@ -356,6 +391,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
+	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	builder.Init(sctx, is, hintProcessor)
@@ -416,7 +452,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	if !ok {
 		return nil, nil, errors.Errorf("invalid result plan type, should be Execute")
 	}
-	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, execAst.FromGeneralStmt, is, exec.PrepStmt, exec.Params)
+	plan, names, err := core.GetPlanFromSessionPlanCache(ctx, sctx, false, is, exec.PrepStmt, exec.Params)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -547,12 +583,14 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		return
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+	_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmtNode, br.Db, br.OriginalSQL))
 	binding := bindinfo.Binding{
 		BindSQL:   bindSQL,
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
 		Source:    bindinfo.Evolve,
+		SQLDigest: sqlDigestWithDB.String(),
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)

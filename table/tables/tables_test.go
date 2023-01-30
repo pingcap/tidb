@@ -333,7 +333,7 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, len(row))
 	require.Equal(t, types.KindUint64, row[0].Kind())
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
@@ -378,18 +378,18 @@ func TestTableFromMeta(t *testing.T) {
 
 	// For test coverage
 	tbInfo.Columns[0].GeneratedExprString = "a"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.NoError(t, err)
 
 	tbInfo.Columns[0].GeneratedExprString = "test"
-	_, err = tables.TableFromMeta(nil, tbInfo)
+	_, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Error(t, err)
 	tbInfo.Columns[0].State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 	tbInfo.State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo)
+	tb, err = tables.TableFromMeta(autoid.NewAllocators(false), tbInfo)
 	require.Nil(t, tb)
 	require.Error(t, err)
 
@@ -639,7 +639,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, len(records), i)
 
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 	require.Nil(t, txn.Commit(context.Background()))

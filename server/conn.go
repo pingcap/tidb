@@ -75,7 +75,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -833,16 +832,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 		return errAccessDeniedNoPassword.FastGenByArgs(cc.user, host)
 	}
 
-	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host}
-	if authPlugin == mysql.AuthTiDBSessionToken {
-		if !cc.ctx.AuthWithoutVerification(userIdentity) {
-			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
-		}
-		if err = sessionstates.ValidateSessionToken(authData, cc.user); err != nil {
-			logutil.BgLogger().Warn("verify session token failed", zap.String("username", cc.user), zap.Error(err))
-			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
-		}
-	} else if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
+	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host, AuthPlugin: authPlugin}
+	if err = cc.ctx.Auth(userIdentity, authData, cc.salt); err != nil {
 		return err
 	}
 	cc.ctx.SetPort(port)
@@ -1391,6 +1382,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.handleChangeUser(ctx, data)
 	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
 	case mysql.ComStmtPrepare:
+		// For issue 39132, same as ComQuery
+		if len(data) > 0 && data[len(data)-1] == 0 {
+			data = data[:len(data)-1]
+			dataStr = string(hack.String(data))
+		}
 		return cc.handleStmtPrepare(ctx, dataStr)
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx, data)
@@ -1599,90 +1595,6 @@ func (cc *clientConn) writeReq(ctx context.Context, filePath string) error {
 	return cc.flush(ctx)
 }
 
-func insertDataWithCommit(ctx context.Context, prevData,
-	curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
-	var err error
-	var reachLimit bool
-	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
-		if err != nil {
-			return nil, err
-		}
-		if !reachLimit {
-			break
-		}
-		// push into commit task queue
-		err = loadDataInfo.EnqOneTask(ctx)
-		if err != nil {
-			return prevData, err
-		}
-		curData = prevData
-		prevData = nil
-	}
-	return prevData, nil
-}
-
-// processStream process input stream from network
-func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.LoadDataInfo, wg *sync.WaitGroup) {
-	var err error
-	var shouldBreak bool
-	var prevData, curData []byte
-	defer func() {
-		r := recover()
-		if r != nil {
-			logutil.Logger(ctx).Error("process routine panicked",
-				zap.Reflect("r", r),
-				zap.Stack("stack"))
-		}
-		if err != nil || r != nil {
-			loadDataInfo.ForceQuit()
-		} else {
-			loadDataInfo.CloseTaskQueue()
-		}
-		wg.Done()
-	}()
-	for {
-		curData, err = cc.readPacket()
-		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
-				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
-				break
-			}
-		}
-		if len(curData) == 0 {
-			loadDataInfo.Drained = true
-			shouldBreak = true
-			if len(prevData) == 0 {
-				break
-			}
-		}
-		select {
-		case <-loadDataInfo.QuitCh:
-			err = errors.New("processStream forced to quit")
-		default:
-		}
-		if err != nil {
-			break
-		}
-		// prepare batch and enqueue task
-		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
-		if err != nil {
-			break
-		}
-		if shouldBreak {
-			break
-		}
-	}
-	if err != nil {
-		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
-		return
-	}
-	if err = loadDataInfo.EnqOneTask(ctx); err != nil {
-		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
-		return
-	}
-}
-
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
 func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor.LoadDataInfo) error {
@@ -1693,29 +1605,13 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if loadDataInfo == nil {
 		return errors.New("load data info is empty")
 	}
-	if !loadDataInfo.Table.Meta().IsBaseTable() {
-		return errors.New("can only load data into base tables")
-	}
+
 	err := cc.writeReq(ctx, loadDataInfo.Path)
 	if err != nil {
 		return err
 	}
 
-	loadDataInfo.InitQueues()
-	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
-	loadDataInfo.StartStopWatcher()
-	// let stop watcher goroutine quit
-	defer loadDataInfo.ForceQuit()
-	err = sessiontxn.NewTxn(ctx, loadDataInfo.Ctx)
-	if err != nil {
-		return err
-	}
-	// processStream process input data, enqueue commit task
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-	go processStream(ctx, cc, loadDataInfo, wg)
-	err = loadDataInfo.CommitWork(ctx)
-	wg.Wait()
+	err = loadDataInfo.Load(ctx, cc.readPacket)
 	if err != nil {
 		if !loadDataInfo.Drained {
 			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")

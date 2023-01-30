@@ -227,12 +227,21 @@ type Controller struct {
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
+	dupIndicator   *atomic.Bool
 
 	preInfoGetter       PreRestoreInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
 }
 
+// LightningStatus provides the finished bytes and total bytes of the current task.
+// It should keep the value after restart from checkpoint.
+// When it is tidb backend, FinishedFileSize can be counted after chunk data is
+// restored to tidb. When it is local backend it's counted after whole engine is
+// imported.
+// TotalFileSize may be an estimated value, so when the task is finished, it may
+// not equal to FinishedFileSize.
 type LightningStatus struct {
+	backend          string
 	FinishedFileSize atomic.Int64
 	TotalFileSize    atomic.Int64
 }
@@ -255,6 +264,8 @@ type ControllerParam struct {
 	CheckpointStorage storage.ExternalStorage
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
 	CheckpointName string
+	// DupIndicator can expose the duplicate detection result to the caller
+	DupIndicator *atomic.Bool
 }
 
 func NewRestoreController(
@@ -353,6 +364,7 @@ func NewRestoreControllerWithPauser(
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
+	p.Status.backend = cfg.TikvImporter.Backend
 
 	var metaBuilder metaMgrBuilder
 	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal
@@ -421,6 +433,7 @@ func NewRestoreControllerWithPauser(
 		errorMgr:       errorMgr,
 		status:         p.Status,
 		taskMgr:        nil,
+		dupIndicator:   p.DupIndicator,
 
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
@@ -925,7 +938,7 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 					if _, ok := fileChunks[c.Key.Path]; !ok {
 						fileChunks[c.Key.Path] = 0.0
 					}
-					remainChunkCnt := float64(c.Chunk.EndOffset-c.Chunk.Offset) / float64(c.Chunk.EndOffset-c.Key.Offset)
+					remainChunkCnt := float64(c.UnfinishedSize()) / float64(c.TotalSize())
 					fileChunks[c.Key.Path] += remainChunkCnt
 				}
 			}
@@ -940,7 +953,8 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
+					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat &&
+						!cfg.CSV.Header && fileMeta.FileMeta.Compression == mydump.CompressionNone {
 						estimatedChunkCount += math.Round(float64(fileMeta.FileMeta.FileSize) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount++
@@ -1606,7 +1620,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			} else {
 				for _, eng := range cp.Engines {
 					for _, chunk := range eng.Chunks {
-						totalDataSizeToRestore += chunk.Chunk.EndOffset - chunk.Chunk.Offset
+						totalDataSizeToRestore += chunk.UnfinishedSize()
 					}
 				}
 			}
@@ -1832,7 +1846,7 @@ func (rc *Controller) fullCompact(ctx context.Context) error {
 
 	// wait until any existing level-1 compact to complete first.
 	task := log.FromContext(ctx).Begin(zap.InfoLevel, "wait for completion of existing level 1 compaction")
-	for !rc.compactState.CAS(compactStateIdle, compactStateDoing) {
+	for !rc.compactState.CompareAndSwap(compactStateIdle, compactStateDoing) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	task.End(zap.ErrorLevel, nil)
@@ -1892,7 +1906,7 @@ func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode)
 }
 
 func (rc *Controller) enforceDiskQuota(ctx context.Context) {
-	if !rc.diskQuotaState.CAS(diskQuotaStateIdle, diskQuotaStateChecking) {
+	if !rc.diskQuotaState.CompareAndSwap(diskQuotaStateIdle, diskQuotaStateChecking) {
 		// do not run multiple the disk quota check / import simultaneously.
 		// (we execute the lock check in background to avoid blocking the cron thread)
 		return
@@ -2127,6 +2141,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
 			}
+			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
+			if err := rc.checkCDCPiTR(ctx); err != nil {
+				return common.ErrCheckCDCPiTR.Wrap(err).GenWithStackByArgs()
+			}
 		}
 	}
 
@@ -2190,23 +2208,7 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	var (
-		reader       storage.ReadSeekCloser
-		compressType storage.CompressType
-		err          error
-	)
-	switch {
-	case chunk.FileMeta.Type == mydump.SourceTypeParquet:
-		reader, err = mydump.OpenParquetReader(ctx, store, chunk.FileMeta.Path, chunk.FileMeta.FileSize)
-	case chunk.FileMeta.Compression != mydump.CompressionNone:
-		compressType, err = mydump.ToStorageCompressType(chunk.FileMeta.Compression)
-		if err != nil {
-			break
-		}
-		reader, err = storage.WithCompression(store, compressType).Open(ctx, chunk.FileMeta.Path)
-	default:
-		reader, err = store.Open(ctx, chunk.FileMeta.Path)
-	}
+	reader, err := openReader(ctx, chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2298,6 +2300,8 @@ type deliveredKVs struct {
 	columns []string
 	offset  int64
 	rowID   int64
+
+	realOffset int64 // indicates file reader's current position, only used for compressed files
 }
 
 type deliverResult struct {
@@ -2326,6 +2330,8 @@ func (cr *chunkRestore) deliverLoop(
 
 	dataSynced := true
 	hasMoreKVs := true
+	var startRealOffset, currRealOffset int64 // save to 0 at first
+
 	for hasMoreKVs {
 		var dataChecksum, indexChecksum verify.KVChecksum
 		var columns []string
@@ -2334,6 +2340,8 @@ func (cr *chunkRestore) deliverLoop(
 		// chunk checkpoint should stay the same
 		startOffset := cr.chunk.Chunk.Offset
 		currOffset := startOffset
+		startRealOffset = cr.chunk.Chunk.RealOffset
+		currRealOffset = startRealOffset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
 
 	populate:
@@ -2348,12 +2356,14 @@ func (cr *chunkRestore) deliverLoop(
 					if p.kvs == nil {
 						// This is the last message.
 						currOffset = p.offset
+						currRealOffset = p.realOffset
 						hasMoreKVs = false
 						break populate
 					}
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
+					currRealOffset = p.realOffset
 					rowID = p.rowID
 				}
 			case <-ctx.Done():
@@ -2420,6 +2430,7 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Checksum.Add(&dataChecksum)
 		cr.chunk.Checksum.Add(&indexChecksum)
 		cr.chunk.Chunk.Offset = currOffset
+		cr.chunk.Chunk.RealOffset = currRealOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
 
 		if m, ok := metric.FromContext(ctx); ok {
@@ -2427,11 +2438,21 @@ func (cr *chunkRestore) deliverLoop(
 			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
 			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
 			// TODO: reproduce and find the root cause and fix it completely
-			if currOffset >= startOffset {
-				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+			var lowOffset, highOffset int64
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
+				lowOffset, highOffset = startRealOffset, currRealOffset
 			} else {
-				deliverLogger.Warn("offset go back", zap.Int64("curr", currOffset),
-					zap.Int64("start", startOffset))
+				lowOffset, highOffset = startOffset, currOffset
+			}
+			delta := highOffset - lowOffset
+			if delta >= 0 {
+				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
+				if rc.status != nil && rc.status.backend == config.BackendTiDB {
+					rc.status.FinishedFileSize.Add(delta)
+				}
+			} else {
+				deliverLogger.Warn("offset go back", zap.Int64("curr", highOffset),
+					zap.Int64("start", lowOffset))
 			}
 		}
 
@@ -2441,6 +2462,11 @@ func (cr *chunkRestore) deliverLoop(
 		}
 		failpoint.Inject("SlowDownWriteRows", func() {
 			deliverLogger.Warn("Slowed down write rows")
+			finished := rc.status.FinishedFileSize.Load()
+			total := rc.status.TotalFileSize.Load()
+			deliverLogger.Warn("PrintStatus Failpoint",
+				zap.Int64("finished", finished),
+				zap.Int64("total", total))
 		})
 		failpoint.Inject("FailAfterWriteRows", nil)
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after written
@@ -2607,14 +2633,22 @@ func (cr *chunkRestore) encodeLoop(
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
 		curOffset := offset
-		var newOffset, rowID int64
+		var newOffset, rowID, realOffset int64
 		var kvSize uint64
+		var realOffsetErr error
 	outLoop:
 		for !canDeliver {
 			readDurStart := time.Now()
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
+				realOffset, realOffsetErr = cr.parser.RealPos()
+				if realOffsetErr != nil {
+					logger.Warn("fail to get data engine RealPos, progress may not be accurate",
+						log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
+				}
+			}
 
 			switch errors.Cause(err) {
 			case nil:
@@ -2676,7 +2710,8 @@ func (cr *chunkRestore) encodeLoop(
 				continue
 			}
 
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset, rowID: rowID})
+			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
+				rowID: rowID, realOffset: realOffset})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
@@ -2708,7 +2743,7 @@ func (cr *chunkRestore) encodeLoop(
 		}
 	}
 
-	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset}})
+	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset, realOffset: cr.chunk.FileMeta.FileSize}})
 	return
 }
 
@@ -2770,4 +2805,21 @@ func (cr *chunkRestore) restore(
 		deliverErr = ctx.Err()
 	}
 	return errors.Trace(firstErr(encodeErr, deliverErr))
+}
+
+func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) (
+	reader storage.ReadSeekCloser, err error) {
+	switch {
+	case fileMeta.Type == mydump.SourceTypeParquet:
+		reader, err = mydump.OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
+	case fileMeta.Compression != mydump.CompressionNone:
+		compressType, err2 := mydump.ToStorageCompressType(fileMeta.Compression)
+		if err2 != nil {
+			return nil, err2
+		}
+		reader, err = storage.WithCompression(store, compressType).Open(ctx, fileMeta.Path)
+	default:
+		reader, err = store.Open(ctx, fileMeta.Path)
+	}
+	return
 }

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/cobra"
@@ -58,14 +57,22 @@ const (
 	FlagStreamRestoreTS = "restored-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
+	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
+	FlagPiTRBatchCount  = "pitr-batch-count"
+	FlagPiTRBatchSize   = "pitr-batch-size"
+	FlagPiTRConcurrency = "pitr-concurrency"
 
-	defaultRestoreConcurrency       = 128
-	defaultRestoreStreamConcurrency = 16
-	maxRestoreBatchSizeLimit        = 10240
-	defaultPDConcurrency            = 1
-	defaultBatchFlushInterval       = 16 * time.Second
-	defaultFlagDdlBatchSize         = 128
-	resetSpeedLimitRetryTimes       = 3
+	FlagResetSysUsers = "reset-sys-users"
+
+	defaultPiTRBatchCount     = 8
+	defaultPiTRBatchSize      = 16 * 1024 * 1024
+	defaultRestoreConcurrency = 128
+	defaultPiTRConcurrency    = 16
+	maxRestoreBatchSizeLimit  = 10240
+	defaultPDConcurrency      = 1
+	defaultBatchFlushInterval = 16 * time.Second
+	defaultFlagDdlBatchSize   = 128
+	resetSpeedLimitRetryTimes = 3
 )
 
 const (
@@ -88,6 +95,8 @@ type RestoreCommonConfig struct {
 
 	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
+
+	ResetSysUsers []string `json:"reset-sys-users" toml:"reset-sys-users"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -113,10 +122,12 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"concurrency pd-relative operations like split & scatter.")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
-		"after how long a restore batch would be auto sended.")
+		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
-		"batch size for ddl to create a batch of tabes once.")
+		"batch size for ddl to create a batch of tables once.")
 	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
+	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
+	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
@@ -145,6 +156,10 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 			return errors.Trace(err)
 		}
 	}
+	cfg.ResetSysUsers, err = flags.GetStringArray(FlagResetSysUsers)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return errors.Trace(err)
 }
 
@@ -169,6 +184,9 @@ type RestoreConfig struct {
 	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
 	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
+	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
+	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
+	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -200,6 +218,9 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
+	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
+	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
+	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -228,6 +249,15 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 			FlagStreamStartTS, FlagStreamFullBackupStorage)
 	}
 
+	if cfg.PitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.PitrBatchSize, err = flags.GetUint32(FlagPiTRBatchSize); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -354,10 +384,19 @@ func (cfg *RestoreConfig) Adjust() {
 }
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
-	if cfg.Config.Concurrency == 0 || cfg.Config.Concurrency > defaultRestoreStreamConcurrency {
-		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
-		cfg.Config.Concurrency = defaultRestoreStreamConcurrency
+	if cfg.PitrConcurrency == 0 {
+		cfg.PitrConcurrency = defaultPiTRConcurrency
 	}
+	if cfg.PitrBatchCount == 0 {
+		cfg.PitrBatchCount = defaultPiTRBatchCount
+	}
+	if cfg.PitrBatchSize == 0 {
+		cfg.PitrBatchSize = defaultPiTRBatchSize
+	}
+	// another goroutine is used to iterate the backup file
+	cfg.PitrConcurrency += 1
+	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
+	cfg.Config.Concurrency = cfg.PitrConcurrency
 }
 
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
@@ -424,42 +463,6 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
-func CheckNewCollationEnable(
-	backupNewCollationEnable string,
-	g glue.Glue,
-	storage kv.Storage,
-	CheckRequirements bool,
-) error {
-	if backupNewCollationEnable == "" {
-		if CheckRequirements {
-			return errors.Annotatef(berrors.ErrUnknown,
-				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
-					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\" to manually check the config. "+
-					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip this check")
-		}
-		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
-		return nil
-	}
-
-	se, err := g.CreateSession(storage)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
-		return errors.Annotatef(berrors.ErrUnknown,
-			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
-			backupNewCollationEnable, newCollationEnable)
-	}
-	return nil
-}
-
 func isFullRestore(cmdName string) bool {
 	return cmdName == FullRestoreCmd
 }
@@ -502,10 +505,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
 	}
 
 	keepaliveCfg.PermitWithoutStream = true
@@ -531,7 +531,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+	if err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -555,7 +555,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
-	restoreTS, err := client.GetTS(ctx)
+	restoreTS, err := client.GetTSWithRetry(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

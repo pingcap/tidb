@@ -354,12 +354,17 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		)
 	}
 	c := s3.New(ses, s3CliConfigs...)
-	// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
-	// we need reassign credential to be compatible with minio authentication.
 	confCred := ses.Config.Credentials
 	setCredOpt := func(req *request.Request) {
+		// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+		// we need reassign credential to be compatible with minio authentication.
 		if confCred != nil {
 			req.Config.Credentials = confCred
+		}
+		// s3manager.GetBucketRegionWithClient use path style addressing default.
+		// we need set S3ForcePathStyle by our config if we set endpoint.
+		if qs.Endpoint != "" {
+			req.Config.S3ForcePathStyle = ses.Config.S3ForcePathStyle
 		}
 	}
 	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
@@ -399,7 +404,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		options: &qs,
 	}
 	if opts.CheckS3ObjectLockOptions {
-		backend.ObjectLockEnabled = s3Storage.isObjectLockEnabled()
+		backend.ObjectLockEnabled = s3Storage.IsObjectLockEnabled()
 	}
 	return s3Storage, nil
 }
@@ -446,7 +451,7 @@ func getObject(svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
-func (rs *S3Storage) isObjectLockEnabled() bool {
+func (rs *S3Storage) IsObjectLockEnabled() bool {
 	input := &s3.GetObjectLockConfigurationInput{
 		Bucket: aws.String(rs.options.Bucket),
 	}
@@ -455,8 +460,8 @@ func (rs *S3Storage) isObjectLockEnabled() bool {
 		log.Warn("failed to check object lock for bucket", zap.String("bucket", rs.options.Bucket), zap.Error(err))
 		return false
 	}
-	if resp.ObjectLockConfiguration != nil {
-		if s3.ObjectLockEnabledEnabled == *resp.ObjectLockConfiguration.ObjectLockEnabled {
+	if resp != nil && resp.ObjectLockConfiguration != nil {
+		if s3.ObjectLockEnabledEnabled == aws.StringValue(resp.ObjectLockConfiguration.ObjectLockEnabled) {
 			return true
 		}
 	}

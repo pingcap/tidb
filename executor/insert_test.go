@@ -419,6 +419,34 @@ func TestInsertValueForCastDecimalField(t *testing.T) {
 	tk.MustQuery(`select cast(a as decimal) from t1;`).Check(testkit.Rows(`9999999999`))
 }
 
+func TestInsertForMultiValuedIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a json, b int, unique index idx((cast(a as signed array))));`)
+	tk.MustExec(`insert into t1 values ('[1,11]', 1);`)
+	tk.MustExec(`insert into t1 values ('[2, 22]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustGetErrMsg(`insert into t1 values ('[2, 222]', 2);`, "[kv:1062]Duplicate entry '2' for key 't1.idx'")
+	tk.MustExec(`replace into t1 values ('[1, 10]', 10)`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[2, 22] 2`, `[1, 10] 10`))
+	tk.MustExec(`replace into t1 values ('[1, 2]', 1)`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 2] 1`))
+	tk.MustExec(`replace into t1 values ('[1, 11]', 1)`)
+	tk.MustExec(`insert into t1 values ('[2, 22]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustExec(`insert ignore into t1 values ('[1]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustExec(`insert ignore into t1 values ('[1, 2]', 2);`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 2`))
+	tk.MustExec(`insert into t1 values ('[2]', 2) on duplicate key update b = 10;`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`[1, 11] 1`, `[2, 22] 10`))
+	tk.MustGetErrMsg(`insert into t1 values ('[2, 1]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[1,2]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+	tk.MustGetErrMsg(`insert into t1 values ('[11, 22]', 2) on duplicate key update a = '[1,2]';`, "[kv:1062]Duplicate entry '[1, 2]' for key 't1.idx'")
+}
+
 func TestInsertDateTimeWithTimeZone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -895,6 +923,22 @@ func TestInsertErrorMsg(t *testing.T) {
 	tk.MustExec(`create table t (a int primary key, b datetime, d date)`)
 	tk.MustContainErrMsg(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`,
 		"Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1")
+
+	// test for Issue #35289
+	tk.MustExec("CREATE TABLE t1 (a BINARY(16) PRIMARY KEY);")
+	tk.MustExec(`INSERT INTO t1 VALUES (AES_ENCRYPT('a','a'));`)
+	err := tk.ExecToErr(`INSERT INTO t1 VALUES (AES_ENCRYPT('a','a'));`)
+	require.Error(t, err, `ERROR 1062 (23000): Duplicate entry '{ W]\xA1\x06u\x9D\xBD\xB1\xA3.\xE2\xD9\xA7t' for key 't1.PRIMARY'`)
+
+	tk.MustExec(`INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));`)
+	err = tk.ExecToErr(`INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));`)
+	require.Error(t, err, "ERROR 1062 (23000): Duplicate entry '\\x0C\\x1E\\x8DG`\\xEB\\x93 F&BC\\xF0\\xB5\\xF4\\xB7' for key 't1.PRIMARY'")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a bit primary key) engine=innodb;")
+	tk.MustExec("insert into t1 values (b'0');")
+	err = tk.ExecToErr(`insert into t1 values (b'0');`)
+	require.Error(t, err, `ERROR 1062 (23000): Duplicate entry '\x00' for key 't1.PRIMARY'`)
 }
 
 func TestIssue16366(t *testing.T) {
@@ -1056,8 +1100,7 @@ func TestInsertRuntimeStat(t *testing.T) {
 	stats.Merge(stats.Clone())
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
 	stats.FKCheckTime = time.Second
-	stats.FKCheckStats = &executor.FKCheckRuntimeStats{Keys: 20}
-	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s, fk_num: 20}", stats.String())
+	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}", stats.String())
 }
 
 func TestDuplicateEntryMessage(t *testing.T) {

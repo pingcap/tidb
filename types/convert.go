@@ -758,6 +758,8 @@ func ToString(value interface{}) (string, error) {
 		return v.String(), nil
 	case Set:
 		return v.String(), nil
+	case BinaryJSON:
+		return v.String(), nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", value, value)
 	}

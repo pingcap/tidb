@@ -103,6 +103,8 @@ import (
 	hintSwapJoinInputs        "SWAP_JOIN_INPUTS"
 	hintUseIndexMerge         "USE_INDEX_MERGE"
 	hintUseIndex              "USE_INDEX"
+	hintKeepOrder             "KEEP_ORDER"
+	hintNoKeepOrder           "NO_KEEP_ORDER"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -607,6 +609,8 @@ SupportedIndexLevelOptimizerHintName:
 |	"IGNORE_INDEX"
 |	"USE_INDEX_MERGE"
 |	"FORCE_INDEX"
+|	"KEEP_ORDER"
+|	"NO_KEEP_ORDER"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -699,6 +703,8 @@ Identifier:
 |	"SWAP_JOIN_INPUTS"
 |	"USE_INDEX_MERGE"
 |	"USE_INDEX"
+|	"KEEP_ORDER"
+|	"NO_KEEP_ORDER"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"
