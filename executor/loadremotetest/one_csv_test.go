@@ -59,7 +59,7 @@ func (s *mockGCSSuite) TestLoadCSV() {
 func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")
-	s.tk.MustExec("CREATE TABLE load_csv.t (i INT, s varchar(32));")
+	s.tk.MustExec("CREATE TABLE load_csv.t (s varchar(32), i INT);")
 
 	sql := fmt.Sprintf(`LOAD DATA REMOTE INFILE 'gcs://test-bucket/ignore-lines-bad-syntax.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'

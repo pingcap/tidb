@@ -55,35 +55,6 @@ func runTestCasesCSV(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int
 	}
 }
 
-func runTestCasesCSVIgnoreNLines(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int64, cases []testCase, ignoreNLines int) {
-	for _, tc := range cases {
-		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
-		assert.NoError(t, err)
-		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(tc.input), blockBufSize, ioWorkers, false, charsetConvertor)
-		assert.NoError(t, err)
-
-		for ignoreNLines > 0 {
-			// IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
-			_, _, err = parser.ReadUntilTerminator()
-			if errors.Cause(err) == io.EOF {
-				assert.Len(t, tc.expected, 0, "input = %q", tc.input)
-				return
-			}
-			assert.NoError(t, err)
-			ignoreNLines--
-		}
-
-		for i, row := range tc.expected {
-			comment := fmt.Sprintf("input = %q, row = %d", tc.input, i+1)
-			e := parser.ReadRow()
-			assert.NoErrorf(t, e, "input = %q, row = %d, error = %s", tc.input, i+1, errors.ErrorStack(e))
-			assert.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
-			assert.Equal(t, row, parser.LastRow().Row, comment)
-		}
-		assert.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, "input = %q", tc.input)
-	}
-}
-
 func runFailingTestCasesCSV(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
 		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
@@ -962,6 +933,29 @@ func TestTerminator(t *testing.T) {
 		},
 	}
 	runTestCasesCSV(t, &cfg, 1, testCases)
+}
+
+func TestReadUntilTerminator(t *testing.T) {
+	cfg := config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  "#",
+			Terminator: "#\n",
+		},
+	}
+	parser, err := mydump.NewCSVParser(
+		context.Background(),
+		&cfg.CSV,
+		mydump.NewStringReader("xxx1#2#3#4#\n"),
+		int64(config.ReadBlockSize),
+		ioWorkers,
+		false,
+		nil,
+	)
+	require.NoError(t, err)
+	content, idx, err := parser.ReadUntilTerminator()
+	require.NoError(t, err)
+	require.Equal(t, "xxx1#2#3#4#\n", string(content))
+	require.Equal(t, int64(12), idx)
 }
 
 func TestStartingBy(t *testing.T) {

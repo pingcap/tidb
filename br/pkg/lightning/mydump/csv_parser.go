@@ -410,7 +410,6 @@ outside:
 			}
 			foundStartingByThisLine = true
 			content = content[idx+len(parser.startingBy):]
-			content = append(content, parser.newLine...)
 			parser.buf = append(content, parser.buf...)
 			parser.pos = oldPos + int64(idx+len(parser.startingBy))
 		}
@@ -459,12 +458,12 @@ outside:
 			// new line = end of record (ignore empty lines)
 			prevToken = firstToken
 			if isEmptyLine {
-				continue
+				//continue
 			}
 			// skip lines only contain whitespaces
 			if err == nil && whitespaceLine && len(bytes.TrimSpace(parser.recordBuffer)) == 0 {
-				parser.recordBuffer = parser.recordBuffer[:0]
-				continue
+				//parser.recordBuffer = parser.recordBuffer[:0]
+				//continue
 			}
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
 			break outside
@@ -620,20 +619,26 @@ func (parser *CSVParser) ReadColumns() error {
 
 // ReadUntilTerminator seeks the file until the terminator token is found, and
 // returns
-// - the content before terminator
+// - the content with terminator
 // - the file offset beyond the terminator
 // - error
 // Note that the terminator string pattern may be the content of a field, which
 // means it's inside quotes. Caller should make sure to handle this case.
 func (parser *CSVParser) ReadUntilTerminator() ([]byte, int64, error) {
+	var ret []byte
 	for {
 		content, firstByte, err := parser.readUntil(&parser.newLineByteSet)
+		ret = append(ret, content...)
+		ret = append(ret, firstByte)
 		if err != nil {
 			return content, 0, err
 		}
 		parser.skipBytes(1)
 		if ok, err := parser.tryReadNewLine(firstByte); ok || err != nil {
-			return content, parser.pos, err
+			if len(parser.newLine) >= 1 {
+				ret = append(ret, parser.newLine[1:]...)
+			}
+			return ret, parser.pos, err
 		}
 	}
 }

@@ -225,22 +225,10 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 		wg.Done()
 	}()
 
-	cfg := &config.CSVConfig{
-		Separator: loadDataInfo.FieldsInfo.Terminated,
-		// TODO: optionally enclosed?
-		Delimiter:       string([]byte{loadDataInfo.FieldsInfo.Enclosed}),
-		Terminator:      loadDataInfo.LinesInfo.Terminated,
-		NotNull:         false,
-		Null:            `\N`, // TODO: right?
-		Header:          false,
-		TrimLastSep:     false,
-		BackslashEscape: loadDataInfo.FieldsInfo.Escaped == '\\',
-		StartingBy:      loadDataInfo.LinesInfo.Starting,
-	}
 	// TODO: use parser interface
 	csvParser, err = mydump.NewCSVParser(
 		ctx,
-		cfg,
+		loadDataInfo.GenerateCSVConfig(),
 		reader,
 		int64(config.ReadBlockSize),
 		nil,
@@ -260,7 +248,7 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 			logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
 			return
 		}
-		if len(loadDataInfo.rows) == 0 {
+		if loadDataInfo.curBatchCnt == 0 {
 			return
 		}
 		if err = loadDataInfo.enqOneTask(ctx); err != nil {
@@ -630,44 +618,13 @@ loop:
 	return -1
 }
 
-// getLine returns a line, curData, the next data start index and a bool value.
-// If it has starting symbol the bool is true, otherwise is false.
-func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, []byte, bool) {
-	if prevData != nil {
-		curData = append(prevData, curData...)
-	}
-	startLen := len(e.LinesInfo.Starting)
-	if startLen != 0 {
-		if len(curData) < startLen {
-			return nil, curData, false
-		}
-		var ok bool
-		curData, ok = e.getValidData(curData)
-		if !ok {
-			return nil, curData, false
-		}
-	}
-	var endIdx int
-	if ignore {
-		endIdx = strings.Index(string(hack.String(curData[startLen:])), e.LinesInfo.Terminated)
-	} else {
-		endIdx = e.indexOfTerminator(curData[startLen:])
-	}
-
-	if endIdx == -1 {
-		return nil, curData, true
-	}
-
-	return curData[startLen : startLen+endIdx], curData[startLen+endIdx+len(e.LinesInfo.Terminated):], true
-}
-
 // ReadRows reads rows from parser. When parser's reader meet EOF, it will return
 // nil. For other errors it will return directly. When the rows batch is full it
 // will also return nil.
-// The result rows are saved in e.rows, caller can check if it's empty to know the
-// data source has meet EOF.
+// The result rows are saved in e.rows and update some members, caller can check
+// if curBatchCnt == 0 to know if reached EOF.
 func (e *LoadDataInfo) ReadRows(ctx context.Context, parser *mydump.CSVParser) error {
-	if e.IgnoreLines > 0 {
+	for e.IgnoreLines > 0 {
 		_, _, err := parser.ReadUntilTerminator()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
@@ -811,6 +768,23 @@ func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error
 	return nil
 }
 
+// GenerateCSVConfig generates a CSV config for parser from LoadDataInfo.
+func (e *LoadDataInfo) GenerateCSVConfig() *config.CSVConfig {
+	return &config.CSVConfig{
+		Separator: e.FieldsInfo.Terminated,
+		// TODO: optionally enclosed?
+		Delimiter:   string([]byte{e.FieldsInfo.Enclosed}),
+		Terminator:  e.LinesInfo.Terminated,
+		NotNull:     false,
+		Null:        `\N`, // TODO: right?
+		Header:      false,
+		TrimLastSep: false,
+		// TODO: escaped is not \
+		BackslashEscape: e.FieldsInfo.Escaped == '\\',
+		StartingBy:      e.LinesInfo.Starting,
+	}
+}
+
 var _ io.ReadSeekCloser = (*SimpleSeekerOnReadCloser)(nil)
 
 // SimpleSeekerOnReadCloser provides Seek(0, SeekCurrent) on ReadCloser.
@@ -824,12 +798,14 @@ func NewSimpleSeekerOnReadCloser(r io.ReadCloser) *SimpleSeekerOnReadCloser {
 	return &SimpleSeekerOnReadCloser{r: r}
 }
 
+// Read implements io.Reader.
 func (s *SimpleSeekerOnReadCloser) Read(p []byte) (n int, err error) {
 	n, err = s.r.Read(p)
 	s.pos += n
 	return
 }
 
+// Seek implements io.Seeker.
 func (s *SimpleSeekerOnReadCloser) Seek(offset int64, whence int) (int64, error) {
 	// only support get reader's current offset
 	if offset == 0 && whence == io.SeekCurrent {
@@ -838,6 +814,7 @@ func (s *SimpleSeekerOnReadCloser) Seek(offset int64, whence int) (int64, error)
 	return 0, errors.Errorf("unsupported seek on SimpleSeekerOnReadCloser, offset: %d whence: %d", offset, whence)
 }
 
+// Close implements io.Closer.
 func (s *SimpleSeekerOnReadCloser) Close() error {
 	return s.r.Close()
 }

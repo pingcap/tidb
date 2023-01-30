@@ -1614,6 +1614,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	// use Pipe to convert cc.readPacket to io.Reader
 	r, w := io.Pipe()
 	go func() {
+		//nolint: errcheck
 		defer w.Close()
 
 		var (
