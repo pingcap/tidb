@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"golang.org/x/exp/slices"
@@ -317,7 +316,10 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	bindRecords := slice.Copy(tmp)
+	bindRecords := make([]*bindinfo.BindRecord, 0, len(tmp))
+	for i, bindRecord := range tmp {
+		bindRecords[i] = bindRecord.Copy()
+	}
 	// Remove the invalid bindRecord.
 	ind := 0
 	for _, bindData := range bindRecords {

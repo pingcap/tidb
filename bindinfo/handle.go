@@ -1129,7 +1129,12 @@ const (
 
 func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 	cache := h.bindInfo.Value.Load().(*bindCache)
-	for _, bindRecord := range cache.GetAllBindRecords() {
+	tmp := cache.GetAllBindRecords()
+	bindRecords := make([]*BindRecord, 0, len(tmp))
+	for i, bindRecord := range tmp {
+		bindRecords[i] = bindRecord.Copy()
+	}
+	for _, bindRecord := range bindRecords {
 		for _, bind := range bindRecord.Bindings {
 			if bind.Status == PendingVerify {
 				return bindRecord.OriginalSQL, bindRecord.Db, bind
