@@ -3685,3 +3685,20 @@ from
 		`  └─Selection_18 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)`,
 		`    └─TableRangeScan_17 1.00 cop[tikv] table:c range: decided by [test39999.t.txn_account_id test39999.t.serial_id], keep order:false`))
 }
+
+func TestIssue40803(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`set tidb_enable_clustered_index=1`)
+	tk.MustExec(`set tidb_partition_prune_mode=dynamic`)
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1  (c_int int, c_str varchar(40) character set latin1 collate latin1_bin, c_datetime datetime, c_timestamp timestamp, c_double double, c_decimal decimal(12, 6), c_enum enum('blue','green','red','yellow','white','orange','purple'), primary key (c_datetime) , key(c_int) , key(c_str(27)) , key(c_decimal)  ) partition by range (to_days(c_datetime)) ( partition p0 values less than (to_days('2020-02-01')), partition p1 values less than (to_days('2020-04-01')), partition p2 values less than (to_days('2020-06-01')), partition p3 values less than maxvalue) `)
+	tk.MustExec(`create table t2  like t1 `)
+	tk.MustExec(`insert into t1 values (1, 'laughing brahmagupta', '2020-04-21 22:48:57', '2020-04-13 15:32:09', 67.158610, 6.460, 'white'), (2, 'silly brattain', '2020-03-13 12:46:14', '2020-01-31 23:32:03', 39.159617, 9.997, 'yellow'), (3, 'keen proskuriakova', '2020-06-28 16:29:23', '2020-05-01 02:48:38', 10.036821, 5.438, 'red'), (4, 'festive faraday', '2020-05-31 22:20:23', '2020-03-21 03:20:34', 88.259904, 2.554, 'white'), (5, 'peaceful bouman', '2020-04-08 18:39:24', '2020-02-10 03:48:01', 51.904213, 9.230, 'yellow')`)
+	tk.MustExec(`insert into t1 values (6, 'stupefied jepsen', '2020-03-19 20:09:25', '2020-01-11 02:01:41', 32.827268, 1.358, 'yellow'), (7, 'exciting engelbart', '2020-02-28 17:51:30', '2020-04-22 04:00:33', 20.161705, 9.528, 'red'), (8, 'flamboyant stonebraker', '2020-05-07 10:34:51', '2020-02-07 11:48:33', 43.514339, 9.248, 'white'), (9, 'dazzling lalande', '2020-04-10 03:40:15', '2020-04-04 21:38:41', 44.208521, 2.658, 'blue'), (10, 'hopeful gagarin', '2020-01-13 16:55:42', '2020-06-06 06:37:03', 79.028624, 3.146, 'blue')`)
+	tk.MustExec(`insert into t2 select * from t1`)
+	tk.MustQuery(`select * from t1 where c_datetime in (select c_datetime from t2 where t1.c_int = 2)`).Check(testkit.Rows("2 silly brattain 2020-03-13 12:46:14 2020-01-31 23:32:03 39.159617 9.997000 yellow"))
+}
