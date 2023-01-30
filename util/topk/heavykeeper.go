@@ -19,7 +19,7 @@ import (
 	"math/rand"
 
 	"github.com/pingcap/tidb/util/minheap"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // LookupTable is the size of lookup table
@@ -69,14 +69,14 @@ func (topk *HeavyKeeper) Expelled() <-chan string {
 }
 
 // Contains returns if item is in topk
-func (topk *HeavyKeeper) Contains(val string) bool {
+func (topk *HeavyKeeper) Contains(val string) (uint32, bool) {
 	items := topk.minHeap.Sorted()
 	for _, item := range items {
 		if item.Key == val {
-			return true
+			return item.Count, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 // Add add item into heavykeeper and return if item had beend add into minheap.
@@ -88,7 +88,7 @@ func (topk *HeavyKeeper) Add(key string, incr uint32) bool {
 
 	// compute d hashes
 	for i, row := range topk.buckets {
-		bucketNumber := murmur3.Sum32WithSeed(keyBytes, uint32(i)) % topk.width
+		bucketNumber := murmur3.SeedSum32(uint32(i), keyBytes) % topk.width
 		fingerprint := row[bucketNumber].fingerprint
 		count := row[bucketNumber].count
 

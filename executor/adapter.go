@@ -275,7 +275,7 @@ type ExecStmt struct {
 	OutputNames     []*types.FieldName
 	PsStmt          *plannercore.PlanCacheStmt
 	Ti              *TelemetryInfo
-	limiterDoneFunc *ratelimit.DoneFunc
+	limiterDoneFunc ratelimit.DoneFunc
 }
 
 // GetStmtNode returns the stmtNode inside Statement
@@ -1415,7 +1415,9 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 // 5. reset `DurationParse` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults bool) {
 	a.checkPlanReplayerCapture(txnTS)
-	(*a.limiterDoneFunc)(ratelimit.DoneInfo{Err: err})
+	if fn := a.limiterDoneFunc; fn != nil {
+		fn(ratelimit.DoneInfo{Err: err})
+	}
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.

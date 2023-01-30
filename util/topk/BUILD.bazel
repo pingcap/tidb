@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//util/minheap",
-        "@com_github_spaolacci_murmur3//:murmur3",
+        "@com_github_twmb_murmur3//:murmur3",
     ],
 )
 

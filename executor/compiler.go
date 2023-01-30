@@ -21,6 +21,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
@@ -157,14 +158,14 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	_, planDigest := stmtCtx.GetPlanDigest()
-	if planDigest.String() != "" {
+	if planDigest != nil && planDigest.String() != "" {
 		doneFunc, err := topklimiter.GlobalTopKLimiter.Allow(planDigest.String())
 		if err != nil {
+			log.Warn("topk limiter allow failed", zap.Error(err), zap.String("sql", stmtCtx.OriginalSQL))
 			return nil, err
 		}
-		stmt.limiterDoneFunc = &doneFunc
+		stmt.limiterDoneFunc = doneFunc
 	}
-
 	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
 		return nil, err
 	}

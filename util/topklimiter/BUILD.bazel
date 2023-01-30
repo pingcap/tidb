@@ -6,8 +6,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/topklimiter",
     visibility = ["//visibility:public"],
     deps = [
+        "//util",
         "//util/topk",
         "@com_github_go_kratos_aegis//ratelimit",
         "@com_github_go_kratos_aegis//ratelimit/bbr",
+        "@com_github_twmb_murmur3//:murmur3",
     ],
 )
