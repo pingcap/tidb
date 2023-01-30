@@ -972,16 +972,17 @@ l_partkey = p_partkey
 id	estRows	task	access object	operator info
 Projection	1.00	root		div(Column#46, 7.0)->Column#47
 └─StreamAgg	1.00	root		funcs:sum(tpch.lineitem.l_extendedprice)->Column#46
-  └─HashJoin	293773.83	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:lt(tpch.lineitem.l_quantity, mul(0.2, Column#44))
-    ├─HashJoin(Build)	293773.83	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)]
-    │ ├─TableReader(Build)	9736.49	root		data:Selection
-    │ │ └─Selection	9736.49	cop[tikv]		eq(tpch.part.p_brand, "Brand#44"), eq(tpch.part.p_container, "WRAP PKG")
-    │ │   └─TableFullScan	10000000.00	cop[tikv]	table:part	keep order:false
-    │ └─TableReader(Probe)	300005811.00	root		data:TableFullScan
-    │   └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
-    └─HashAgg(Probe)	9943040.00	root		group by:tpch.lineitem.l_partkey, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(tpch.lineitem.l_partkey)->tpch.lineitem.l_partkey
-      └─TableReader	9943040.00	root		data:HashAgg
-        └─HashAgg	9943040.00	cop[tikv]		group by:tpch.lineitem.l_partkey, funcs:count(tpch.lineitem.l_quantity)->Column#50, funcs:sum(tpch.lineitem.l_quantity)->Column#51
+  └─Selection	240004648.80	root		eq(tpch.part.p_brand, "Brand#44"), eq(tpch.part.p_container, "WRAP PKG")
+    └─Projection	300005811.00	root		tpch.lineitem.l_extendedprice, tpch.part.p_brand, tpch.part.p_container
+      └─HashJoin	300005811.00	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:lt(tpch.lineitem.l_quantity, mul(0.2, Column#44))
+        ├─HashJoin(Build)	9943040.00	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)]
+        │ ├─HashAgg(Build)	9943040.00	root		group by:tpch.lineitem.l_partkey, funcs:avg(Column#50, Column#51)->Column#44, funcs:firstrow(tpch.lineitem.l_partkey)->tpch.lineitem.l_partkey
+        │ │ └─TableReader	9943040.00	root		data:HashAgg
+        │ │   └─HashAgg	9943040.00	cop[tikv]		group by:tpch.lineitem.l_partkey, funcs:count(tpch.lineitem.l_quantity)->Column#50, funcs:sum(tpch.lineitem.l_quantity)->Column#51
+        │ │     └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
+        │ └─TableReader(Probe)	10000000.00	root		data:TableFullScan
+        │   └─TableFullScan	10000000.00	cop[tikv]	table:part	keep order:false
+        └─TableReader(Probe)	300005811.00	root		data:TableFullScan
           └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q18 Large Volume Customer Query

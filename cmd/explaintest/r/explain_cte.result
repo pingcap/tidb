@@ -391,52 +391,48 @@ order by t_s_secyear.customer_id
 ,t_s_secyear.customer_email_address
 limit 100;
 id	estRows	task	access object	operator info
-TopN	40.00	root		Column#180, Column#181, Column#182, Column#186, offset:0, count:100
-└─HashJoin	40.00	root		inner join, equal:[eq(Column#170, Column#200)], other cond:gt(case(gt(Column#198, 0), div(Column#208, Column#198), 0.0), case(gt(Column#178, 0), div(Column#188, Column#178), 0.0))
-  ├─Selection(Build)	40.00	root		eq(Column#207, 2002), eq(Column#209, "w"), not(isnull(Column#200))
-  │ └─CTEFullScan	50.00	root	CTE:year_total AS t_w_secyear	data:CTE_0
-  └─HashJoin(Probe)	40.00	root		inner join, equal:[eq(Column#170, Column#190)]
-    ├─Selection(Build)	40.00	root		eq(Column#197, 2001), eq(Column#199, "w"), gt(Column#198, 0), not(isnull(Column#190))
-    │ └─CTEFullScan	50.00	root	CTE:year_total AS t_w_firstyear	data:CTE_0
-    └─HashJoin(Probe)	40.00	root		inner join, equal:[eq(Column#170, Column#180)]
-      ├─Selection(Build)	40.00	root		eq(Column#187, 2002), eq(Column#189, "s"), not(isnull(Column#180))
-      │ └─CTEFullScan	50.00	root	CTE:year_total AS t_s_secyear	data:CTE_0
-      └─Selection(Probe)	40.00	root		eq(Column#177, 2001), eq(Column#179, "s"), gt(Column#178, 0), not(isnull(Column#170))
-        └─CTEFullScan	50.00	root	CTE:year_total AS t_s_firstyear	data:CTE_0
-CTE_0	50.00	root		Non-Recursive CTE
-└─Union(Seed Part)	50.00	root		
-  ├─Projection	25.00	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, Column#73, s->Column#169
-  │ └─Selection	25.00	root		or(or(and(1, and(eq(test.date_dim.d_year, 2001), gt(Column#73, 0))), and(1, eq(test.date_dim.d_year, 2002))), 0)
-  │   └─HashAgg	31.25	root		group by:Column#233, Column#234, Column#235, Column#236, Column#237, Column#238, Column#239, Column#240, funcs:sum(Column#224)->Column#73, funcs:firstrow(Column#225)->test.customer.c_customer_id, funcs:firstrow(Column#226)->test.customer.c_first_name, funcs:firstrow(Column#227)->test.customer.c_last_name, funcs:firstrow(Column#228)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#229)->test.customer.c_birth_country, funcs:firstrow(Column#230)->test.customer.c_login, funcs:firstrow(Column#231)->test.customer.c_email_address, funcs:firstrow(Column#232)->test.date_dim.d_year
-  │     └─Projection	31.25	root		minus(test.store_sales.ss_ext_list_price, test.store_sales.ss_ext_discount_amt)->Column#224, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
-  │       └─Projection	31.25	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.store_sales.ss_ext_discount_amt, test.store_sales.ss_ext_list_price, test.date_dim.d_year
-  │         └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:test.store_sales.ss_customer_sk, inner key:test.customer.c_customer_sk, equal cond:eq(test.store_sales.ss_customer_sk, test.customer.c_customer_sk)
-  │           ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(test.date_dim.d_date_sk, test.store_sales.ss_sold_date_sk)]
-  │           │ ├─TableReader(Build)	20.00	root		data:Selection
-  │           │ │ └─Selection	20.00	cop[tikv]		or(and(1, eq(test.date_dim.d_year, 2001)), or(and(1, eq(test.date_dim.d_year, 2002)), 0))
-  │           │ │   └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
-  │           │ └─TableReader(Probe)	9980.01	root		data:Selection
-  │           │   └─Selection	9980.01	cop[tikv]		not(isnull(test.store_sales.ss_customer_sk)), not(isnull(test.store_sales.ss_sold_date_sk))
-  │           │     └─TableFullScan	10000.00	cop[tikv]	table:store_sales	keep order:false, stats:pseudo
-  │           └─IndexLookUp(Probe)	25.00	root		
-  │             ├─IndexRangeScan(Build)	25.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
-  │             └─TableRowIDScan(Probe)	25.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
-  └─Projection	25.00	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, Column#158, w->Column#169
-    └─Selection	25.00	root		or(0, or(and(1, and(eq(test.date_dim.d_year, 2001), gt(Column#158, 0))), and(1, eq(test.date_dim.d_year, 2002))))
-      └─HashAgg	31.25	root		group by:Column#250, Column#251, Column#252, Column#253, Column#254, Column#255, Column#256, Column#257, funcs:sum(Column#241)->Column#158, funcs:firstrow(Column#242)->test.customer.c_customer_id, funcs:firstrow(Column#243)->test.customer.c_first_name, funcs:firstrow(Column#244)->test.customer.c_last_name, funcs:firstrow(Column#245)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#246)->test.customer.c_birth_country, funcs:firstrow(Column#247)->test.customer.c_login, funcs:firstrow(Column#248)->test.customer.c_email_address, funcs:firstrow(Column#249)->test.date_dim.d_year
-        └─Projection	31.25	root		minus(test.web_sales.ws_ext_list_price, test.web_sales.ws_ext_discount_amt)->Column#241, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
-          └─Projection	31.25	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.web_sales.ws_ext_discount_amt, test.web_sales.ws_ext_list_price, test.date_dim.d_year
-            └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:test.web_sales.ws_bill_customer_sk, inner key:test.customer.c_customer_sk, equal cond:eq(test.web_sales.ws_bill_customer_sk, test.customer.c_customer_sk)
-              ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(test.date_dim.d_date_sk, test.web_sales.ws_sold_date_sk)]
-              │ ├─TableReader(Build)	20.00	root		data:Selection
-              │ │ └─Selection	20.00	cop[tikv]		or(0, or(and(1, eq(test.date_dim.d_year, 2001)), and(1, eq(test.date_dim.d_year, 2002))))
-              │ │   └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
-              │ └─TableReader(Probe)	9980.01	root		data:Selection
-              │   └─Selection	9980.01	cop[tikv]		not(isnull(test.web_sales.ws_bill_customer_sk)), not(isnull(test.web_sales.ws_sold_date_sk))
-              │     └─TableFullScan	10000.00	cop[tikv]	table:web_sales	keep order:false, stats:pseudo
-              └─IndexLookUp(Probe)	25.00	root		
-                ├─IndexRangeScan(Build)	25.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.web_sales.ws_bill_customer_sk)], keep order:false, stats:pseudo
-                └─TableRowIDScan(Probe)	25.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
+TopN	100.00	root		Column#180, Column#181, Column#182, Column#186, offset:0, count:100
+└─HashJoin	10240.00	root		inner join, equal:[eq(Column#170, Column#200)], other cond:gt(case(gt(Column#198, 0), div(Column#208, Column#198), 0.0), case(gt(Column#178, 0), div(Column#188, Column#178), 0.0))
+  ├─Selection(Build)	10240.00	root		eq(Column#207, 2002), eq(Column#209, "w"), not(isnull(Column#200))
+  │ └─CTEFullScan	12800.00	root	CTE:year_total AS t_w_secyear	data:CTE_0
+  └─HashJoin(Probe)	10240.00	root		inner join, equal:[eq(Column#170, Column#190)]
+    ├─Selection(Build)	10240.00	root		eq(Column#197, 2001), eq(Column#199, "w"), gt(Column#198, 0), not(isnull(Column#190))
+    │ └─CTEFullScan	12800.00	root	CTE:year_total AS t_w_firstyear	data:CTE_0
+    └─HashJoin(Probe)	10240.00	root		inner join, equal:[eq(Column#170, Column#180)]
+      ├─Selection(Build)	10240.00	root		eq(Column#187, 2002), eq(Column#189, "s"), not(isnull(Column#180))
+      │ └─CTEFullScan	12800.00	root	CTE:year_total AS t_s_secyear	data:CTE_0
+      └─Selection(Probe)	10240.00	root		eq(Column#177, 2001), eq(Column#179, "s"), gt(Column#178, 0), not(isnull(Column#170))
+        └─CTEFullScan	12800.00	root	CTE:year_total AS t_s_firstyear	data:CTE_0
+CTE_0	12800.00	root		Non-Recursive CTE
+└─Union(Seed Part)	12800.00	root		
+  ├─Selection	6400.00	root		or(or(and(and(not(isnull(Column#160)), eq(Column#169, "s")), and(eq(Column#167, 2001), gt(Column#168, 0))), and(not(isnull(Column#160)), and(eq(Column#169, "s"), eq(Column#167, 2002)))), or(and(and(not(isnull(Column#160)), eq(Column#169, "w")), and(eq(Column#167, 2001), gt(Column#168, 0))), and(not(isnull(Column#160)), and(eq(Column#169, "w"), eq(Column#167, 2002)))))
+  │ └─Projection	8000.00	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, Column#73, s->Column#169
+  │   └─HashAgg	8000.00	root		group by:Column#233, Column#234, Column#235, Column#236, Column#237, Column#238, Column#239, Column#240, funcs:sum(Column#224)->Column#73, funcs:firstrow(Column#225)->test.customer.c_customer_id, funcs:firstrow(Column#226)->test.customer.c_first_name, funcs:firstrow(Column#227)->test.customer.c_last_name, funcs:firstrow(Column#228)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#229)->test.customer.c_birth_country, funcs:firstrow(Column#230)->test.customer.c_login, funcs:firstrow(Column#231)->test.customer.c_email_address, funcs:firstrow(Column#232)->test.date_dim.d_year
+  │     └─Projection	15593.77	root		minus(test.store_sales.ss_ext_list_price, test.store_sales.ss_ext_discount_amt)->Column#224, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
+  │       └─Projection	15593.77	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.store_sales.ss_ext_discount_amt, test.store_sales.ss_ext_list_price, test.date_dim.d_year
+  │         └─HashJoin	15593.77	root		inner join, equal:[eq(test.store_sales.ss_sold_date_sk, test.date_dim.d_date_sk)]
+  │           ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │           │ └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
+  │           └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(test.store_sales.ss_customer_sk, test.customer.c_customer_sk)]
+  │             ├─TableReader(Build)	9980.01	root		data:Selection
+  │             │ └─Selection	9980.01	cop[tikv]		not(isnull(test.store_sales.ss_customer_sk)), not(isnull(test.store_sales.ss_sold_date_sk))
+  │             │   └─TableFullScan	10000.00	cop[tikv]	table:store_sales	keep order:false, stats:pseudo
+  │             └─TableReader(Probe)	10000.00	root		data:TableFullScan
+  │               └─TableFullScan	10000.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
+  └─Selection	6400.00	root		or(or(and(and(not(isnull(Column#160)), eq(Column#169, "s")), and(eq(Column#167, 2001), gt(Column#168, 0))), and(not(isnull(Column#160)), and(eq(Column#169, "s"), eq(Column#167, 2002)))), or(and(and(not(isnull(Column#160)), eq(Column#169, "w")), and(eq(Column#167, 2001), gt(Column#168, 0))), and(not(isnull(Column#160)), and(eq(Column#169, "w"), eq(Column#167, 2002)))))
+    └─Projection	8000.00	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, Column#158, w->Column#169
+      └─HashAgg	8000.00	root		group by:Column#250, Column#251, Column#252, Column#253, Column#254, Column#255, Column#256, Column#257, funcs:sum(Column#241)->Column#158, funcs:firstrow(Column#242)->test.customer.c_customer_id, funcs:firstrow(Column#243)->test.customer.c_first_name, funcs:firstrow(Column#244)->test.customer.c_last_name, funcs:firstrow(Column#245)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#246)->test.customer.c_birth_country, funcs:firstrow(Column#247)->test.customer.c_login, funcs:firstrow(Column#248)->test.customer.c_email_address, funcs:firstrow(Column#249)->test.date_dim.d_year
+        └─Projection	15593.77	root		minus(test.web_sales.ws_ext_list_price, test.web_sales.ws_ext_discount_amt)->Column#241, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
+          └─Projection	15593.77	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.web_sales.ws_ext_discount_amt, test.web_sales.ws_ext_list_price, test.date_dim.d_year
+            └─HashJoin	15593.77	root		inner join, equal:[eq(test.web_sales.ws_sold_date_sk, test.date_dim.d_date_sk)]
+              ├─TableReader(Build)	10000.00	root		data:TableFullScan
+              │ └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
+              └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(test.web_sales.ws_bill_customer_sk, test.customer.c_customer_sk)]
+                ├─TableReader(Build)	9980.01	root		data:Selection
+                │ └─Selection	9980.01	cop[tikv]		not(isnull(test.web_sales.ws_bill_customer_sk)), not(isnull(test.web_sales.ws_sold_date_sk))
+                │   └─TableFullScan	10000.00	cop[tikv]	table:web_sales	keep order:false, stats:pseudo
+                └─TableReader(Probe)	10000.00	root		data:TableFullScan
+                  └─TableFullScan	10000.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
 drop table if exists t1;
 create table t1 (id int, bench_type varchar(10),version varchar(10),tps int(20));
 insert into t1 (id,bench_type,version,tps) values (1,'sysbench','5.4.0',1111111);
