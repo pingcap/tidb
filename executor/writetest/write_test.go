@@ -1882,7 +1882,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *t
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
 		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
-		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
+		data, reachLimit, err1 := ld.ReadRows(context.Background(), tt.data1, tt.data2)
 		require.NoError(t, err1)
 		require.False(t, reachLimit)
 		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
@@ -1921,7 +1921,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 
 	deleteSQL := "delete from load_data_missing"
 	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
-	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
+	_, reachLimit, err := ld.ReadRows(context.Background(), nil, nil)
 	require.NoError(t, err)
 	require.False(t, reachLimit)
 	r := tk.MustQuery(selectSQL)
@@ -2039,7 +2039,7 @@ func TestLoadData(t *testing.T) {
 	// data1 = nil, data2 = nil, fields and lines is default
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
+	_, reachLimit, err := ld.ReadRows(context.Background(), nil, nil)
 	require.NoError(t, err)
 	require.False(t, reachLimit)
 	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
@@ -2054,7 +2054,7 @@ func TestLoadData(t *testing.T) {
 		sc.IgnoreTruncate = originIgnoreTruncate
 	}()
 	sc.IgnoreTruncate = false
-	// fields and lines are default, InsertData returns data is nil
+	// fields and lines are default, ReadRows returns data is nil
 	tests := []testCase{
 		// data1 = nil, data2 != nil
 		{nil, []byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
@@ -2074,12 +2074,12 @@ func TestLoadData(t *testing.T) {
 		{[]byte("\t2\t3"), []byte("\t4\t5\n"), []string{"10|2|3|4"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("\t2\t3"), []byte("4\t5\n"), []string{"11|2|34|5"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 
-		// data1 != nil, data2 != nil, InsertData returns data isn't nil
+		// data1 != nil, data2 != nil, ReadRows returns data isn't nil
 		{[]byte("\t2\t3"), []byte("\t4\t5"), nil, []byte("\t2\t3\t4\t5"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	// lines starting symbol is "" and terminated symbol length is 2, InsertData returns data is nil
+	// lines starting symbol is "" and terminated symbol length is 2, ReadRows returns data is nil
 	ld.LinesInfo.Terminated = "||"
 	tests = []testCase{
 		// data1 != nil, data2 != nil
@@ -2095,7 +2095,7 @@ func TestLoadData(t *testing.T) {
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	// fields and lines aren't default, InsertData returns data is nil
+	// fields and lines aren't default, ReadRows returns data is nil
 	ld.FieldsInfo.Terminated = "\\"
 	ld.LinesInfo.Starting = "xxx"
 	ld.LinesInfo.Terminated = "|!#^"
@@ -2136,7 +2136,7 @@ func TestLoadData(t *testing.T) {
 			[]string{"25|2|3|4", "27|222|<nil>|<nil>"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("xxx\\2\\3"), []byte("4\\5|!#^"), []string{"28|2|34|5"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 
-		// InsertData returns data isn't nil
+		// ReadRows returns data isn't nil
 		{nil, []byte("\\2\\3\\4|!#^"), nil, []byte("#^"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{nil, []byte("\\4\\5"), nil, []byte("\\5"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("\\2\\3"), []byte("\\4\\5"), nil, []byte("\\5"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
@@ -2148,7 +2148,7 @@ func TestLoadData(t *testing.T) {
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
-	// lines starting symbol is the same as terminated symbol, InsertData returns data is nil
+	// lines starting symbol is the same as terminated symbol, ReadRows returns data is nil
 	ld.LinesInfo.Terminated = "xxx"
 	tests = []testCase{
 		// data1 = nil, data2 != nil
@@ -2171,7 +2171,7 @@ func TestLoadData(t *testing.T) {
 		{[]byte("xxx34\\2\\3\\4\\5xx"), []byte("xxxx35\\22\\33xxxxxx36\\222xxx"),
 			[]string{"34|2|3|4", "35|22|33|<nil>", "36|222|<nil>|<nil>"}, nil, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 0"},
 
-		// InsertData returns data isn't nil
+		// ReadRows returns data isn't nil
 		{nil, []byte("\\2\\3\\4xxxx"), nil, []byte("xxxx"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("\\2\\3\\4xxx"), nil, []string{"37|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("\\2\\3\\4xxxxxx11\\22\\33\\44xxx"), nil,
@@ -2347,7 +2347,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 
-	_, _, err := ld.InsertData(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
+	_, _, err := ld.ReadRows(context.Background(), nil, []byte("1,2\n3,4\n5,6\n7,8\n9,10\n"))
 	require.NoError(t, err)
 	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
 	require.NoError(t, err)

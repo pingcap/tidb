@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -28,12 +27,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
@@ -124,11 +125,8 @@ func (e *LoadDataExec) loadFromRemote(ctx context.Context) error {
 		return err
 	}
 	defer fileReader.Close()
-	reader := bufio.NewReader(fileReader)
 
-	return e.loadDataInfo.Load(ctx, func() ([]byte, error) {
-		return reader.ReadBytes('\n')
-	})
+	return e.loadDataInfo.Load(ctx, fileReader)
 }
 
 // Close implements the Executor Close interface.
@@ -187,7 +185,7 @@ type FieldMapping struct {
 }
 
 // Load reads from readerFn and do load data job.
-func (e *LoadDataInfo) Load(ctx context.Context, readerFn func() ([]byte, error)) error {
+func (e *LoadDataInfo) Load(ctx context.Context, reader io.ReadSeekCloser) error {
 	e.initQueues()
 	e.SetMaxRowsInBatch(uint64(e.Ctx.GetSessionVars().DMLBatchSize))
 	e.startStopWatcher()
@@ -200,17 +198,18 @@ func (e *LoadDataInfo) Load(ctx context.Context, readerFn func() ([]byte, error)
 	// processStream process input data, enqueue commit task
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
-	go processStream(ctx, readerFn, e, wg)
+	go processStream(ctx, reader, e, wg)
 	err = e.commitWork(ctx)
 	wg.Wait()
 	return err
 }
 
 // processStream process input stream from network
-func processStream(ctx context.Context, readerFn func() ([]byte, error), loadDataInfo *LoadDataInfo, wg *sync.WaitGroup) {
-	var err error
-	var shouldBreak bool
-	var prevData, curData []byte
+func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *LoadDataInfo, wg *sync.WaitGroup) {
+	var (
+		csvParser *mydump.CSVParser
+		err       error
+	)
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -225,71 +224,50 @@ func processStream(ctx context.Context, readerFn func() ([]byte, error), loadDat
 		}
 		wg.Done()
 	}()
-	for {
-		// here
-		curData, err = readerFn()
-		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
-				logutil.Logger(ctx).Error("read data for LOAD DATA failed", zap.Error(err))
-				break
-			}
-			err = nil
-		}
-		if len(curData) == 0 {
-			loadDataInfo.Drained = true
-			shouldBreak = true
-			if len(prevData) == 0 {
-				break
-			}
-		}
-		select {
-		case <-loadDataInfo.QuitCh:
-			err = errors.New("processStream forced to quit")
-		default:
-		}
-		if err != nil {
-			break
-		}
-		// prepare batch and enqueue task
-		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
-		if err != nil {
-			break
-		}
-		if shouldBreak {
-			break
-		}
-	}
-	if err != nil {
-		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
-		return
-	}
-	if err = loadDataInfo.enqOneTask(ctx); err != nil {
-		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
-		return
-	}
-}
 
-func insertDataWithCommit(ctx context.Context, prevData,
-	curData []byte, loadDataInfo *LoadDataInfo) ([]byte, error) {
-	var err error
-	var reachLimit bool
-	for {
-		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
-		if err != nil {
-			return nil, err
-		}
-		if !reachLimit {
-			break
-		}
-		// push into commit task queue
-		err = loadDataInfo.enqOneTask(ctx)
-		if err != nil {
-			return prevData, err
-		}
-		curData = prevData
-		prevData = nil
+	cfg := &config.CSVConfig{
+		Separator: loadDataInfo.FieldsInfo.Terminated,
+		// TODO: optionally enclosed?
+		Delimiter:       string([]byte{loadDataInfo.FieldsInfo.Enclosed}),
+		Terminator:      loadDataInfo.LinesInfo.Terminated,
+		NotNull:         false,
+		Null:            `\N`, // TODO: right?
+		Header:          false,
+		TrimLastSep:     false,
+		BackslashEscape: loadDataInfo.FieldsInfo.Escaped == '\\',
+		StartingBy:      loadDataInfo.LinesInfo.Starting,
 	}
-	return prevData, nil
+	// TODO: use parser interface
+	csvParser, err = mydump.NewCSVParser(
+		ctx,
+		cfg,
+		reader,
+		int64(config.ReadBlockSize),
+		nil,
+		false,
+		// TODO: Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+		//		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+		//		if err != nil {
+		//			return nil, err
+		//		}
+		nil)
+	csvParser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
+
+	for {
+		// prepare batch and enqueue task
+		err = loadDataInfo.ReadRows(ctx, csvParser)
+		if err != nil {
+			logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+			return
+		}
+		if len(loadDataInfo.rows) == 0 {
+			return
+		}
+		if err = loadDataInfo.enqOneTask(ctx); err != nil {
+			logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+			return
+		}
+	}
 }
 
 // reorderColumns reorder the e.insertColumns according to the order of columnNames
@@ -454,16 +432,12 @@ func (e *LoadDataInfo) makeCommitTask() commitTask {
 func (e *LoadDataInfo) enqOneTask(ctx context.Context) error {
 	var err error
 	if e.curBatchCnt > 0 {
-		sendOk := false
-		for !sendOk {
-			select {
-			case e.commitTaskQueue <- e.makeCommitTask():
-				sendOk = true
-			case <-e.QuitCh:
-				err = errors.New("enqOneTask forced to quit")
-				logutil.Logger(ctx).Error("enqOneTask forced to quit, possible commitWork error")
-				return err
-			}
+		select {
+		case e.commitTaskQueue <- e.makeCommitTask():
+		case <-e.QuitCh:
+			err = errors.New("enqOneTask forced to quit")
+			logutil.Logger(ctx).Error("enqOneTask forced to quit, possible commitWork error")
+			return err
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
 		e.SetMaxRowsInBatch(e.maxRowsInBatch)
@@ -687,62 +661,41 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	return curData[startLen : startLen+endIdx], curData[startLen+endIdx+len(e.LinesInfo.Terminated):], true
 }
 
-// InsertData inserts data into specified table according to the specified format.
-// If it has the rest of data isn't completed the processing, then it returns without completed data.
-// If the number of inserted rows reaches the batchRows, then the second return value is true.
-// If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
-func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte) ([]byte, bool, error) {
-	if len(prevData) == 0 && len(curData) == 0 {
-		return nil, false, nil
-	}
-	var line []byte
-	var isEOF, hasStarting, reachLimit bool
-	if len(prevData) > 0 && len(curData) == 0 {
-		isEOF = true
-		prevData, curData = nil, prevData
-	}
-	for len(curData) > 0 {
-		// here
-		line, curData, hasStarting = e.getLine(prevData, curData, e.IgnoreLines > 0)
-		prevData = nil
-		// If it doesn't find the terminated symbol and this data isn't the last data,
-		// the data can't be inserted.
-		if line == nil && !isEOF {
-			break
-		}
-		// If doesn't find starting symbol, this data can't be inserted.
-		if !hasStarting {
-			if isEOF {
-				curData = nil
+// ReadRows reads rows from parser. When parser's reader meet EOF, it will return
+// nil. For other errors it will return directly. When the rows batch is full it
+// will also return nil.
+// The result rows are saved in e.rows, caller can check if it's empty to know the
+// data source has meet EOF.
+func (e *LoadDataInfo) ReadRows(ctx context.Context, parser *mydump.CSVParser) error {
+	if e.IgnoreLines > 0 {
+		_, _, err := parser.ReadUntilTerminator()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				return nil
 			}
-			break
-		}
-		if line == nil && isEOF {
-			line = curData[len(e.LinesInfo.Starting):]
-			curData = nil
+			return err
 		}
 
-		if e.IgnoreLines > 0 {
-			e.IgnoreLines--
-			continue
-		}
-		cols, err := e.getFieldsFromLine(line)
-		if err != nil {
-			return nil, false, err
+		e.IgnoreLines--
+	}
+	for {
+		if err := parser.ReadRow(); err != nil {
+			if errors.Cause(err) == io.EOF {
+				return nil
+			}
+			return err
 		}
 		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
 		// So should add first here.
 		e.rowCount++
-		e.rows = append(e.rows, e.colsToRow(ctx, cols))
+		e.rows = append(e.rows, e.colsToRow(ctx, parser.LastRow().Row))
 		e.curBatchCnt++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
-			reachLimit = true
 			logutil.Logger(ctx).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
 				zap.Uint64("totalRows", e.rowCount))
-			break
+			return nil
 		}
 	}
-	return curData, reachLimit, nil
 }
 
 // CheckAndInsertOneBatch is used to commit one transaction batch full filled data
@@ -785,14 +738,15 @@ func (e *LoadDataInfo) SetMessage() {
 	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 }
 
-func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datum {
+// colsToRow encodes the data of parser output.
+func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []types.Datum) []types.Datum {
 	row := make([]types.Datum, 0, len(e.insertColumns))
 	sessionVars := e.Ctx.GetSessionVars()
-	setVar := func(name string, col *field) {
-		if col == nil || col.isNull() {
+	setVar := func(name string, col *types.Datum) {
+		if col == nil || col.IsNull() {
 			sessionVars.UnsetUserVar(name)
 		} else {
-			sessionVars.SetStringUserVar(name, string(col.str), mysql.DefaultCollationName)
+			sessionVars.SetUserVarVal(name, *col)
 		}
 	}
 
@@ -818,12 +772,12 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 			continue
 		}
 
-		if cols[i].isNull() {
+		if cols[i].IsNull() {
 			row = append(row, types.NewDatum(nil))
 			continue
 		}
 
-		row = append(row, types.NewDatum(string(cols[i].str)))
+		row = append(row, cols[i])
 	}
 	for i := 0; i < len(e.ColumnAssignments); i++ {
 		// eval expression of `SET` clause
@@ -857,6 +811,38 @@ func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error
 	return nil
 }
 
+var _ io.ReadSeekCloser = (*SimpleSeekerOnReadCloser)(nil)
+
+// SimpleSeekerOnReadCloser provides Seek(0, SeekCurrent) on ReadCloser.
+type SimpleSeekerOnReadCloser struct {
+	r   io.ReadCloser
+	pos int
+}
+
+// NewSimpleSeekerOnReadCloser creates a SimpleSeekerOnReadCloser.
+func NewSimpleSeekerOnReadCloser(r io.ReadCloser) *SimpleSeekerOnReadCloser {
+	return &SimpleSeekerOnReadCloser{r: r}
+}
+
+func (s *SimpleSeekerOnReadCloser) Read(p []byte) (n int, err error) {
+	n, err = s.r.Read(p)
+	s.pos += n
+	return
+}
+
+func (s *SimpleSeekerOnReadCloser) Seek(offset int64, whence int) (int64, error) {
+	// only support get reader's current offset
+	if offset == 0 && whence == io.SeekCurrent {
+		return int64(s.pos), nil
+	}
+	return 0, errors.Errorf("unsupported seek on SimpleSeekerOnReadCloser, offset: %d whence: %d", offset, whence)
+}
+
+func (s *SimpleSeekerOnReadCloser) Close() error {
+	return s.r.Close()
+}
+
+// TODO: remove this
 type field struct {
 	str       []byte
 	maybeNull bool
@@ -869,6 +855,7 @@ func (f *field) isNull() bool {
 	return f.maybeNull && len(f.str) == 1 && f.str[0] == 'N'
 }
 
+// TODO: remove this
 type fieldWriter struct {
 	pos           int
 	ReadBuf       []byte
@@ -1009,6 +996,7 @@ func (w *fieldWriter) GetField() (bool, field) {
 }
 
 // getFieldsFromLine splits line according to fieldsInfo.
+// TODO: remove this
 func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	var (
 		reader fieldWriter

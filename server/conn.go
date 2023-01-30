@@ -1611,7 +1611,39 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return err
 	}
 
-	err = loadDataInfo.Load(ctx, cc.readPacket)
+	// use Pipe to convert cc.readPacket to io.Reader
+	r, w := io.Pipe()
+	go func() {
+		defer w.Close()
+
+		var (
+			data []byte
+			err2 error
+		)
+		for {
+			if len(data) == 0 {
+				data, err2 = cc.readPacket()
+				if err2 != nil {
+					w.CloseWithError(err2)
+					return
+				}
+				// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
+				if len(data) == 0 {
+					loadDataInfo.Drained = true
+					return
+				}
+			}
+
+			n, err3 := w.Write(data)
+			if err3 != nil {
+				logutil.Logger(ctx).Error("write data meet error", zap.Error(err3))
+				return
+			}
+			data = data[n:]
+		}
+	}()
+
+	err = loadDataInfo.Load(ctx, executor.NewSimpleSeekerOnReadCloser(r))
 	if err != nil {
 		if !loadDataInfo.Drained {
 			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
