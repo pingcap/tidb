@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
-	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
@@ -2111,9 +2110,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 
 		case <-readMemTricker.C:
-			if gctuner.EnableGOGCTuner.Load() {
-				memory.ForceReadMemStats()
-			}
+			memory.ForceReadMemStats()
 		}
 	}
 }
