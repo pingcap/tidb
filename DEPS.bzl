@@ -3544,10 +3544,6 @@ def go_deps():
         name = "com_github_rivo_uniseg",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/rivo/uniseg",
-        patch_args = ["-p1"],
-        patches = [
-            "//build/patches:com_github_rivo_uniseg.patch",
-        ],
         sum = "h1:YwD0ulJSJytLpiaWua0sBDusfsCZohxjxzVTYjwxfV8=",
         version = "v0.4.2",
     )
@@ -3900,6 +3896,14 @@ def go_deps():
         sum = "h1:CZ7eSOd3kZoaYDLbXnmzgQI5RlciuXBMA+18HwHRfZQ=",
         version = "v1.12.0",
     )
+    go_repository(
+        name = "com_github_spkg_bom",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/spkg/bom",
+        sum = "h1:S939THe0ukL5WcTGiGqkgtaW5JW+O6ITaIlpJXTYY64=",
+        version = "v1.0.0",
+    )
+
     go_repository(
         name = "com_github_ssgreg_nlreturn_v2",
         build_file_proto_mode = "disable",
@@ -5910,8 +5914,8 @@ def go_deps():
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
-        sum = "h1:G6AHpWxTMGY1KyEYoAQ5WTtIekUUvDNjan3ugu60JvE=",
-        version = "v0.2.0",
+        sum = "h1:+bSpV5HIeWkuvgaMfI3UmKRThoTA5ODJTUd8T17NO+4=",
+        version = "v0.5.0",
     )
     go_repository(
         name = "org_golang_x_xerrors",

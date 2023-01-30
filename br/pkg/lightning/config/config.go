@@ -455,6 +455,9 @@ type CSVConfig struct {
 	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	// hide these options for lightning configuration file, they can only be used by LOAD DATA
+	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
+	StartingBy string `toml:"-" json:"-"`
 }
 
 type MydumperRuntime struct {
