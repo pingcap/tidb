@@ -192,7 +192,6 @@ go_library(
         "//util/servermemorylimit",
         "//util/set",
         "//util/size",
-        "//util/slice",
         "//util/sqlexec",
         "//util/stmtsummary",
         "//util/stringutil",
