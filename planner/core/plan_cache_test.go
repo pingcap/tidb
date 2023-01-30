@@ -493,7 +493,8 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-		if idx < 6 {
+		if idx < 9 {
+			// point get plan
 			tk.MustExec("set @a0 = 6")
 			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
