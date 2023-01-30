@@ -121,6 +121,7 @@ func (br *BindRecord) Copy() *BindRecord {
 		OriginalSQL: br.OriginalSQL,
 		Db:          br.Db,
 	}
+	nbr.Bindings = make([]Binding, len(br.Bindings))
 	copy(nbr.Bindings, br.Bindings)
 	return nbr
 }
