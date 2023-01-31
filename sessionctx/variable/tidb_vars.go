@@ -1181,10 +1181,6 @@ const (
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
-	DefTiDBStmtSummaryFilename                             = "tidb-statements.log"
-	DefTiDBStmtSummaryFileMaxDays                          = 3
-	DefTiDBStmtSummaryFileMaxSize                          = 64
-	DefTiDBStmtSummaryFileMaxBackups                       = 0
 )
 
 // Process global variables.

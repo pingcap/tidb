@@ -47,21 +47,20 @@ func newStmtLogStorage(cfg *log.Config) *stmtLogStorage {
 	return &stmtLogStorage{logger}
 }
 
-func (s *stmtLogStorage) persist(w *stmtWindow) {
+func (s *stmtLogStorage) persist(w *stmtWindow, end time.Time) {
 	begin := w.begin.Unix()
-	end := w.end.Unix()
 	for _, v := range w.lru.Values() {
 		r := v.(*lockedStmtRecord)
 		r.Lock()
 		r.Begin = begin
-		r.End = end
+		r.End = end.Unix()
 		s.log(r.StmtRecord)
 		r.Unlock()
 	}
 	w.evicted.Lock()
 	if w.evicted.other.ExecCount > 0 {
 		w.evicted.other.Begin = begin
-		w.evicted.other.End = end
+		w.evicted.other.End = end.Unix()
 		s.log(w.evicted.other)
 	}
 	w.evicted.Unlock()

@@ -93,8 +93,9 @@ func (r *MemReader) Rows() [][]types.Datum {
 	if r.s == nil {
 		return nil
 	}
+	end := timeNow().Unix()
 	w := r.s.window.Load().(*stmtWindow)
-	if !r.checker.isTimeValid(w.begin.Unix(), w.end.Unix()) {
+	if !r.checker.isTimeValid(w.begin.Unix(), end) {
 		return nil
 	}
 	w.Lock()
@@ -114,7 +115,7 @@ func (r *MemReader) Rows() [][]types.Datum {
 				return
 			}
 			record.Begin = w.begin.Unix()
-			record.End = w.end.Unix()
+			record.End = end
 			row := make([]types.Datum, len(r.columnFactories))
 			for i, factory := range r.columnFactories {
 				row[i] = types.NewDatum(factory(r, record.StmtRecord))
@@ -133,7 +134,7 @@ func (r *MemReader) Rows() [][]types.Datum {
 				return
 			}
 			evicted.other.Begin = w.begin.Unix()
-			evicted.other.End = w.end.Unix()
+			evicted.other.End = end
 			row := make([]types.Datum, len(r.columnFactories))
 			for i, factory := range r.columnFactories {
 				row[i] = types.NewDatum(factory(r, evicted.other))
