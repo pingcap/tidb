@@ -159,7 +159,7 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 	}()
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
-		return h.getTableHistoricalStatsToJsonWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
+		return h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
 	}
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
@@ -167,13 +167,13 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(dbName string, tableInfo *model.T
 		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
 	}
 	for _, def := range pi.Definitions {
-		tbl, err := h.getTableHistoricalStatsToJsonWithFallback(dbName, tableInfo, def.ID, snapshot)
+		tbl, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, def.ID, snapshot)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		jsonTbl.Partitions[def.Name.L] = tbl
 	}
-	tbl, err := h.getTableHistoricalStatsToJsonWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
+	tbl, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -249,8 +249,8 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 	return jsonTbl, nil
 }
 
-// getTableHistoricalStatsToJsonWithFallback try to get table historical stats, if not exit, directly fallback to the latest stats
-func (h *Handle) getTableHistoricalStatsToJsonWithFallback(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error) {
+// getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exit, directly fallback to the latest stats
+func (h *Handle) getTableHistoricalStatsToJSONWithFallback(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error) {
 	jt, exist, err := h.tableHistoricalStatsToJSON(physicalID, snapshot)
 	if err != nil {
 		return nil, err
