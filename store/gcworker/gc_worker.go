@@ -375,32 +375,10 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 
 	// Do keyspace delete range
 	if w.store.GetCodec().GetKeyspace() != nil {
-		// When the worker is just started, or an old GC job has just finished,
-		// wait a while before starting a new job.
-		if time.Since(w.lastFinish) < gcWaitTime {
-			logutil.Logger(ctx).Info("[gc worker] another keyspace gc job has just finished, skipped.",
-				zap.String("leaderTick on ", w.uuid))
-			return nil
-		}
-
-		now, err := w.getOracleTime()
+		err = w.runKeyspaceGCJob(ctx, concurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		ok, err := w.checkGCInterval(now)
-		if err != nil || !ok {
-			return errors.Trace(err)
-		}
-
-		go func() {
-			w.done <- w.runKeyspaceDeleteRange(ctx, concurrency)
-		}()
-
-		err = w.saveTime(gcLastRunTimeKey, now)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		return nil
 	}
 
@@ -438,6 +416,36 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	go func() {
 		w.done <- w.runGCJob(ctx, safePoint, concurrency)
 	}()
+	return nil
+}
+
+func (w *GCWorker) runKeyspaceGCJob(ctx context.Context, concurrency int) error {
+	// When the worker is just started, or an old GC job has just finished,
+	// wait a while before starting a new job.
+	if time.Since(w.lastFinish) < gcWaitTime {
+		logutil.Logger(ctx).Info("[gc worker] another keyspace gc job has just finished, skipped.",
+			zap.String("leaderTick on ", w.uuid))
+		return nil
+	}
+
+	now, err := w.getOracleTime()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ok, err := w.checkGCInterval(now)
+	if err != nil || !ok {
+		return errors.Trace(err)
+	}
+
+	go func() {
+		w.done <- w.runKeyspaceDeleteRange(ctx, concurrency)
+	}()
+
+	err = w.saveTime(gcLastRunTimeKey, now)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 

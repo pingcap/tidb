@@ -111,9 +111,9 @@ type Domain struct {
 	SchemaValidator         SchemaValidator
 	sysSessionPool          *sessionPool
 	exit                    chan struct{}
-	etcdClient              *clientv3.Client
-	unprefixedEtcdCli       *clientv3.Client
-	sysVarCache             sysVarCache // replaces GlobalVariableCache
+	etcdClient              *clientv3.Client // etcdClient must be used when the logic to each etcd path needs to be executed separately by keyspace, or when keyspace is not set.
+	unprefixedEtcdCli       *clientv3.Client // unprefixedEtcdCli must be used when even different keyspaces need to be used globally. It will never set etcd namespace prefix by keyspace.
+	sysVarCache             sysVarCache      // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
@@ -977,11 +977,11 @@ func (do *Domain) Init(
 
 			do.etcdClient = cli
 
-			noNamespaceCli, err := newEtcdCli(addrs, ebd)
+			unprefixedEtcdCli, err := newEtcdCli(addrs, ebd)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			do.unprefixedEtcdCli = noNamespaceCli
+			do.unprefixedEtcdCli = unprefixedEtcdCli
 		}
 	}
 
