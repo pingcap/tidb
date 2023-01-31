@@ -234,6 +234,7 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 		nil,
 		false,
 		// LOAD DATA arguments can only be ASCII, no need to convert
+		// TODO: do we need to convert charset for fields?
 		nil)
 	csvParser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
