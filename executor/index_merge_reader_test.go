@@ -62,12 +62,12 @@ func TestIndexMergePickAndExecTaskPanic(t *testing.T) {
 	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id").Check(testkit.Rows("1 1 1 1 1",
 		"5 5 5 5 5"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePickAndExecTaskPanic", "panic"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePickAndExecTaskPanic", "panic(\"pickAndExecTaskPanic\")"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePickAndExecTaskPanic"))
 	}()
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id")
-	require.Contains(t, err.Error(), "testIndexMergePickAndExecTaskPanic")
+	require.Contains(t, err.Error(), "pickAndExecTaskPanic")
 }
 
 func TestJoin(t *testing.T) {
