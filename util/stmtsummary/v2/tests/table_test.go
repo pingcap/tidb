@@ -496,7 +496,7 @@ func enableStmtSummaryV2InBindHandle(t *testing.T, store kv.Storage, stmtSummary
 	require.NoError(t, err)
 	ss, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().StmtSummary.EnablePersistent = true
-	tk.Session().GetSessionVars().StmtSummary.StmtSummaryV2 = stmtSummary
+	ss.GetSessionVars().StmtSummary.EnablePersistent = true
+	ss.GetSessionVars().StmtSummary.StmtSummaryV2 = stmtSummary
 	dom.BindHandle().Reset(ss)
 }
