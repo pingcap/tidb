@@ -37,7 +37,7 @@ const (
 	defaultMaxStmtCount        = 3000
 	defaultMaxSQLLength        = 4096
 	defaultRefreshInterval     = 30 * 60 // 30 min
-	defaultRotateCheckInterval = 5       // s
+	defaultRotateCheckInterval = 1       // s
 )
 
 var (
