@@ -505,7 +505,7 @@ outside:
 			}
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
 			parser.fieldIsQuoted = append(parser.fieldIsQuoted, fieldIsQuoted)
-			fieldIsQuoted = false
+			// the loop is end, no need to reset fieldIsQuoted
 			break outside
 		default:
 			if prevToken == csvTokenDelimiter {
