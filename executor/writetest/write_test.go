@@ -1881,8 +1881,7 @@ func checkCases(
 	selectSQL, deleteSQL string,
 ) {
 	origin := ld.IgnoreLines
-	for i, tt := range tests {
-		t.Log("case", i)
+	for _, tt := range tests {
 		ld.IgnoreLines = origin
 		require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
@@ -2293,6 +2292,37 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 	tests := []testCase{
 		{[]byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+}
+
+func TestLoadDataNULL(t *testing.T) {
+	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+	// - For the default FIELDS and LINES values, NULL is written as a field value of \N for output, and a field value of \N is read as NULL for input (assuming that the ESCAPED BY character is \).
+	// - If FIELDS ENCLOSED BY is not empty, a field containing the literal word NULL as its value is read as a NULL value. This differs from the word NULL enclosed within FIELDS ENCLOSED BY characters, which is read as the string 'NULL'.
+	// - If FIELDS ESCAPED BY is empty, NULL is written as the word NULL.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (id VARCHAR(20), value VARCHAR(20)) CHARACTER SET utf8")
+	tk.MustExec(`load data local infile '/tmp/nonexistence.csv' into table load_data_test
+FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`)
+	ctx := tk.Session().(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NotNil(t, ld)
+	tests := []testCase{
+		{
+			[]byte(`NULL,"NULL"
+\N,"\N"
+"\\N"`),
+			[]string{"<nil>|NULL", "<nil>|<nil>", "\\N|<nil>"},
+			// TODO: Warnings should be 1, "Row 3 doesn't contain data for all columns"
+			"Records: 3  Deleted: 0  Skipped: 0  Warnings: 0",
+		},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"

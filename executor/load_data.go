@@ -768,11 +768,13 @@ func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error
 func (e *LoadDataInfo) GenerateCSVConfig() *config.CSVConfig {
 	return &config.CSVConfig{
 		Separator: e.FieldsInfo.Terminated,
-		// TODO: optionally enclosed?
-		Delimiter:   string([]byte{e.FieldsInfo.Enclosed}),
-		Terminator:  e.LinesInfo.Terminated,
-		NotNull:     false,
-		Null:        `\N`, // TODO: right?
+		// ignore optionally enclosed
+		Delimiter:  string([]byte{e.FieldsInfo.Enclosed}),
+		Terminator: e.LinesInfo.Terminated,
+		NotNull:    false,
+		// TODO: If FIELDS ENCLOSED BY is not empty, a field containing the literal word NULL as its value is read as a NULL value
+		// If FIELDS ESCAPED BY is empty, NULL is written as the word NULL.
+		Null:        `\N`,
 		Header:      false,
 		TrimLastSep: false,
 		// TODO: escaped is not \
