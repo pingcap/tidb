@@ -1333,3 +1333,24 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
 	// tk.MustQuery("select * from t1 where c1 < 2").Check(testkit.Rows("1 1"))
 }
+
+func TestMPPMemoryTracker(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_mem_quota_query = 1 << 30")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set tidb_enforce_mpp = on;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testMPPOOMPanic", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/testMPPOOMPanic"))
+	}()
+	err = tk.QueryToErr("select * from t")
+	require.NotNil(t, err)
+}

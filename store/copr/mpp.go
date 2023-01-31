@@ -209,9 +209,16 @@ func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
 			m.sendError(errors.New(fmt.Sprint(r)))
 		}
 	}()
-	respSize := resp.MemSize()
-	m.memTracker.Consume(respSize)
-	defer m.memTracker.Consume(respSize)
+	if m.memTracker != nil {
+		respSize := resp.MemSize()
+		failpoint.Inject("testMPPOOMPanic", func(val failpoint.Value) {
+			if val.(bool) && respSize != 0 {
+				respSize = 1 << 30
+			}
+		})
+		m.memTracker.Consume(respSize)
+		defer m.memTracker.Consume(-respSize)
+	}
 	select {
 	case m.respChan <- resp:
 	case <-m.finishCh:
