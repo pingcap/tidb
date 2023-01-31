@@ -1418,6 +1418,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				// So just skip `RebuildSysVarCache` in some integration testing.
 				if val.(bool) {
 					failpoint.Continue()
+					logutil.BgLogger().Info("skipLoadSysVarCacheLoop enable")
 				}
 			})
 
