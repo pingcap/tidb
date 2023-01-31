@@ -88,7 +88,8 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(2000), g.RURate)
 	re.Equal(int64(-1), g.BurstLimit)
 
-	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x'").Check(testkit.Rows("x RU_MODE 2000 0 3000 0 <nil> <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x RU_MODE 2000 0 3000 0 <nil> <nil> <nil>"))
+
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Nil(g)
@@ -142,7 +143,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("create resource group y " +
 		"RRU_PER_SEC=2000 " +
 		"WRU_PER_SEC=3000")
-	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'y'").Check(testkit.Rows("y RU_MODE 2000 0 3000 0 <nil> <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y RU_MODE 2000 0 3000 0 <nil> <nil> <nil>"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RRU_PER_SEC=2000 WRU_PER_SEC=3000"))
 
 	tk.MustExec("alter resource group y RU_PER_SEC=4000")
@@ -161,7 +162,7 @@ func TestResourceGroupBasic(t *testing.T) {
 		"CPU='4000m' " +
 		"IO_READ_BANDWIDTH='1G' " +
 		"IO_WRITE_BANDWIDTH='300M'")
-	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'z'").Check(testkit.Rows("z RAW_MODE <nil> <nil> <nil> <nil> 4000 1000000000 300000000"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'z'").Check(testkit.Rows("z RAW_MODE <nil> <nil> <nil> <nil> 4000 1000000000 300000000"))
 	tk.MustQuery("show create resource group z").Check(testkit.Rows("z CREATE RESOURCE GROUP `z` CPU=\"4000m\" IO_READ_BANDWIDTH=\"1G\" IO_WRITE_BANDWIDTH=\"300M\""))
 	*/
 
