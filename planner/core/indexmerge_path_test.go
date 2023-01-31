@@ -15,6 +15,8 @@
 package core_test
 
 import (
+	"fmt"
+	"math/rand"
 	"strings"
 	"testing"
 
@@ -210,4 +212,150 @@ func TestMVIndexPointGet(t *testing.T) {
 		}
 		require.True(t, !hasPointGet) // no point-get plan
 	}
+}
+
+func TestEnforceMVIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int, j json, index kj((cast(j as signed array))))`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	planSuiteData := core.GetIndexMergeSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, query := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = query
+		})
+		result := tk.MustQuery("explain format = 'brief' " + query)
+		testdata.OnRecord(func() {
+			output[i].Plan = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		result.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestMVIndexInvisible(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t(a int, j json, index kj((cast(j as signed array))))`)
+	tk.MustQuery(`explain format='brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j))`).Check(testkit.Rows(
+		`Selection 8000.00 root  json_memberof(cast(1, json BINARY), test.t.j)`,
+		`└─IndexMerge 10.00 root  type: union`,
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+		`  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+
+	tk.MustExec(`ALTER TABLE t ALTER INDEX kj INVISIBLE`)
+	tk.MustQuery(`explain format='brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j))`).Check(testkit.Rows(
+		"Selection 8000.00 root  json_memberof(cast(1, json BINARY), test.t.j)",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select /*+ use_index_merge(t, kj) */ * from t where (1 member of (j))`).Check(testkit.Rows(
+		"Selection 8000.00 root  json_memberof(cast(1, json BINARY), test.t.j)",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	tk.MustExec(`ALTER TABLE t ALTER INDEX kj VISIBLE`)
+	tk.MustQuery(`explain format='brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j))`).Check(testkit.Rows(
+		`Selection 8000.00 root  json_memberof(cast(1, json BINARY), test.t.j)`,
+		`└─IndexMerge 10.00 root  type: union`,
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+		`  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+}
+
+func TestMVIndexRandom(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, testCase := range []struct {
+		indexType     string
+		insertValOpts randMVIndexValOpts
+		queryValsOpts randMVIndexValOpts
+	}{
+		{"signed", randMVIndexValOpts{"signed", 0, 3}, randMVIndexValOpts{"signed", 0, 3}},
+		{"unsigned", randMVIndexValOpts{"unsigned", 0, 3}, randMVIndexValOpts{"unsigned", 0, 3}}, // unsigned-index + unsigned-values
+		{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 3, 3}},
+		{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 1, 3}},
+		//{"char(3)", randMVIndexValOpts{"string", 3, 3}, randMVIndexValOpts{"string", 5, 3}},
+		//{"date", randMVIndexValOpts{"date", 0, 3}, randMVIndexValOpts{"date", 0, 3}},
+	} {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf(`create table t(a int, j json, index kj((cast(j as %v array))))`, testCase.indexType))
+
+		nRows := 20
+		rows := make([]string, 0, nRows)
+		for i := 0; i < nRows; i++ {
+			va, v1, v2 := rand.Intn(testCase.insertValOpts.distinct), randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts)
+			if testCase.indexType == "date" {
+				rows = append(rows, fmt.Sprintf(`(%v, json_array(cast(%v as date), cast(%v as date)))`, va, v1, v2))
+			} else {
+				rows = append(rows, fmt.Sprintf(`(%v, '[%v, %v]')`, va, v1, v2))
+			}
+		}
+		tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(rows, ", ")))
+
+		nQueries := 20
+		for i := 0; i < nQueries; i++ {
+			conds := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts)
+			r1 := tk.MustQuery("select /*+ ignore_index(t, kj) */ * from t where " + conds).Sort()
+			tk.MustQuery("select /*+ use_index(t, kj) */ * from t where " + conds).Sort().Check(r1.Rows())
+		}
+	}
+}
+
+func randMVIndexConds(nConds int, valOpts randMVIndexValOpts) string {
+	var conds string
+	for i := 0; i < nConds; i++ {
+		if i > 0 {
+			if rand.Intn(5) < 1 { // OR
+				conds += " OR "
+			} else { // AND
+				conds += " AND "
+			}
+		}
+		cond := randMVIndexCond(rand.Intn(4), valOpts)
+		conds += cond
+	}
+	return conds
+}
+
+func randMVIndexCond(condType int, valOpts randMVIndexValOpts) string {
+	switch condType {
+	case 0: // member_of
+		return fmt.Sprintf(`(%v member of (j))`, randMVIndexValue(valOpts))
+	case 1: // json_contains
+		return fmt.Sprintf(`json_contains(j, '[%v, %v]')`, randMVIndexValue(valOpts), randMVIndexValue(valOpts))
+	case 2: // json_overlaps
+		return fmt.Sprintf(`json_overlaps(j, '[%v, %v]')`, randMVIndexValue(valOpts), randMVIndexValue(valOpts))
+	default: // others
+		return fmt.Sprintf(`a < %v`, rand.Intn(valOpts.distinct))
+	}
+}
+
+type randMVIndexValOpts struct {
+	valType   string // INT, UNSIGNED, STR, DATE
+	maxStrLen int
+	distinct  int
+}
+
+func randMVIndexValue(opts randMVIndexValOpts) string {
+	switch strings.ToLower(opts.valType) {
+	case "signed":
+		return fmt.Sprintf("%v", rand.Intn(opts.distinct)-(opts.distinct/2))
+	case "unsigned":
+		return fmt.Sprintf("%v", rand.Intn(opts.distinct))
+	case "string":
+		return fmt.Sprintf(`"%v"`, strings.Repeat(fmt.Sprintf("%v", rand.Intn(opts.distinct)), rand.Intn(opts.maxStrLen)+1))
+	case "date":
+		return fmt.Sprintf(`"2000-01-%v"`, rand.Intn(opts.distinct)+1)
+	}
+	return ""
 }

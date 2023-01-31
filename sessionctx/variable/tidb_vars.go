@@ -796,6 +796,9 @@ const (
 	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
 	// is enabled.
 	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
+
+	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
+	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
 )
 
 // TiDB vars that have only global scope
@@ -1177,6 +1180,7 @@ const (
 	DefTiDBTTLDeleteWorkerCount                            = 4
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
+	DefTiDBEnablePlanCacheForParamLimit                    = true
 	DefTiDBStmtSummaryFilename                             = "tidb-statements.log"
 	DefTiDBStmtSummaryFileMaxDays                          = 3
 	DefTiDBStmtSummaryFileMaxSize                          = 64

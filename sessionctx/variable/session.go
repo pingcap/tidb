@@ -1254,6 +1254,9 @@ type SessionVars struct {
 	// PreparedPlanCacheMonitor indicates whether to enable prepared plan cache monitor.
 	EnablePreparedPlanCacheMemoryMonitor bool
 
+	// EnablePlanCacheForParamLimit controls whether the prepare statement with parameterized limit can be cached
+	EnablePlanCacheForParamLimit bool
+
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
