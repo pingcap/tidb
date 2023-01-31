@@ -405,6 +405,12 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 		if err != nil {
 			return nil, err
 		}
+		// Update mode of new generated firstRow as other agg funcs.
+		if len(agg.AggFuncs) != 0 {
+			firstRow.Mode = agg.AggFuncs[0].Mode
+		} else {
+			firstRow.Mode = aggregation.Partial1Mode
+		}
 		newAgg.AggFuncs = append(newAgg.AggFuncs, firstRow)
 	}
 	tmpSchema := expression.NewSchema(newAgg.GetGroupByCols()...)
