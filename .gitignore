@@ -33,6 +33,6 @@ out
 bazel-bin
 bazel-out
 bazel-testlogs
-bazel-tidb*
+bazel-tidb
 .ijwb/
 /oom_record/
