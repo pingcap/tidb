@@ -114,6 +114,10 @@ func makeJSONSchema(schema *backuppb.Schema) (*jsonSchema, error) {
 
 func fromJSONSchema(jSchema *jsonSchema) (*backuppb.Schema, error) {
 	schema := jSchema.Schema
+	if schema == nil {
+		schema = &backuppb.Schema{}
+	}
+
 	var err error
 	schema.Db, err = json.Marshal(jSchema.DB)
 	if err != nil {
