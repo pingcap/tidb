@@ -105,10 +105,7 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 			},
 		}),
 	}
-	now := time.Now().Unix()
-	now -= now % int64(s.RefreshInterval())
-	end := now + int64(s.RefreshInterval())
-	w := newStmtWindow(time.Unix(now, 0), time.Unix(end, 0), uint(s.optMaxStmtCount.Load()))
+	w := newStmtWindow(timeNow(), uint(s.optMaxStmtCount.Load()))
 	s.window.Store(w)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
@@ -133,18 +130,15 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 
 // NewStmtSummary4Test creates a new StmtSummary for testing purposes.
 func NewStmtSummary4Test(maxStmtCount uint) *StmtSummary {
-	const refreshInterval = 60 * 60 * 24 * 365 // 1 year
 	s := &StmtSummary{
 		optEnabled:             atomic2.NewBool(defaultEnabled),
 		optEnableInternalQuery: atomic2.NewBool(defaultEnableInternalQuery),
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
-		optRefreshInterval:     atomic2.NewUint32(refreshInterval),
+		optRefreshInterval:     atomic2.NewUint32(60 * 60 * 24 * 365), // 1 year
 		storage:                &mockStmtStorage{},
 	}
-	now := time.Now()
-	w := newStmtWindow(now, now.Add(time.Duration(refreshInterval)*time.Second), maxStmtCount)
-	s.window.Store(w)
+	s.window.Store(newStmtWindow(timeNow(), maxStmtCount))
 	return s
 }
 
@@ -230,31 +224,20 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		return
 	}
 	now := timeNow()
-	cur := s.window.Load().(*stmtWindow)
-	end := cur.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)
 	// The current window has expired and needs to be refreshed and persisted.
-	if now.After(end) {
+	if now.After(s.window.Load().(*stmtWindow).begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
 		// Lock to avoid repeated persistence of the same window.
 		s.rotateLock.Lock()
-		cur := s.window.Load().(*stmtWindow)
-		end := cur.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)
 		// Double check to avoid repeated persistence of the same window.
-		if now.After(end) {
-			newBegin := end
-			newEnd := newBegin.Add(time.Duration(s.RefreshInterval()) * time.Second)
-			newWindow := newStmtWindow(newBegin, newEnd, uint(s.MaxStmtCount()))
-			cur = s.window.Swap(newWindow).(*stmtWindow)
+		if now.After(s.window.Load().(*stmtWindow).begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
+			cur := s.window.Swap(newStmtWindow(now, uint(s.MaxStmtCount()))).(*stmtWindow)
 			// Waiting for possible running `stmtWindow.add()`
 			cur.Lock()
 			size := cur.lru.Size()
 			cur.Unlock()
-			if !cur.end.Equal(end) {
-				// RefreshInterval has been changed, so we need to modify the end time of the window.
-				cur.end = end
-			}
 			if size > 0 {
 				// Persist window asynchronously.
-				go s.storage.persist(cur)
+				go s.storage.persist(cur, now)
 			}
 		}
 		s.rotateLock.Unlock()
@@ -290,7 +273,7 @@ func (s *StmtSummary) Evicted() []types.Datum {
 		return nil
 	}
 	begin := types.NewTime(types.FromGoTime(w.begin), mysql.TypeTimestamp, 0)
-	end := types.NewTime(types.FromGoTime(w.end), mysql.TypeTimestamp, 0)
+	end := types.NewTime(types.FromGoTime(timeNow()), mysql.TypeTimestamp, 0)
 	return types.MakeDatums(begin, end, count)
 }
 
@@ -383,15 +366,13 @@ func (s *StmtSummary) GetMoreThanCntBindableStmt(cnt int64) []*stmtsummary.Binda
 type stmtWindow struct {
 	sync.Mutex
 	begin   time.Time
-	end     time.Time
 	lru     *kvcache.SimpleLRUCache // *stmtKey => *lockedStmtRecord
 	evicted *stmtEvicted
 }
 
-func newStmtWindow(begin time.Time, end time.Time, capacity uint) *stmtWindow {
+func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
 	w := &stmtWindow{
 		begin:   begin,
-		end:     end,
 		lru:     kvcache.NewSimpleLRUCache(capacity, 0, 0),
 		evicted: newStmtEvicted(),
 	}
@@ -434,7 +415,7 @@ func (w *stmtWindow) clear() {
 }
 
 type stmtStorage interface {
-	persist(w *stmtWindow)
+	persist(w *stmtWindow, end time.Time)
 }
 
 // stmtKey defines key for stmtElement.
@@ -507,6 +488,6 @@ type mockStmtStorage struct {
 	windows []*stmtWindow
 }
 
-func (s *mockStmtStorage) persist(w *stmtWindow) {
+func (s *mockStmtStorage) persist(w *stmtWindow, end time.Time) {
 	s.windows = append(s.windows, w)
 }

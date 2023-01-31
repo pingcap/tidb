@@ -23,7 +23,7 @@ import (
 )
 
 func TestStmtWindow(t *testing.T) {
-	w := newStmtWindow(time.Unix(0, 0), time.Unix(4070880000, 0), 5)
+	w := newStmtWindow(time.Unix(0, 0), 5)
 	w.add(GenerateStmtExecInfo4Test("digest1"))
 	w.add(GenerateStmtExecInfo4Test("digest1"))
 	w.add(GenerateStmtExecInfo4Test("digest2"))
@@ -54,7 +54,7 @@ func TestStmtSummary(t *testing.T) {
 	require.Equal(t, 3, w.lru.Size())
 	require.Equal(t, 2, w.evicted.count())
 
-	newEnd := w.end.Add(time.Second)
+	newEnd := w.begin.Add(time.Duration(ss.RefreshInterval()+1) * time.Second)
 	timeNow = func() time.Time {
 		return newEnd
 	}
@@ -87,7 +87,7 @@ type waitableMockStmtStorage struct {
 	*mockStmtStorage
 }
 
-func (s *waitableMockStmtStorage) persist(w *stmtWindow) {
+func (s *waitableMockStmtStorage) persist(w *stmtWindow, end time.Time) {
 	defer s.Done()
-	s.mockStmtStorage.persist(w)
+	s.mockStmtStorage.persist(w, end)
 }
