@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -2340,10 +2341,13 @@ func (cr *chunkRestore) deliverLoop(
 
 	for hasMoreKVs {
 		var (
-			c             = t.kvStore.GetCodec()
+			c             = keyspace.CodecV1
 			dataChecksum  = verify.NewKVChecksumWithKeyspace(c)
 			indexChecksum = verify.NewKVChecksumWithKeyspace(c)
 		)
+		if t.kvStore != nil {
+			c = t.kvStore.GetCodec()
+		}
 		var columns []string
 		var kvPacket []deliveredKVs
 		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
