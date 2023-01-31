@@ -29,6 +29,27 @@ import (
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 )
 
+func buildStmtSummaryRetriever(
+	ctx sessionctx.Context,
+	table *model.TableInfo,
+	columns []*model.ColumnInfo,
+	extractor *plannercore.StatementsSummaryExtractor,
+) memTableRetriever {
+	if ctx.GetSessionVars().StmtSummary.EnablePersistent {
+		return &stmtSummaryRetrieverV2{
+			stmtSummary: ctx.GetSessionVars().StmtSummary.StmtSummaryV2,
+			table:       table,
+			columns:     columns,
+			extractor:   extractor,
+		}
+	}
+	return &stmtSummaryRetriever{
+		table:     table,
+		columns:   columns,
+		extractor: extractor,
+	}
+}
+
 // stmtSummaryRetriever is used to retrieve statements summary.
 type stmtSummaryRetriever struct {
 	dummyCloser

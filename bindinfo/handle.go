@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	tablefilter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
@@ -892,7 +891,7 @@ func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
 	captureFilter := h.extractCaptureFilterFromStorage()
 	emptyCaptureFilter := captureFilter.isEmpty()
-	bindableStmts := getBindableStmts(h.sctx.GetSessionVars(), captureFilter.frequency)
+	bindableStmts := h.sctx.GetSessionVars().StmtSummary.GetBindableStmts(captureFilter.frequency)
 	for _, bindableStmt := range bindableStmts {
 		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
@@ -947,13 +946,6 @@ func (h *BindHandle) CaptureBaselines() {
 			logutil.BgLogger().Debug("[sql-bind] create bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}
 	}
-}
-
-func getBindableStmts(sessVars *variable.SessionVars, frequency int64) []*stmtsummary.BindableStmt {
-	if sessVars.EnablePersistentStmtSummary {
-		return sessVars.StmtSummaryV2.GetMoreThanCntBindableStmt(frequency)
-	}
-	return stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(frequency)
 }
 
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {

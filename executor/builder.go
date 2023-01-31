@@ -1980,26 +1980,10 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			if v.Extractor != nil {
 				extractor = v.Extractor.(*plannercore.StatementsSummaryExtractor)
 			}
-			if b.ctx.GetSessionVars().EnablePersistentStmtSummary {
-				return &MemTableReaderExec{
-					baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-					table:        v.Table,
-					retriever: &stmtSummaryRetrieverV2{
-						stmtSummary: b.ctx.GetSessionVars().StmtSummaryV2,
-						table:       v.Table,
-						columns:     v.Columns,
-						extractor:   extractor,
-					},
-				}
-			}
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
-				retriever: &stmtSummaryRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: extractor,
-				},
+				retriever:    buildStmtSummaryRetriever(b.ctx, v.Table, v.Columns, extractor),
 			}
 		case strings.ToLower(infoschema.TableColumns):
 			return &MemTableReaderExec{
