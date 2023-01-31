@@ -1593,7 +1593,7 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 }
 
 var tableResourceGroupsCols = []columnInfo{
-	{name: "GROUP_NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
+	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
 	{name: "MODE", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
 	{name: "RRU", tp: mysql.TypeLonglong, size: 21},
 	{name: "RRU_TOKEN", tp: mysql.TypeLonglong, size: 21},
