@@ -525,6 +525,7 @@ func TestTSV(t *testing.T) {
 		Separator: "\t",
 		Delimiter: "",
 		NotNull:   false,
+		Null:      []string{""},
 		Header:    true,
 	}
 
@@ -587,6 +588,7 @@ func TestCsvWithWhiteSpaceLine(t *testing.T) {
 	cfg := config.CSVConfig{
 		Separator: ",",
 		Delimiter: `"`,
+		Null:      []string{""},
 	}
 	data := " \r\n\r\n0,,abc\r\n \r\n123,1999-12-31,test\r\n"
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(data), int64(config.ReadBlockSize), ioWorkers, false, nil)
@@ -850,6 +852,7 @@ func TestBackslashAsSep(t *testing.T) {
 		CSV: config.CSVConfig{
 			Separator: `\`,
 			Delimiter: `"`,
+			Null:      []string{""},
 		},
 	}
 
@@ -877,13 +880,14 @@ func TestBackslashAsDelim(t *testing.T) {
 		CSV: config.CSVConfig{
 			Separator: ",",
 			Delimiter: `\`,
+			Null:      []string{""},
 		},
 	}
 
 	testCases := []testCase{
 		{
 			input:    `\\`,
-			expected: [][]types.Datum{{nullDatum}},
+			expected: [][]types.Datum{{types.NewStringDatum("")}},
 		},
 	}
 	runTestCasesCSV(t, &cfg, 1, testCases)

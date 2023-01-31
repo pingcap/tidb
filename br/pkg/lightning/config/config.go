@@ -914,6 +914,11 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		csv.EscapedBy = `\`
 	}
 
+	// keep compatibility with old behaviour
+	if !csv.NotNull && len(csv.Null) == 0 {
+		csv.Null = []string{""}
+	}
+
 	if len(csv.EscapedBy) > 0 {
 		if csv.Separator == csv.EscapedBy {
 			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV separator and `mydumper.csv.escaped-by`", csv.EscapedBy)
