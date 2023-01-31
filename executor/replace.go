@@ -177,9 +177,16 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
-		handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn, e.Table.Meta().ID, uk.commonHandle, false)
+		val, err := txn.Get(ctx, uk.newKey)
 		if err != nil {
+			if kv.IsErrNotFound(err) {
+				continue
+			}
 			return false, false, err
+		}
+		handle, err := tables.FetchDuplicatedHandleForDistinctKey(ctx, uk.newKey, val, txn, e.Table.Meta().ID, uk.commonHandle)
+		if err != nil {
+			return false, true, err
 		}
 		if handle == nil {
 			continue
