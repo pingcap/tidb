@@ -543,6 +543,25 @@ func TestInvalidTOML(t *testing.T) {
 	require.EqualError(t, err, "toml: line 2: expected '.' or '=', but got '[' instead")
 }
 
+func TestStringOrStringSlice(t *testing.T) {
+	cfg := &config.Config{}
+	err := cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = '\N'
+	`))
+	require.NoError(t, err)
+	err = cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = [ '\N', 'NULL' ]
+	`))
+	require.NoError(t, err)
+	err = cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = [ '\N', 123 ]
+	`))
+	require.ErrorContains(t, err, "invalid string slice")
+}
+
 func TestTOMLUnusedKeys(t *testing.T) {
 	cfg := &config.Config{}
 	err := cfg.LoadFromTOML([]byte(`

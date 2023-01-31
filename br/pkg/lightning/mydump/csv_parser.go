@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -28,6 +29,7 @@ import (
 	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -47,10 +49,12 @@ type CSVParser struct {
 	blockParser
 	cfg *config.CSVConfig
 
-	comma      []byte
-	quote      []byte
-	newLine    []byte
-	startingBy []byte
+	comma          []byte
+	quote          []byte
+	newLine        []byte
+	startingBy     []byte
+	escapedBy      string
+	unescapeRegexp *regexp.Regexp
 
 	charsetConvertor *CharsetConvertor
 	// These variables are used with IndexAnyByte to search a byte slice for the
@@ -74,13 +78,19 @@ type CSVParser struct {
 
 	// fieldIndexes is an index of fields inside recordBuffer.
 	// The i'th field ends at offset fieldIndexes[i] in recordBuffer.
-	fieldIndexes []int
+	fieldIndexes  []int
+	fieldIsQuoted []bool
 
-	lastRecord []string
+	lastRecord []field
 
-	escFlavor backslashEscapeFlavor
+	escFlavor escapeFlavor
 	// if set to true, csv parser will treat the first non-empty line as header line
 	shouldParseHeader bool
+}
+
+type field struct {
+	content string
+	quoted  bool
 }
 
 // NewCSVParser creates a CSV parser.
@@ -127,14 +137,19 @@ func NewCSVParser(
 		}
 	}
 
-	escFlavor := backslashEscapeFlavorNone
-	if cfg.BackslashEscape {
-		escFlavor = backslashEscapeFlavorMySQL
-		quoteStopSet = append(quoteStopSet, '\\')
-		unquoteStopSet = append(unquoteStopSet, '\\')
+	escFlavor := escapeFlavorNone
+	var r *regexp.Regexp
+	if len(cfg.EscapedBy) > 0 {
+		escFlavor = escapeFlavorMySQL
+		quoteStopSet = append(quoteStopSet, cfg.EscapedBy[0])
+		unquoteStopSet = append(unquoteStopSet, cfg.EscapedBy[0])
 		// we need special treatment of the NULL value \N, used by MySQL.
-		if !cfg.NotNull && cfg.Null == `\N` {
-			escFlavor = backslashEscapeFlavorMySQLWithNull
+		if !cfg.NotNull && slices.Contains(cfg.Null, cfg.EscapedBy+`N`) {
+			escFlavor = escapeFlavorMySQLWithNull
+		}
+		r, err = regexp.Compile(`(?s)` + regexp.QuoteMeta(cfg.EscapedBy) + `.`)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	metrics, _ := metric.FromContext(ctx)
@@ -146,6 +161,8 @@ func NewCSVParser(
 		quote:             []byte(delimiter),
 		newLine:           []byte(terminator),
 		startingBy:        []byte(cfg.StartingBy),
+		escapedBy:         cfg.EscapedBy,
+		unescapeRegexp:    r,
 		escFlavor:         escFlavor,
 		quoteByteSet:      makeByteSet(quoteStopSet),
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
@@ -175,18 +192,30 @@ func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (separato
 	return
 }
 
-func (parser *CSVParser) unescapeString(input string) (unescaped string, isNull bool, err error) {
+func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull bool, err error) {
 	// Convert the input from another charset to utf8mb4 before we return the string.
-	if input, err = parser.charsetConvertor.Decode(input); err != nil {
+	if unescaped, err = parser.charsetConvertor.Decode(input.content); err != nil {
 		return
 	}
-	if parser.escFlavor == backslashEscapeFlavorMySQLWithNull && input == `\N` {
-		return input, true, nil
+	if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedBy+`N` {
+		return input.content, true, nil
 	}
-	unescaped = unescape(input, "", parser.escFlavor)
-	isNull = parser.escFlavor != backslashEscapeFlavorMySQLWithNull &&
-		!parser.cfg.NotNull &&
-		unescaped == parser.cfg.Null
+	if len(parser.escapedBy) > 0 {
+		unescaped = unescape(unescaped, "", parser.escFlavor, parser.escapedBy[0], parser.unescapeRegexp)
+	}
+	if len(parser.quote) == 0 {
+		isNull = parser.escFlavor != escapeFlavorMySQLWithNull &&
+			!parser.cfg.NotNull &&
+			slices.Contains(parser.cfg.Null, unescaped)
+	} else if !input.quoted {
+		// quoted string can never be NULL except for \N, which must be escapeFlavorMySQLWithNull
+		isNull = !parser.cfg.NotNull &&
+			slices.Contains(parser.cfg.Null, unescaped)
+		if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedBy+`N` {
+			// avoid \\N
+			isNull = false
+		}
+	}
 	return
 }
 
@@ -198,9 +227,9 @@ type csvToken int16
 const (
 	// csvTokenAnyUnquoted is a placeholder to represent any unquoted character.
 	csvTokenAnyUnquoted csvToken = 0
-	// csvTokenWithBackslash is a mask indicating an escaped character.
-	// The actual token is represented like `csvTokenWithBackslash | 'n'`.
-	csvTokenWithBackslash csvToken = 0x100
+	// csvTokenEscaped is a mask indicating an escaped character.
+	// The actual token is represented like `csvTokenEscaped | 'n'`.
+	csvTokenEscaped csvToken = 0x100
 	// csvTokenComma is the CSV separator token.
 	csvTokenComma csvToken = 0x200
 	// csvTokenNewLine is the CSV terminator token.
@@ -293,8 +322,11 @@ func (parser *CSVParser) tryReadComma(b byte) (bool, error) {
 	return parser.tryReadExact(parser.comma[1:])
 }
 
-func (parser *CSVParser) tryReadBackslashed(bs byte) (bool, byte, error) {
-	if bs != '\\' || parser.escFlavor == backslashEscapeFlavorNone {
+func (parser *CSVParser) tryReadEscaped(bs byte) (bool, byte, error) {
+	if parser.escapedBy == "" {
+		return false, 0, nil
+	}
+	if bs != parser.escapedBy[0] || parser.escFlavor == escapeFlavorNone {
 		return false, 0, nil
 	}
 	b, err := parser.readByte()
@@ -306,8 +338,8 @@ func (parser *CSVParser) readQuotedToken(b byte) (csvToken, error) {
 	if ok, err := parser.tryReadCloseDelimiter(b); ok || err != nil {
 		return csvTokenDelimiter, err
 	}
-	if ok, eb, err := parser.tryReadBackslashed(b); ok || err != nil {
-		return csvTokenWithBackslash | csvToken(eb), err
+	if ok, eb, err := parser.tryReadEscaped(b); ok || err != nil {
+		return csvTokenEscaped | csvToken(eb), err
 	}
 	return csvToken(b), nil
 }
@@ -323,15 +355,15 @@ func (parser *CSVParser) readUnquoteToken(b byte) (csvToken, error) {
 	if ok, err := parser.tryReadOpenDelimiter(b); ok || err != nil {
 		return csvTokenDelimiter, err
 	}
-	if ok, eb, err := parser.tryReadBackslashed(b); ok || err != nil {
-		return csvTokenWithBackslash | csvToken(eb), err
+	if ok, eb, err := parser.tryReadEscaped(b); ok || err != nil {
+		return csvTokenEscaped | csvToken(eb), err
 	}
 	return csvToken(b), nil
 }
 
 func (parser *CSVParser) appendCSVTokenToRecordBuffer(token csvToken) {
-	if token&csvTokenWithBackslash != 0 {
-		parser.recordBuffer = append(parser.recordBuffer, '\\')
+	if token&csvTokenEscaped != 0 {
+		parser.recordBuffer = append(parser.recordBuffer, parser.escapedBy[0])
 	}
 	parser.recordBuffer = append(parser.recordBuffer, byte(token))
 }
@@ -372,14 +404,16 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	}
 }
 
-func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
+func (parser *CSVParser) readRecord(dst []field) ([]field, error) {
 	parser.recordBuffer = parser.recordBuffer[:0]
 	parser.fieldIndexes = parser.fieldIndexes[:0]
+	parser.fieldIsQuoted = parser.fieldIsQuoted[:0]
 
 	isEmptyLine := true
 	whitespaceLine := true
 	foundStartingByThisLine := false
 	prevToken := csvTokenNewLine
+	fieldIsQuoted := false
 	var firstToken csvToken
 
 outside:
@@ -445,6 +479,8 @@ outside:
 		case csvTokenComma:
 			whitespaceLine = false
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
+			parser.fieldIsQuoted = append(parser.fieldIsQuoted, fieldIsQuoted)
+			fieldIsQuoted = false
 		case csvTokenDelimiter:
 			if prevToken != csvTokenComma && prevToken != csvTokenNewLine {
 				parser.logSyntaxError()
@@ -453,6 +489,7 @@ outside:
 			if err = parser.readQuotedField(); err != nil {
 				return nil, err
 			}
+			fieldIsQuoted = true
 			whitespaceLine = false
 		case csvTokenNewLine:
 			foundStartingByThisLine = false
@@ -467,6 +504,8 @@ outside:
 				continue
 			}
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
+			parser.fieldIsQuoted = append(parser.fieldIsQuoted, fieldIsQuoted)
+			fieldIsQuoted = false
 			break outside
 		default:
 			if prevToken == csvTokenDelimiter {
@@ -483,12 +522,13 @@ outside:
 	str := string(parser.recordBuffer) // Convert to string once to batch allocations
 	dst = dst[:0]
 	if cap(dst) < len(parser.fieldIndexes) {
-		dst = make([]string, len(parser.fieldIndexes))
+		dst = make([]field, len(parser.fieldIndexes))
 	}
 	dst = dst[:len(parser.fieldIndexes)]
 	var preIdx int
 	for i, idx := range parser.fieldIndexes {
-		dst[i] = str[preIdx:idx]
+		dst[i].content = str[preIdx:idx]
+		dst[i].quoted = parser.fieldIsQuoted[i]
 		preIdx = idx
 	}
 
@@ -574,7 +614,7 @@ func (parser *CSVParser) ReadRow() error {
 	// remove the last empty value
 	if parser.cfg.TrimLastSep {
 		i := len(records) - 1
-		if i >= 0 && len(records[i]) == 0 {
+		if i >= 0 && len(records[i].content) == 0 {
 			records = records[:i]
 		}
 	}
@@ -586,7 +626,7 @@ func (parser *CSVParser) ReadRow() error {
 		row.Row = make([]types.Datum, len(records))
 	}
 	for i, record := range records {
-		row.Length += len(record)
+		row.Length += len(record.content)
 		unescaped, isNull, err := parser.unescapeString(record)
 		if err != nil {
 			return errors.Trace(err)
@@ -609,31 +649,37 @@ func (parser *CSVParser) ReadColumns() error {
 	}
 	parser.columns = make([]string, 0, len(columns))
 	for _, colName := range columns {
-		colName, _, err = parser.unescapeString(colName)
+		colNameStr, _, err := parser.unescapeString(colName)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		parser.columns = append(parser.columns, strings.ToLower(colName))
+		parser.columns = append(parser.columns, strings.ToLower(colNameStr))
 	}
 	return nil
 }
 
 // ReadUntilTerminator seeks the file until the terminator token is found, and
 // returns
-// - the content before terminator
+// - the content with terminator
 // - the file offset beyond the terminator
 // - error
 // Note that the terminator string pattern may be the content of a field, which
 // means it's inside quotes. Caller should make sure to handle this case.
 func (parser *CSVParser) ReadUntilTerminator() ([]byte, int64, error) {
+	var ret []byte
 	for {
 		content, firstByte, err := parser.readUntil(&parser.newLineByteSet)
 		if err != nil {
-			return content, 0, err
+			return nil, 0, err
 		}
+		ret = append(ret, content...)
 		parser.skipBytes(1)
+		ret = append(ret, firstByte)
 		if ok, err := parser.tryReadNewLine(firstByte); ok || err != nil {
-			return content, parser.pos, err
+			if len(parser.newLine) >= 1 {
+				ret = append(ret, parser.newLine[1:]...)
+			}
+			return ret, parser.pos, err
 		}
 	}
 }
