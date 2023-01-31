@@ -1059,11 +1059,12 @@ func TestNULL(t *testing.T) {
 
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  `"`,
-			Terminator: "\n",
-			Null:       []string{`\N`, `NULL`},
-			EscapedBy:  `\`,
+			Separator:        ",",
+			Delimiter:        `"`,
+			Terminator:       "\n",
+			Null:             []string{`\N`, `NULL`},
+			EscapedBy:        `\`,
+			QuotedNullIsText: true,
 		},
 	}
 	testCases := []testCase{
@@ -1128,11 +1129,12 @@ func TestNULL(t *testing.T) {
 
 	cfg = config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:  ",",
-			Delimiter:  `"`,
-			Terminator: "\n",
-			Null:       []string{`NULL`},
-			EscapedBy:  ``,
+			Separator:        ",",
+			Delimiter:        `"`,
+			Terminator:       "\n",
+			Null:             []string{`NULL`},
+			EscapedBy:        ``,
+			QuotedNullIsText: true,
 		},
 	}
 	testCases = []testCase{

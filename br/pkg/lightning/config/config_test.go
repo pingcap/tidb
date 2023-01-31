@@ -477,15 +477,15 @@ func TestInvalidCSV(t *testing.T) {
 				separator = '\'
 				backslash-escape = true
 			`,
-			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' both as CSV separator and `mydumper.csv.escaped-by`",
 		},
 		{
 			input: `
 				[mydumper.csv]
 				delimiter = '\'
-				backslash-escape = true
+				escaped-by = '\'
 			`,
-			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' both as CSV delimiter and `mydumper.csv.escaped-by`",
 		},
 		{
 			input: `
@@ -528,7 +528,7 @@ func TestInvalidCSV(t *testing.T) {
 		if tc.err != "" {
 			require.EqualError(t, err, tc.err, comment)
 		} else {
-			require.NoError(t, err)
+			require.NoError(t, err, tc.input)
 		}
 	}
 }

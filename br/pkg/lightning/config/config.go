@@ -771,13 +771,14 @@ func NewConfig() *Config {
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
 			CSV: CSVConfig{
-				Separator:   ",",
-				Delimiter:   `"`,
-				Header:      true,
-				NotNull:     false,
-				Null:        []string{`\N`},
-				EscapedBy:   `\`,
-				TrimLastSep: false,
+				Separator:       ",",
+				Delimiter:       `"`,
+				Header:          true,
+				NotNull:         false,
+				Null:            []string{`\N`},
+				BackslashEscape: true,
+				EscapedBy:       `\`,
+				TrimLastSep:     false,
 			},
 			StrictFormat:           false,
 			MaxRegionSize:          MaxRegionSize,
@@ -913,6 +914,9 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	}
 	if csv.BackslashEscape && csv.EscapedBy == "" {
 		csv.EscapedBy = `\`
+	}
+	if !csv.BackslashEscape && csv.EscapedBy == `\` {
+		csv.EscapedBy = ""
 	}
 
 	// keep compatibility with old behaviour
