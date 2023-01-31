@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"math"
 	"runtime"
 	"strconv"
@@ -2322,8 +2323,12 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBEnableResourceControl, Value: BoolToOnOff(DefTiDBEnableResourceControl), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		EnableResourceControl.Store(TiDBOptOn(s))
-		(*SetGlobalResourceControl.Load())(TiDBOptOn(s))
+		if TiDBOptOn(s) != EnableResourceControl.Load() {
+			EnableResourceControl.Store(TiDBOptOn(s))
+			(*SetGlobalResourceControl.Load())(TiDBOptOn(s))
+			logutil.BgLogger().Info("set resource control", zap.Bool("enable", TiDBOptOn(s)))
+			TiDBOptOn(s)
+		}
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableResourceControl.Load()), nil

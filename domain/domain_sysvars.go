@@ -76,10 +76,6 @@ func (do *Domain) setGlobalResourceControl(enable bool) {
 	} else {
 		variable.DisableGlobalResourceControlFunc()
 	}
-
-	if enable != variable.EnableResourceControl.Load() {
-		logutil.BgLogger().Info("set resource control", zap.Bool("enable", enable))
-	}
 }
 
 // updatePDClient is used to set the dynamic option into the PD client.
