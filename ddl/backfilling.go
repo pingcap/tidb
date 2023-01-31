@@ -241,7 +241,6 @@ type backfillResult struct {
 	taskID     int
 	addedCount int
 	scanCount  int
-	unsyncErr  error
 	nextKey    kv.Key
 	err        error
 }

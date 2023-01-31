@@ -237,6 +237,7 @@ go_test(
         "//parser/terror",
         "//parser/types",
         "//planner/core",
+        "//resourcemanager/util",
         "//server",
         "//session",
         "//sessionctx",

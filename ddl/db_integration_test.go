@@ -1338,9 +1338,6 @@ func TestAddIndexAfterAddColumn(t *testing.T) {
 	tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2)")
 	tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
 	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
-	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(3)
-	defer variable.SetDDLErrorCountLimit(limit)
 	tk.MustGetErrCode(sql, errno.ErrDupEntry)
 	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
 	tk.MustGetErrCode(sql, errno.ErrTooManyKeyParts)

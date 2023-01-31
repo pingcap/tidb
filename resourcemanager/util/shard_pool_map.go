@@ -28,7 +28,7 @@ var InTest atomic.Bool
 
 func isInTests() bool {
 	for _, arg := range os.Args {
-		if strings.HasPrefix(arg, "-test.v=") {
+		if strings.HasPrefix(arg, "-test.v=") || strings.HasPrefix(arg, "-test.run=") {
 			return true
 		}
 	}

@@ -786,6 +786,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return err
 		}
 
+		// TODO: Currently, it is only processed during initialization and is expected to be added to EnableDDL later.
 		if err := d.prepareBackfillWorkers(); err != nil {
 			return err
 		}
