@@ -16,7 +16,6 @@ package tables
 
 import (
 	"context"
-	"errors"
 	"sync"
 
 	"github.com/opentracing/opentracing-go"
@@ -287,7 +286,8 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			if keyIsTempIdxKey {
 				idxVal = tablecodec.EncodeTempIndexValue(idxVal, keyVer)
 			}
-			needPresumeNotExists, err := needPresumeKeyNotExistsFlag(ctx, txn, key, tempKey, distinct, h, c.tblInfo.IsCommonHandle, keyIsTempIdxKey, c.idxInfo.ID)
+			needPresumeNotExists, err := needPresumeKeyNotExistsFlag(ctx, txn, key, tempKey, h,
+				keyIsTempIdxKey, c.tblInfo.IsCommonHandle, c.tblInfo.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -344,52 +344,26 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	return nil, nil
 }
 
-func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key, distinct bool,
-	h kv.Handle, isCommon bool, keyIsTempIdxKey bool, idxID int64) (needFlag bool, err error) {
-	var tmpKeyState TempIndexKeyState
-	var tmpIdxHandle kv.Handle
-	// Check the value in temp/origin index key to determine if the key exists.
+func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key,
+	h kv.Handle, keyIsTempIdxKey bool, isCommon bool, tblID int64) (needFlag bool, err error) {
+	var dupHandle kv.Handle
 	if keyIsTempIdxKey {
-		tmpKeyState, tmpIdxHandle, err = KeyExistInTempIndex(ctx, txn, key, distinct, h, isCommon)
+		dupHandle, err = FetchDuplicatedHandle(key, ctx, txn, tblID, isCommon, true)
 		if err != nil {
 			return false, err
 		}
 	} else if len(tempKey) > 0 {
-		tmpKeyState, tmpIdxHandle, err = KeyExistInTempIndex(ctx, txn, tempKey, distinct, h, isCommon)
+		dupHandle, err = FetchDuplicatedHandle(tempKey, ctx, txn, tblID, isCommon, true)
 		if err != nil {
 			return false, err
 		}
 	} else {
 		return true, nil
 	}
-	if tmpKeyState == KeyInTempIndexIsDeleted {
-		// The key is deleted in temp index. However, it may still exist in the original index.
-		// We need to get the handle from original index value to determine
-		// whether the deleted marker matches.
-		// - If they match, we need "put"(overwrite) semantic, the "presumeKeyNotExists" flag is not needed.
-		// - If they don't match, we need "insert" semantic, the "presumeKeyNotExists" flag is required.
-		if distinct {
-			originKey := key.Clone()
-			tablecodec.TempIndexKey2IndexKey(idxID, originKey)
-			originVal, err := txn.Get(ctx, originKey)
-			if err != nil {
-				if kv.IsErrNotFound(err) {
-					err = nil // Suppress the error.
-				}
-				return false, err
-			}
-			originHandle, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, isCommon)
-			if err != nil {
-				return false, err
-			}
-			if originHandle.Equal(tmpIdxHandle) {
-				// The handle on deleted marker matches the handle in original index.
-				return false, nil
-			}
-			return true, nil
-		}
+	if dupHandle != nil && !dupHandle.Equal(h) {
+		return false, kv.ErrKeyExists
 	}
-	return true, nil
+	return false, nil
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
@@ -522,54 +496,87 @@ func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tem
 func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
 	indexedValues := c.getIndexedValue(indexedValue)
 	for _, val := range indexedValues {
-		key, distinct, err := c.GenIndexKey(sc, val, h, nil)
+		key, _, err := c.GenIndexKey(sc, val, h, nil)
 		if err != nil {
 			return false, nil, err
 		}
-
-		var (
-			tempKey []byte
-			keyVer  byte
-		)
 		// If index current is in creating status and using ingest mode, we need first
 		// check key exist status in temp index.
-		key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
-		if keyVer != TempIndexKeyTypeNone {
-			KeyExistInfo, h1, err1 := KeyExistInTempIndex(context.TODO(), txn, tempKey, distinct, h, c.tblInfo.IsCommonHandle)
-			if err1 != nil {
-				return false, nil, err
-			}
-			switch KeyExistInfo {
-			case KeyInTempIndexNotExist, KeyInTempIndexIsDeleted:
-				return false, nil, nil
-			case KeyInTempIndexConflict:
-				return true, h1, kv.ErrKeyExists
-			case KeyInTempIndexIsItself:
-				continue
-			}
+		key, tempKey, _ := GenTempIdxKeyByState(c.idxInfo, key)
+		if len(tempKey) > 0 {
+			key = tempKey
 		}
-
-		value, err := txn.Get(context.TODO(), key)
-		if kv.IsErrNotFound(err) {
-			return false, nil, nil
-		}
+		dupHandle, err := FetchDuplicatedHandle(key, context.TODO(), txn, c.tblInfo.ID, c.tblInfo.IsCommonHandle, true)
 		if err != nil {
 			return false, nil, err
 		}
-
-		// For distinct index, the value of key is handle.
-		if distinct {
-			var handle kv.Handle
-			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
-			if err != nil {
-				return false, nil, err
-			}
-			if !handle.Equal(h) {
-				return true, handle, kv.ErrKeyExists
-			}
+		if dupHandle == nil {
+			return false, nil, nil
 		}
 	}
 	return true, h, nil
+}
+
+// FetchDuplicatedHandle is used to find the duplicated row's handle for a given unique index key.
+func FetchDuplicatedHandle(uniqueKey kv.Key, ctx context.Context,
+	txn kv.Transaction, tableID int64, isCommon bool, checkDistinct bool) (dupHandle kv.Handle, err error) {
+	val, err := txn.Get(ctx, uniqueKey)
+	if err != nil {
+		if kv.IsErrNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if isTemp, idxID := tablecodec.IsTempIndexKey(uniqueKey); isTemp {
+		originValInTmp, deletedHandle, deleted, _, _ := tablecodec.DecodeTempIndexValue(val, isCommon)
+		if deleted {
+			originKey := uniqueKey.Clone()
+			tablecodec.TempIndexKey2IndexKey(idxID, originKey)
+			originVal, err := txn.Get(ctx, originKey)
+			if err != nil {
+				if kv.IsErrNotFound(err) {
+					// The key has been deleted. This is not a duplicated key.
+					return nil, nil
+				}
+				// Unexpected errors.
+				return nil, err
+			}
+			if checkDistinct && !tablecodec.IndexKVIsUnique(originVal) {
+				return nil, nil
+			}
+			originHandle, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, isCommon)
+			if err != nil {
+				return nil, err
+			}
+			if originHandle.Equal(deletedHandle) {
+				// The key has been deleted. This is not a duplicated key.
+				return nil, nil
+			}
+			// The inequality means multiple modifications happened in the same key.
+			// We use the handle in origin index value to check if the row exists.
+			recPrefix := tablecodec.GenTableRecordPrefix(tableID)
+			rowKey := tablecodec.EncodeRecordKey(recPrefix, originHandle)
+			_, err = txn.Get(context.Background(), rowKey)
+			if err != nil {
+				if kv.IsErrNotFound(err) {
+					// The key has been deleted. This is not a duplicated key.
+					return nil, nil
+				}
+				// Unexpected errors.
+				return nil, err
+			}
+			// The row exists. This is the duplicated key.
+			return originHandle, nil
+		}
+		if checkDistinct && !tablecodec.IndexKVIsUnique(originValInTmp) {
+			return nil, nil
+		}
+		return tablecodec.DecodeHandleInUniqueIndexValue(originValInTmp, isCommon)
+	}
+	if checkDistinct && !tablecodec.IndexKVIsUnique(val) {
+		return nil, nil
+	}
+	return tablecodec.DecodeHandleInUniqueIndexValue(val, isCommon)
 }
 
 func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
@@ -646,59 +653,4 @@ func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *
 		}
 	}
 	return colInfo
-}
-
-// TempIndexKeyState is the state of the temporary index key.
-type TempIndexKeyState byte
-
-const (
-	// KeyInTempIndexUnknown whether the key exists or not in temp index is unknown.
-	KeyInTempIndexUnknown TempIndexKeyState = iota
-	// KeyInTempIndexNotExist the key is not exist in temp index.
-	KeyInTempIndexNotExist
-	// KeyInTempIndexIsDeleted the key is marked deleted in temp index.
-	KeyInTempIndexIsDeleted
-	// KeyInTempIndexIsItself the key is correlated to itself in temp index.
-	KeyInTempIndexIsItself
-	// KeyInTempIndexConflict the key is conflict in temp index.
-	KeyInTempIndexConflict
-)
-
-// KeyExistInTempIndex is used to check the unique key exist status in temp index.
-func KeyExistInTempIndex(ctx context.Context, txn kv.Transaction, key kv.Key, distinct bool, h kv.Handle, IsCommonHandle bool) (TempIndexKeyState, kv.Handle, error) {
-	// Only check temp index key.
-	if isTemp, _ := tablecodec.IsTempIndexKey(key); !isTemp {
-		return KeyInTempIndexUnknown, nil, nil
-	}
-	value, err := txn.Get(ctx, key)
-	if kv.IsErrNotFound(err) {
-		return KeyInTempIndexNotExist, nil, nil
-	}
-	if err != nil {
-		return KeyInTempIndexUnknown, nil, err
-	}
-
-	// Since KeyExistInTempIndex only accept temp index key, so the value length should great than 1 for key version.
-	if len(value) < 1 {
-		return KeyInTempIndexUnknown, nil, errors.New("temp index value length should great than 1")
-	}
-
-	originVal, handle, isDelete, _, _ := tablecodec.DecodeTempIndexValue(value, IsCommonHandle)
-	if isDelete {
-		return KeyInTempIndexIsDeleted, handle, nil
-	}
-
-	// Check if handle equal.
-	if distinct {
-		if handle == nil {
-			handle, err = tablecodec.DecodeHandleInUniqueIndexValue(originVal, IsCommonHandle)
-			if err != nil {
-				return KeyInTempIndexUnknown, nil, err
-			}
-		}
-		if !handle.Equal(h) {
-			return KeyInTempIndexConflict, handle, kv.ErrKeyExists
-		}
-	}
-	return KeyInTempIndexIsItself, handle, nil
 }

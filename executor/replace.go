@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -176,16 +177,9 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
-		val, err := txn.Get(ctx, uk.newKey)
+		handle, err := tables.FetchDuplicatedHandle(uk.newKey, ctx, txn, e.Table.Meta().ID, uk.commonHandle, false)
 		if err != nil {
-			if kv.IsErrNotFound(err) {
-				continue
-			}
 			return false, false, err
-		}
-		handle, err := getDuplicatedHandle(uk.newKey, val, ctx, txn, uk.commonHandle)
-		if err != nil {
-			return false, true, err
 		}
 		if handle == nil {
 			continue
