@@ -279,4 +279,4 @@ replace (
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
 
-replace github.com/tikv/pd => github.com/nolouch/pd v1.1.0-beta.0.20230131084939-7378569288ee
+replace github.com/tikv/pd => github.com/nolouch/pd v1.1.0-beta.0.20230131120223-1fc9d2456fbc
