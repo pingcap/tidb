@@ -348,12 +348,12 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 	h kv.Handle, keyIsTempIdxKey bool, isCommon bool, tblID int64) (needFlag bool, err error) {
 	var dupHandle kv.Handle
 	if keyIsTempIdxKey {
-		dupHandle, err = FetchDuplicatedHandle(key, ctx, txn, tblID, isCommon, true)
+		dupHandle, err = FetchDuplicatedHandle(ctx, key, txn, tblID, isCommon, true)
 		if err != nil {
 			return false, err
 		}
 	} else if len(tempKey) > 0 {
-		dupHandle, err = FetchDuplicatedHandle(tempKey, ctx, txn, tblID, isCommon, true)
+		dupHandle, err = FetchDuplicatedHandle(ctx, tempKey, txn, tblID, isCommon, true)
 		if err != nil {
 			return false, err
 		}
@@ -506,7 +506,7 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 		if len(tempKey) > 0 {
 			key = tempKey
 		}
-		dupHandle, err := FetchDuplicatedHandle(key, context.TODO(), txn, c.tblInfo.ID, c.tblInfo.IsCommonHandle, true)
+		dupHandle, err := FetchDuplicatedHandle(context.TODO(), key, txn, c.tblInfo.ID, c.tblInfo.IsCommonHandle, true)
 		if err != nil {
 			return false, nil, err
 		}
@@ -518,7 +518,7 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 }
 
 // FetchDuplicatedHandle is used to find the duplicated row's handle for a given unique index key.
-func FetchDuplicatedHandle(uniqueKey kv.Key, ctx context.Context,
+func FetchDuplicatedHandle(ctx context.Context, uniqueKey kv.Key,
 	txn kv.Transaction, tableID int64, isCommon bool, checkDistinct bool) (dupHandle kv.Handle, err error) {
 	val, err := txn.Get(ctx, uniqueKey)
 	if err != nil {
