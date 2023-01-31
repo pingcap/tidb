@@ -31,6 +31,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
@@ -89,10 +90,19 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, tab
 	for _, store := range tiFlashStores {
 		regionReplica := make(map[int64]int)
 		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, tableID, &regionReplica)
+		failpoint.Inject("OneTiFlashStoreDown", func() {
+			if store.Store.StateName == "Down" {
+				err = errors.New("mock TiFlasah down")
+			}
+		})
 		if err != nil {
 			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
 				zap.Int64("tableID", tableID))
-			return 0, err
+			// Just skip down or offline or tomestone stores, because PD will migrate regions from these stores.
+			if store.Store.StateName == "Up" || store.Store.StateName == "Disconnected" {
+				return 0, err
+			}
+			continue
 		}
 		flashPeerCount += len(regionReplica)
 	}

@@ -424,6 +424,14 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 			return err
 		}
 	}
+
+	failpoint.Inject("OneTiFlashStoreDown", func() {
+		for storeID, store := range pollTiFlashContext.TiFlashStores {
+			store.Store.StateName = "Down"
+			pollTiFlashContext.TiFlashStores[storeID] = store
+			break
+		}
+	})
 	pollTiFlashContext.PollCounter++
 
 	// Start to process every table.
