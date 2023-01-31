@@ -34,7 +34,6 @@ go_library(
         "//util/memory",
         "//util/parser",
         "//util/sqlexec",
-        "//util/stmtsummary",
         "//util/table-filter",
         "//util/timeutil",
         "@org_golang_x_exp//maps",
