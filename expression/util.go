@@ -439,7 +439,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		oldCollEt, err := CheckAndDeriveCollationFromExprs(v.GetCtx(), v.FuncName.L, v.RetType.EvalType(), v.GetArgs()...)
 		if err != nil {
-			logutil.BgLogger().Error("should not happen", zap.Stack("stack"))
+			logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
 			return false, false, v
 		}
 		var tmpArgForCollCheck []Expression
