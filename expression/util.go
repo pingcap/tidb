@@ -415,7 +415,6 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		if v.InOperand {
 			newExpr = SetExprColumnInOperand(newExpr)
 		}
-		newExpr.SetCoercibility(v.Coercibility())
 		return true, false, newExpr
 	case *ScalarFunction:
 		substituted := false
@@ -437,7 +436,19 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
+<<<<<<< HEAD
 		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
+=======
+		oldCollEt, err := CheckAndDeriveCollationFromExprs(v.GetCtx(), v.FuncName.L, v.RetType.EvalType(), v.GetArgs()...)
+		if err != nil {
+			logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+			return false, false, v
+		}
+		var tmpArgForCollCheck []Expression
+		if collate.NewCollationEnabled() {
+			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
+		}
+>>>>>>> 00617c96ef (expression, cmd: fix ColumnSubstitute and allow some cases to substitute (#38826))
 		for idx, arg := range v.GetArgs() {
 			changed, hasFail, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs, fail1Return)
 			if fail1Return && hasFail {
@@ -446,6 +457,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			oldChanged := changed
 			if collate.NewCollationEnabled() {
 				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
+<<<<<<< HEAD
 				if changed {
 					changed = false
 					tmpArgs := make([]Expression, 0, len(v.GetArgs()))
@@ -453,6 +465,22 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
 						changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
+=======
+				changed = false
+				copy(tmpArgForCollCheck, refExprArr.Result())
+				tmpArgForCollCheck[idx] = newFuncExpr
+				newCollEt, err := CheckAndDeriveCollationFromExprs(v.GetCtx(), v.FuncName.L, v.RetType.EvalType(), tmpArgForCollCheck...)
+				if err != nil {
+					logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+					return false, failed, v
+				}
+				if oldCollEt.Collation == newCollEt.Collation {
+					if newFuncExpr.GetType().GetCollate() == arg.GetType().GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
+						// It's safe to use the new expression, otherwise some cases in projection push-down will be wrong.
+						changed = true
+					} else {
+						changed = checkCollationStrictness(oldCollEt.Collation, newFuncExpr.GetType().GetCollate())
+>>>>>>> 00617c96ef (expression, cmd: fix ColumnSubstitute and allow some cases to substitute (#38826))
 					}
 				}
 			}
