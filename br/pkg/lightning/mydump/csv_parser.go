@@ -81,6 +81,8 @@ type CSVParser struct {
 	escFlavor backslashEscapeFlavor
 	// if set to true, csv parser will treat the first non-empty line as header line
 	shouldParseHeader bool
+	// in LOAD DATA, empty line should be treated as a valid record
+	allowEmptyLine bool
 }
 
 // NewCSVParser creates a CSV parser.
@@ -151,6 +153,7 @@ func NewCSVParser(
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
 		newLineByteSet:    makeByteSet(newLineStopSet),
 		shouldParseHeader: shouldParseHeader,
+		allowEmptyLine:    cfg.AllowEmptyLine,
 	}, nil
 }
 
@@ -457,13 +460,15 @@ outside:
 			foundStartingByThisLine = false
 			// new line = end of record (ignore empty lines)
 			prevToken = firstToken
-			if isEmptyLine {
-				//continue
-			}
-			// skip lines only contain whitespaces
-			if err == nil && whitespaceLine && len(bytes.TrimSpace(parser.recordBuffer)) == 0 {
-				//parser.recordBuffer = parser.recordBuffer[:0]
-				//continue
+			if !parser.allowEmptyLine {
+				if isEmptyLine {
+					continue
+				}
+				// skip lines only contain whitespaces
+				if err == nil && whitespaceLine && len(bytes.TrimSpace(parser.recordBuffer)) == 0 {
+					parser.recordBuffer = parser.recordBuffer[:0]
+					continue
+				}
 			}
 			parser.fieldIndexes = append(parser.fieldIndexes, len(parser.recordBuffer))
 			break outside

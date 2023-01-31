@@ -233,7 +233,7 @@ func processStream(ctx context.Context, reader io.ReadSeekCloser, loadDataInfo *
 		int64(config.ReadBlockSize),
 		nil,
 		false,
-		// these arguments can only be ASCII
+		// LOAD DATA arguments can only be ASCII, no need to convert
 		nil)
 	csvParser.SetLogger(log.Logger{Logger: logutil.Logger(ctx)})
 
@@ -778,6 +778,7 @@ func (e *LoadDataInfo) GenerateCSVConfig() *config.CSVConfig {
 		// TODO: escaped is not \
 		BackslashEscape: e.FieldsInfo.Escaped == '\\',
 		StartingBy:      e.LinesInfo.Starting,
+		AllowEmptyLine:  true,
 	}
 }
 

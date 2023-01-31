@@ -270,6 +270,7 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 	require.Len(t, res, 1)
 }
 
+// TODO: support it
 func TestLoadDataWithDifferentEscapeChar(t *testing.T) {
 	tests := []struct {
 		input      string
