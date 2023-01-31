@@ -32,7 +32,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
@@ -100,7 +99,7 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, tab
 			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
 				zap.Int64("tableID", tableID))
 			// Just skip down or offline or tomestone stores, because PD will migrate regions from these stores.
-			if store.Store.State == int64(metapb.StoreState_Up) && store.Store.StateName != "Down" {
+			if store.Store.StateName == "Up" || store.Store.StateName == "Disconnected" {
 				return 0, err
 			}
 			continue
