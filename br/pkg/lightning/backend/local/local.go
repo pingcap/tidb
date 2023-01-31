@@ -1076,32 +1076,20 @@ func (local *local) generateJobInRanges(
 // startWorker will return nil if it's expected to stop, which means the context
 // is canceled or channel is closed. It will return not nil error when it actively
 // stops.
-// worker must always call jobWg.Done() no matter it successfully processes it or
-// meets error.
-// putBackFn will be called when the job should be retried later.
+// this function must send the job back to jobOutCh after read it from jobInCh,
+// even if any error happens.
 func (local *local) startWorker(
 	ctx context.Context,
-	jobCh chan *regionJob,
-	jobWg *sync.WaitGroup,
-	putBackFn func(*regionJob),
+	jobInCh, jobOutCh chan *regionJob,
 ) error {
-	owningJob := false
-	defer func() {
-		if owningJob {
-			jobWg.Done()
-		}
-	}()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case job, ok := <-jobCh:
+		case job, ok := <-jobInCh:
 			if !ok {
 				return nil
 			}
-
-			owningJob = true
 
 			now := time.Now()
 			if now.Before(job.waitUntil) {
@@ -1110,40 +1098,17 @@ func (local *local) startWorker(
 					zap.Duration("wait", duration))
 				select {
 				case <-ctx.Done():
+					jobOutCh <- job
 					return nil
 				case <-time.After(duration):
 				}
 			}
 
 			err := local.writeAndIngestPairs(ctx, job)
+			jobOutCh <- job
 			if err != nil {
 				return err
 			}
-
-			switch job.stage {
-			case regionScanned, wrote:
-				job.retryCount++
-				if job.retryCount > maxWriteAndIngestRetryTimes {
-					return job.lastRetryableErr
-				}
-				// max retry backoff time: 2+4+8+16+30*26=810s
-				sleepSecond := math.Pow(2, float64(job.retryCount))
-				if sleepSecond > maxRetryBackoffSecond {
-					sleepSecond = maxRetryBackoffSecond
-				}
-				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
-				log.FromContext(ctx).Info("put job back to jobCh to retry later",
-					logutil.Key("startKey", job.keyRange.start),
-					logutil.Key("endKey", job.keyRange.end),
-					zap.Stringer("stage", job.stage),
-					zap.Int("retryCount", job.retryCount),
-					zap.Time("waitUntil", job.waitUntil))
-				putBackFn(job)
-			case ingested, needRescan:
-			}
-
-			jobWg.Done()
-			owningJob = false
 		}
 	}
 }
@@ -1293,24 +1258,63 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
 	var (
-		workGroup, workerCtx = errgroup.WithContext(ctx)
-		// jobCh is unbuffered so when we finished sending all jobs, we can make sure all jobs have been
+		ctx2, workerCancel   = context.WithCancel(ctx)
+		workGroup, workerCtx = errgroup.WithContext(ctx2)
+		// jobToWorkerCh is unbuffered so when we finished sending all jobs, we can make sure all jobs have been
 		// received by workers.
-		jobCh = make(chan *regionJob)
+		jobToWorkerCh   = make(chan *regionJob)
+		jobFromWorkerCh = make(chan *regionJob)
 		// jobWg is the number of jobs that need to be processed by worker in this round.
-		jobWg           sync.WaitGroup
-		needRetryJobs   []*regionJob
-		needRetryJobsMu sync.Mutex
-		putBackFn       = func(job *regionJob) {
-			needRetryJobsMu.Lock()
-			defer needRetryJobsMu.Unlock()
-			needRetryJobs = append(needRetryJobs, job)
-		}
+		jobWg              sync.WaitGroup
+		needRetryJobs      []*regionJob
+		retryErr           atomic.Error
+		retryGoroutineDone = make(chan struct{})
 	)
+
+	// handle processed job from worker, it will only exit when jobFromWorkerCh
+	// is closed to avoid send to jobFromWorkerCh is blocked.
+	defer func() {
+		close(jobFromWorkerCh)
+		<-retryGoroutineDone
+	}()
+	go func() {
+		defer close(retryGoroutineDone)
+		for {
+			job, ok := <-jobFromWorkerCh
+			if !ok {
+				return
+			}
+			switch job.stage {
+			case regionScanned, wrote:
+				job.retryCount++
+				if job.retryCount > maxWriteAndIngestRetryTimes {
+					retryErr.Store(job.lastRetryableErr)
+					workerCancel()
+					jobWg.Done()
+					continue
+				}
+				// max retry backoff time: 2+4+8+16+30*26=810s
+				sleepSecond := math.Pow(2, float64(job.retryCount))
+				if sleepSecond > maxRetryBackoffSecond {
+					sleepSecond = maxRetryBackoffSecond
+				}
+				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
+				log.FromContext(ctx).Info("put job back to jobCh to retry later",
+					logutil.Key("startKey", job.keyRange.start),
+					logutil.Key("endKey", job.keyRange.end),
+					zap.Stringer("stage", job.stage),
+					zap.Int("retryCount", job.retryCount),
+					zap.Time("waitUntil", job.waitUntil))
+				needRetryJobs = append(needRetryJobs, job)
+			case ingested, needRescan:
+			}
+			jobWg.Done()
+		}
+	}()
 
 	for i := 0; i < local.workerConcurrency; i++ {
 		workGroup.Go(func() error {
-			return local.startWorker(workerCtx, jobCh, &jobWg, putBackFn)
+			return local.startWorker(workerCtx, jobToWorkerCh, jobFromWorkerCh)
 		})
 	}
 
@@ -1329,7 +1333,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			regionSplitKeys,
 		)
 		if err != nil {
-			close(jobCh)
+			close(jobToWorkerCh)
 			_ = workGroup.Wait()
 			return err
 		}
@@ -1343,8 +1347,12 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		for _, job := range pendingJobs {
 			select {
 			case <-workerCtx.Done():
-				return workGroup.Wait()
-			case jobCh <- job:
+				err2 := retryErr.Load()
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
+				return errors.Trace(workGroup.Wait())
+			case jobToWorkerCh <- job:
 			}
 		}
 		pendingJobs = nil
@@ -1354,12 +1362,16 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		// check if worker has error in this round
 		select {
 		case <-workerCtx.Done():
-			return workGroup.Wait()
+			err2 := retryErr.Load()
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
+			return errors.Trace(workGroup.Wait())
 		default:
 		}
 	}
 
-	close(jobCh)
+	close(jobToWorkerCh)
 	log.FromContext(ctx).Info("import engine success", zap.Stringer("uuid", engineUUID),
 		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
 		zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
