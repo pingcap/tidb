@@ -1444,7 +1444,7 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 	}
 	buf := bytes.NewBuffer(nil)
 	if e.Enable {
-		buf.WriteString(fmt.Sprintf("digests:[%s], ", extractStringFromStringSet(e.Digests)))
+		buf.WriteString(fmt.Sprintf("digests: [%s], ", extractStringFromStringSet(e.Digests)))
 	}
 	if len(e.TimeRanges) > 0 && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().StmtCtx != nil {
 		stmtCtx := p.ctx.GetSessionVars().StmtCtx
