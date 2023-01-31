@@ -488,6 +488,6 @@ type mockStmtStorage struct {
 	windows []*stmtWindow
 }
 
-func (s *mockStmtStorage) persist(w *stmtWindow, end time.Time) {
+func (s *mockStmtStorage) persist(w *stmtWindow, _ time.Time) {
 	s.windows = append(s.windows, w)
 }
