@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
-	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -1806,19 +1805,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		userString = sessVars.User.Username
 	}
 
-	var enabled, enabledInternalQuery bool
-	if sessVars.EnablePersistentStmtSummary {
-		if sessVars.StmtSummaryV2 == nil && stmtsummaryv2.GlobalStmtSummary != nil {
-			sessVars.StmtSummaryV2 = stmtsummaryv2.GlobalStmtSummary
-		}
-		if sessVars.StmtSummaryV2 != nil {
-			enabled = sessVars.StmtSummaryV2.Enabled()
-			enabledInternalQuery = sessVars.StmtSummaryV2.EnableInternalQuery()
-		}
-	} else {
-		enabled = stmtsummary.StmtSummaryByDigestMap.Enabled()
-		enabledInternalQuery = stmtsummary.StmtSummaryByDigestMap.EnabledInternal()
-	}
+	enabled := sessVars.StmtSummary.Enabled()
+	enabledInternalQuery := sessVars.StmtSummary.EnabledInternal()
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
 	if !enabled || ((sessVars.InRestrictedSQL || len(userString) == 0) && !enabledInternalQuery) {
 		sessVars.SetPrevStmtDigest("")
@@ -1937,11 +1925,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
-	if sessVars.EnablePersistentStmtSummary {
-		sessVars.StmtSummaryV2.Add(stmtExecInfo)
-	} else {
-		stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
-	}
+	sessVars.StmtSummary.Add(stmtExecInfo)
 }
 
 // GetTextToLog return the query text to log.
