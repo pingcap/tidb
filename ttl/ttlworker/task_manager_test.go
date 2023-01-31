@@ -54,6 +54,24 @@ func (m *taskManager) ReportMetrics() {
 	m.reportMetrics()
 }
 
+// CheckFinishedTask is an exported version of checkFinishedTask
+func (m *taskManager) CheckFinishedTask(se session.Session, now time.Time) {
+	m.checkFinishedTask(se, now)
+}
+
+// ReportTaskFinished is an exported version of reportTaskFinished
+func (m *taskManager) GetRunningTasks() []*runningScanTask {
+	return m.runningTasks
+}
+
+// ReportTaskFinished is an exported version of reportTaskFinished
+func (t *runningScanTask) SetResult(err error) {
+	t.result = &ttlScanTaskExecResult{
+		task: t.ttlScanTask,
+		err:  err,
+	}
+}
+
 func TestResizeWorkers(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 
