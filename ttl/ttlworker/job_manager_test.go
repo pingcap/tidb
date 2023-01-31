@@ -171,6 +171,11 @@ func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, no
 	return m.updateHeartBeat(ctx, se, now)
 }
 
+// ReportMetrics is an exported version of reportMetrics
+func (m *JobManager) ReportMetrics() {
+	m.reportMetrics()
+}
+
 func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) {
 	j.finish(se, now, summary)
 }

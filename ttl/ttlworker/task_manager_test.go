@@ -49,6 +49,11 @@ func (m *taskManager) RescheduleTasks(se session.Session, now time.Time) {
 	m.rescheduleTasks(se, now)
 }
 
+// ReportMetrics is an exported version of reportMetrics
+func (m *taskManager) ReportMetrics() {
+	m.reportMetrics()
+}
+
 func TestResizeWorkers(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 
