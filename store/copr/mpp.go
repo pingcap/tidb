@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strconv"
 	"sync"
@@ -203,6 +204,11 @@ func (m *mppIterator) sendError(err error) {
 }
 
 func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.sendError(errors.New(fmt.Sprint(r)))
+		}
+	}()
 	respSize := resp.MemSize()
 	m.memTracker.Consume(respSize)
 	defer m.memTracker.Consume(respSize)
