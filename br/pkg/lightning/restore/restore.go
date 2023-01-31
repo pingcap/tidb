@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
 	"github.com/pingcap/tidb/util/set"
-	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -2341,10 +2340,8 @@ func (cr *chunkRestore) deliverLoop(
 	var startRealOffset, currRealOffset int64 // save to 0 at first
 
 	for hasMoreKVs {
-		var c tikvclient.Codec
-		if t.kvStore == nil {
-			c = keyspace.CodecV1
-		} else {
+		c := keyspace.CodecV1
+		if t.kvStore != nil {
 			c = t.kvStore.GetCodec()
 		}
 		var (
