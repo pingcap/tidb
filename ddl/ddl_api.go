@@ -3036,10 +3036,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 // SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
 func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64) error {
 	switch typ {
-	case ast.ResourceRRURate:
-		resourceGroupSettings.RRURate = uintVal
-	case ast.ResourceWRURate:
-		resourceGroupSettings.WRURate = uintVal
+	case ast.ResourceRURate:
+		resourceGroupSettings.RURate = uintVal
 	case ast.ResourceUnitCPU:
 		resourceGroupSettings.CPULimiter = stringVal
 	case ast.ResourceUnitIOReadBandwidth:
