@@ -887,7 +887,7 @@ func TestBackslashAsDelim(t *testing.T) {
 	testCases := []testCase{
 		{
 			input:    `\\`,
-			expected: [][]types.Datum{{types.NewStringDatum("")}},
+			expected: [][]types.Datum{{nullDatum}},
 		},
 	}
 	runTestCasesCSV(t, &cfg, 1, testCases)
@@ -896,6 +896,23 @@ func TestBackslashAsDelim(t *testing.T) {
 		`"\`,
 	}
 	runFailingTestCasesCSV(t, &cfg, 1, failingInputs)
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:        ",",
+			Delimiter:        `\`,
+			Null:             []string{""},
+			QuotedNullIsText: true,
+		},
+	}
+
+	testCases = []testCase{
+		{
+			input:    `\\`,
+			expected: [][]types.Datum{{types.NewStringDatum("")}},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
 }
 
 // errorReader implements the Reader interface which always returns an error.

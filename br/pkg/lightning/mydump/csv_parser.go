@@ -86,6 +86,7 @@ type CSVParser struct {
 	escFlavor escapeFlavor
 	// if set to true, csv parser will treat the first non-empty line as header line
 	shouldParseHeader bool
+	quotedNullIsText  bool
 }
 
 type field struct {
@@ -168,6 +169,7 @@ func NewCSVParser(
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
 		newLineByteSet:    makeByteSet(newLineStopSet),
 		shouldParseHeader: shouldParseHeader,
+		quotedNullIsText:  cfg.QuotedNullIsText,
 	}, nil
 }
 
@@ -203,7 +205,7 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 	if len(parser.escapedBy) > 0 {
 		unescaped = unescape(unescaped, "", parser.escFlavor, parser.escapedBy[0], parser.unescapeRegexp)
 	}
-	if len(parser.quote) == 0 {
+	if len(parser.quote) == 0 || !parser.quotedNullIsText {
 		isNull = parser.escFlavor != escapeFlavorMySQLWithNull &&
 			!parser.cfg.NotNull &&
 			slices.Contains(parser.cfg.Null, unescaped)

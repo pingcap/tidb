@@ -501,11 +501,9 @@ func (s *StringOrStringSlice) UnmarshalTOML(in interface{}) error {
 
 type CSVConfig struct {
 	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
-	Separator  string `toml:"separator" json:"separator"`
-	Delimiter  string `toml:"delimiter" json:"delimiter"`
-	Terminator string `toml:"terminator" json:"terminator"`
-	// for non-empty Delimiter (for example quotes), Null elements inside quotes are not considered as null except for
-	// `\N` (when escape-by is `\`). That is to say, `\N` is special for null because it always means null.
+	Separator   string              `toml:"separator" json:"separator"`
+	Delimiter   string              `toml:"delimiter" json:"delimiter"`
+	Terminator  string              `toml:"terminator" json:"terminator"`
 	Null        StringOrStringSlice `toml:"null" json:"null"`
 	Header      bool                `toml:"header" json:"header"`
 	TrimLastSep bool                `toml:"trim-last-separator" json:"trim-last-separator"`
@@ -517,6 +515,9 @@ type CSVConfig struct {
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
 	StartingBy string `toml:"-" json:"-"`
+	// for non-empty Delimiter (for example quotes), Null elements inside quotes are not considered as null except for
+	// `\N` (when escape-by is `\`). That is to say, `\N` is special for null because it always means null.
+	QuotedNullIsText bool
 }
 
 type MydumperRuntime struct {
