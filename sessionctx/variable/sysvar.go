@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go.uber.org/zap"
 	"math"
 	"runtime"
 	"strconv"
@@ -49,6 +48,7 @@ import (
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -2327,7 +2327,6 @@ var defaultSysVars = []*SysVar{
 			EnableResourceControl.Store(TiDBOptOn(s))
 			(*SetGlobalResourceControl.Load())(TiDBOptOn(s))
 			logutil.BgLogger().Info("set resource control", zap.Bool("enable", TiDBOptOn(s)))
-			TiDBOptOn(s)
 		}
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
