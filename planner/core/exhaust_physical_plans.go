@@ -1252,9 +1252,18 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
 		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
 			// Don't use the join columns if their collations are unmatched and the new collation is enabled.
+<<<<<<< HEAD
 			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.Tp) && types.IsString(outerKeys[ijHelper.curIdxOff2KeyOff[i]].RetType.Tp) {
 				_, coll := expression.DeriveCollationFromExprs(nil, idxCol, outerKeys[ijHelper.curIdxOff2KeyOff[i]])
 				if !collate.CompatibleCollate(idxCol.GetType().Collate, coll) {
+=======
+			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.GetType()) && types.IsString(outerKeys[ijHelper.curIdxOff2KeyOff[i]].RetType.GetType()) {
+				et, err := expression.CheckAndDeriveCollationFromExprs(ijHelper.innerPlan.ctx, "equal", types.ETInt, idxCol, outerKeys[ijHelper.curIdxOff2KeyOff[i]])
+				if err != nil {
+					logutil.BgLogger().Error("Unexpected error happened during constructing index join", zap.Stack("stack"))
+				}
+				if !collate.CompatibleCollate(idxCol.GetType().GetCollate(), et.Collation) {
+>>>>>>> 00617c96ef (expression, cmd: fix ColumnSubstitute and allow some cases to substitute (#38826))
 					ijHelper.curIdxOff2KeyOff[i] = -1
 				}
 			}
