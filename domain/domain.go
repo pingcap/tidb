@@ -882,6 +882,10 @@ func (do *Domain) Close() {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
 
+	if do.unprefixedEtcdCli != nil {
+		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
+	}
+
 	do.slowQuery.Close()
 	if do.cancel != nil {
 		do.cancel()
