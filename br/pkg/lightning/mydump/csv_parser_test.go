@@ -1017,7 +1017,7 @@ func TestReadUntilTerminator(t *testing.T) {
 	parser, err := mydump.NewCSVParser(
 		context.Background(),
 		&cfg.CSV,
-		mydump.NewStringReader("xxx1#2#3#4#\n"),
+		mydump.NewStringReader("xxx1#2#3#4#\n56#78"),
 		int64(config.ReadBlockSize),
 		ioWorkers,
 		false,
@@ -1028,6 +1028,10 @@ func TestReadUntilTerminator(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "xxx1#2#3#4#\n", string(content))
 	require.Equal(t, int64(12), idx)
+	content, idx, err = parser.ReadUntilTerminator()
+	require.ErrorIs(t, err, io.EOF)
+	require.Equal(t, "56#78", string(content))
+	require.Equal(t, int64(17), idx)
 }
 
 func TestNULL(t *testing.T) {

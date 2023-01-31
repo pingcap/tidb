@@ -661,7 +661,7 @@ func (parser *CSVParser) ReadColumns() error {
 // ReadUntilTerminator seeks the file until the terminator token is found, and
 // returns
 // - the content with terminator, or the content read before meet error
-// - the file offset beyond the terminator
+// - the file offset beyond the terminator, or the offset when meet error
 // - error
 // Note that the terminator string pattern may be the content of a field, which
 // means it's inside quotes. Caller should make sure to handle this case.
@@ -671,7 +671,7 @@ func (parser *CSVParser) ReadUntilTerminator() ([]byte, int64, error) {
 		content, firstByte, err := parser.readUntil(&parser.newLineByteSet)
 		ret = append(ret, content...)
 		if err != nil {
-			return ret, 0, err
+			return ret, parser.pos, err
 		}
 		parser.skipBytes(1)
 		ret = append(ret, firstByte)
