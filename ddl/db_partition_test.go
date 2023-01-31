@@ -4943,7 +4943,7 @@ func TestDropPartitionKeyColumn(t *testing.T) {
 }
 
 type TestReorgDDLCallback struct {
-	*ddl.TestDDLCallback
+	*callback.TestDDLCallback
 	syncChan chan bool
 }
 
@@ -4972,7 +4972,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	defer dom.DDL().SetHook(originHook)
 	syncOnChanged := make(chan bool)
 	defer close(syncOnChanged)
-	hook := &TestReorgDDLCallback{TestDDLCallback: &ddl.TestDDLCallback{Do: dom}, syncChan: syncOnChanged}
+	hook := &TestReorgDDLCallback{TestDDLCallback: &callback.TestDDLCallback{Do: dom}, syncChan: syncOnChanged}
 	dom.DDL().SetHook(hook)
 
 	wait := make(chan bool)
@@ -5149,7 +5149,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	dom.DDL().SetHook(hook)
 
 	wait := make(chan bool)
@@ -5291,7 +5291,7 @@ func TestReorgPartitionFailInject(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	dom.DDL().SetHook(hook)
 
 	wait := make(chan bool)
