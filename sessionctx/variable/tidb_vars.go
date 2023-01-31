@@ -796,6 +796,9 @@ const (
 	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
 	// is enabled.
 	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
+
+	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
+	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
 )
 
 // TiDB vars that have only global scope
@@ -1167,6 +1170,7 @@ const (
 	DefTiDBTTLDeleteWorkerCount                            = 4
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
+	DefTiDBEnablePlanCacheForParamLimit                    = true
 )
 
 // Process global variables.
@@ -1265,6 +1269,16 @@ var (
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
+	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
+	SetGlobalResourceControl atomic.Pointer[func(bool)]
+)
+
+// Hooks functions for Cluster Resource Control.
+var (
+	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
+	EnableGlobalResourceControlFunc func() = func() {}
+	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
+	DisableGlobalResourceControlFunc func() = func() {}
 )
 
 func serverMemoryLimitDefaultValue() string {

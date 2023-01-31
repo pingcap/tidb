@@ -69,12 +69,14 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
@@ -148,7 +150,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if f.tls.TLSConfig() != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
 	}
@@ -1726,13 +1728,18 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		return err
 	}
 
+	tableIDs := physicalTableIDs(tbl.Meta())
+	keyInTable := func(key []byte) bool {
+		return slices.Contains(tableIDs, tablecodec.DecodeTableID(key))
+	}
+
 	errLimiter := rate.NewLimiter(1, 1)
 	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
 	err = local.errorMgr.ResolveAllConflictKeys(
 		ctx, tableName, pool,
 		func(ctx context.Context, handleRows [][2][]byte) error {
 			for {
-				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
+				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder, keyInTable)
 				if err == nil {
 					return nil
 				}
@@ -1755,7 +1762,13 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	return errors.Trace(err)
 }
 
-func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error) {
+func (local *local) deleteDuplicateRows(
+	ctx context.Context,
+	logger *log.Task,
+	handleRows [][2][]byte,
+	decoder *kv.TableKVDecoder,
+	keyInTable func(key []byte) bool,
+) (err error) {
 	// Starts a Delete transaction.
 	txn, err := local.tikvCli.Begin()
 	if err != nil {
@@ -1780,6 +1793,12 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 	// (if the number of duplicates is small this should fit entirely in memory)
 	// (Txn's MemBuf's bufferSizeLimit is currently infinity)
 	for _, handleRow := range handleRows {
+		// Skip the row key if it's not in the table.
+		// This can happen if the table has been recreated or truncated,
+		// and the duplicate key is from the old table.
+		if !keyInTable(handleRow[0]) {
+			continue
+		}
 		logger.Debug("[resolve-dupe] found row to resolve",
 			logutil.Key("handle", handleRow[0]),
 			logutil.Key("row", handleRow[1]))

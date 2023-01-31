@@ -25,8 +25,8 @@ var (
 	MinSchedulerInterval = atomic.NewDuration(200 * time.Millisecond)
 )
 
-// GorotinuePool is a pool interface
-type GorotinuePool interface {
+// GoroutinePool is a pool interface
+type GoroutinePool interface {
 	ReleaseAndWait()
 	Tune(size int)
 	LastTunerTs() time.Time
@@ -37,7 +37,7 @@ type GorotinuePool interface {
 
 // PoolContainer is a pool container
 type PoolContainer struct {
-	Pool      GorotinuePool
+	Pool      GoroutinePool
 	Component Component
 }
 

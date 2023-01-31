@@ -19,7 +19,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -36,7 +36,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("use test")
 	re := require.New(t)
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var groupID int64
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		// job.SchemaID will be assigned when the group is created.
