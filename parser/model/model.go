@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -1767,7 +1766,7 @@ type TTLInfo struct {
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
 	// JobInterval is the interval between two TTL scan jobs.
-	JobInterval duration.Duration `json:"job_interval"`
+	JobInterval string `json:"job_interval"`
 }
 
 // Clone clones TTLInfo

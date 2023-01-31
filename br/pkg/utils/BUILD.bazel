@@ -38,6 +38,7 @@ go_library(
         "//util",
         "//util/sqlexec",
         "@com_github_cheggaaa_pb_v3//:pb",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

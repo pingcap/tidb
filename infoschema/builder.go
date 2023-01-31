@@ -881,6 +881,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
 	b.copyPoliciesMap(oldIS)
+	b.copyResourceGroupMap(oldIS)
 	b.copyTemporaryTableIDsMap(oldIS)
 	b.copyReferredForeignKeyMap(oldIS)
 
@@ -905,6 +906,13 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
+	}
+}
+
+func (b *Builder) copyResourceGroupMap(oldIS *infoSchema) {
+	is := b.is
+	for _, v := range oldIS.AllResourceGroups() {
+		is.resourceGroupMap[v.Name.L] = v
 	}
 }
 
