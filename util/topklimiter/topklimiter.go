@@ -55,7 +55,7 @@ func (l *limiters) addLimiterAndAllow(key string) (ratelimit.DoneFunc, error) {
 	l.mu.Lock()
 	l.limiter[key] = limiter
 	l.mu.Unlock()
-	limiter.Allow()
+	return limiter.Allow()
 }
 
 func (l *limiters) RemoveLimiter(key string) {
