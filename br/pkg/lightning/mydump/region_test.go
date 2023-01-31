@@ -304,16 +304,34 @@ func TestSplitLargeFile(t *testing.T) {
 	colCnt := int64(3)
 	columns := []string{"a", "b", "c"}
 	for _, tc := range []struct {
-		maxRegionSize config.ByteSize
-		offsets       [][]int64
+		maxRegionSize  config.ByteSize
+		skipFirstNRows int64
+		offsets        [][]int64
 	}{
-		{1, [][]int64{{6, 12}, {12, 18}, {18, 24}, {24, 30}}},
-		{6, [][]int64{{6, 18}, {18, 30}}},
-		{8, [][]int64{{6, 18}, {18, 30}}},
-		{12, [][]int64{{6, 24}, {24, 30}}},
-		{13, [][]int64{{6, 24}, {24, 30}}},
-		{18, [][]int64{{6, 30}}},
-		{19, [][]int64{{6, 30}}},
+		{1, 0, [][]int64{{6, 12, 0}, {12, 18, 0}, {18, 24, 0}, {24, 30, 0}}},
+		{6, 0, [][]int64{{6, 18, 0}, {18, 30, 0}}},
+		{8, 0, [][]int64{{6, 18, 0}, {18, 30, 0}}},
+		{12, 0, [][]int64{{6, 24, 0}, {24, 30, 0}}},
+		{13, 0, [][]int64{{6, 24, 0}, {24, 30, 0}}},
+		{18, 0, [][]int64{{6, 30, 0}}},
+		{19, 0, [][]int64{{6, 30, 0}}},
+		{1, 1, [][]int64{{12, 18, 0}, {18, 24, 0}, {24, 30, 0}}},
+		{1, 2, [][]int64{{18, 24, 0}, {24, 30, 0}}},
+		{6, 1, [][]int64{{6, 18, 1}, {18, 30, 0}}},
+		{6, 2, [][]int64{{18, 30, 0}}},
+		{6, 3, [][]int64{{18, 30, 1}}},
+		{6, 4, [][]int64{}},
+		{6, 99, [][]int64{}},
+		{13, 1, [][]int64{{6, 24, 1}, {24, 30, 0}}},
+		{13, 2, [][]int64{{6, 24, 2}, {24, 30, 0}}},
+		{13, 3, [][]int64{{24, 30, 0}}},
+		{13, 4, [][]int64{}},
+		{13, 99, [][]int64{}},
+		{19, 1, [][]int64{{6, 30, 1}}},
+		{19, 2, [][]int64{{6, 30, 2}}},
+		{19, 3, [][]int64{{6, 30, 3}}},
+		{19, 4, [][]int64{}},
+		{19, 99, [][]int64{}},
 	} {
 		cfg.Mydumper.MaxRegionSize = tc.maxRegionSize
 		prevRowIdxMax := int64(0)
@@ -322,13 +340,14 @@ func TestSplitLargeFile(t *testing.T) {
 		store, err := storage.NewLocalStorage(".")
 		assert.NoError(t, err)
 
-		_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
-		assert.NoError(t, err)
-		assert.Len(t, regions, len(tc.offsets))
+		_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store, tc.skipFirstNRows)
+		require.NoErrorf(t, err, "max region size: %d; skip first N rows: %d", tc.maxRegionSize, tc.skipFirstNRows)
+		require.Lenf(t, regions, len(tc.offsets), "max region size: %d; skip first N rows: %d", tc.maxRegionSize, tc.skipFirstNRows)
 		for i := range tc.offsets {
-			assert.Equal(t, tc.offsets[i][0], regions[i].Chunk.Offset)
-			assert.Equal(t, tc.offsets[i][1], regions[i].Chunk.EndOffset)
-			assert.Equal(t, columns, regions[i].Chunk.Columns)
+			assert.Equalf(t, tc.offsets[i][0], regions[i].Chunk.Offset, "max region size: %d; skip first N rows: %d", tc.maxRegionSize, tc.skipFirstNRows)
+			assert.Equalf(t, tc.offsets[i][1], regions[i].Chunk.EndOffset, "max region size: %d; skip first N rows: %d", tc.maxRegionSize, tc.skipFirstNRows)
+			assert.Equalf(t, tc.offsets[i][2], regions[i].Chunk.SkipFirstNRows, "max region size: %d; skip first N rows: %d", tc.maxRegionSize, tc.skipFirstNRows)
+			assert.Equalf(t, columns, regions[i].Chunk.Columns, "max region size: %d; skip first N rows: %d", tc.maxRegionSize, tc.skipFirstNRows)
 		}
 	}
 }
@@ -379,7 +398,7 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 
 	offsets := [][]int64{{4, 13}, {13, 21}}
 
-	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store, 0)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -429,7 +448,7 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 
 	offsets := [][]int64{{0, 23}, {23, 38}, {38, 47}}
 
-	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store, 0)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
@@ -484,12 +503,84 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 
 	offsets := [][]int64{{14, 24}}
 
-	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store)
+	_, regions, _, err := SplitLargeFile(context.Background(), meta, cfg, fileInfo, colCnt, prevRowIdxMax, ioWorker, store, 0)
 	require.NoError(t, err)
 	require.Len(t, regions, len(offsets))
 	for i := range offsets {
 		require.Equal(t, offsets[i][0], regions[i].Chunk.Offset)
 		require.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
 		require.Equal(t, columns, regions[i].Chunk.Columns)
+	}
+}
+
+func TestGetSkipRowCount(t *testing.T) {
+	type TestCase struct {
+		CaseName           string
+		Cfg                *config.Config
+		SrcType            SourceType
+		ExpectSkipRowCount int64
+	}
+	for _, tc := range []TestCase{
+		{
+			CaseName: "CSV: header: false, skip header row: false",
+			Cfg: &config.Config{
+				Mydumper: config.MydumperRuntime{
+					CSV: config.CSVConfig{
+						Header:        false,
+						SkipHeaderRow: false,
+					},
+				},
+			},
+			SrcType:            SourceTypeCSV,
+			ExpectSkipRowCount: 0,
+		},
+		{
+			CaseName: "CSV: header: false, skip header row: true",
+			Cfg: &config.Config{
+				Mydumper: config.MydumperRuntime{
+					CSV: config.CSVConfig{
+						Header:        false,
+						SkipHeaderRow: true,
+					},
+				},
+			},
+			SrcType:            SourceTypeCSV,
+			ExpectSkipRowCount: 1,
+		},
+		{
+			CaseName: "CSV: header: true, skip header row: false",
+			Cfg: &config.Config{
+				Mydumper: config.MydumperRuntime{
+					CSV: config.CSVConfig{
+						Header:        true,
+						SkipHeaderRow: false,
+					},
+				},
+			},
+			SrcType:            SourceTypeCSV,
+			ExpectSkipRowCount: 0,
+		},
+		{
+			CaseName: "CSV: header: true, skip header row: true",
+			Cfg: &config.Config{
+				Mydumper: config.MydumperRuntime{
+					CSV: config.CSVConfig{
+						Header:        true,
+						SkipHeaderRow: true,
+					},
+				},
+			},
+			SrcType:            SourceTypeCSV,
+			ExpectSkipRowCount: 0,
+		},
+		{
+			CaseName:           "Non-CSV",
+			Cfg:                &config.Config{},
+			SrcType:            SourceTypeSQL,
+			ExpectSkipRowCount: 0,
+		},
+	} {
+		skipRowCount := GetSkipRowCount(tc.Cfg, tc.SrcType)
+		require.Equalf(t, tc.ExpectSkipRowCount, skipRowCount, "case name: %s", tc.CaseName)
 	}
 }

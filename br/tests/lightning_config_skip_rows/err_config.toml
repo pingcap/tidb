@@ -1,0 +1,6 @@
+[mydumper.csv]
+header = false
+skip-header-row = false
+
+[tikv-importer]
+duplicate-resolution = 'remove'

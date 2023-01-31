@@ -93,12 +93,13 @@ type ChunkParser struct {
 
 // Chunk represents a portion of the data file.
 type Chunk struct {
-	Offset       int64
-	EndOffset    int64
-	RealOffset   int64
-	PrevRowIDMax int64
-	RowIDMax     int64
-	Columns      []string
+	Offset         int64
+	EndOffset      int64
+	RealOffset     int64
+	PrevRowIDMax   int64
+	RowIDMax       int64
+	Columns        []string
+	SkipFirstNRows int64
 }
 
 // Row is the content of a row.

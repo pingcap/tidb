@@ -2446,6 +2446,10 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Chunk.Offset = currOffset
 		cr.chunk.Chunk.RealOffset = currRealOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
+		if cr.chunk.Chunk.SkipFirstNRows > 0 {
+			// if there are some row KVs delivered, it means no more rows needs to be skipped
+			cr.chunk.Chunk.SkipFirstNRows = 0
+		}
 
 		if m, ok := metric.FromContext(ctx); ok {
 			// value of currOffset comes from parser.pos which increase monotonically. the init value of parser.pos
@@ -2650,6 +2654,7 @@ func (cr *chunkRestore) encodeLoop(
 		var newOffset, rowID, realOffset int64
 		var kvSize uint64
 		var realOffsetErr error
+		var remainingSkipRows int64 = cr.chunk.Chunk.SkipFirstNRows
 	outLoop:
 		for !canDeliver {
 			readDurStart := time.Now()
@@ -2666,6 +2671,11 @@ func (cr *chunkRestore) encodeLoop(
 
 			switch errors.Cause(err) {
 			case nil:
+				if remainingSkipRows > 0 {
+					remainingSkipRows--
+					readDur += time.Since(readDurStart)
+					continue outLoop
+				}
 				if !initializedColumns {
 					if len(cr.chunk.ColumnPermutation) == 0 {
 						if err = t.initializeColumns(columnNames, cr.chunk); err != nil {

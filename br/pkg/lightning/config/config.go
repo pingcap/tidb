@@ -484,6 +484,7 @@ type CSVConfig struct {
 	Terminator      string `toml:"terminator" json:"terminator"`
 	Null            string `toml:"null" json:"null"`
 	Header          bool   `toml:"header" json:"header"`
+	SkipHeaderRow   bool   `toml:"skip-header-row" json:"skip-header-row"`
 	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
@@ -746,6 +747,7 @@ func NewConfig() *Config {
 				Separator:       ",",
 				Delimiter:       `"`,
 				Header:          true,
+				SkipHeaderRow:   false,
 				NotNull:         false,
 				Null:            `\N`,
 				BackslashEscape: true,
@@ -890,6 +892,10 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if csv.Terminator == `\` {
 			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV terminator when `mydumper.csv.backslash-escape` is true")
 		}
+	}
+	// Adjust CSV configurations
+	if csv.Header {
+		csv.SkipHeaderRow = true
 	}
 
 	// adjust file routing

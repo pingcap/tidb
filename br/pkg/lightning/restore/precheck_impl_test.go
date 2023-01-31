@@ -499,6 +499,7 @@ func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s.cfg.Mydumper.CSV.Header = false
+	s.cfg.Mydumper.CSV.SkipHeaderRow = false
 
 	const testCSVData01 string = `111,"aaa"
 222,"bbb"

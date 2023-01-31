@@ -481,6 +481,17 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context,
 	//nolint: errcheck
 	defer parser.Close()
 
+	skipFirstNRows := mydump.GetSkipRowCount(p.cfg, dataFileMeta.Type)
+	for i := int64(0); i < skipFirstNRows; i++ {
+		err := parser.ReadRow()
+		if err != nil {
+			if errors.Cause(err) != io.EOF {
+				return nil, nil, errors.Trace(err)
+			}
+			break
+		}
+	}
+
 	rows := [][]types.Datum{}
 	for i := 0; i < n; i++ {
 		err := parser.ReadRow()

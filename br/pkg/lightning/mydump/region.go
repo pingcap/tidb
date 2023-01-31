@@ -261,6 +261,32 @@ func MakeTableRegions(
 	return filesRegions, nil
 }
 
+// GetSkipRowCount calculates the number of `ReadRow()` result needs to be skipped
+func GetSkipRowCount(cfg *config.Config, srcType SourceType) int64 {
+	// TODO: first, we need to set a skip row from the config
+	var skipFirstNRows int64 = 0
+	switch srcType {
+	case SourceTypeCSV:
+		// second, skip the header row if this config is set,
+		// but no skip rows count is configured previously
+		if cfg.Mydumper.CSV.SkipHeaderRow {
+			if skipFirstNRows < 1 {
+				skipFirstNRows = 1
+			}
+		}
+		// third, reduce one skipping row when `Header` is set,
+		// because when parsing the header as columns using ReadColumn(),
+		// one line has already been skipped
+		// So decline one row to be skipped
+		if cfg.Mydumper.CSV.Header {
+			if skipFirstNRows > 0 {
+				skipFirstNRows--
+			}
+		}
+	}
+	return skipFirstNRows
+}
+
 // MakeSourceFileRegion create a new source file region.
 func MakeSourceFileRegion(
 	ctx context.Context,
@@ -285,6 +311,7 @@ func MakeSourceFileRegion(
 	if !isCsvFile {
 		divisor += 2
 	}
+	skipFirstNRows := GetSkipRowCount(cfg, fi.FileMeta.Type)
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
 	// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
@@ -293,7 +320,7 @@ func MakeSourceFileRegion(
 	// If a csv file is compressed, we can't split it now because we can't get the exact size of a row.
 	if isCsvFile && cfg.Mydumper.StrictFormat && fi.FileMeta.Compression == CompressionNone &&
 		dataFileSize > int64(cfg.Mydumper.MaxRegionSize+cfg.Mydumper.MaxRegionSize/largeCSVLowerThresholdRation) {
-		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
+		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store, skipFirstNRows)
 		return regions, subFileSizes, err
 	}
 
@@ -313,11 +340,12 @@ func MakeSourceFileRegion(
 		Table:    meta.Name,
 		FileMeta: fi.FileMeta,
 		Chunk: Chunk{
-			Offset:       0,
-			EndOffset:    fileSize,
-			RealOffset:   0,
-			PrevRowIDMax: 0,
-			RowIDMax:     rowIDMax,
+			Offset:         0,
+			EndOffset:      fileSize,
+			RealOffset:     0,
+			PrevRowIDMax:   0,
+			RowIDMax:       rowIDMax,
+			SkipFirstNRows: skipFirstNRows,
 		},
 	}
 
@@ -382,25 +410,32 @@ func SplitLargeFile(
 	prevRowIdxMax int64,
 	ioWorker *worker.Pool,
 	store storage.ExternalStorage,
+	skipFirstNRows int64,
 ) (prevRowIDMax int64, regions []*TableRegion, dataFileSizes []float64, err error) {
 	maxRegionSize := int64(cfg.Mydumper.MaxRegionSize)
 	dataFileSizes = make([]float64, 0, dataFile.FileMeta.FileSize/maxRegionSize+1)
 	startOffset, endOffset := int64(0), maxRegionSize
 	var columns []string
+
+	r, err := store.Open(ctx, dataFile.FileMeta.Path)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+	charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	// Later we manually call `ReadColumns()` even if `Header` is `true`,
+	// so we set `shouldParseHeader` to `false` here
+	parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	//nolint: errcheck
+	defer parser.Close()
+
 	if cfg.Mydumper.CSV.Header {
-		r, err := store.Open(ctx, dataFile.FileMeta.Path)
-		if err != nil {
-			return 0, nil, nil, err
-		}
-		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
-		if err != nil {
-			return 0, nil, nil, err
-		}
-		parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true, charsetConvertor)
-		if err != nil {
-			return 0, nil, nil, err
-		}
 		if err = parser.ReadColumns(); err != nil {
 			return 0, nil, nil, err
 		}
@@ -411,9 +446,11 @@ func SplitLargeFile(
 			endOffset = dataFile.FileMeta.FileSize
 		}
 	}
+	var remainingSkipRows int64 = skipFirstNRows
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
+		// calculate the real end offset (in uncompressed data)
 		if endOffset != dataFile.FileMeta.FileSize {
 			r, err := store.Open(ctx, dataFile.FileMeta.Path)
 			if err != nil {
@@ -424,14 +461,14 @@ func SplitLargeFile(
 			if err != nil {
 				return 0, nil, nil, err
 			}
-			parser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
+			subParser, err := NewCSVParser(ctx, &cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
 			if err != nil {
 				return 0, nil, nil, err
 			}
-			if err = parser.SetPos(endOffset, prevRowIDMax); err != nil {
+			if err = subParser.SetPos(endOffset, prevRowIDMax); err != nil {
 				return 0, nil, nil, err
 			}
-			_, pos, err := parser.ReadUntilTerminator()
+			_, pos, err := subParser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
 					return 0, nil, nil, err
@@ -442,23 +479,47 @@ func SplitLargeFile(
 				pos = dataFile.FileMeta.FileSize
 			}
 			endOffset = pos
-			parser.Close()
+			subParser.Close()
 		}
-		regions = append(regions,
-			&TableRegion{
-				DB:       meta.DB,
-				Table:    meta.Name,
-				FileMeta: dataFile.FileMeta,
-				Chunk: Chunk{
-					Offset:       startOffset,
-					EndOffset:    endOffset,
-					PrevRowIDMax: prevRowIdxMax,
-					RowIDMax:     rowIDMax,
-					Columns:      columns,
-				},
-			})
-		dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
-		prevRowIdxMax = rowIDMax
+		isChunkNeeded := true
+		var rowsToSkip int64 = 0
+		// iterate the overall parser to get how many lines to skip in this chunk
+		if remainingSkipRows > 0 {
+			iterPos, _ := parser.Pos()
+			for remainingSkipRows > 0 && iterPos < endOffset {
+				if err := parser.ReadRow(); err != nil {
+					if !errors.ErrorEqual(err, io.EOF) {
+						return 0, nil, nil, err
+					}
+				}
+				iterPos, _ = parser.Pos()
+				remainingSkipRows--
+				rowsToSkip++
+			}
+			if remainingSkipRows <= 0 && iterPos < endOffset {
+				isChunkNeeded = true
+			} else {
+				isChunkNeeded = false
+			}
+		}
+		if isChunkNeeded {
+			regions = append(regions,
+				&TableRegion{
+					DB:       meta.DB,
+					Table:    meta.Name,
+					FileMeta: dataFile.FileMeta,
+					Chunk: Chunk{
+						Offset:         startOffset,
+						EndOffset:      endOffset,
+						PrevRowIDMax:   prevRowIdxMax,
+						RowIDMax:       rowIDMax,
+						Columns:        columns,
+						SkipFirstNRows: rowsToSkip,
+					},
+				})
+			dataFileSizes = append(dataFileSizes, float64(endOffset-startOffset))
+			prevRowIdxMax = rowIDMax
+		}
 		if endOffset == dataFile.FileMeta.FileSize {
 			break
 		}
