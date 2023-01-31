@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/multierr"
@@ -327,15 +328,9 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 	}
 
 	err := se.RunInTxn(ctx, func() error {
-		sql, args := cache.SelectFromTTLTaskWithID(task.JobID, task.ScanID)
-		rows, err := se.ExecuteSQL(ctx, sql+" FOR UPDATE NOWAIT", args...)
-		if err != nil {
-			return errors.Wrapf(err, "execute sql: %s", sql)
-		}
-		if len(rows) == 0 {
-			return errors.Errorf("didn't find task with jobID: %s, scanID: %d", task.JobID, task.ScanID)
-		}
-		task, err = cache.RowToTTLTask(se, rows[0])
+		var err error
+
+		task, err = m.syncTaskFromTable(se, task.JobID, task.ScanID, true)
 		if err != nil {
 			return err
 		}
@@ -343,7 +338,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 			return errors.New("task is already scheduled")
 		}
 
-		sql, args = setTTLTaskOwnerSQL(task.JobID, task.ScanID, m.id, now)
+		sql, args := setTTLTaskOwnerSQL(task.JobID, task.ScanID, m.id, now)
 		_, err = se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)
@@ -351,6 +346,12 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 
 		return nil
 	}, session.TxnModePessimistic)
+	if err != nil {
+		return nil, err
+	}
+
+	// update the task after setting status and owner
+	task, err = m.syncTaskFromTable(se, task.JobID, task.ScanID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -369,6 +370,28 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 		cancel,
 		nil,
 	}, nil
+}
+
+func (m *taskManager) syncTaskFromTable(se session.Session, jobID string, scanID int64, detectLock bool) (*cache.TTLTask, error) {
+	ctx := m.ctx
+
+	sql, args := cache.SelectFromTTLTaskWithID(jobID, scanID)
+	if detectLock {
+		sql += " FOR UPDATE NOWAIT"
+	}
+	rows, err := se.ExecuteSQL(ctx, sql, args...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "execute sql: %s", sql)
+	}
+	if len(rows) == 0 {
+		return nil, errors.Errorf("didn't find task with jobID: %s, scanID: %d", jobID, scanID)
+	}
+	task, err := cache.RowToTTLTask(se, rows[0])
+	if err != nil {
+		return nil, err
+	}
+
+	return task, nil
 }
 
 // updateHeartBeat updates the heartbeat for all tasks with current instance as owner
@@ -427,6 +450,7 @@ func (m *taskManager) reportTaskFinished(se session.Session, now time.Time, task
 	if err != nil {
 		return err
 	}
+	task.Status = cache.TaskStatusFinished
 
 	timeoutCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
 	_, err = se.ExecuteSQL(timeoutCtx, sql, args...)
@@ -472,6 +496,10 @@ func (m *taskManager) checkInvalidTask(se session.Session) {
 	}
 
 	m.runningTasks = ownRunningTask
+}
+
+func (m *taskManager) reportMetrics() {
+	metrics.RunningTaskCnt.Set(float64(len(m.runningTasks)))
 }
 
 type runningScanTask struct {

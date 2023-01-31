@@ -48,6 +48,8 @@ var (
 
 	RunningJobsCnt    = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "running"})
 	CancellingJobsCnt = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "cancelling"})
+
+	RunningTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "running"})
 )
 
 func initWorkerPhases(workerType string) map[string]prometheus.Counter {
