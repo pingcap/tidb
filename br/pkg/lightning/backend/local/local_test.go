@@ -1253,7 +1253,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		job := <-jobOutCh
 		job.retryCount++
 		retryJobs = append(retryJobs, job)
-		_ = <-jobOutCh
+		<-jobOutCh
 		wg.Done()
 	}()
 	wg.Add(1)
