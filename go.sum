@@ -409,6 +409,8 @@ github.com/Jeffail/gabs/v2 v2.5.1 h1:ANfZYjpMlfTTKebycu4X1AgkVWumFVDYQl7JwOr4mDk
 github.com/Jeffail/gabs/v2 v2.5.1/go.mod h1:xCn81vdHKxFUuWWAaD5jCTQDNPBMh5pPs9IJ+NcziBI=
 github.com/Joker/hpp v1.0.0/go.mod h1:8x5n+M1Hp5hC0g8okX3sR3vFQwynaX/UgSOM9MeBKzY=
 github.com/Joker/jade v1.0.1-0.20190614124447-d475f43051e7/go.mod h1:6E6s8o2AE4KhCrqr6GRJjdC/gNfTdxkIXvuGZZda2VM=
+github.com/LykxSassinator/client-go/v2 v2.0.0-20230131091257-ada803e8728e h1:1XdsW0wFZo9MUKZqZggKRE39RTdAOp6OjWoLIqgUSVg=
+github.com/LykxSassinator/client-go/v2 v2.0.0-20230131091257-ada803e8728e/go.mod h1:jc7J2EbNeVvU6eXmB50wAGrTPyJwdi+0ENccMXMFSpw=
 github.com/Masterminds/goutils v1.1.1 h1:5nUrii3FMTL5diU80unEVvNevw1nH4+ZV4DSLVJLSYI=
 github.com/Masterminds/goutils v1.1.1/go.mod h1:8cTjp+g8YejhMuvIA5y2vz3BpJxksy863GQaJW2MFNU=
 github.com/Masterminds/semver v1.5.0 h1:H65muMkzWKEuNDnfl9d70GUjFniHKHRbFPGBuZ3QEww=
@@ -1308,8 +1310,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.5-0.20230120021435-f89383775234 h1:2BmijiUk1Hcv0z58DVk4ypwaNmgutzLc2YJm0SHPEWE=
-github.com/tikv/client-go/v2 v2.0.5-0.20230120021435-f89383775234/go.mod h1:jc7J2EbNeVvU6eXmB50wAGrTPyJwdi+0ENccMXMFSpw=
 github.com/tikv/pd v1.1.0-beta.0.20230119114149-402c2bfee2f3 h1:cj3bhdIBJcLL2304EDEmd3eX+r73+hbGSYRFn/APiDU=
 github.com/tikv/pd v1.1.0-beta.0.20230119114149-402c2bfee2f3/go.mod h1:IFQZ85uu1438yp7Tb0xCgvw/BdSPReB9zcJsxXbyTP4=
 github.com/tikv/pd/client v0.0.0-20230119115149-5c518d079b93 h1:KK5bx0KLcpYUCnuQ06THPYT6QdAMfvwAtRQ0saVGD7k=
