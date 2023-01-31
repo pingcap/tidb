@@ -98,22 +98,27 @@ func NewMockDomain() *Domain {
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store                   kv.Storage
-	infoCache               *infoschema.InfoCache
-	privHandle              *privileges.Handle
-	bindHandle              atomic.Pointer[bindinfo.BindHandle]
-	statsHandle             unsafe.Pointer
-	statsLease              time.Duration
-	ddl                     ddl.DDL
-	info                    *infosync.InfoSyncer
-	globalCfgSyncer         *globalconfigsync.GlobalConfigSyncer
-	m                       sync.Mutex
-	SchemaValidator         SchemaValidator
-	sysSessionPool          *sessionPool
-	exit                    chan struct{}
-	etcdClient              *clientv3.Client // etcdClient must be used when the logic to each etcd path needs to be executed separately by keyspace, or when keyspace is not set.
-	unprefixedEtcdCli       *clientv3.Client // unprefixedEtcdCli must be used when even different keyspaces need to be used globally. It will never set etcd namespace prefix by keyspace.
-	sysVarCache             sysVarCache      // replaces GlobalVariableCache
+	store           kv.Storage
+	infoCache       *infoschema.InfoCache
+	privHandle      *privileges.Handle
+	bindHandle      atomic.Pointer[bindinfo.BindHandle]
+	statsHandle     unsafe.Pointer
+	statsLease      time.Duration
+	ddl             ddl.DDL
+	info            *infosync.InfoSyncer
+	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
+	m               sync.Mutex
+	SchemaValidator SchemaValidator
+	sysSessionPool  *sessionPool
+	exit            chan struct{}
+	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
+	etcdClient *clientv3.Client
+	// `unprefixedEtcdCli` will never set etcd namespace prefix by keyspace.
+	// It's only used in storeMinStartTS and RemoveMinStartTS now.
+	// It's must be used when the etcd path isn't need to separate by keyspaces.
+	// See: https://github.com/pingcap/tidb/pull/39685
+	unprefixedEtcdCli       *clientv3.Client
+	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
