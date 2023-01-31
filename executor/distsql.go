@@ -412,6 +412,8 @@ type IndexLookUpExecutor struct {
 	// If dummy flag is set, this is not a real IndexLookUpReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	partitionIDMap map[int64]struct{}
 }
 
 type getHandleType int8
@@ -964,6 +966,11 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
 				return handles, retChk, err
+			}
+			if ph, ok := h.(kv.PartitionHandle); ok {
+				if _, exist := w.idxLookup.partitionIDMap[ph.PartitionID]; !exist {
+					continue
+				}
 			}
 			handles = append(handles, h)
 		}

@@ -1302,7 +1302,7 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 	return latestIndexes, true, nil
 }
 
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, _ int64) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, _ int64, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1347,6 +1347,9 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
 					continue
 				}
+			}
+			if index.Global && hasFlagPartitionProcessor {
+				continue
 			}
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
@@ -1407,7 +1410,9 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
-			if path.Index != nil && path.Index.Global {
+			// global index must not use partition pruning optimization, as LogicalPartitionAll not suitable for global index.
+			// ignore global index if flagPartitionProcessor exists.
+			if path.Index != nil && path.Index.Global && hasFlagPartitionProcessor {
 				ignored = append(ignored, path)
 				continue
 			}

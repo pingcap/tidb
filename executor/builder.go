@@ -3897,6 +3897,15 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	}
 
 	if is.Index.Global {
+		tmp, _ := b.is.TableByID(ts.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitionInfo := &v.PartitionInfo
+		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+
 		return ret
 	}
 	if ok, _ := is.IsPartition(); ok {
@@ -5090,6 +5099,31 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 			pid := pi.Definitions[idx].ID
 			p := tbl.GetPartition(pid)
 			ret = append(ret, p)
+		}
+	}
+	return ret, nil
+}
+
+func getPartitionIdsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+	columns []*expression.Column, columnNames types.NameSlice) (map[int64]struct{}, error) {
+	idxArr, err := plannercore.PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
+	if err != nil {
+		return nil, err
+	}
+
+	var ret map[int64]struct{}
+
+	pi := tbl.Meta().GetPartitionInfo()
+	if fullRangePartition(idxArr) {
+		ret = make(map[int64]struct{}, len(pi.Definitions))
+		for _, def := range pi.Definitions {
+			ret[def.ID] = struct{}{}
+		}
+	} else {
+		ret = make(map[int64]struct{}, len(idxArr))
+		for _, idx := range idxArr {
+			pid := pi.Definitions[idx].ID
+			ret[pid] = struct{}{}
 		}
 	}
 	return ret, nil

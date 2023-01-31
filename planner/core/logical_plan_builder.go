@@ -4414,10 +4414,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.is.SchemaMetaVersion())
-	if err != nil {
-		return nil, err
-	}
 
 	if tableInfo.IsView() {
 		if tn.TableSample != nil {
@@ -4512,6 +4508,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		b.partitionedTable = append(b.partitionedTable, pt)
 	} else if len(tn.PartitionNames) != 0 {
 		return nil, ErrPartitionClauseOnNonpartitioned
+	}
+
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.is.SchemaMetaVersion(), b.optFlag&flagPartitionProcessor > 0)
+	if err != nil {
+		return nil, err
 	}
 
 	// remain tikv access path to generate point get acceess path if existed

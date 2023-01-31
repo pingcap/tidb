@@ -3916,21 +3916,81 @@ func TestIssue35181(t *testing.T) {
 }
 
 func TestIssue21732(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalIndex = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	for _, mode := range []variable.PartitionPruneMode{variable.StaticOnly, variable.DynamicOnly} {
-		testkit.WithPruneMode(tk, mode, func() {
-			tk.MustExec("create database TestIssue21732")
-			tk.MustExec("use TestIssue21732")
-			tk.MustExec("drop table if exists p")
-			tk.MustExec(`create table p (a int, b int GENERATED ALWAYS AS (3*a-2*a) VIRTUAL) partition by hash(b) partitions 2;`)
-			tk.MustExec("alter table p add unique index idx (a, b);")
-			tk.MustExec("insert into p (a) values  (1),(2),(3);")
-			tk.MustExec("select * from p ignore index (idx);")
-			tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
-			tk.MustExec("drop database TestIssue21732")
-		})
+	tk.MustExec("create database TestIssue21732")
+	tk.MustExec("use TestIssue21732")
+	tk.MustExec("drop table if exists p")
+	tk.MustExec(`create table p (a int, b int GENERATED ALWAYS AS (3*a-2*a) VIRTUAL) partition by hash(b) partitions 2;`)
+	tk.MustExec("alter table p add unique index idx (a);")
+	tk.MustExec("insert into p (a) values  (1),(2),(3);")
+	tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustExec("drop database TestIssue21732")
+}
+
+func TestGlobalIndexSelectSpecifiedPartition(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalIndex = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists p")
+	tk.MustExec(`create table p (id int, c int) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
+	tk.MustQuery("select * from p partition(p0) use index (idx)").Sort().Check(testkit.Rows("1 3"))
+}
+
+func TestGlobalIndexForIssue40149(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalIndex = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	for _, opt := range []string{"true", "false"} {
+		failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(` + opt +`)`)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists test_t1")
+		tk.MustExec(`CREATE TABLE test_t1 (
+  		a int(11) NOT NULL,
+  		b int(11) DEFAULT NULL,
+  		c int(11) DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY RANGE (c) (
+ 	PARTITION p0 VALUES LESS THAN (10),
+ 	PARTITION p1 VALUES LESS THAN (MAXVALUE));`)
+		tk.MustExec("alter table test_t1 add unique  p_a (a);")
+		tk.MustExec("insert into test_t1 values (1,1,1);")
+		tk.MustQuery("select * from test_t1 where a = 1;").Sort().Check(testkit.Rows("1 1 1"))
+		failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	}
 }
 
