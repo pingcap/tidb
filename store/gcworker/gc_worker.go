@@ -314,6 +314,9 @@ func getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
 
 func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) error {
 	// Get safe point from PD.
+	// The update process of GC safe point is to resolve locks first and then update to pd.
+	// So, in the following code, the data of the range to be deleted must have been resolved locks,
+	// the range is safe to be deleted.
 	safePoint, err := getGCSafePoint(ctx, w.pdClient)
 	if err != nil {
 		logutil.Logger(ctx).Info("[gc worker] get gc safe point error", zap.Error(errors.Trace(err)))
@@ -324,7 +327,6 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) 
 		logutil.Logger(ctx).Info("[gc worker] skip keyspace delete range, because gc safe point is 0")
 		return nil
 	}
-
 	keyspaceID := w.store.GetCodec().GetKeyspaceID()
 	logutil.Logger(ctx).Info("[gc worker] start keyspace delete range",
 		zap.String("uuid", w.uuid),
