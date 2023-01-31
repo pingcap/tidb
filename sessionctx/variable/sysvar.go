@@ -76,11 +76,6 @@ var defaultSysVars = []*SysVar{
 	/* TiDB specific variables */
 	{Scope: ScopeNone, Name: TiDBEnableEnhancedSecurity, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
-	{Scope: ScopeNone, Name: TiDBStmtSummaryEnablePersistent, Value: Off, Type: TypeBool, ReadOnly: true},
-	{Scope: ScopeNone, Name: TiDBStmtSummaryFilename, Value: DefTiDBStmtSummaryFilename, Type: TypeStr, ReadOnly: true},
-	{Scope: ScopeNone, Name: TiDBStmtSummaryFileMaxDays, Value: strconv.Itoa(DefTiDBStmtSummaryFileMaxDays), Type: TypeInt, ReadOnly: true},
-	{Scope: ScopeNone, Name: TiDBStmtSummaryFileMaxSize, Value: strconv.Itoa(DefTiDBStmtSummaryFileMaxSize), Type: TypeInt, ReadOnly: true},
-	{Scope: ScopeNone, Name: TiDBStmtSummaryFileMaxBackups, Value: strconv.Itoa(DefTiDBStmtSummaryFileMaxBackups), Type: TypeInt, ReadOnly: true},
 
 	/* The system variables below have SESSION scope  */
 	{Scope: ScopeSession, Name: Timestamp, Value: DefTimestamp, MinValue: 0, MaxValue: math.MaxInt32, Type: TypeFloat, GetSession: func(s *SessionVars) (string, error) {
@@ -481,6 +476,24 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+			return On, nil
+		}
+		return Off, nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBStmtSummaryFilename, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return config.GetGlobalConfig().Instance.StmtSummaryFilename, nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBStmtSummaryFileMaxDays, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return strconv.Itoa(config.GetGlobalConfig().Instance.StmtSummaryFileMaxDays), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBStmtSummaryFileMaxSize, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return strconv.Itoa(config.GetGlobalConfig().Instance.StmtSummaryFileMaxSize), nil
+	}},
+	{Scope: ScopeInstance, Name: TiDBStmtSummaryFileMaxBackups, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return strconv.Itoa(config.GetGlobalConfig().Instance.StmtSummaryFileMaxBackups), nil
 	}},
 
 	/* The system variables below have GLOBAL scope  */
