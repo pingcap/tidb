@@ -478,10 +478,7 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-		if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
-			return On, nil
-		}
-		return Off, nil
+		return BoolToOnOff(config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBStmtSummaryFilename, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.StmtSummaryFilename, nil
