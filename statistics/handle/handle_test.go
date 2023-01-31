@@ -622,16 +622,16 @@ func TestLoadStats(t *testing.T) {
 	require.True(t, idx.IsFullLoad())
 
 	// Following test tests whether the LoadNeededHistograms would panic.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail", `return(true)`))
 	err = h.LoadNeededHistograms()
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic", "panic"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic", "panic"))
 	err = h.LoadNeededHistograms()
 	require.Error(t, err)
 	require.Regexp(t, ".*getStatsReader panic.*", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic"))
 	err = h.LoadNeededHistograms()
 	require.NoError(t, err)
 }
