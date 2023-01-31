@@ -117,6 +117,10 @@ enable-global-kill = true
 # disaggregated-tiflash indicates whether TiDB is in disaggregated tiflash mode, if true, MPP will runs on tiflash_compute nodes.
 disaggregated-tiflash = false
 
+# use-autoscaler indicates whether use AutoScaler or PD for tiflash_compute nodes, only meaningful when disaggregated-tiflash is true.
+# Will remove this after AutoScaler is stable.
+use-autoscaler = true
+
 # autoscaler-type indicates which type of AutoScaler will be used. Possible values are: mock, aws, gcp.
 # Only meaningful when disaggregated-tiflash is true
 autoscaler-type = "aws"

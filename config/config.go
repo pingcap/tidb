@@ -295,6 +295,8 @@ type Config struct {
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
 	ClusterName                  string `toml:"cluster-name" json:"cluster-name"`
+	// todo: remove this after AutoScaler is stable.
+	UseAutoScaler bool `toml:"use-autoscaler" json:"use-autoscaler"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
@@ -1011,6 +1013,7 @@ var defaultConf = Config{
 	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
 	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
+	UseAutoScaler:                        true,
 	ClusterName:                          "",
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
@@ -1348,7 +1351,7 @@ func (c *Config) Valid() error {
 	}
 
 	// Check tiflash_compute topo fetch is valid.
-	if c.DisaggregatedTiFlash {
+	if c.DisaggregatedTiFlash && c.UseAutoScaler {
 		if !tiflashcompute.IsValidAutoScalerConfig(c.TiFlashComputeAutoScalerType) {
 			return fmt.Errorf("invalid AutoScaler type, expect %s, %s or %s, got %s",
 				tiflashcompute.MockASStr, tiflashcompute.AWSASStr, tiflashcompute.GCPASStr, c.TiFlashComputeAutoScalerType)

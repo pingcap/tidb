@@ -204,7 +204,7 @@ func main() {
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
+	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
 		clusterID, err := config.GetClusterName()
 		terror.MustNil(err)
 
