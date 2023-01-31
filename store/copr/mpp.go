@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
@@ -162,6 +163,8 @@ type mppIterator struct {
 	mu sync.Mutex
 
 	enableCollectExecutionInfo bool
+
+	memTracker *memory.Tracker
 }
 
 func (m *mppIterator) run(ctx context.Context) {
@@ -200,6 +203,9 @@ func (m *mppIterator) sendError(err error) {
 }
 
 func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
+	respSize := resp.MemSize()
+	m.memTracker.Consume(respSize)
+	defer m.memTracker.Consume(respSize)
 	select {
 	case m.respChan <- resp:
 	case <-m.finishCh:
@@ -535,7 +541,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID kv.MPPQueryID) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID kv.MPPQueryID, memTracker *memory.Tracker) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
@@ -550,6 +556,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		vars:                       vars,
 		needTriggerFallback:        needTriggerFallback,
 		enableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
+		memTracker:                 memTracker,
 	}
 	go iter.run(ctxChild)
 	return iter
