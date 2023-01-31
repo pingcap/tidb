@@ -484,6 +484,7 @@ type CSVConfig struct {
 	Terminator      string `toml:"terminator" json:"terminator"`
 	Null            string `toml:"null" json:"null"`
 	Header          bool   `toml:"header" json:"header"`
+	SkipHeader      bool   `toml:"skip-header" json:"skip-header"`
 	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
@@ -746,6 +747,7 @@ func NewConfig() *Config {
 				Separator:       ",",
 				Delimiter:       `"`,
 				Header:          true,
+				SkipHeader:      false,
 				NotNull:         false,
 				Null:            `\N`,
 				BackslashEscape: true,
