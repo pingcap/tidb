@@ -877,6 +877,7 @@ func (do *Domain) Close() {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
 	}
+	log.Info("do exit")
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -1406,7 +1407,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			case <-do.exit:
 				return
 			case _, ok = <-watchCh:
+				log.Info("watchCh")
 			case <-time.After(duration):
+				log.Info("tricker")
 			}
 
 			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
