@@ -835,7 +835,6 @@ func (bc *Client) BackupRange(
 		zap.Uint64("rateLimit", request.RateLimit),
 		zap.Uint32("concurrency", request.Concurrency))
 
-	var selectedStores []*metapb.Store
 	allStores, err := conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), connutil.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -863,7 +862,7 @@ func (bc *Client) BackupRange(
 			req.EndKey = progressRange.Incomplete[0].EndKey
 		}
 
-		push := newPushDown(bc.mgr, len(selectedStores))
+		push := newPushDown(bc.mgr, len(allStores))
 		err = push.pushBackup(ctx, req, progressRange, allStores, bc.checkpointRunner, progressCallBack)
 		if err != nil {
 			return errors.Trace(err)
