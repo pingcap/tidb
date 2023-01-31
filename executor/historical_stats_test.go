@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -30,6 +31,8 @@ import (
 )
 
 func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -150,6 +153,8 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 }
 
 func TestGCHistoryStatsAfterDropTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -174,6 +179,7 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
 	// drop the table and gc stats
 	tk.MustExec("drop table t")
+	is = dom.InfoSchema()
 	h.GCStats(is, 0)
 
 	// assert stats_history tables delete the record of dropped table
@@ -183,7 +189,56 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 }
 
+func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10),c int, KEY `idx` (`c`))")
+	tk.MustExec("analyze table test.t")
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	// dump historical stats
+	h := dom.StatsHandle()
+	hsWorker := dom.GetHistoricalStatsWorker()
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+	snapshot := oracle.GoTimeToTS(time.Now())
+	jsTable, err := h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.NotEqual(t, jsTable.Version, uint64(0))
+	originVersion := jsTable.Version
+
+	// assert historical stats non-change after drop column
+	tk.MustExec("alter table t drop column b")
+	h.GCStats(is, 0)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, err = h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.Equal(t, jsTable.Version, originVersion)
+
+	// assert historical stats non-change after drop index
+	tk.MustExec("alter table t drop index idx")
+	h.GCStats(is, 0)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, err = h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.Equal(t, jsTable.Version, originVersion)
+}
+
 func TestGCOutdatedHistoryStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -219,6 +274,8 @@ func TestGCOutdatedHistoryStats(t *testing.T) {
 }
 
 func TestPartitionTableHistoricalStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -246,6 +303,8 @@ PARTITION p0 VALUES LESS THAN (6)
 }
 
 func TestDumpHistoricalStatsByTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
