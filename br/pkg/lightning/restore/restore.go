@@ -2341,16 +2341,16 @@ func (cr *chunkRestore) deliverLoop(
 	var startRealOffset, currRealOffset int64 // save to 0 at first
 
 	for hasMoreKVs {
+		var c tikvclient.Codec
+		if t.kvStore == nil {
+			c = keyspace.CodecV1
+		} else {
+			c = t.kvStore.GetCodec()
+		}
 		var (
-			c             tikvclient.Codec
 			dataChecksum  = verify.NewKVChecksumWithKeyspace(c)
 			indexChecksum = verify.NewKVChecksumWithKeyspace(c)
 		)
-		if t.kvStore != nil {
-			c = t.kvStore.GetCodec()
-		} else {
-			c = keyspace.CodecV1
-		}
 		var columns []string
 		var kvPacket []deliveredKVs
 		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
