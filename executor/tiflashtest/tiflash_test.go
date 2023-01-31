@@ -1338,6 +1338,7 @@ func TestMPPMemoryTracker(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_mem_quota_query = 1 << 30")
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values (1);")
@@ -1353,4 +1354,5 @@ func TestMPPMemoryTracker(t *testing.T) {
 	}()
 	err = tk.QueryToErr("select * from t")
 	require.NotNil(t, err)
+	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 }
