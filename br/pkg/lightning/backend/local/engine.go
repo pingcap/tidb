@@ -990,6 +990,8 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 // in the engine. Empty upperBound means unbounded.
 func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
 	if len(upperBound) == 0 {
+		// we use empty slice for unbounded upper bound, but it means max value in pebble
+		// so reset to nil
 		upperBound = nil
 	}
 	opt := &pebble.IterOptions{

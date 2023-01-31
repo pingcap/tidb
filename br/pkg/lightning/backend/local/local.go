@@ -199,10 +199,9 @@ func (f *importClientFactoryImpl) Close() {
 
 // Range record start and end key for localStoreDir.DB
 // so we can write it to tikv in streaming
-// TODO: Range is [start, end)?
 type Range struct {
 	start []byte
-	end   []byte
+	end   []byte // end is always exclusive except import_sstpb.SSTMeta
 }
 
 type encodingBuilder struct {
@@ -1330,6 +1329,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 			regionSplitKeys,
 		)
 		if err != nil {
+			close(jobCh)
+			_ = workGroup.Wait()
 			return err
 		}
 
