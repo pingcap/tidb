@@ -4,28 +4,18 @@
     "Cases": [
       {
         "SQL": "select /*+ use_index(t, kj) */ * from t",
-        "Plan": [
-          "IndexMerge 10000.00 root  type: union",
-          "├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ]
+        "Plan": null,
+        "Err": "[planner:1815]Internal : Can't find a proper physical plan for this query"
       },
       {
         "SQL": "select /*+ use_index(t, kj) */ a from t",
-        "Plan": [
-          "IndexMerge 10000.00 root  type: union",
-          "├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ]
+        "Plan": null,
+        "Err": "[planner:1815]Internal : Can't find a proper physical plan for this query"
       },
       {
         "SQL": "select /*+ use_index(t, kj) */ * from t where a<10",
-        "Plan": [
-          "IndexMerge 3323.33 root  type: union",
-          "├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) keep order:false, stats:pseudo",
-          "└─Selection(Probe) 3323.33 cop[tikv]  lt(test.t.a, 10)",
-          "  └─TableRowIDScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ]
+        "Plan": null,
+        "Err": "[planner:1815]Internal : Can't find a proper physical plan for this query"
       },
       {
         "SQL": "select /*+ use_index(t, kj) */ * from t where (1 member of (j))",
@@ -34,7 +24,8 @@
           "└─IndexMerge 10.00 root  type: union",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ]
+        ],
+        "Err": ""
       },
       {
         "SQL": "select /*+ use_index(t, kj) */ * from t where (1 member of (j)) and a=10",
@@ -44,16 +35,47 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 0.01 cop[tikv]  eq(test.t.a, 10)",
           "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ]
+        ],
+        "Err": ""
       },
       {
         "SQL": "select /*+ use_index(t, kj) */ * from t where (1 member of (j)) or a=10",
+        "Plan": null,
+        "Err": "[planner:1815]Internal : Can't find a proper physical plan for this query"
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, kj) */ * from t",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Err": ""
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, kj) */ a from t",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Err": ""
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, kj) */ * from t where a<10",
+        "Plan": [
+          "TableReader 3323.33 root  data:Selection",
+          "└─Selection 3323.33 cop[tikv]  lt(test.t.a, 10)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Err": ""
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, kj) */ * from t where (1 member of (j)) or a=10",
         "Plan": [
           "Selection 8000.00 root  or(json_memberof(cast(1, json BINARY), test.t.j), eq(test.t.a, 10))",
-          "└─IndexMerge 10000.00 root  type: union",
-          "  ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
-        ]
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Err": ""
       }
     ]
   },
