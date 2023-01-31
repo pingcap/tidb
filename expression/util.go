@@ -459,7 +459,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				tmpArgForCollCheck[idx] = newFuncExpr
 				newCollEt, err := CheckAndDeriveCollationFromExprs(v.GetCtx(), v.FuncName.L, v.RetType.EvalType(), tmpArgForCollCheck...)
 				if err != nil {
-					logutil.BgLogger().Error("should not happen", zap.Stack("stack"))
+					logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
 					return false, failed, v
 				}
 				if oldCollEt.Collation == newCollEt.Collation {
