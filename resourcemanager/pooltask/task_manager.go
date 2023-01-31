@@ -148,3 +148,8 @@ func (t *TaskManager[T, U, C, CT, TF]) StopTask(taskID uint64) {
 		}
 	}
 }
+
+// GetOriginConcurrency return the concurrency of the pool at the init.
+func (t *TaskManager[T, U, C, CT, TF]) GetOriginConcurrency() int32 {
+	return t.concurrency
+}
