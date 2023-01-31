@@ -1084,8 +1084,8 @@ github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef/go.mod h1:7WjlapSfwQyo
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
 github.com/nishanths/predeclared v0.2.2 h1:V2EPdZPliZymNAn79T8RkNApBjMmVKh5XRpLm/w98Vk=
 github.com/nishanths/predeclared v0.2.2/go.mod h1:RROzoN6TnGQupbC+lqggsOlcgysk3LMK/HI84Mp280c=
-github.com/nolouch/pd v1.1.0-beta.0.20230131081918-9c5a9ffdd51f h1:7DilETabziYMtcjZ3ueusWwLswDzf52x0Sy6gseV5fo=
-github.com/nolouch/pd v1.1.0-beta.0.20230131081918-9c5a9ffdd51f/go.mod h1:IFQZ85uu1438yp7Tb0xCgvw/BdSPReB9zcJsxXbyTP4=
+github.com/nolouch/pd v1.1.0-beta.0.20230131084939-7378569288ee h1:bMIKXH7IywyVzsrP2cbXTAbdn3olUgrbRPPNU9StcH8=
+github.com/nolouch/pd v1.1.0-beta.0.20230131084939-7378569288ee/go.mod h1:IFQZ85uu1438yp7Tb0xCgvw/BdSPReB9zcJsxXbyTP4=
 github.com/nxadm/tail v1.4.4 h1:DQuhQpB1tVlglWS2hLQ5OV6B5r8aGxSrPc5Qo6uTN78=
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
 github.com/oklog/run v1.0.0/go.mod h1:dlhp/R75TPv97u0XWUtDeV/lRKWPKSdTuV0TZvrmrQA=
