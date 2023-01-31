@@ -149,11 +149,13 @@ func (s *StmtSummary) Enabled() bool {
 
 // SetEnabled is used to enable or disable StmtSummary. If disabled, in-memory
 // data will be cleared, (persisted data will still be remained).
-func (s *StmtSummary) SetEnabled(v bool) {
+func (s *StmtSummary) SetEnabled(v bool) error {
 	s.optEnabled.Store(v)
 	if !v {
 		s.Clear()
 	}
+
+	return nil
 }
 
 // EnableInternalQuery returns whether the StmtSummary counts internal queries.
@@ -164,11 +166,13 @@ func (s *StmtSummary) EnableInternalQuery() bool {
 // SetEnableInternalQuery is used to enable or disable StmtSummary's internal
 // query statistics. If disabled, in-memory internal queries will be cleared,
 // (persisted internal queries will still be remained).
-func (s *StmtSummary) SetEnableInternalQuery(v bool) {
+func (s *StmtSummary) SetEnableInternalQuery(v bool) error {
 	s.optEnableInternalQuery.Store(v)
 	if !v {
 		s.ClearInternal()
 	}
+
+	return nil
 }
 
 // MaxStmtCount returns the maximum number of statements.
@@ -178,7 +182,7 @@ func (s *StmtSummary) MaxStmtCount() uint32 {
 
 // SetMaxStmtCount is used to set the maximum number of statements.
 // If the current number exceeds the maximum number, the excess will be evicted.
-func (s *StmtSummary) SetMaxStmtCount(v uint32) {
+func (s *StmtSummary) SetMaxStmtCount(v uint32) error {
 	if v < 1 {
 		v = 1
 	}
@@ -187,6 +191,8 @@ func (s *StmtSummary) SetMaxStmtCount(v uint32) {
 	w.Lock()
 	_ = w.lru.SetCapacity(uint(v))
 	w.Unlock()
+
+	return nil
 }
 
 // MaxSQLLength returns the maximum size of a single SQL statement.
@@ -195,8 +201,10 @@ func (s *StmtSummary) MaxSQLLength() uint32 {
 }
 
 // SetMaxSQLLength sets the maximum size of a single SQL statement.
-func (s *StmtSummary) SetMaxSQLLength(v uint32) {
+func (s *StmtSummary) SetMaxSQLLength(v uint32) error {
 	s.optMaxSQLLength.Store(v)
+
+	return nil
 }
 
 // RefreshInterval returns the period (in seconds) at which the statistics
@@ -208,11 +216,13 @@ func (s *StmtSummary) RefreshInterval() uint32 {
 // SetRefreshInterval sets the period (in seconds) for the statistics window
 // to be refreshed (persisted). This may trigger a refresh (persistence) of
 // the current statistics window early.
-func (s *StmtSummary) SetRefreshInterval(v uint32) {
+func (s *StmtSummary) SetRefreshInterval(v uint32) error {
 	if v < 1 {
 		v = 1
 	}
 	s.optRefreshInterval.Store(v)
+
+	return nil
 }
 
 // Add adds a single stmtsummary.StmtExecInfo to the current statistics window

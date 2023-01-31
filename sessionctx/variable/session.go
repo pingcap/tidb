@@ -3271,110 +3271,121 @@ func newStmtSummary() *stmtSummary {
 }
 
 func (s *stmtSummary) Add(stmtExecInfo *stmtsummary.StmtExecInfo) {
-	s.tryInit()
-
-	if s.EnablePersistent && s.StmtSummaryV2 != nil {
-		s.StmtSummaryV2.Add(stmtExecInfo)
-	} else if !s.EnablePersistent {
-		stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
+	if !s.ensureInit() {
+		return
 	}
+
+	if s.EnablePersistent {
+		s.StmtSummaryV2.Add(stmtExecInfo)
+	}
+	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 }
 
 func (s *stmtSummary) Enabled() bool {
-	s.tryInit()
-
-	if s.EnablePersistent && s.StmtSummaryV2 != nil {
-		return s.StmtSummaryV2.Enabled()
-	} else if !s.EnablePersistent {
-		return stmtsummary.StmtSummaryByDigestMap.Enabled()
+	if !s.ensureInit() {
+		return false
 	}
 
-	return false
+	if s.EnablePersistent {
+		return s.StmtSummaryV2.Enabled()
+	}
+	return stmtsummary.StmtSummaryByDigestMap.Enabled()
 }
 
 func (s *stmtSummary) EnabledInternal() bool {
-	s.tryInit()
-
-	if s.EnablePersistent && s.StmtSummaryV2 != nil {
-		return s.StmtSummaryV2.EnableInternalQuery()
-	} else if !s.EnablePersistent {
-		return stmtsummary.StmtSummaryByDigestMap.EnabledInternal()
+	if !s.ensureInit() {
+		return false
 	}
 
-	return false
+	if s.EnablePersistent {
+		return s.StmtSummaryV2.EnableInternalQuery()
+	}
+	return stmtsummary.StmtSummaryByDigestMap.EnabledInternal()
+}
+
+func (s *stmtSummary) SetEnabled(v bool) error {
+	if !s.ensureInit() {
+		return nil
+	}
+
+	if s.EnablePersistent {
+		return s.StmtSummaryV2.SetEnabled(v)
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetEnabled(v)
+}
+
+func (s *stmtSummary) SetEnableInternalQuery(v bool) error {
+	if !s.ensureInit() {
+		return nil
+	}
+
+	if s.EnablePersistent {
+		return s.StmtSummaryV2.SetEnableInternalQuery(v)
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(v)
+}
+
+func (s *stmtSummary) SetRefreshInterval(v int64) error {
+	if !s.ensureInit() {
+		return nil
+	}
+
+	if s.EnablePersistent {
+		return s.StmtSummaryV2.SetRefreshInterval(uint32(v))
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(v)
+}
+
+func (s *stmtSummary) SetHistorySize(v int) error {
+	if !s.ensureInit() {
+		return nil
+	}
+
+	if s.EnablePersistent {
+		return nil // not support
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetHistorySize(v)
+}
+
+func (s *stmtSummary) SetMaxStmtCount(v int) error {
+	if !s.ensureInit() {
+		return nil
+	}
+
+	if s.EnablePersistent {
+		return s.StmtSummaryV2.SetMaxStmtCount(uint32(v))
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(uint(v))
+}
+
+func (s *stmtSummary) SetMaxSQLLength(v int) error {
+	if !s.ensureInit() {
+		return nil
+	}
+
+	if s.EnablePersistent {
+		return s.StmtSummaryV2.SetMaxSQLLength(uint32(v))
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(v)
 }
 
 func (s *stmtSummary) GetBindableStmts(frequency int64) []*stmtsummary.BindableStmt {
-	s.tryInit()
+	if !s.ensureInit() {
+		return nil
+	}
 
-	if s.EnablePersistent && s.StmtSummaryV2 != nil {
+	if s.EnablePersistent {
 		return s.StmtSummaryV2.GetMoreThanCntBindableStmt(frequency)
-	} else if !s.EnablePersistent {
-		return stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(frequency)
 	}
-
-	return nil
+	return stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(frequency)
 }
 
-func (s *stmtSummary) SetEnabled(v bool) {
-	s.tryInit()
-
-	if s.EnablePersistent && s.StmtSummaryV2 != nil {
-		s.StmtSummaryV2.SetEnabled(v)
-	} else if !s.EnablePersistent {
-		_ = stmtsummary.StmtSummaryByDigestMap.SetEnabled(v)
-	}
-}
-
-func (s *stmtSummary) SetEnableInternalQuery(v bool) {
-	s.tryInit()
-
-	if s.EnablePersistent && s.StmtSummaryV2 != nil {
-		s.StmtSummaryV2.SetEnableInternalQuery(v)
-	} else if !s.EnablePersistent {
-		_ = stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(v)
-	}
-}
-
-func (s *stmtSummary) SetRefreshInterval(v int64) {
-	s.tryInit()
-
-	if s.EnablePersistent && s.StmtSummaryV2 != nil {
-		s.StmtSummaryV2.SetRefreshInterval(uint32(v))
-	} else if !s.EnablePersistent {
-		_ = stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(v)
-	}
-}
-
-func (s *stmtSummary) SetHistorySize(v int) {
-	if !s.EnablePersistent {
-		_ = stmtsummary.StmtSummaryByDigestMap.SetHistorySize(v)
-	}
-}
-
-func (s *stmtSummary) SetMaxStmtCount(v int) {
-	s.tryInit()
-
-	if s.EnablePersistent && s.StmtSummaryV2 != nil {
-		s.StmtSummaryV2.SetMaxStmtCount(uint32(v))
-	} else if !s.EnablePersistent {
-		_ = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(uint(v))
-	}
-}
-
-func (s *stmtSummary) SetMaxSQLLength(v int) {
-	s.tryInit()
-
-	if s.EnablePersistent && s.StmtSummaryV2 != nil {
-		s.StmtSummaryV2.SetMaxSQLLength(uint32(v))
-	} else if !s.EnablePersistent {
-		_ = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(v)
-	}
-}
-
-// tryInit initials StmtSummaryV2 in case it is nil.
-func (s *stmtSummary) tryInit() {
+// ensureInit initials StmtSummaryV2 in case it is nil, or
+// return false if the initialization fails.
+func (s *stmtSummary) ensureInit() bool {
 	if s.EnablePersistent && s.StmtSummaryV2 == nil {
 		s.StmtSummaryV2 = stmtsummaryv2.GlobalStmtSummary
+		return s.StmtSummaryV2 != nil
 	}
+	return true
 }
