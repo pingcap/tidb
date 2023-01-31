@@ -5,7 +5,6 @@ header:
   paths-ignore:
     - "docs/"
     - "br/"
-    - "bazel-*/"
     - ".gitignore"
     - ".dockerignore"
     - ".gitattributes"
