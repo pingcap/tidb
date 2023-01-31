@@ -731,7 +731,7 @@ func newBatchPointGetPlan(
 		}
 	}
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible ||
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, indexHints) {
 			continue
 		}
@@ -1099,7 +1099,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	var err error
 
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible ||
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, tblName.IndexHints) {
 			continue
 		}
@@ -1355,7 +1355,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				con, err = expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx, x, false)
 				if err != nil {
 					return nil, false
 				}
@@ -1369,7 +1369,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				con, err = expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx, x, false)
 				if err != nil {
 					return nil, false
 				}

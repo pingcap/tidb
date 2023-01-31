@@ -1,6 +1,7 @@
 package mydump_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"fmt"
@@ -43,6 +44,35 @@ func runTestCasesCSV(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int
 		assert.NoError(t, err)
 		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(tc.input), blockBufSize, ioWorkers, false, charsetConvertor)
 		assert.NoError(t, err)
+		for i, row := range tc.expected {
+			comment := fmt.Sprintf("input = %q, row = %d", tc.input, i+1)
+			e := parser.ReadRow()
+			assert.NoErrorf(t, e, "input = %q, row = %d, error = %s", tc.input, i+1, errors.ErrorStack(e))
+			assert.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
+			assert.Equal(t, row, parser.LastRow().Row, comment)
+		}
+		assert.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, "input = %q", tc.input)
+	}
+}
+
+func runTestCasesCSVIgnoreNLines(t *testing.T, cfg *config.MydumperRuntime, blockBufSize int64, cases []testCase, ignoreNLines int) {
+	for _, tc := range cases {
+		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+		assert.NoError(t, err)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(tc.input), blockBufSize, ioWorkers, false, charsetConvertor)
+		assert.NoError(t, err)
+
+		for ignoreNLines > 0 {
+			// IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
+			_, _, err = parser.ReadUntilTerminator()
+			if errors.Cause(err) == io.EOF {
+				assert.Len(t, tc.expected, 0, "input = %q", tc.input)
+				return
+			}
+			assert.NoError(t, err)
+			ignoreNLines--
+		}
+
 		for i, row := range tc.expected {
 			comment := fmt.Sprintf("input = %q, row = %d", tc.input, i+1)
 			e := parser.ReadRow()
@@ -680,6 +710,29 @@ func TestConsecutiveFields(t *testing.T) {
 	})
 }
 
+func TestTooLargeRow(t *testing.T) {
+	cfg := config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator: ",",
+			Delimiter: `"`,
+		},
+	}
+	var testCase bytes.Buffer
+	testCase.WriteString("a,b,c,d")
+	// WARN: will take up 10KB memory here.
+	mydump.LargestEntryLimit = 10 * 1024
+	for i := 0; i < mydump.LargestEntryLimit; i++ {
+		testCase.WriteByte('d')
+	}
+	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+	require.NoError(t, err)
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(testCase.String()), int64(config.ReadBlockSize), ioWorkers, false, charsetConvertor)
+	require.NoError(t, err)
+	e := parser.ReadRow()
+	require.Error(t, e)
+	require.Contains(t, e.Error(), "size of row cannot exceed the max value of txn-entry-size-limit")
+}
+
 func TestSpecialChars(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{Separator: ",", Delimiter: `"`},
@@ -909,6 +962,211 @@ func TestTerminator(t *testing.T) {
 		},
 	}
 	runTestCasesCSV(t, &cfg, 1, testCases)
+}
+
+func TestStartingBy(t *testing.T) {
+	cfg := config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  ",",
+			Delimiter:  `"`,
+			Terminator: "\n",
+			StartingBy: "xxx",
+		},
+	}
+	testCases := []testCase{
+		{
+			input: `xxx"abc",1
+something xxx"def",2
+"ghi",3`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("abc"), types.NewStringDatum("1")},
+				{types.NewStringDatum("def"), types.NewStringDatum("2")},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
+	testCases = []testCase{
+		{
+			input: `xxxabc,1
+something xxxdef,2
+ghi,3
+"bad syntax"aaa`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("abc"), types.NewStringDatum("1")},
+				{types.NewStringDatum("def"), types.NewStringDatum("2")},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
+	// test that special characters appears before StartingBy, and StartingBy only takes effect after once
+
+	testCases = []testCase{
+		{
+			input: `xxx"abc",1
+something xxxdef,2
+"ghi",3
+"yyy"xxx"yyy",4
+"yyy",5,xxxyyy,5
+qwe,zzzxxxyyy,6
+"yyyxxx"yyyxxx",7
+yyy",5,xxxxxx,8
+`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("abc"), types.NewStringDatum("1")},
+				{types.NewStringDatum("def"), types.NewStringDatum("2")},
+				{types.NewStringDatum("yyy"), types.NewStringDatum("4")},
+				{types.NewStringDatum("yyy"), types.NewStringDatum("5")},
+				{types.NewStringDatum("yyy"), types.NewStringDatum("6")},
+				{types.NewStringDatum("yyyxxx"), types.NewStringDatum("7")},
+				{types.NewStringDatum("xxx"), types.NewStringDatum("8")},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
+	// test StartingBy contains special characters
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  ",",
+			Delimiter:  `"`,
+			Terminator: "\n",
+			StartingBy: "x,xx",
+		},
+	}
+	testCases = []testCase{
+		{
+			input: `x,xx"abc",1
+something x,xxdef,2
+"ghi",3
+"yyy"xxx"yyy",4
+"yyy",5,xxxyyy,5
+qwe,zzzxxxyyy,6
+"yyyxxx"yyyxxx",7
+yyy",5,xx,xxxx,8`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("abc"), types.NewStringDatum("1")},
+				{types.NewStringDatum("def"), types.NewStringDatum("2")},
+				{types.NewStringDatum("xx"), types.NewStringDatum("8")},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  ",",
+			Delimiter:  `"`,
+			Terminator: "\n",
+			StartingBy: `x"xx`,
+		},
+	}
+	testCases = []testCase{
+		{
+			input: `x"xx"abc",1
+something x"xxdef,2
+"ghi",3
+"yyy"xxx"yyy",4
+"yyy",5,xxxyyy,5
+qwe,zzzxxxyyy,6
+"yyyxxx"yyyxxx",7
+yyy",5,xx"xxxx,8
+`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("abc"), types.NewStringDatum("1")},
+				{types.NewStringDatum("def"), types.NewStringDatum("2")},
+				{types.NewStringDatum("xx"), types.NewStringDatum("8")},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  ",",
+			Delimiter:  `"`,
+			Terminator: "\n",
+			StartingBy: "x\nxx",
+		},
+	}
+	_, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, nil, 1, ioWorkers, false, nil)
+	require.ErrorContains(t, err, "starting-by cannot contain (line) terminator")
+}
+
+func TestCallerCanIgnoreNLines(t *testing.T) {
+	cfg := config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  ",",
+			Delimiter:  `"`,
+			Terminator: "\n",
+		},
+	}
+	testCases := []testCase{
+		{
+			input: `1,1
+2,2
+3,3`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("3"), types.NewStringDatum("3")},
+			},
+		},
+	}
+	runTestCasesCSVIgnoreNLines(t, &cfg, 1, testCases, 2)
+
+	testCases = []testCase{
+		{
+			input: `"bad syntax"1
+"b",2
+"c",3`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("c"), types.NewStringDatum("3")},
+			},
+		},
+	}
+	runTestCasesCSVIgnoreNLines(t, &cfg, 1, testCases, 2)
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  ",",
+			Delimiter:  `"`,
+			Terminator: "\n",
+		},
+	}
+	testCases = []testCase{
+		{
+			input: `1,1
+2,2
+3,3`,
+			expected: [][]types.Datum{},
+		},
+	}
+	runTestCasesCSVIgnoreNLines(t, &cfg, 1, testCases, 100)
+
+	// test IGNORE N LINES will directly find (line) terminator without checking it's inside quotes
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  ",",
+			Delimiter:  `"`,
+			Terminator: "\n",
+		},
+	}
+	testCases = []testCase{
+		{
+			input: `"a
+",1
+"b
+",2
+"c",3`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("b\n"), types.NewStringDatum("2")},
+				{types.NewStringDatum("c"), types.NewStringDatum("3")},
+			},
+		},
+	}
+	runTestCasesCSVIgnoreNLines(t, &cfg, 1, testCases, 2)
 }
 
 func TestCharsetConversion(t *testing.T) {

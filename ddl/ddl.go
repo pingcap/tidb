@@ -21,7 +21,6 @@ package ddl
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -1249,12 +1248,6 @@ var (
 	RunInGoTest bool
 )
 
-func init() {
-	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-		RunInGoTest = true
-	}
-}
-
 // GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
 func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
@@ -1537,7 +1530,7 @@ func (s *session) begin() error {
 }
 
 func (s *session) commit() error {
-	s.StmtCommit()
+	s.StmtCommit(context.Background())
 	return s.CommitTxn(context.Background())
 }
 
@@ -1546,12 +1539,12 @@ func (s *session) txn() (kv.Transaction, error) {
 }
 
 func (s *session) rollback() {
-	s.StmtRollback()
+	s.StmtRollback(context.Background(), false)
 	s.RollbackTxn(context.Background())
 }
 
 func (s *session) reset() {
-	s.StmtRollback()
+	s.StmtRollback(context.Background(), false)
 }
 
 func (s *session) execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {

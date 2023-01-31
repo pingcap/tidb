@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -125,7 +126,7 @@ func TestForeignKey(t *testing.T) {
 	var mu sync.Mutex
 	checkOK := false
 	var hookErr error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
@@ -167,7 +168,7 @@ func TestForeignKey(t *testing.T) {
 	checkOK = false
 	mu.Unlock()
 	// fix data race pr/#9491
-	tc2 := &ddl.TestDDLCallback{}
+	tc2 := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
@@ -224,7 +225,7 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 	var wg sync.WaitGroup
 	var truncateErr, dropErr error
 	testTruncate := true
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateNone {
 			return
@@ -280,7 +281,7 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var dropErr error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
 			return
@@ -319,7 +320,7 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	tk.MustExec("create database test2")
 	var wg sync.WaitGroup
 	var dropErr error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateNone {
 			return
@@ -360,7 +361,7 @@ func TestAddForeignKey2(t *testing.T) {
 	tk.MustExec("create table t2 (id int key, b int, index(b));")
 	var wg sync.WaitGroup
 	var addErr error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
 			return
@@ -400,7 +401,7 @@ func TestAddForeignKey3(t *testing.T) {
 
 	var insertErrs []error
 	var deleteErrs []error
-	tc := &ddl.TestDDLCallback{}
+	tc := &callback.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionAddForeignKey {
 			return

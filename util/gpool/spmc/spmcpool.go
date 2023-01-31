@@ -44,6 +44,7 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	lock          sync.Locker
 	cond          *sync.Cond
 	taskCh        chan *pooltask.TaskBox[T, U, C, CT, TF]
+	taskManager   pooltask.TaskManager[T, U, C, CT, TF]
 	options       *Options
 	stopCh        chan struct{}
 	consumerFunc  func(T, C, CT) U
@@ -63,11 +64,12 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		opts.ExpiryDuration = gpool.DefaultCleanIntervalTime
 	}
 	result := &Pool[T, U, C, CT, TF]{
-		BasePool: gpool.NewBasePool(),
-		taskCh:   make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
-		stopCh:   make(chan struct{}),
-		lock:     gpool.NewSpinLock(),
-		options:  opts,
+		BasePool:    gpool.NewBasePool(),
+		taskCh:      make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
+		stopCh:      make(chan struct{}),
+		lock:        gpool.NewSpinLock(),
+		taskManager: pooltask.NewTaskManager[T, U, C, CT, TF](size),
+		options:     opts,
 	}
 	result.SetName(name)
 	result.state.Store(int32(gpool.OPENED))
@@ -79,7 +81,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.capacity.Add(size)
 	result.workers = newWorkerLoopQueue[T, U, C, CT, TF](int(size))
 	result.cond = sync.NewCond(result.lock)
-	err := resourcemanager.GlobalResourceManager.Register(result, name, component)
+	err := resourcemanager.InstanceResourceManager.Register(result, name, component)
 	if err != nil {
 		return nil, err
 	}
@@ -138,12 +140,22 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	p.SetLastTuneTs(time.Now())
 	p.capacity.Store(int32(size))
 	if size > capacity {
-		// boost
+		for i := 0; i < size-capacity; i++ {
+			if tid, boostTask := p.taskManager.Overclock(); boostTask != nil {
+				p.addWaitingTask()
+				p.taskManager.AddSubTask(tid, boostTask.Clone())
+				p.taskCh <- boostTask
+			}
+		}
 		if size-capacity == 1 {
 			p.cond.Signal()
 			return
 		}
 		p.cond.Broadcast()
+		return
+	}
+	if size < capacity {
+		p.taskManager.Downclock()
 	}
 }
 
@@ -223,6 +235,7 @@ func (p *Pool[T, U, C, CT, TF]) ReleaseAndWait() {
 
 	close(p.stopCh)
 	p.release()
+	defer resourcemanager.InstanceResourceManager.Unregister(p.Name())
 	for {
 		// Wait for all workers to exit and all task to be completed.
 		if p.Running() == 0 && p.heartbeatDone.Load() && p.waitingTask.Load() == 0 {
@@ -246,6 +259,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 	closeCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
+	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
@@ -253,6 +267,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 		}
 		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, inputCh, result, taskID)
 		p.addWaitingTask()
+		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
 	go func() {
@@ -293,6 +308,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
+	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
 	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
@@ -301,6 +317,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 		}
 		p.addWaitingTask()
 		taskBox := pooltask.NewTaskBox[T, U, C, CT, TF](constArg, contextFn, &wg, inputCh, result, taskID)
+		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
 	go func() {
@@ -424,4 +441,21 @@ func (p *Pool[T, U, C, CT, TF]) revertWorker(worker *goWorker[T, U, C, CT, TF]) 
 	p.cond.Signal()
 	p.lock.Unlock()
 	return true
+}
+
+// DeleteTask is to delete task.
+// Please don't use it manually.
+func (p *Pool[T, U, C, CT, TF]) DeleteTask(id uint64) {
+	p.taskManager.DeleteTask(id)
+}
+
+// StopTask is to stop task by id
+// Please don't use it manually.
+func (p *Pool[T, U, C, CT, TF]) StopTask(id uint64) {
+	p.taskManager.StopTask(id)
+}
+
+// ExitSubTask is to reduce the number of subtasks.
+func (p *Pool[T, U, C, CT, TF]) ExitSubTask(id uint64) {
+	p.taskManager.ExitSubTask(id)
 }
