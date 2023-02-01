@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"strings"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -182,7 +182,7 @@ func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
 // It's only check during the test environment, so it would panic directly.
 // These checks may be controlled by configuration in the future.
 func (d *ddl) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
-	if !(flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil) {
+	if !intest.InTest {
 		return
 	}
 

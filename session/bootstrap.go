@@ -21,7 +21,6 @@ package session
 import (
 	"context"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	osuser "os/user"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2407,12 +2407,6 @@ func doBootstrapSQLFile(s Session) {
 	}
 }
 
-// inTestSuite checks if we are bootstrapping in the context of tests.
-// There are some historical differences in behavior between tests and non-tests.
-func inTestSuite() bool {
-	return flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
-}
-
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 func doDMLWorks(s Session) {
@@ -2457,11 +2451,11 @@ func doDMLWorks(s Session) {
 				vVal = variable.On
 			}
 		case variable.TiDBMemOOMAction:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.OOMActionLog
 			}
 		case variable.TiDBEnableAutoAnalyze:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.Off
 			}
 		// For the following sysvars, we change the default

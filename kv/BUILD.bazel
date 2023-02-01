@@ -30,6 +30,7 @@ go_library(
         "//types",
         "//util/codec",
         "//util/dbterror",
+        "//util/intest",
         "//util/logutil",
         "//util/memory",
         "//util/set",

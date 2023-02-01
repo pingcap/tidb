@@ -78,6 +78,7 @@ go_library(
         "//util/fastrand",
         "//util/gcutil",
         "//util/hack",
+        "//util/intest",
         "//util/logutil",
         "//util/memory",
         "//util/pdapi",
