@@ -1420,8 +1420,8 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				// That's the problem, each testSuit use different storage to update some same local variables.
 				// So just skip `RebuildSysVarCache` in some integration testing.
 				if val.(bool) {
-					failpoint.Continue()
 					logutil.BgLogger().Info("skipLoadSysVarCacheLoop enable")
+					failpoint.Continue()
 				}
 			})
 
