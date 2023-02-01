@@ -74,7 +74,7 @@ const (
 var errTopoFetcher = dbterror.ClassUtil.NewStd(errno.ErrInternal)
 
 // TopoFetcher is interface for fetching topo from AutoScaler.
-// There are three kinds of AutoScaler for now:
+// We support the following kinds of AutoScaler for now:
 //  1. MockAutoScaler: Normally for test, can run in local environment.
 //  2. AWSAutoScaler: AutoScaler runs on AWS.
 //  3. GCPAutoScaler: AutoScaler runs on GCP.
@@ -264,7 +264,7 @@ func httpGetAndParseResp(url string) ([]byte, error) {
 	return b, nil
 }
 
-// httpGetAndParseResp send http get request and parse topo to []string.
+// mockHTTPGetAndParseResp send http get request and parse topo to []string.
 func mockHTTPGetAndParseResp(url string) ([]string, error) {
 	b, err := httpGetAndParseResp(url)
 	if err != nil {

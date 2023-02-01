@@ -523,14 +523,6 @@ func buildBatchCopTasksForPartitionedTable(
 	return batchTasks, nil
 }
 
-func filterAliveStoresStr(ctx context.Context, storesStr []string, ttl time.Duration, kvStore *kvStore) (aliveStores []string) {
-	aliveIdx := filterAliveStoresHelper(ctx, storesStr, ttl, kvStore)
-	for _, idx := range aliveIdx {
-		aliveStores = append(aliveStores, storesStr[idx])
-	}
-	return aliveStores
-}
-
 func filterAliveStores(ctx context.Context, stores []*tikv.Store, ttl time.Duration, kvStore *kvStore) (aliveStores []*tikv.Store) {
 	storesStr := make([]string, 0, len(stores))
 	for _, s := range stores {
