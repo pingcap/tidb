@@ -111,6 +111,7 @@ go_test(
         "//br/pkg/restore/split",
         "//br/pkg/utils",
         "//ddl",
+        "//keyspace",
         "//kv",
         "//parser",
         "//parser/ast",

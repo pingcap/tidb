@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -1045,6 +1046,8 @@ type Writer struct {
 	batchSize  int64
 
 	lastMetaSeq int32
+
+	tikvCodec tikv.Codec
 }
 
 func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
@@ -1125,6 +1128,10 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 
 	if w.engine.closed.Load() {
 		return errorEngineClosed
+	}
+
+	for i := range kvs {
+		kvs[i].Key = w.tikvCodec.EncodeKey(kvs[i].Key)
 	}
 
 	w.Lock()

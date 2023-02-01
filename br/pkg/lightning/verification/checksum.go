@@ -19,20 +19,31 @@ import (
 	"hash/crc64"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap/zapcore"
 )
 
 var ecmaTable = crc64.MakeTable(crc64.ECMA)
 
 type KVChecksum struct {
-	bytes    uint64
-	kvs      uint64
-	checksum uint64
+	base      uint64
+	prefixLen int
+	bytes     uint64
+	kvs       uint64
+	checksum  uint64
 }
 
 func NewKVChecksum(checksum uint64) *KVChecksum {
 	return &KVChecksum{
 		checksum: checksum,
+	}
+}
+
+func NewKVChecksumWithKeyspace(k tikv.Codec) *KVChecksum {
+	ks := k.GetKeyspace()
+	return &KVChecksum{
+		base:      crc64.Update(0, ecmaTable, ks),
+		prefixLen: len(ks),
 	}
 }
 
@@ -45,10 +56,10 @@ func MakeKVChecksum(bytes uint64, kvs uint64, checksum uint64) KVChecksum {
 }
 
 func (c *KVChecksum) UpdateOne(kv common.KvPair) {
-	sum := crc64.Update(0, ecmaTable, kv.Key)
+	sum := crc64.Update(c.base, ecmaTable, kv.Key)
 	sum = crc64.Update(sum, ecmaTable, kv.Val)
 
-	c.bytes += uint64(len(kv.Key) + len(kv.Val))
+	c.bytes += uint64(c.prefixLen + len(kv.Key) + len(kv.Val))
 	c.kvs++
 	c.checksum ^= sum
 }
@@ -62,11 +73,12 @@ func (c *KVChecksum) Update(kvs []common.KvPair) {
 	)
 
 	for _, pair := range kvs {
-		sum = crc64.Update(0, ecmaTable, pair.Key)
+		sum = crc64.Update(c.base, ecmaTable, pair.Key)
 		sum = crc64.Update(sum, ecmaTable, pair.Val)
 		checksum ^= sum
 		kvNum++
-		bytes += (len(pair.Key) + len(pair.Val))
+		bytes += c.prefixLen
+		bytes += len(pair.Key) + len(pair.Val)
 	}
 
 	c.bytes += uint64(bytes)

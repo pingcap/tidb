@@ -412,6 +412,38 @@ var (
 	taskCfgRecorderKey = "taskCfgRecorderKey"
 )
 
+func getKeyspaceName(g glue.Glue) (string, error) {
+	db, err := g.GetDB()
+	if err != nil {
+		return "", err
+	}
+	if db == nil {
+		return "", nil
+	}
+
+	rows, err := db.Query("show config where Type = 'tidb' and name = 'keyspace-name'")
+	if err != nil {
+		return "", err
+	}
+	//nolint: errcheck
+	defer rows.Close()
+
+	var (
+		_type     string
+		_instance string
+		_name     string
+		value     string
+	)
+	if rows.Next() {
+		err = rows.Scan(&_type, &_instance, &_name, &value)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return value, rows.Err()
+}
+
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
 	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
@@ -541,6 +573,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	dbMetas := mdl.GetDatabases()
 	web.BroadcastInitProgress(dbMetas)
 
+	keyspaceName, err := getKeyspaceName(g)
+	if err != nil {
+		o.logger.Error("fail to get keyspace name", zap.Error(err))
+		return errors.Trace(err)
+	}
+	o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
+
 	param := &restore.ControllerParam{
 		DBMetas:           dbMetas,
 		Status:            &l.status,
@@ -550,6 +589,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		CheckpointStorage: o.checkpointStorage,
 		CheckpointName:    o.checkpointName,
 		DupIndicator:      o.dupIndicator,
+		KeyspaceName:      keyspaceName,
 	}
 
 	var procedure *restore.Controller
