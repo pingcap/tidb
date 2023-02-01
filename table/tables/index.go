@@ -525,13 +525,13 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 			return false, nil, nil
 		}
 		// Unexpected errors.
-		return false, nil, err // Unexpected errors.
+		return false, nil, err
 	}
-	if isTemp, idxID := tablecodec.IsTempIndexKey(key); isTemp {
+	if isTemp, originIdxID := tablecodec.CheckTempIndexKey(key); isTemp {
 		originValInTmp, deletedHandle, deleted, _, _ := tablecodec.DecodeTempIndexValue(val, isCommon)
 		if deleted {
 			originKey := key.Clone()
-			tablecodec.TempIndexKey2IndexKey(idxID, originKey)
+			tablecodec.TempIndexKey2IndexKey(originIdxID, originKey)
 			originVal, err := txn.Get(ctx, originKey)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
