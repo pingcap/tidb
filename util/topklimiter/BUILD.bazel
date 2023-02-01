@@ -9,7 +9,7 @@ go_library(
         "//util",
         "//util/hack",
         "//util/topk",
-        "@com_github_go_faster_city//:go_default_library",
+        "@com_github_go_faster_city//:city",
         "@com_github_go_kratos_aegis//ratelimit",
         "@com_github_go_kratos_aegis//ratelimit/bbr",
         "@com_github_twmb_murmur3//:murmur3",

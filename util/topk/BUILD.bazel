@@ -6,7 +6,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/util/topk",
     visibility = ["//visibility:public"],
     deps = [
+        "//util/hack",
         "//util/minheap",
+        "@com_github_go_faster_city//:city",
         "@com_github_twmb_murmur3//:murmur3",
     ],
 )
