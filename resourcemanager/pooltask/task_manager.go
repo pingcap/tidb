@@ -61,12 +61,11 @@ type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 // TaskManager is a manager that can control or watch the pool.
 type TaskManager[T any, U any, C any, CT any, TF Context[CT]] struct {
 	task        []TaskStatusContainer[T, U, C, CT, TF]
-	subTaskCnt  atomic.Int32
 	running     atomic.Int32
 	concurrency int32
 }
 
-// NewTaskManager create a new pooltask manager.
+// NewTaskManager create a new pool task manager.
 func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](c int32) TaskManager[T, U, C, CT, TF] {
 	task := make([]TaskStatusContainer[T, U, C, CT, TF], shard)
 	for i := 0; i < shard; i++ {
