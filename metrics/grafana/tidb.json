@@ -19296,7 +19296,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Read Byte",
+          "title": "Bytes Read",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -19404,7 +19404,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Read Byte Per Query",
+          "title": "Bytes Read Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -19512,7 +19512,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Write Byte",
+          "title": "Bytes Written",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -19619,7 +19619,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Write Byte Per Query",
+          "title": "Bytes Written Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
