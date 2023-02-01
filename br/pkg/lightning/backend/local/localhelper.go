@@ -388,7 +388,6 @@ func (local *local) BatchSplitRegions(
 	keys [][]byte,
 ) (*split.RegionInfo, []*split.RegionInfo, error) {
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
-		log.FromContext(ctx).Warn("failToSplit")
 		failpoint.Return(nil, nil, errors.New("retryable error"))
 	})
 	region, newRegions, err := local.splitCli.BatchSplitRegionsWithOrigin(ctx, region, keys)
