@@ -1159,8 +1159,8 @@ func TempIndexKey2IndexKey(originIdxID int64, tempIdxKey []byte) {
 	binary.BigEndian.PutUint64(tempIdxKey[prefixLen:], eid)
 }
 
-// IsTempIndexKey check whether the input key is for a temp index.
-func IsTempIndexKey(indexKey []byte) (bool, int64) {
+// CheckTempIndexKey checks whether the input key is for a temp index.
+func CheckTempIndexKey(indexKey []byte) (isTemp bool, originIdxID int64) {
 	var (
 		indexIDKey  []byte
 		indexID     int64
