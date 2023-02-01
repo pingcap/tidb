@@ -81,7 +81,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.capacity.Add(size)
 	result.workers = newWorkerLoopQueue[T, U, C, CT, TF](int(size))
 	result.cond = sync.NewCond(result.lock)
-	err := resourcemanager.InstanceResourceManager.Register(result, name, component)
+	err := resourcemanager.GlobalResourceManager.Register(result, name, component)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func (p *Pool[T, U, C, CT, TF]) ReleaseAndWait() {
 
 	close(p.stopCh)
 	p.release()
-	defer resourcemanager.InstanceResourceManager.Unregister(p.Name())
+	defer resourcemanager.GlobalResourceManager.Unregister(p.Name())
 	for {
 		// Wait for all workers to exit and all task to be completed.
 		if p.Running() == 0 && p.heartbeatDone.Load() && p.waitingTask.Load() == 0 {

@@ -92,7 +92,7 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 		err := store.Close()
 		require.NoError(t, err)
 		view.Stop()
-		resourcemanager.InstanceResourceManager.Reset()
+		resourcemanager.GlobalResourceManager.Reset()
 	})
 	return dom
 }
