@@ -397,8 +397,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
 	newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
 	newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
-	newCollatorMap[charset.CollationGB18030Bin] = &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
-	newCollatorIDMap[CollationName2ID(charset.CollationGB18030Bin)] = &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
-	newCollatorMap[charset.CollationGB18030ChineseCI] = &gb18030ChineseCICollator{}
-	newCollatorIDMap[CollationName2ID(charset.CollationGB18030ChineseCI)] = &gb18030ChineseCICollator{}
+	newCollatorMap[charset.CollationGB18030Bin] = &gbkBinCollator{charset.NewCustomGB18030Encoder()}
+	newCollatorIDMap[CollationName2ID(charset.CollationGB18030Bin)] = &gbkBinCollator{charset.NewCustomGB18030Encoder()}
+	newCollatorMap[charset.CollationGB18030ChineseCI] = &gbkChineseCICollator{}
+	newCollatorIDMap[CollationName2ID(charset.CollationGB18030ChineseCI)] = &gbkChineseCICollator{}
 }

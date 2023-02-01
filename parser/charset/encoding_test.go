@@ -136,6 +136,13 @@ func TestEncodingValidate(t *testing.T) {
 		{charset.CharsetGBK, "À", "?", 0, false},
 		{charset.CharsetGBK, "中文À中文", "中文?中文", 6, false},
 		{charset.CharsetGBK, "asdfÀ", "asdf?", 4, false},
+		{charset.CharsetGB18030, "", "", 0, true},
+		{charset.CharsetGB18030, "asdf", "asdf", 4, true},
+		{charset.CharsetGB18030, "中文", "中文", 6, true},
+		{charset.CharsetGB18030, "À", "À", 4, true},
+		{charset.CharsetGB18030, "中文À中文", "中文À中文", 6, true},
+		{charset.CharsetGB18030, "asdfÀ", "asdfÀ", 4, true},
+		{charset.CharsetGB18030, "😂", "😂", 4, true},
 	}
 	for _, tc := range testCases {
 		msg := fmt.Sprintf("%v", tc)
@@ -150,7 +157,6 @@ func TestEncodingValidate(t *testing.T) {
 	}
 }
 
-// TODO
 func TestEncodingGB18030(t *testing.T) {
 	enc := charset.FindEncoding(charset.CharsetGB18030)
 	require.Equal(t, charset.CharsetGB18030, enc.Name())
@@ -209,10 +215,10 @@ func TestEncodingGB18030(t *testing.T) {
 	}{
 		{"一二三", "һ\xb6\xfe\xc8\xfd", true},
 		{"🀁", "\x948\xe11", true},
-		{"€", "?", true},
-		{"€a", "?a", true},
-		{"a€aa", "a?aa", true},
-		{"aaa€", "aaa?", true},
+		{"€", "?", false},
+		{"€a", "?a", false},
+		{"a€aa", "a?aa", false},
+		{"aaa€", "aaa?", false},
 	}
 	for _, tc := range utf8Cases {
 		cmt := fmt.Sprintf("%v", tc)
@@ -223,62 +229,5 @@ func TestEncodingGB18030(t *testing.T) {
 			require.Error(t, err, cmt)
 		}
 		require.Equal(t, tc.result, string(result), cmt)
-	}
-}
-
-func TestEncodingGB18030Validate(t *testing.T) {
-	oxfffefd := string([]byte{0xff, 0xfe, 0xfd})
-	testCases := []struct {
-		chs      string
-		str      string
-		expected string
-		nSrc     int
-		ok       bool
-	}{
-		{charset.CharsetASCII, "", "", 0, true},
-		{charset.CharsetASCII, "qwerty", "qwerty", 6, true},
-		{charset.CharsetASCII, "qwÊrty", "qw?rty", 2, false},
-		{charset.CharsetASCII, "中文", "??", 0, false},
-		{charset.CharsetASCII, "中文?qwert", "???qwert", 0, false},
-		{charset.CharsetUTF8MB4, "", "", 0, true},
-		{charset.CharsetUTF8MB4, "qwerty", "qwerty", 6, true},
-		{charset.CharsetUTF8MB4, "qwÊrty", "qwÊrty", 7, true},
-		{charset.CharsetUTF8MB4, "qwÊ合法字符串", "qwÊ合法字符串", 19, true},
-		{charset.CharsetUTF8MB4, "😂", "😂", 4, true},
-		{charset.CharsetUTF8MB4, oxfffefd, "???", 0, false},
-		{charset.CharsetUTF8MB4, "中文" + oxfffefd, "中文???", 6, false},
-		{charset.CharsetUTF8MB4, string(utf8.RuneError), "�", 3, true},
-		{charset.CharsetUTF8, "", "", 0, true},
-		{charset.CharsetUTF8, "qwerty", "qwerty", 6, true},
-		{charset.CharsetUTF8, "qwÊrty", "qwÊrty", 7, true},
-		{charset.CharsetUTF8, "qwÊ合法字符串", "qwÊ合法字符串", 19, true},
-		{charset.CharsetUTF8, "😂", "?", 0, false},
-		{charset.CharsetUTF8, "valid_str😂", "valid_str?", 9, false},
-		{charset.CharsetUTF8, oxfffefd, "???", 0, false},
-		{charset.CharsetUTF8, "中文" + oxfffefd, "中文???", 6, false},
-		{charset.CharsetUTF8, string(utf8.RuneError), "�", 3, true},
-		{charset.CharsetGBK, "", "", 0, true},
-		{charset.CharsetGBK, "asdf", "asdf", 4, true},
-		{charset.CharsetGBK, "中文", "中文", 6, true},
-		{charset.CharsetGBK, "À", "?", 0, false},
-		{charset.CharsetGBK, "中文À中文", "中文?中文", 6, false},
-		{charset.CharsetGBK, "asdfÀ", "asdf?", 4, false},
-		{charset.CharsetGB18030, "", "", 0, true},
-		{charset.CharsetGB18030, "asdf", "asdf", 4, true},
-		{charset.CharsetGB18030, "中文", "中文", 6, true},
-		{charset.CharsetGB18030, "À", "À", 4, true},
-		{charset.CharsetGB18030, "中文À中文", "中文À中文", 6, true},
-		{charset.CharsetGB18030, "asdfÀ", "asdfÀ", 4, true},
-	}
-	for _, tc := range testCases {
-		msg := fmt.Sprintf("%v", tc)
-		enc := charset.FindEncoding(tc.chs)
-		if tc.chs == charset.CharsetUTF8 {
-			enc = charset.EncodingUTF8MB3StrictImpl
-		}
-		strBytes := []byte(tc.str)
-		require.Equal(t, tc.ok, enc.IsValid(strBytes), msg)
-		replace, _ := enc.Transform(nil, strBytes, charset.OpReplaceNoErr)
-		require.Equal(t, tc.expected, string(replace), msg)
 	}
 }

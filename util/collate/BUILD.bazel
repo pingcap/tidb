@@ -6,8 +6,6 @@ go_library(
         "bin.go",
         "charset.go",
         "collate.go",
-        "gb18030_bin.go",
-        "gb18030_chinese_ci.go",
         "gbk_bin.go",
         "gbk_chinese_ci.go",
         "gbk_chinese_ci_data.go",

@@ -17,21 +17,19 @@ import (
 	"bytes"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
-	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
 // EncodingGB18030Impl is the instance of encodingGB18030
-var EncodingGB18030Impl = &encodingGB18030{encodingBase{enc: customGB18030{}}}
+var EncodingGB18030Impl = &encodingGB18030{encodingGBK{encodingBase{enc: customGB18030{}}}}
 
 func init() {
 	EncodingGB18030Impl.self = EncodingGB18030Impl
 }
 
-// encodingGB18030 is GBK encoding.
+// encodingGB18030 is GB18030 encoding.
 type encodingGB18030 struct {
-	encodingBase
+	encodingGBK
 }
 
 // Name implements Encoding interface.
@@ -79,43 +77,6 @@ func (*encodingGB18030) MbLen(bs string) int {
 	return 0
 }
 
-// ToUpper implements Encoding interface.
-func (*encodingGB18030) ToUpper(d string) string {
-	return strings.ToUpperSpecial(GB18030Case, d)
-}
-
-// ToLower implements Encoding interface.
-func (*encodingGB18030) ToLower(d string) string {
-	return strings.ToLowerSpecial(GB18030Case, d)
-}
-
-// GB18030Case follows https://dev.mysql.com/worklog/task/?id=4583.
-var GB18030Case = unicode.SpecialCase{
-	unicode.CaseRange{Lo: 0x00E0, Hi: 0x00E1, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x00E8, Hi: 0x00EA, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x00EC, Hi: 0x00ED, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x00F2, Hi: 0x00F3, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x00F9, Hi: 0x00FA, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x00FC, Hi: 0x00FC, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x0101, Hi: 0x0101, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x0113, Hi: 0x0113, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x011B, Hi: 0x011B, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x012B, Hi: 0x012B, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x0144, Hi: 0x0144, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x0148, Hi: 0x0148, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x014D, Hi: 0x014D, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x016B, Hi: 0x016B, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x01CE, Hi: 0x01CE, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x01D0, Hi: 0x01D0, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x01D2, Hi: 0x01D2, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x01D4, Hi: 0x01D4, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x01D6, Hi: 0x01D6, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x01D8, Hi: 0x01D8, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x01DA, Hi: 0x01DA, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x01DC, Hi: 0x01DC, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{Lo: 0x216A, Hi: 0x216B, Delta: [unicode.MaxCase]rune{0, 0, 0}},
-}
-
 // customGB18030 is a simplifiedchinese.GB18030 wrapper.
 type customGB18030 struct{}
 
@@ -129,6 +90,15 @@ func (customGB18030) NewDecoder() *encoding.Decoder {
 	return &encoding.Decoder{
 		Transformer: customGB18030Decoder{
 			gb18030Decoder: simplifiedchinese.GB18030.NewDecoder(),
+		},
+	}
+}
+
+// NewEncoder returns simplifiedchinese.gb18030.
+func (customGB18030) NewEncoder() *encoding.Encoder {
+	return &encoding.Encoder{
+		Transformer: customGB18030Encoder{
+			gb18030Encoder: simplifiedchinese.GB18030.NewEncoder(),
 		},
 	}
 }
@@ -155,15 +125,6 @@ func (c customGB18030Decoder) Reset() {
 
 type customGB18030Encoder struct {
 	gb18030Encoder *encoding.Encoder
-}
-
-// NewEncoder returns simplifiedchinese.gb18030.
-func (customGB18030) NewEncoder() *encoding.Encoder {
-	return &encoding.Encoder{
-		Transformer: customGB18030Encoder{
-			gb18030Encoder: simplifiedchinese.GB18030.NewEncoder(),
-		},
-	}
 }
 
 // Transform special treatment for `€`,
