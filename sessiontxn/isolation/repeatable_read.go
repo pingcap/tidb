@@ -38,7 +38,7 @@ type PessimisticRRTxnContextProvider struct {
 
 	// Used for ForUpdateRead statement
 	forUpdateTS       *kv.RefreshableReadTS
-	latestForUpdateTS uint64
+	latestForUpdateTS *kv.RefreshableReadTS
 	// It may decide whether to update forUpdateTs when calling provider's getForUpdateTs
 	// See more details in the comments of optimizeWithPlan
 	optimizeForNotFetchingLatestTS bool
@@ -130,7 +130,7 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 	refreshableTS := kv.NewRefreshableReadTS(version.Ver)
 
 	sctx.GetSessionVars().TxnCtx.SetForUpdateTS(refreshableTS)
-	p.latestForUpdateTS = version.Ver
+	p.latestForUpdateTS = refreshableTS
 	txn.SetOption(kv.SnapshotTSGetter, func() (uint64, error) { return refreshableTS.Get() })
 
 	return nil
@@ -165,13 +165,9 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 	}
 
 	// If TxnCtx.forUpdateTS is updated in OnStmtErrorForNextAction, we assign the value to the provider
-	// The ts should have already been waited so no waiting is expected here.
-	lastForUpdateTS, err := p.forUpdateTS.GetForNonRead()
-	if err != nil {
-		return err
-	}
-	if p.latestForUpdateTS > lastForUpdateTS {
-		p.forUpdateTS = kv.NewRefreshableReadTS(p.latestForUpdateTS)
+	if p.latestForUpdateTS != nil {
+		p.forUpdateTS = p.latestForUpdateTS
+		p.latestForUpdateTS = nil
 	} else {
 		p.forUpdateTS = nil
 	}

@@ -220,6 +220,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.SetPessimistic(val.(bool))
 	case kv.SnapshotTS:
 		txn.KVTxn.GetSnapshot().SetSnapshotTS(val.(uint64))
+	case kv.SnapshotTSGetter:
+		txn.KVTxn.GetSnapshot().SetSnapshotTSGetter(val.(func() (uint64, error)))
 	case kv.ReplicaRead:
 		t := options.GetTiKVReplicaReadType(val.(kv.ReplicaReadType))
 		txn.KVTxn.GetSnapshot().SetReplicaRead(t)

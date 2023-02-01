@@ -40,6 +40,12 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 )
 
+func mustGetTSValue(t *testing.T, ts *kv.RefreshableReadTS) uint64 {
+	tsValue, err := ts.Get()
+	require.NoError(t, err)
+	return tsValue
+}
+
 func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -62,7 +68,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	// first ts should use the txn startTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
-	ts, err := provider.GetStmtReadTS()
+	ts, err := getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Equal(t, ts, compareTS)
 	rcCheckTS := ts
@@ -70,7 +76,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	// second ts should reuse the txn startTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
-	ts, err = provider.GetStmtReadTS()
+	ts, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
 
@@ -79,7 +85,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
-	ts, err = provider.GetStmtReadTS()
+	ts, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
 
@@ -90,7 +96,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	compareTS = getOracleTS(t, se)
 	require.Greater(t, compareTS, rcCheckTS)
 	require.NoError(t, provider.OnStmtRetry(context.TODO()))
-	ts, err = provider.GetStmtReadTS()
+	ts, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
 	rcCheckTS = ts
@@ -98,7 +104,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	// if retry succeed next statement will still use rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
-	ts, err = provider.GetStmtReadTS()
+	ts, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
 
@@ -108,14 +114,14 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
-	ts, err = provider.GetStmtReadTS()
+	ts, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
 
 	// `StmtErrAfterPessimisticLock` will still disable rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
-	ts, err = provider.GetStmtReadTS()
+	ts, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
@@ -123,7 +129,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
 	compareTS = getOracleTS(t, se)
 	require.NoError(t, provider.OnStmtRetry(context.TODO()))
-	ts, err = provider.GetStmtReadTS()
+	ts, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
 	rcCheckTS = ts
@@ -133,7 +139,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	// only read-only stmt can retry for rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), forUpdateStmt))
-	ts, err = provider.GetStmtReadTS()
+	ts, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, kv.ErrWriteConflict)
@@ -169,7 +175,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.NoError(t, err)
 	ts, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	require.Equal(t, txnStartTS, ts)
+	require.Equal(t, txnStartTS, mustGetTSValue(t, ts))
 
 	// second ts should reuse the txn startTS
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, expression.Args2Expressions4Test())
@@ -177,7 +183,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	require.Equal(t, txnStartTS, ts)
+	require.Equal(t, txnStartTS, mustGetTSValue(t, ts))
 
 	tk2.MustExec("update t set v = v + 10 where id = 1")
 	compareTS := getOracleTS(t, se)
@@ -189,7 +195,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	require.Greater(t, compareTS, ts)
+	require.Greater(t, compareTS, mustGetTSValue(t, ts))
 	// retry
 	tk.Session().GetSessionVars().RetryInfo.Retrying = true
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, expression.Args2Expressions4Test())
@@ -197,7 +203,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	require.Greater(t, ts, compareTS)
+	require.Greater(t, mustGetTSValue(t, ts), compareTS)
 }
 
 func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
@@ -255,12 +261,12 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	// first read
 	require.NoError(t, executor.ResetContextOfStmt(se, stmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
-	readTS, err := provider.GetStmtReadTS()
+	readTS, err := getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
-	forUpdateTS, err := provider.GetStmtForUpdateTS()
+	forUpdateTS, err := getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Equal(t, readTS, forUpdateTS)
-	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTSValue())
+	require.Equal(t, forUpdateTS, mustGetTSValue(t, se.GetSessionVars().TxnCtx.GetForUpdateTS()))
 	require.Greater(t, readTS, compareTS)
 
 	// second read should use the newest ts
@@ -268,12 +274,12 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	require.Greater(t, compareTS, readTS)
 	require.NoError(t, executor.ResetContextOfStmt(se, stmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
-	readTS, err = provider.GetStmtReadTS()
+	readTS, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
-	forUpdateTS, err = provider.GetStmtForUpdateTS()
+	forUpdateTS, err = getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Equal(t, readTS, forUpdateTS)
-	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTSValue())
+	require.Equal(t, forUpdateTS, mustGetTSValue(t, se.GetSessionVars().TxnCtx.GetForUpdateTS()))
 	require.Greater(t, readTS, compareTS)
 
 	// if we should retry, the ts should be updated
@@ -283,12 +289,12 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	compareTS = getOracleTS(t, se)
 	require.Greater(t, compareTS, readTS)
 	require.NoError(t, provider.OnStmtRetry(context.TODO()))
-	readTS, err = provider.GetStmtReadTS()
+	readTS, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
-	forUpdateTS, err = provider.GetStmtForUpdateTS()
+	forUpdateTS, err = getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Equal(t, readTS, forUpdateTS)
-	require.Equal(t, forUpdateTS, se.GetSessionVars().TxnCtx.GetForUpdateTSValue())
+	require.Equal(t, forUpdateTS, mustGetTSValue(t, se.GetSessionVars().TxnCtx.GetForUpdateTS()))
 	require.Greater(t, readTS, compareTS)
 }
 
@@ -338,7 +344,7 @@ func TestRCProviderInitialize(t *testing.T) {
 		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 		provider := assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-		ts, err := provider.GetStmtReadTS()
+		ts, err := getTSValue(provider.GetStmtReadTS())
 		require.NoError(t, err)
 		assertAfterActive.Check(t)
 		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
@@ -351,7 +357,7 @@ func TestRCProviderInitialize(t *testing.T) {
 		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 		provider = assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-		ts, err = provider.GetStmtReadTS()
+		ts, err = getTSValue(provider.GetStmtReadTS())
 		require.NoError(t, err)
 		assertAfterActive.Check(t)
 		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
@@ -392,10 +398,10 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
 		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
-		readTS, err := provider.GetStmtReadTS()
+		readTS, err := getTSValue(provider.GetStmtReadTS())
 		require.NoError(t, err)
 		require.Equal(t, snapshotTS, readTS)
-		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		forUpdateTS, err := getTSValue(provider.GetStmtForUpdateTS())
 		require.NoError(t, err)
 		require.Equal(t, readTS, forUpdateTS)
 	}
@@ -404,7 +410,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, isVersion, is.SchemaMetaVersion())
 		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
-		readTS, err := provider.GetStmtReadTS()
+		readTS, err := getTSValue(provider.GetStmtReadTS())
 		require.NoError(t, err)
 		require.NotEqual(t, snapshotTS, readTS)
 		if useTxnTs {
@@ -412,7 +418,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 		} else {
 			require.Greater(t, readTS, se.GetSessionVars().TxnCtx.StartTS)
 		}
-		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		forUpdateTS, err := getTSValue(provider.GetStmtForUpdateTS())
 		require.NoError(t, err)
 		require.Equal(t, readTS, forUpdateTS)
 	}

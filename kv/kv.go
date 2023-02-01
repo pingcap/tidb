@@ -550,8 +550,10 @@ func (t *RefreshableReadTS) getImpl() (uint64, error) {
 }
 
 func (t *RefreshableReadTS) EqualsToConstant(anotherTS uint64) bool {
-	if _, ok := t.tsFuture.(util2.ConstantFuture); ok {
-		ts, err := t.tsFuture.Wait()
+	tsFuture := t.getInnerFuture()
+
+	if _, ok := tsFuture.(util2.ConstantFuture); ok {
+		ts, err := tsFuture.Wait()
 		if err != nil {
 			panic(err)
 		}
@@ -561,7 +563,15 @@ func (t *RefreshableReadTS) EqualsToConstant(anotherTS uint64) bool {
 }
 
 func (t *RefreshableReadTS) GetInnerForTest() oracle.Future {
-	return t.tsFuture
+	return t.getInnerFuture()
+}
+
+func (t *RefreshableReadTS) getInnerFuture() oracle.Future {
+	var tsFuture oracle.Future
+	t.mu.RLock()
+	tsFuture = t.tsFuture
+	t.mu.RUnlock()
+	return tsFuture
 }
 
 func (t *RefreshableReadTS) TryRefreshWithOracle(ctx context.Context, tsOracle oracle.Oracle, scope string) bool {
@@ -583,8 +593,28 @@ func (t *RefreshableReadTS) TryRefreshWithOracle(ctx context.Context, tsOracle o
 	return true
 }
 
+func (t *RefreshableReadTS) CheckIsEquivalentForTest(rhs *RefreshableReadTS) bool {
+	if t == rhs {
+		return true
+	}
+	if t.sealed.Load() && rhs.sealed.Load() {
+		var selfValue, rhsValue util2.ConstantFuture
+		var ok bool
+		if selfValue, ok = t.getInnerFuture().(util2.ConstantFuture); !ok {
+			return false
+		}
+		if rhsValue, ok = rhs.getInnerFuture().(util2.ConstantFuture); !ok {
+			return false
+		}
+		return uint64(selfValue) == uint64(rhsValue)
+	}
+	return false
+}
+
 func (t *RefreshableReadTS) String() string {
-	if value, ok := t.tsFuture.(util2.ConstantFuture); ok {
+	tsFuture := t.getInnerFuture()
+
+	if value, ok := tsFuture.(util2.ConstantFuture); ok {
 		return strconv.FormatUint(uint64(value), 10)
 	} else {
 		return fmt.Sprintf("(future, initial value: %v)", t.initialTS)

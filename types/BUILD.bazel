@@ -26,6 +26,7 @@ go_library(
         "field_type.go",
         "field_type_builder.go",
         "fsp.go",
+        "future.go",
         "helper.go",
         "json_binary.go",
         "json_binary_functions.go",

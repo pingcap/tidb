@@ -92,6 +92,11 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 			return nil
 		}
 		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTSValue); cacheTable != nil {
+			err = e.initSnapshot()
+			if err != nil {
+				b.err = err
+				return nil
+			}
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}
 	}

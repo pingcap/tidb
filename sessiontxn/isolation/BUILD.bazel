@@ -27,6 +27,7 @@ go_library(
         "//sessiontxn/internal",
         "//sessiontxn/staleread",
         "//table/temptable",
+        "//types",
         "//util/logutil",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",

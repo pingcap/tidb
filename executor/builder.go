@@ -4956,6 +4956,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			return nil
 		}
 		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTSValue); cacheTable != nil {
+			err = e.initSnapshot()
+			if err != nil {
+				b.err = err
+				return nil
+			}
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}
 	}

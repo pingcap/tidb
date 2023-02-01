@@ -115,6 +115,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetNotFillCache(val.(bool))
 	case kv.SnapshotTS:
 		s.KVSnapshot.SetSnapshotTS(val.(uint64))
+	case kv.SnapshotTSGetter:
+		s.KVSnapshot.SetSnapshotTSGetter(val.(func() (uint64, error)))
 	case kv.ReplicaRead:
 		t := options.GetTiKVReplicaReadType(val.(kv.ReplicaReadType))
 		s.KVSnapshot.SetReplicaRead(t)

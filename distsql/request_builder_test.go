@@ -240,7 +240,7 @@ func TestRequestBuilder1(t *testing.T) {
 	require.NoError(t, err)
 	expect := &kv.Request{
 		Tp:     103,
-		ReadTS: kv.NewRefreshableReadTS(0x0),
+		ReadTS: 0x0,
 		Data:   []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
 		KeyRanges: kv.NewNonParitionedKeyRanges([]kv.KeyRange{
 			{
@@ -323,7 +323,7 @@ func TestRequestBuilder2(t *testing.T) {
 	require.NoError(t, err)
 	expect := &kv.Request{
 		Tp:     103,
-		ReadTS: kv.NewRefreshableReadTS(0x0),
+		ReadTS: 0x0,
 		Data:   []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
 		KeyRanges: kv.NewNonParitionedKeyRanges([]kv.KeyRange{
 			{

@@ -64,7 +64,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	// update the provider's in OnStmtRetry. So, if we acquire new ts now, it will be less than the current ts.
 	compareTS2 := getOracleTS(t, se)
 	require.NoError(t, err)
-	ts, err := provider.GetStmtForUpdateTS()
+	ts, err := getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
 	require.Greater(t, compareTS2, ts)
@@ -80,7 +80,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	// which leads GetStmtForUpdateTS to acquire the latest ts.
 	compareTS2 = getOracleTS(t, se)
 	require.NoError(t, err)
-	ts, err = provider.GetStmtForUpdateTS()
+	ts, err = getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
 	require.Greater(t, ts, compareTS2)
@@ -101,7 +101,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	// In OnStmtErrorForNextAction, we set the txnCtx.forUpdateTS to be the latest ts, which is used to
 	// update the provider's in OnStmtRetry. So, if we acquire new ts now, it will be less than the current ts.
 	compareTS2 = getOracleTS(t, se)
-	ts, err = provider.GetStmtForUpdateTS()
+	ts, err = getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
 	require.Greater(t, compareTS2, ts)
@@ -117,7 +117,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	// Unlike StmtRetry which uses forUpdateTS got in OnStmtErrorForNextAction, OnStmtStart will reset provider's forUpdateTS,
 	// which leads GetStmtForUpdateTS to acquire the latest ts.
 	compareTS2 = getOracleTS(t, se)
-	ts, err = provider.GetStmtForUpdateTS()
+	ts, err = getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
 	require.Greater(t, ts, compareTS2)
@@ -133,6 +133,13 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, lockErr)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 	require.Nil(t, err)
+}
+
+func getTSValue(ts *kv.RefreshableReadTS, err error) (uint64, error) {
+	if err != nil {
+		return 0, err
+	}
+	return ts.Get()
 }
 
 func TestRepeatableReadProviderTS(t *testing.T) {
@@ -155,7 +162,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 	// The read ts should be less than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	CurrentTS, err = provider.GetStmtReadTS()
+	CurrentTS, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Greater(t, compareTS, CurrentTS)
 	prevTS = CurrentTS
@@ -163,28 +170,28 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 	// The read ts should also be less than the compareTS in a new statement (after calling OnStmtStart)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	CurrentTS, err = provider.GetStmtReadTS()
+	CurrentTS, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
 
 	// The read ts should not be changed after calling OnStmtRetry
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtRetry(context.TODO()))
-	CurrentTS, err = provider.GetStmtReadTS()
+	CurrentTS, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
 
 	// The for update read ts should be larger than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	forUpdateTS, err := provider.GetStmtForUpdateTS()
+	forUpdateTS, err := getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Greater(t, forUpdateTS, compareTS)
 
 	// But the read ts is still less than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	CurrentTS, err = provider.GetStmtReadTS()
+	CurrentTS, err = getTSValue(provider.GetStmtReadTS())
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
 }
@@ -234,7 +241,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 		provider := assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-		ts, err := provider.GetStmtReadTS()
+		ts, err := getTSValue(provider.GetStmtReadTS())
 		require.NoError(t, err)
 		assertAfterActive.Check(t)
 		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
@@ -247,7 +254,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 		provider = assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-		ts, err = provider.GetStmtReadTS()
+		ts, err = getTSValue(provider.GetStmtReadTS())
 		require.NoError(t, err)
 		assertAfterActive.Check(t)
 		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
@@ -287,10 +294,10 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, snapshotISVersion, is.SchemaMetaVersion())
 		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
-		readTS, err := provider.GetStmtReadTS()
+		readTS, err := getTSValue(provider.GetStmtReadTS())
 		require.NoError(t, err)
 		require.Equal(t, snapshotTS, readTS)
-		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		forUpdateTS, err := getTSValue(provider.GetStmtForUpdateTS())
 		require.NoError(t, err)
 		require.Equal(t, readTS, forUpdateTS)
 	}
@@ -299,11 +306,11 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 		is := provider.GetTxnInfoSchema()
 		require.Equal(t, isVersion, is.SchemaMetaVersion())
 		require.IsType(t, &infoschema.SessionExtendedInfoSchema{}, is)
-		readTS, err := provider.GetStmtReadTS()
+		readTS, err := getTSValue(provider.GetStmtReadTS())
 		require.NoError(t, err)
 		require.NotEqual(t, snapshotTS, readTS)
 		require.Equal(t, se.GetSessionVars().TxnCtx.StartTS, readTS)
-		forUpdateTS, err := provider.GetStmtForUpdateTS()
+		forUpdateTS, err := getTSValue(provider.GetStmtForUpdateTS())
 		require.NoError(t, err)
 		require.Greater(t, forUpdateTS, readTS)
 	}
@@ -350,7 +357,8 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	tk.MustExec("insert into t values (1,1), (2,2)")
 	se := tk.Session()
 	provider := initializeRepeatableReadProvider(t, tk, true)
-	lastFetchedForUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTSValue()
+	lastFetchedForUpdateTS, err := se.GetSessionVars().TxnCtx.GetForUpdateTSValue()
+	require.NoError(t, err)
 	txnManager := sessiontxn.GetTxnManager(se)
 
 	type testStruct struct {
@@ -386,7 +394,6 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	}
 
 	var stmt ast.StmtNode
-	var err error
 	var execStmt *executor.ExecStmt
 	var compiler executor.Compiler
 	var ts, compareTS uint64
@@ -409,7 +416,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 		err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
 		require.NoError(t, err)
 
-		ts, err = provider.GetStmtForUpdateTS()
+		ts, err = getTSValue(provider.GetStmtForUpdateTS())
 		require.NoError(t, err)
 
 		if c.shouldOptimize {
@@ -426,7 +433,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 			require.Equal(t, sessiontxn.StmtActionRetryReady, action)
 			err = provider.OnStmtRetry(context.TODO())
 			require.NoError(t, err)
-			ts, err = provider.GetStmtForUpdateTS()
+			ts, err = getTSValue(provider.GetStmtForUpdateTS())
 			require.NoError(t, err)
 			require.Greater(t, ts, compareTS)
 
@@ -444,7 +451,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.NoError(t, err)
 	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
 	require.NoError(t, err)
-	ts, err = provider.GetStmtForUpdateTS()
+	ts, err = getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Same(t, provider, activeAssert.CheckAndGetProvider(t))
 	require.Equal(t, tk.Session().GetSessionVars().TxnCtx.StartTS, ts)
@@ -460,7 +467,7 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.NoError(t, err)
 	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
 	require.NoError(t, err)
-	ts, err = provider.GetStmtForUpdateTS()
+	ts, err = getTSValue(provider.GetStmtForUpdateTS())
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
 }

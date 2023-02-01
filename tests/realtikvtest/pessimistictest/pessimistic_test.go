@@ -781,12 +781,15 @@ func TestConcurrentInsert(t *testing.T) {
 	tk.MustExec("create table tk1 (c1 int, c2 int)")
 
 	tk1.MustExec("begin pessimistic")
-	forUpdateTsA := tk1.Session().GetSessionVars().TxnCtx.GetForUpdateTSValue()
+	forUpdateTsA, err := tk1.Session().GetSessionVars().TxnCtx.GetForUpdateTSValue()
+	require.NoError(t, err)
 	tk1.MustQuery("select * from tk where c1 = 1 for update")
-	forUpdateTsB := tk1.Session().GetSessionVars().TxnCtx.GetForUpdateTSValue()
+	forUpdateTsB, err := tk1.Session().GetSessionVars().TxnCtx.GetForUpdateTSValue()
+	require.NoError(t, err)
 	require.Equal(t, forUpdateTsB, forUpdateTsA)
 	tk1.MustQuery("select * from tk where c1 > 0 for update")
-	forUpdateTsC := tk1.Session().GetSessionVars().TxnCtx.GetForUpdateTSValue()
+	forUpdateTsC, err := tk1.Session().GetSessionVars().TxnCtx.GetForUpdateTSValue()
+	require.NoError(t, err)
 	require.Greater(t, forUpdateTsC, forUpdateTsB)
 
 	tk2.MustExec("insert tk values (2, 2)")

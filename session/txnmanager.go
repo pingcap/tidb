@@ -88,6 +88,9 @@ func (m *txnManager) GetStmtForUpdateTS() (*kv.RefreshableReadTS, error) {
 	if m.ctxProvider == nil {
 		return nil, errors.New("context provider not set")
 	}
+	if _, ok := m.ctxProvider.(*isolation.OptimisticTxnContextProvider); !ok {
+		func() {}()
+	}
 	ts, err := m.ctxProvider.GetStmtForUpdateTS()
 	if err != nil {
 		return nil, err
@@ -95,7 +98,7 @@ func (m *txnManager) GetStmtForUpdateTS() (*kv.RefreshableReadTS, error) {
 
 	failpoint.Inject("assertTxnManagerForUpdateTSEqual", func() {
 		sessVars := m.sctx.GetSessionVars()
-		if txnCtxForUpdateTS := sessVars.TxnCtx.GetForUpdateTS(); sessVars.SnapshotTS == 0 && ts != txnCtxForUpdateTS {
+		if txnCtxForUpdateTS := sessVars.TxnCtx.GetForUpdateTS(); sessVars.SnapshotTS == 0 && !ts.CheckIsEquivalentForTest(txnCtxForUpdateTS) {
 			panic(fmt.Sprintf("forUpdateTS not equal %s != %s", ts.String(), txnCtxForUpdateTS.String()))
 		}
 	})

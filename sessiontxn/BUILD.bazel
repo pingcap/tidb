@@ -4,7 +4,6 @@ go_library(
     name = "sessiontxn",
     srcs = [
         "failpoint.go",
-        "future.go",
         "interface.go",
     ],
     importpath = "github.com/pingcap/tidb/sessiontxn",

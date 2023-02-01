@@ -36,6 +36,12 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+func mustGetTSValue(t *testing.T, ts *kv.RefreshableReadTS) uint64 {
+	tsValue, err := ts.Get()
+	require.NoError(t, err)
+	return tsValue
+}
+
 func TestEnterNewTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -309,7 +315,7 @@ func TestGetSnapshot(t *testing.T) {
 			check: func(t *testing.T, sctx sessionctx.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
-				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
+				compareSnap := internal.GetSnapshotWithTS(sctx, mustGetTSValue(t, ts), nil)
 				snap, err := mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap, snap))
@@ -319,7 +325,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3", "10"))
 				ts, err = mgr.GetStmtForUpdateTS()
 				require.NoError(t, err)
-				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts, nil)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, mustGetTSValue(t, ts), nil)
 				snap, err = mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.False(t, isSnapshotEqual(t, compareSnap2, snap))
@@ -339,7 +345,7 @@ func TestGetSnapshot(t *testing.T) {
 			check: func(t *testing.T, sctx sessionctx.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
-				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
+				compareSnap := internal.GetSnapshotWithTS(sctx, mustGetTSValue(t, ts), nil)
 				snap, err := mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap, snap))
@@ -349,7 +355,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustQuery("select * from t").Check(testkit.Rows("1", "3", "10"))
 				ts, err = mgr.GetStmtForUpdateTS()
 				require.NoError(t, err)
-				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts, nil)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, mustGetTSValue(t, ts), nil)
 				snap, err = mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
@@ -368,7 +374,7 @@ func TestGetSnapshot(t *testing.T) {
 			check: func(t *testing.T, sctx sessionctx.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
-				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
+				compareSnap := internal.GetSnapshotWithTS(sctx, mustGetTSValue(t, ts), nil)
 				snap, err := mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap, snap))
@@ -378,7 +384,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3"))
 				ts, err = mgr.GetStmtForUpdateTS()
 				require.NoError(t, err)
-				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts, nil)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, mustGetTSValue(t, ts), nil)
 				snap, err = mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
@@ -399,7 +405,7 @@ func TestGetSnapshot(t *testing.T) {
 			check: func(t *testing.T, sctx sessionctx.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
-				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
+				compareSnap := internal.GetSnapshotWithTS(sctx, mustGetTSValue(t, ts), nil)
 				snap, err := mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap, snap))
@@ -409,7 +415,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3"))
 				ts, err = mgr.GetStmtForUpdateTS()
 				require.NoError(t, err)
-				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts, nil)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, mustGetTSValue(t, ts), nil)
 				snap, err = mgr.GetSnapshotWithStmtReadTS()
 				require.NoError(t, err)
 				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
