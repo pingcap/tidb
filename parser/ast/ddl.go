@@ -2103,17 +2103,23 @@ type ResourceGroupOption struct {
 	Tp        ResourceUnitType
 	StrValue  string
 	UintValue uint64
+	BoolValue bool
 }
 
 type ResourceUnitType int
 
 const (
+	// RU mode
 	ResourceRRURate ResourceUnitType = iota
 	ResourceWRURate
-	// Native mode
+
+	// Raw mode
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
 	ResourceUnitIOWriteBandwidth
+
+	// Options
+	ResourceBurstableOpiton
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -2142,6 +2148,8 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
+		case ResourceBurstableOpiton:
+			ctx.WriteKeyWord("BURSTABLE ")
 		default:
 			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
 		}

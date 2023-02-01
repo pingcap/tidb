@@ -86,10 +86,12 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustExec("alter resource group x " +
 		"RRU_PER_SEC=2000 " +
-		"WRU_PER_SEC=3000")
+		"WRU_PER_SEC=3000 " +
+		"BURSTABLE")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(2000), g.RRURate)
 	re.Equal(uint64(3000), g.WRURate)
+	re.Equal(int64(-1), g.BurstLimit)
 
 	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x'").Check(testkit.Rows(strconv.FormatInt(g.ID, 10) + " x 2000 3000"))
 

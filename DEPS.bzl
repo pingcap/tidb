@@ -3980,8 +3980,8 @@ def go_deps():
         name = "com_github_tikv_pd",
         build_file_proto_mode = "disable",
         importpath = "github.com/tikv/pd",
-        sum = "h1:cj3bhdIBJcLL2304EDEmd3eX+r73+hbGSYRFn/APiDU=",
-        version = "v1.1.0-beta.0.20230119114149-402c2bfee2f3",
+        sum = "h1:bDwwSWvUNT2aoUgTzZve4ngOx20y3BOqNd8asu2ZGio=",
+        version = "v1.1.0-beta.0.20230131135954-872c73d8a930",
     )
 
     go_repository(

@@ -654,6 +654,7 @@ import (
 	bitXor                "BIT_XOR"
 	bound                 "BOUND"
 	briefType             "BRIEF"
+	burstable             "BURSTABLE"
 	cast                  "CAST"
 	copyKwd               "COPY"
 	constraints           "CONSTRAINTS"
@@ -1627,6 +1628,10 @@ DirectResourceGroupOption:
 |	"IO_WRITE_BANDWIDTH" EqOpt stringLit
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteBandwidth, StrValue: $3}
+	}
+|	"BURSTABLE"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
 	}
 
 PlacementOptionList:
@@ -10795,7 +10800,7 @@ ShowStmt:
 |	"SHOW" "CREATE" "RESOURCE" "GROUP" ResourceGroupName
 	{
 		$$ = &ast.ShowStmt{
-			Tp:     ast.ShowCreateResourceGroup,
+			Tp:                ast.ShowCreateResourceGroup,
 			ResourceGroupName: $5,
 		}
 	}

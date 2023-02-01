@@ -3034,7 +3034,7 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 }
 
 // SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
-func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64) error {
+func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64, boolValue bool) error {
 	switch typ {
 	case ast.ResourceRRURate:
 		resourceGroupSettings.RRURate = uintVal
@@ -3046,6 +3046,13 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 		resourceGroupSettings.IOReadBandwidth = stringVal
 	case ast.ResourceUnitIOWriteBandwidth:
 		resourceGroupSettings.IOWriteBandwidth = stringVal
+	case ast.ResourceBurstableOpiton:
+		limit := int64(0)
+		if boolValue {
+			// negative means no limit within burst setting.
+			limit = -1
+		}
+		resourceGroupSettings.BurstLimit = limit
 	default:
 		return errors.Trace(errors.New("unknown resource unit type"))
 	}
@@ -7612,7 +7619,7 @@ func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResour
 	groupName := stmt.ResourceGroupName
 	groupInfo.Name = groupName
 	for _, opt := range stmt.ResourceGroupOptionList {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue)
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
 		if err != nil {
 			return err
 		}
@@ -7695,7 +7702,7 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
 	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: &model.ResourceGroupSettings{}}
 	for _, opt := range options {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue)
+		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
 		if err != nil {
 			return nil, err
 		}

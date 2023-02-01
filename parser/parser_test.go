@@ -99,6 +99,7 @@ func TestSimple(t *testing.T) {
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
 		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute", "resource",
+		"burstable",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -3651,6 +3652,7 @@ func TestDDL(t *testing.T) {
 		{"create resource group x wru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` WRU_PER_SEC = 200000"},
 		{"create resource group x rru_per_sec=2000 wru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = 2000 WRU_PER_SEC = 200000"},
 		{"create resource group x followers=0", false, ""},
+		{"create resource group x rru_per_sec=2000, wru_per_sec=2000, burstable", true, "CREATE RESOURCE GROUP `x` RRU_PER_SEC = 2000 WRU_PER_SEC = 2000 BURSTABLE"},
 
 		{"alter resource group x cpu ='8c'", true, "ALTER RESOURCE GROUP `x` CPU = '8c'"},
 		{"alter resource group x region ='us, 3'", false, ""},
