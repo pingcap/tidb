@@ -251,6 +251,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			} else {
 				sessVars.StmtCtx.AppendExtraNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
+			if len(tableHints) > 0 {
+				sessVars.StmtCtx.AppendWarning(errors.Errorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
+			}
 		}
 		// Restore the hint to avoid changing the stmt node.
 		hint.BindHint(stmtNode, originHints)
