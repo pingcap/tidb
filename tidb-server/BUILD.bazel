@@ -49,6 +49,7 @@ go_library(
         "//util/sys/linux",
         "//util/sys/storage",
         "//util/systimemon",
+        "//util/tiflashcompute",
         "//util/topsql",
         "//util/versioninfo",
         "@com_github_coreos_go_semver//semver",
