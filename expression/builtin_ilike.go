@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -105,11 +104,7 @@ func (b *builtinIlikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		// pattern := b.collator().Pattern()
 		pattern := b.getCICollator().Pattern()
 		pattern.Compile(patternStr, byte(escape))
-		fmt.Println(pattern.DoMatch(valStr))
-		fmt.Println(boolToInt64(pattern.DoMatch(valStr)))
 		return boolToInt64(pattern.DoMatch(valStr)), false, nil
 	}
-	fmt.Println(b.pattern.DoMatch(valStr))
-	fmt.Println(boolToInt64(b.pattern.DoMatch(valStr)))
 	return boolToInt64(b.pattern.DoMatch(valStr)), false, nil
 }
