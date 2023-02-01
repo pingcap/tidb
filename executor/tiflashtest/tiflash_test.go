@@ -1302,7 +1302,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
 	err = tk.ExecToErr("select * from t;")
-	require.Contains(t, err.Error(), "Please check tiflash_compute node is available")
+	require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = false
@@ -1336,9 +1336,6 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
-	needCheckTiFlashComputeNode := "false"
-	failpoint.Enable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery", fmt.Sprintf("return(%s)", needCheckTiFlashComputeNode))
-	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/testDisaggregatedTiFlashQuery")
 	tk.MustExec("explain select max( tbl_1.col_1 ) as r0 , sum( tbl_1.col_1 ) as r1 , sum( tbl_1.col_8 ) as r2 from tbl_1 where tbl_1.col_8 != 68 or tbl_1.col_3 between null and 939 order by r0,r1,r2;")
 
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
