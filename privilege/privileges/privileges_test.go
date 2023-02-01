@@ -2604,6 +2604,7 @@ func TestResourceGroupAdminDynamicPriv(t *testing.T) {
 		`GRANT RESOURCE_GROUP_ADMIN ON *.* TO 'resource_group_user'@'%'`))
 
 	tk2.MustExec("CREATE RESOURCE GROUP test RU_PER_SEC = 666")
+	tk2.MustExec("CREATE RESOURCE GROUP test2 RU_PER_SEC = 999")
 
 	tk2.MustExec("ALTER RESOURCE GROUP test2 RU_PER_SEC = 1000")
 	tk2.MustExec("DROP RESOURCE GROUP test2")
