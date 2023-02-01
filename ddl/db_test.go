@@ -1763,62 +1763,6 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column a char(10)")
 }
-<<<<<<< HEAD
-=======
-
-func TestHashPartitionAddColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
-
-	hook := &ddl.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.SchemaState != model.StateWriteOnly {
-			return
-		}
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test")
-		tk2.MustExec("delete from t")
-	}
-	dom.DDL().SetHook(hook)
-	tk.MustExec("alter table t add column c int")
-}
-
-func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int)")
-
-	var wg sync.WaitGroup
-	var checkErr error
-	one := false
-	hook := &ddl.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.SchemaState != model.StateDeleteOnly {
-			return
-		}
-		if !one {
-			one = true
-		} else {
-			return
-		}
-		wg.Add(1)
-		go func() {
-			tk2 := testkit.NewTestKit(t, store)
-			tk2.MustExec("use test")
-			_, checkErr = tk2.Exec("alter table t alter column a set default 1")
-			wg.Done()
-		}()
-	}
-	dom.DDL().SetHook(hook)
-	tk.MustExec("alter table t modify column a text(100)")
-	wg.Wait()
-	require.EqualError(t, checkErr, "[ddl:1101]BLOB/TEXT/JSON column 'a' can't have a default value")
-}
 
 func TestMDLTruncateTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -1868,4 +1812,3 @@ func TestMDLTruncateTable(t *testing.T) {
 	require.True(t, timetk2.After(timeMain))
 	require.True(t, timetk3.After(timeMain))
 }
->>>>>>> 2cf328bf65 (ddl: let concurrent truncate on the same table depend on the previous one (#40501))
