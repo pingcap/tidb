@@ -2043,19 +2043,21 @@ func (rc *Client) RestoreKVFiles(
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
-			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer func() {
 					onProgress(int64(len(files)))
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
 
-					filenames := make([]string, 0, len(files))
-					for _, f := range files {
-						filenames = append(filenames, f.Path+", ")
+					if err == nil {
+						filenames := make([]string, 0, len(files))
+						for _, f := range files {
+							filenames = append(filenames, f.Path+", ")
+						}
+						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 					}
-					log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
-						zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 				}()
 
 				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
@@ -2063,13 +2065,18 @@ func (rc *Client) RestoreKVFiles(
 		}
 	}
 
-	if supportBatch {
-		err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
-	} else {
-		err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
-	}
-	if err != nil {
+	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+		if supportBatch {
+			err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+		} else {
+			err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
+		}
 		return errors.Trace(err)
+	})
+
+	if err = eg.Wait(); err != nil {
+		summary.CollectFailureUnit("file", err)
+		log.Error("restore files failed", zap.Error(err))
 	}
 
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
@@ -2077,10 +2084,6 @@ func (rc *Client) RestoreKVFiles(
 		log.Debug("table id in full backup storage", zap.Any("tables", rules))
 	}
 
-	if err = eg.Wait(); err != nil {
-		summary.CollectFailureUnit("file", err)
-		log.Error("restore files failed", zap.Error(err))
-	}
 	return errors.Trace(err)
 }
 
