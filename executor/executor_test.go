@@ -2114,6 +2114,8 @@ func TestIncorrectLimitArg(t *testing.T) {
 
 	tk.MustGetErrMsg(`execute stmt1 using @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
 	tk.MustGetErrMsg(`execute stmt2 using @b, @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
+	tk.MustGetErrMsg(`execute stmt2 using @a, @b;`, `[planner:1210]Incorrect arguments to LIMIT`)
+	tk.MustGetErrMsg(`execute stmt2 using @a, @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
 }
 
 func TestExecutorLimit(t *testing.T) {
