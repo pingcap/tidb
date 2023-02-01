@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "taskgroup",
+    srcs = ["task_group.go"],
+    importpath = "github.com/pingcap/tidb/resourcemanager/taskgroup",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/grunning",
+        "//util/queue",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
