@@ -72,6 +72,17 @@ func TestResourceGroupBasic(t *testing.T) {
 	g := testResourceGroupNameFromIS(t, tk.Session(), "x")
 	checkFunc(g)
 
+	// test create if not exists
+	tk.MustExec("create resource group if not exists x " +
+		"RRU_PER_SEC=10000 " +
+		"WRU_PER_SEC=20000")
+	// Check the resource group is not changed
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	checkFunc(g)
+	// Check warning message
+	res := tk.MustQuery("show warnings")
+	res.Check(testkit.Rows("Note 8248 Resource group 'x' already exists"))
+
 	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
 	tk.MustGetErrCode("alter resource group x "+
 		"RRU_PER_SEC=2000 "+
@@ -90,6 +101,13 @@ func TestResourceGroupBasic(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(2000), g.RRURate)
 	re.Equal(uint64(3000), g.WRURate)
+
+	tk.MustExec("alter resource group if exists not_exists " +
+		"RRU_PER_SEC=2000 " +
+		"WRU_PER_SEC=3000")
+	// Check warning message
+	res = tk.MustQuery("show warnings")
+	res.Check(testkit.Rows("Note 8249 Unknown resource group 'not_exists'"))
 
 	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x'").Check(testkit.Rows(strconv.FormatInt(g.ID, 10) + " x 2000 3000"))
 
