@@ -20,9 +20,13 @@ import "github.com/pingcap/tidb/parser/charset"
 func switchDefaultCollation(flag bool) {
 	if flag {
 		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKChineseCI
+		charset.CharacterSetInfos[charset.CharsetGB18030].DefaultCollation = charset.CollationGB18030ChineseCI
 	} else {
 		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKBin
+		charset.CharacterSetInfos[charset.CharsetGB18030].DefaultCollation = charset.CollationGB18030Bin
 	}
 	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKBin].IsDefault = !flag
 	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKChineseCI].IsDefault = flag
+	charset.CharacterSetInfos[charset.CharsetGB18030].Collations[charset.CollationGB18030Bin].IsDefault = !flag
+	charset.CharacterSetInfos[charset.CharsetGB18030].Collations[charset.CollationGB18030ChineseCI].IsDefault = flag
 }

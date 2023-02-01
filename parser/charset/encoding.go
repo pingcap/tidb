@@ -23,6 +23,7 @@ var (
 	_ Encoding = &encodingLatin1{}
 	_ Encoding = &encodingBin{}
 	_ Encoding = &encodingGBK{}
+	_ Encoding = &encodingGB18030{}
 )
 
 // IsSupportedEncoding checks if the charset is fully supported.
@@ -60,6 +61,7 @@ var encodingMap = map[string]Encoding{
 	CharsetLatin1:  EncodingLatin1Impl,
 	CharsetBin:     EncodingBinImpl,
 	CharsetASCII:   EncodingASCIIImpl,
+	CharsetGB18030: EncodingGB18030Impl,
 }
 
 // Encoding provide encode/decode functions for a string with a specific charset.
@@ -98,6 +100,7 @@ const (
 	EncodingTpLatin1
 	EncodingTpBin
 	EncodingTpGBK
+	EncodingTpGB18030
 )
 
 //revive:enable

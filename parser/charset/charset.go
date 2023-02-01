@@ -62,6 +62,7 @@ var CharacterSetInfos = map[string]*Charset{
 	CharsetLatin1:  {CharsetLatin1, CollationLatin1, make(map[string]*Collation), "Latin1", 1},
 	CharsetBin:     {CharsetBin, CollationBin, make(map[string]*Collation), "binary", 1},
 	CharsetGBK:     {CharsetGBK, CollationGBKBin, make(map[string]*Collation), "Chinese Internal Code Specification", 2},
+	CharsetGB18030: {CharsetGB18030, CollationGB18030Bin, make(map[string]*Collation), "China National Standard GB18030", 4},
 }
 
 // All the names supported collations should be in the following table.
@@ -214,6 +215,10 @@ const (
 	CollationGBKBin = "gbk_bin"
 	// CollationGBKChineseCI is the default collation for CharsetGBK when new collation is enabled.
 	CollationGBKChineseCI = "gbk_chinese_ci"
+	// CollationGB18030Bin is the default collation for CharsetGB18030 when new collation is disabled.
+	CollationGB18030Bin = "gb18030_bin"
+	// CollationGB18030ChineseCI is the default collation for CharsetGB18030 when new collation is enabled.
+	CollationGB18030ChineseCI = "gb18030_chinese_ci"
 )
 
 const (
@@ -227,6 +232,8 @@ const (
 	CharsetUTF8 = "utf8"
 	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
 	CharsetUTF8MB4 = "utf8mb4"
+	// CharsetGB18030 represents 4 bytes gb18030.
+	CharsetGB18030 = "gb18030"
 	//revive:disable:exported
 	CharsetARMSCII8 = "armscii8"
 	CharsetBig5     = "big5"
@@ -241,7 +248,6 @@ const (
 	CharsetDEC8     = "dec8"
 	CharsetEUCJPMS  = "eucjpms"
 	CharsetEUCKR    = "euckr"
-	CharsetGB18030  = "gb18030"
 	CharsetGB2312   = "gb2312"
 	CharsetGBK      = "gbk"
 	CharsetGEOSTD8  = "geostd8"
