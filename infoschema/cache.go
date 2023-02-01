@@ -83,7 +83,10 @@ func (h *InfoCache) GetLatest() InfoSchema {
 func (h *InfoCache) GetVersionByTimestamp(ts uint64) (int64, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	return h.getVersionByTimestampNoLock(ts)
+}
 
+func (h *InfoCache) getVersionByTimestampNoLock(ts uint64) (int64, error) {
 	i := sort.Search(len(h.descSortedTs), func(i int) bool {
 		return h.descSortedTs[i] <= ts
 	})
@@ -98,7 +101,10 @@ func (h *InfoCache) GetVersionByTimestamp(ts uint64) (int64, error) {
 func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	return h.getByVersionNoLock(version)
+}
 
+func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 	getVersionCounter.Inc()
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
@@ -137,9 +143,9 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	defer h.mu.RUnlock()
 
 	getTSCounter.Inc()
-	if version, err := h.GetVersionByTimestamp(snapshotTS); err == nil {
+	if version, err := h.getVersionByTimestampNoLock(snapshotTS); err == nil {
 		hitTSCounter.Inc()
-		return h.GetByVersion(version)
+		return h.getByVersionNoLock(version)
 	}
 	return nil
 }
