@@ -352,7 +352,7 @@ func (tc *TransactionContext) ClearDelta() {
 // GetForUpdateTS returns the ts for update.
 func (tc *TransactionContext) GetForUpdateTS() *kv.RefreshableReadTS {
 	if tc.forUpdateTS == nil {
-		tc.forUpdateTS = kv.NewRefreshableReadTS(tc.StartTS).Seal()
+		tc.forUpdateTS = kv.NewRefreshableReadTS(tc.StartTS)
 	}
 	return tc.forUpdateTS
 }

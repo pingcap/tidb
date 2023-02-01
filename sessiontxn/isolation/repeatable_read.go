@@ -79,7 +79,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts *kv.RefreshableRe
 	}
 
 	if p.optimizeForNotFetchingLatestTS {
-		p.forUpdateTS = p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS().Seal()
+		p.forUpdateTS = p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 		return p.forUpdateTS, nil
 	}
 
