@@ -38,7 +38,7 @@ export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/backend/local/Fai
 rm -f "$TEST_DIR/lightning-local.log"
 run_sql 'DROP DATABASE IF EXISTS cpeng;'
 run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/config.toml" -L debug
-# TODO: check the log contains "split regions.*retry time"
+grep -Eq "split regions.*retryable error" "$TEST_DIR/lightning-local.log"
 
 read -p 123
 # Check that everything is correctly imported
