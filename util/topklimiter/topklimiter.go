@@ -48,15 +48,17 @@ func (l *limiters) Allow(key string) (ratelimit.DoneFunc, error) {
 		return limiter.Allow()
 	}
 	l.mu.RUnlock()
-	return l.addLimiterAndAllow(key)
+	return nil, nil
 }
 
-func (l *limiters) addLimiterAndAllow(key string) (ratelimit.DoneFunc, error) {
-	limiter := bbr.NewLimiter()
+func (l *limiters) AddLimiterIfNotExist(key string) {
 	l.mu.Lock()
-	l.limiter[key] = limiter
+	_, ok := l.limiter[key]
+	if !ok {
+		limiter := bbr.NewLimiter()
+		l.limiter[key] = limiter
+	}
 	l.mu.Unlock()
-	return limiter.Allow()
 }
 
 func (l *limiters) RemoveLimiter(key string) {
@@ -109,6 +111,10 @@ func (l *TopKLimiter) Start() {
 			case item := <-l.writeCh:
 				l.mu.Lock()
 				l.hk.Add(item, 1)
+				if count, ok := l.hk.Contains(item); ok && count > 100 {
+					idx := city.CH64(hack.Slice(item)) % shard
+					l.limiters[idx].AddLimiterIfNotExist(item)
+				}
 				l.mu.Unlock()
 			}
 		}
