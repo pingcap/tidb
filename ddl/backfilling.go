@@ -66,7 +66,7 @@ const (
 	genTaskBatch        = 4096
 	minGenTaskBatch     = 1024
 	minDistTaskCnt      = 32
-	retrySQLTimes       = 3
+	retrySQLTimes       = 10
 	retrySQLInterval    = 300 * time.Millisecond
 )
 
@@ -900,7 +900,7 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 			idxWorker, err := newAddIndexWorker(b.decodeColMap, b.tbl, backfillCtx,
 				jc, job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
 			if err != nil {
-				if b.canSkipError(err) {
+				if canSkipError(b.reorgInfo.ID, len(b.workers), err) {
 					continue
 				}
 				return err
@@ -967,14 +967,14 @@ func (b *backfillScheduler) initCopReqSenderPool() {
 	b.copReqSenderPool = newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore())
 }
 
-func (b *backfillScheduler) canSkipError(err error) bool {
-	if len(b.workers) > 0 {
+func canSkipError(jobID int64, workerCnt int, err error) bool {
+	if workerCnt > 0 {
 		// The error can be skipped because the rest workers can handle the tasks.
 		return true
 	}
 	logutil.BgLogger().Warn("[ddl] create add index backfill worker failed",
-		zap.Int("current worker count", len(b.workers)),
-		zap.Int64("job ID", b.reorgInfo.ID), zap.Error(err))
+		zap.Int("current worker count", workerCnt),
+		zap.Int64("job ID", jobID), zap.Error(err))
 	return false
 }
 

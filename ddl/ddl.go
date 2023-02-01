@@ -737,14 +737,12 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 }
 
 func (d *ddl) prepareBackfillWorkers() error {
-	workerFactory := func() func() (pools.Resource, error) {
-		return func() (pools.Resource, error) {
-			bk := newBackfillWorker(context.Background(), nil)
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_backfill_worker", metrics.CreateDDL)).Inc()
-			return bk, nil
-		}
+	workerFactory := func() (pools.Resource, error) {
+		bk := newBackfillWorker(context.Background(), nil)
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_backfill_worker", metrics.CreateDDL)).Inc()
+		return bk, nil
 	}
-	d.backfillCtxPool = newBackfillContextPool(pools.NewResourcePool(workerFactory(), backfillWorkerCnt, backfillWorkerCnt, 0))
+	d.backfillCtxPool = newBackfillContextPool(pools.NewResourcePool(workerFactory, backfillWorkerCnt, backfillWorkerCnt, 0))
 	var err error
 	d.backfillWorkerPool, err = spmc.NewSPMCPool[*reorgBackfillTask, *backfillResult, int, *backfillWorker,
 		*backfillWorkerContext]("backfill", int32(backfillWorkerCnt), rmutil.DDL)
@@ -985,6 +983,7 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 
 func (dc *ddlCtx) asyncNotifyWorker(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
 	// If the workers don't run, we needn't notify workers.
+	// TODO: It does not affect informing the backfill worker.
 	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
 		return
 	}

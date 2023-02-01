@@ -43,45 +43,52 @@ type backfillWorkerContext struct {
 
 type newBackfillerFunc func(bfCtx *backfillCtx) (bf backfiller, err error)
 
-func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, workerCnt int, bfMeta *model.BackfillMeta,
+func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, workerCnt int, jobID int64, bfMeta *model.BackfillMeta,
 	bfFunc newBackfillerFunc) (*backfillWorkerContext, error) {
 	if workerCnt <= 0 {
 		return nil, nil
 	}
 
-	bCtxs, err := d.backfillCtxPool.batchGet(workerCnt)
-	if err != nil || len(bCtxs) == 0 {
-		logutil.BgLogger().Debug("[ddl] no backfill context available now", zap.Int("backfillCtx", len(bCtxs)), zap.Error(err))
-		return nil, errors.Trace(err)
-	}
-	bwCtx := &backfillWorkerContext{backfillWorkers: bCtxs, sessCtxs: make([]sessionctx.Context, 0, len(bCtxs))}
+	bwCtx := &backfillWorkerContext{backfillWorkers: make([]*backfillWorker, 0, workerCnt), sessCtxs: make([]sessionctx.Context, 0, workerCnt)}
+	var err error
 	defer func() {
 		if err != nil {
 			bwCtx.close(d)
 		}
 	}()
 
-	for i := 0; i < len(bCtxs); i++ {
+	for i := 0; i < workerCnt; i++ {
 		var se sessionctx.Context
 		se, err = d.sessPool.get()
 		if err != nil {
-			logutil.BgLogger().Error("[ddl] new backfill worker context, get a session failed", zap.Error(err))
-			return nil, errors.Trace(err)
-		}
-		err = initSessCtx(se, bfMeta.SQLMode, bfMeta.Location)
-		if err != nil {
-			logutil.BgLogger().Error("[ddl] new backfill worker context, init the session ctx failed", zap.Error(err))
-			return nil, errors.Trace(err)
-		}
-		bfCtx := newBackfillCtx(d.ddlCtx, 0, se, bfMeta.ReorgTp, schemaName, tbl)
-		var bf backfiller
-		bf, err = bfFunc(bfCtx)
-		if err != nil {
-			logutil.BgLogger().Error("[ddl] new backfill worker context, do bfFunc failed", zap.Error(err))
+			logutil.BgLogger().Error("[ddl] new backfill worker context, get a session failed", zap.Int64("jobID", jobID), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		bwCtx.sessCtxs = append(bwCtx.sessCtxs, se)
-		bCtxs[i].backfiller = bf
+		err = initSessCtx(se, bfMeta.SQLMode, bfMeta.Location)
+		if err != nil {
+			logutil.BgLogger().Error("[ddl] new backfill worker context, init the session ctx failed", zap.Int64("jobID", jobID), zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+
+		var bf backfiller
+		bf, err = bfFunc(newBackfillCtx(d.ddlCtx, 0, se, bfMeta.ReorgTp, schemaName, tbl))
+		if err != nil {
+			if canSkipError(jobID, len(bwCtx.backfillWorkers), err) {
+				err = nil
+				continue
+			}
+			logutil.BgLogger().Error("[ddl] new backfill worker context, do bfFunc failed", zap.Int64("jobID", jobID), zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		bCtx, err := d.backfillCtxPool.get()
+		if err != nil || bCtx == nil {
+			logutil.BgLogger().Info("[ddl] new backfill worker context, get backfill context failed", zap.Int64("jobID", jobID), zap.Error(err))
+			err = nil
+			break
+		}
+		bCtx.backfiller = bf
+		bwCtx.backfillWorkers = append(bwCtx.backfillWorkers, bCtx)
 	}
 	return bwCtx, nil
 }
@@ -99,12 +106,19 @@ func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
 	return bw
 }
 
-func runBackfillJobs(d *ddl, ingestBackendCtx *ingest.BackendContext, sess *session, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
+func runBackfillJobs(d *ddl, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
 	dbInfo, tbl, err := d.getTableByTxn(d.store, bJob.Meta.SchemaID, bJob.Meta.TableID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs gets table failed", zap.String("bfJob", bJob.AbbrStr()), zap.Error(err))
 		return nil, err
 	}
+	se, err := d.sessPool.get()
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] run backfill jobs get session failed", zap.Error(err))
+		return nil, err
+	}
+	defer d.sessPool.put(se)
+	sess := newSession(se)
 
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	// TODO: Different worker using different newBackfillerFunc.
@@ -113,17 +127,19 @@ func runBackfillJobs(d *ddl, ingestBackendCtx *ingest.BackendContext, sess *sess
 		logutil.BgLogger().Info("[ddl] new adding index worker context failed", zap.Reflect("workerCtx", workerCtx), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
+	workerCnt = len(workerCtx.backfillWorkers)
 	bwMgr := newBackfilWorkerManager(workerCtx)
 	d.backfillWorkerPool.SetConsumerFunc(func(task *reorgBackfillTask, _ int, bfWorker *backfillWorker) *backfillResult {
 		return bfWorker.runTask(task)
 	})
+
 	proFunc := func() ([]*reorgBackfillTask, error) {
 		// TODO: After BackfillJob replaces reorgBackfillTask, use backfiller's GetTasks instead of it.
 		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, workerCnt+5)
 	}
 	// add new task
 	resultCh, control := d.backfillWorkerPool.AddProduceBySlice(proFunc, 0, workerCtx, spmc.WithConcurrency(workerCnt))
-	bwMgr.waitFinalResult(resultCh, ingestBackendCtx, workerCnt, bJob.EleID, control)
+	bwMgr.waitFinalResult(resultCh, ingestBackendCtx, bJob.EleID, control)
 
 	// waiting task finishing
 	control.Wait()
@@ -155,10 +171,12 @@ func newBackfilWorkerManager(bwCtx *backfillWorkerContext) *backfilWorkerManager
 	}
 }
 
-func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult, ingestBackendCtx *ingest.BackendContext, workerCnt int, eleID int64,
+func (bwm *backfilWorkerManager) waitFinalResult(resultCh <-chan *backfillResult, ingestBackendCtx *ingest.BackendContext, eleID int64,
 	tControl pooltask.TaskController[*reorgBackfillTask, *backfillResult, int, *backfillWorker, *backfillWorkerContext]) {
 	bwm.wg.Run(func() {
 		i := 0
+		workerCnt := len(bwm.bwCtx.backfillWorkers)
+
 		for {
 			select {
 			case result, ok := <-resultCh:

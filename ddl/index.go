@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -656,6 +655,12 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
+
+		if job.MultiSchemaInfo == nil {
+			if err := initDistReorg(job.ReorgMeta, d.store, schemaID, tblInfo); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		tbl, err := getTable(d.store, schemaID, tblInfo)
@@ -667,8 +672,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		if job.MultiSchemaInfo != nil {
 			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, indexInfo)
 		} else {
-			initDistReorg(job.ReorgMeta, tbl)
-			if job.ReorgMeta.IsDistReorg == model.DistReorgTrue {
+			if job.ReorgMeta.IsDistReorg {
 				done, ver, err = doReorgWorkForCreateIndexWithDistReorg(w, d, t, job, tbl, indexInfo)
 			} else {
 				done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
@@ -991,7 +995,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) ||
 			// TODO: Remove this check make it can be retry. Related test is TestModifyColumnReorgInfo.
-			variable.DDLEnableDistributeReorg.Load() {
+			job.ReorgMeta.IsDistReorg {
 			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
@@ -1408,11 +1412,11 @@ func newAddIndexWorkerContext(d *ddl, schemaName model.CIStr, tbl table.Table, w
 	bfJob *BackfillJob, jobCtx *JobContext) (*backfillWorkerContext, error) {
 	//nolint:forcetypeassert
 	phyTbl := tbl.(table.PhysicalTable)
-	return newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.Meta,
+	return newBackfillWorkerContext(d, schemaName.O, tbl, workerCnt, bfJob.JobID, bfJob.Meta,
 		func(bfCtx *backfillCtx) (backfiller, error) {
 			decodeColMap, err := makeupDecodeColMap(bfCtx.sessCtx, schemaName, phyTbl)
 			if err != nil {
-				logutil.BgLogger().Info("[ddl] make up decode column map failed", zap.Error(err))
+				logutil.BgLogger().Error("[ddl] make up decode column map failed", zap.Error(err))
 				return nil, errors.Trace(err)
 			}
 			bf, err1 := newAddIndexWorker(decodeColMap, phyTbl, bfCtx, jobCtx, bfJob.JobID, bfJob.EleID, bfJob.EleKey)
@@ -1819,8 +1823,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 		//nolint:forcetypeassert
 		phyTbl := t.(table.PhysicalTable)
 		// TODO: Support typeAddIndexMergeTmpWorker.
-		isDistReorg := reorgInfo.Job.ReorgMeta.IsDistReorg == model.DistReorgTrue
-		if isDistReorg && !reorgInfo.mergingTmpIdx {
+		if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 			sCtx, err := w.sessPool.get()
 			if err != nil {
 				return errors.Trace(err)
@@ -2074,20 +2077,14 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, jobCtx *JobContext) error {
-	// TODO: Consider redo it.
-	bc, ok := ingest.LitBackCtxMgr.Load(bfJob.JobID)
-	if ok && bc.Done() {
-		return errors.New(ingest.LitErrGetBackendFail)
-	}
-	var err error
-	bc, err = ingest.LitBackCtxMgr.Register(d.ctx, bfJob.Meta.IsUnique, bfJob.JobID, bfJob.Meta.SQLMode)
+func runBackfillJobsWithLightning(d *ddl, bfJob *BackfillJob, jobCtx *JobContext) error {
+	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, bfJob.Meta.IsUnique, bfJob.JobID, bfJob.Meta.SQLMode)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
 		return err
 	}
 
-	tbl, err := runBackfillJobs(d, bc, sess, bfJob, jobCtx)
+	tbl, err := runBackfillJobs(d, bc, bfJob, jobCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs error", zap.Error(err))
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)

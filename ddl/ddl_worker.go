@@ -175,7 +175,8 @@ func (d *ddlCtx) asyncNotifyByEtcd(etcdPath string, jobID int64, jobType string)
 	timeStart := time.Now()
 	err := util.PutKVToEtcd(d.ctx, d.etcdCli, 1, etcdPath, jobIDStr)
 	if err != nil {
-		logutil.BgLogger().Info("[ddl] notify handling DDL job failed", zap.String("jobID", jobIDStr), zap.Error(err))
+		logutil.BgLogger().Info("[ddl] notify handling DDL job failed",
+			zap.String("etcdPath", etcdPath), zap.Int64("jobID", jobID), zap.String("type", jobType), zap.Error(err))
 	}
 	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerNotifyDDLJob, jobType, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 }

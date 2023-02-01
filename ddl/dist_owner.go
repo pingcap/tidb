@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -34,9 +35,10 @@ import (
 // CheckBackfillJobFinishInterval is export for test.
 var CheckBackfillJobFinishInterval = 300 * time.Millisecond
 
-func initDistReorg(reorgMeta *model.DDLReorgMeta, tbl table.Table) {
-	if reorgMeta.IsDistReorg != model.DistReorgNone {
-		return
+func initDistReorg(reorgMeta *model.DDLReorgMeta, store kv.Storage, schemaID int64, tblInfo *model.TableInfo) error {
+	tbl, err := getTable(store, schemaID, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	isDistReorg := variable.DDLEnableDistributeReorg.Load()
@@ -44,11 +46,8 @@ func initDistReorg(reorgMeta *model.DDLReorgMeta, tbl table.Table) {
 	if _, ok := tbl.(table.PartitionedTable); ok {
 		isDistReorg = false
 	}
-	if isDistReorg {
-		reorgMeta.IsDistReorg = model.DistReorgTrue
-	} else {
-		reorgMeta.IsDistReorg = model.DistReorgFalse
-	}
+	reorgMeta.IsDistReorg = isDistReorg
+	return nil
 }
 
 func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
@@ -92,7 +91,6 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dc.ctx.Done()
 	return checkReorgJobFinished(dc.ctx, sess, &dc.reorgCtx, ddlJobID, currEle)
 }
 
