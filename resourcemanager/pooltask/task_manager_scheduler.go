@@ -15,7 +15,6 @@
 package pooltask
 
 // Overclock is to increase the concurrency of pool.
-// We should check the concurrency which meet the constraints before using it.
 func (t *TaskManager[T, U, C, CT, TF]) Overclock() (tid uint64, task *TaskBox[T, U, C, CT, TF]) {
 	if t.running.Load()+1 > int32(t.SubTaskCnt(tid)) {
 		return
@@ -24,7 +23,6 @@ func (t *TaskManager[T, U, C, CT, TF]) Overclock() (tid uint64, task *TaskBox[T,
 }
 
 // Downclock is to decrease the concurrency of pool.
-// We should check the concurrency which meet the constraints before using it.
 func (t *TaskManager[T, U, C, CT, TF]) Downclock() {
 	t.pauseTask()
 }
