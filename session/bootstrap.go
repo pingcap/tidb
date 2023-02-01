@@ -24,7 +24,6 @@ import (
 	"flag"
 	"fmt"
 	osuser "os/user"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -2425,8 +2424,7 @@ func mustExecute(s Session, sql string, args ...interface{}) {
 	_, err := s.ExecuteInternal(ctx, sql, args...)
 	defer cancel()
 	if err != nil {
-		debug.PrintStack()
-		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
+		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 
