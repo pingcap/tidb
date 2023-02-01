@@ -81,7 +81,8 @@ func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, worker
 			logutil.BgLogger().Error("[ddl] new backfill worker context, do bfFunc failed", zap.Int64("jobID", jobID), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
-		bCtx, err := d.backfillCtxPool.get()
+		var bCtx *backfillWorker
+		bCtx, err = d.backfillCtxPool.get()
 		if err != nil || bCtx == nil {
 			logutil.BgLogger().Info("[ddl] new backfill worker context, get backfill context failed", zap.Int64("jobID", jobID), zap.Error(err))
 			err = nil
