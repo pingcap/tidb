@@ -206,6 +206,7 @@ func (m *mppIterator) sendError(err error) {
 func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
 	defer func() {
 		if r := recover(); r != nil {
+			logutil.BgLogger().Error("mppIterator panic", zap.Stack("stack"), zap.Any("recover", r))
 			m.sendError(errors.New(fmt.Sprint(r)))
 		}
 	}()
