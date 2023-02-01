@@ -21,7 +21,6 @@ package ddl
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -1249,12 +1248,6 @@ var (
 	RunInGoTest bool
 )
 
-func init() {
-	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-		RunInGoTest = true
-	}
-}
-
 // GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
 func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
@@ -1343,7 +1336,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = newReorgHandler(t, sess).GetDDLReorgHandle(reorgJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(sess).GetDDLReorgHandle(reorgJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1537,7 +1530,7 @@ func (s *session) begin() error {
 }
 
 func (s *session) commit() error {
-	s.StmtCommit()
+	s.StmtCommit(context.Background())
 	return s.CommitTxn(context.Background())
 }
 
@@ -1546,12 +1539,12 @@ func (s *session) txn() (kv.Transaction, error) {
 }
 
 func (s *session) rollback() {
-	s.StmtRollback()
+	s.StmtRollback(context.Background(), false)
 	s.RollbackTxn(context.Background())
 }
 
 func (s *session) reset() {
-	s.StmtRollback()
+	s.StmtRollback(context.Background(), false)
 }
 
 func (s *session) execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {
@@ -1582,6 +1575,19 @@ func (s *session) execute(ctx context.Context, query string, label string) ([]ch
 
 func (s *session) session() sessionctx.Context {
 	return s.Context
+}
+
+func (s *session) runInTxn(f func(*session) error) (err error) {
+	err = s.begin()
+	if err != nil {
+		return err
+	}
+	err = f(s)
+	if err != nil {
+		s.rollback()
+		return
+	}
+	return errors.Trace(s.commit())
 }
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.

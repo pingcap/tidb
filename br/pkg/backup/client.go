@@ -312,13 +312,13 @@ func (bc *Client) StartCheckpointRunner(
 		}
 	}
 
-	bc.checkpointRunner = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher)
-	return nil
+	bc.checkpointRunner, err = checkpoint.StartCheckpointRunner(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
+	return errors.Trace(err)
 }
 
-func (bc *Client) WaitForFinishCheckpoint() {
+func (bc *Client) WaitForFinishCheckpoint(ctx context.Context) {
 	if bc.checkpointRunner != nil {
-		bc.checkpointRunner.WaitForFinish()
+		bc.checkpointRunner.WaitForFinish(ctx)
 	}
 }
 
@@ -556,7 +556,7 @@ func BuildBackupRangeAndSchema(
 				continue
 			}
 
-			logger := log.With(
+			logger := log.L().With(
 				zap.String("db", dbInfo.Name.O),
 				zap.String("table", tableInfo.Name.O),
 			)

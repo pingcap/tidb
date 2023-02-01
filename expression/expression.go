@@ -1576,6 +1576,8 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 			ft = types.NewFieldType(mysql.TypeVarString)
 		case types.KindMysqlTime:
 			ft = types.NewFieldType(mysql.TypeTimestamp)
+		case types.KindBytes:
+			ft = types.NewFieldType(mysql.TypeBlob)
 		default:
 			exprs[i] = nil
 			continue

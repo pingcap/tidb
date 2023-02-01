@@ -146,7 +146,7 @@ func GetLeaseGoTime(currTime time.Time, lease time.Duration) types.Time {
 // Backfilling is time consuming, to accelerate this process, TiDB has built some sub
 // workers to do this in the DDL owner node.
 //
-//                                DDL owner thread
+//                       DDL owner thread (also see comments before runReorgJob func)
 //                                      ^
 //                                      | (reorgCtx.doneCh)
 //                                      |
@@ -489,7 +489,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up backfilling data in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
-func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange, error) {
+func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey kv.Key, limit int) ([]kv.KeyRange, error) {
 	logutil.BgLogger().Info("[ddl] split table range from PD",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("start key", hex.EncodeToString(startKey)),
@@ -504,7 +504,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	maxSleep := 10000 // ms
 	bo := backoff.NewBackofferWithVars(context.Background(), maxSleep, nil)
 	rc := copr.NewRegionCache(s.GetRegionCache())
-	ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange})
+	ranges, err := rc.SplitRegionRanges(bo, []kv.KeyRange{kvRange}, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -583,9 +583,10 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		err = dc.isReorgRunnable(reorgInfo.Job.ID)
 	}
 
+	// Update the reorg handle that has been processed.
+	err1 := reorgInfo.UpdateReorgMeta(nextKey, scheduler.sessPool)
+
 	if err != nil {
-		// Update the reorg handle that has been processed.
-		err1 := reorgInfo.UpdateReorgMeta(nextKey, scheduler.sessPool)
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
 
@@ -614,7 +615,8 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 		zap.String("start key", hex.EncodeToString(startKey)),
 		zap.String("next key", hex.EncodeToString(nextKey)),
 		zap.Int64("batch added count", taskAddedCount),
-		zap.String("take time", elapsedTime.String()))
+		zap.String("take time", elapsedTime.String()),
+		zap.NamedError("updateHandleError", err1))
 	return nil
 }
 
@@ -979,7 +981,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sessionPool, t table.Physic
 	}
 
 	for {
-		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey)
+		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1091,7 +1093,7 @@ func (*ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, pTb
 	isFirstOps := true
 	bJobs := make([]*BackfillJob, 0, genTaskBatch)
 	for {
-		kvRanges, err := splitTableRanges(pTbl, reorgInfo.d.store, startKey, endKey)
+		kvRanges, err := splitTableRanges(pTbl, reorgInfo.d.store, startKey, endKey, genTaskBatch)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1320,15 +1322,15 @@ func GetMaxBackfillJob(sess *session, jobID, currEleID int64, currEleKey []byte)
 }
 
 // MoveBackfillJobsToHistoryTable moves backfill table jobs to the backfill history table.
-func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bfJob *BackfillJob) error {
-	sess, ok := sessCtx.(*session)
+func MoveBackfillJobsToHistoryTable(sctx sessionctx.Context, bfJob *BackfillJob) error {
+	s, ok := sctx.(*session)
 	if !ok {
-		return errors.Errorf("sess ctx:%#v convert session failed", sessCtx)
+		return errors.Errorf("sess ctx:%#v convert session failed", sctx)
 	}
 
-	return runInTxn(sess, func(se *session) error {
+	return s.runInTxn(func(se *session) error {
 		// TODO: Consider batch by batch update backfill jobs and insert backfill history jobs.
-		bJobs, err := GetBackfillJobs(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
+		bJobs, err := GetBackfillJobs(se, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = '%s'",
 			bfJob.JobID, bfJob.EleID, bfJob.EleKey), "update_backfill_job")
 		if err != nil {
 			return errors.Trace(err)
@@ -1342,13 +1344,13 @@ func MoveBackfillJobsToHistoryTable(sessCtx sessionctx.Context, bfJob *BackfillJ
 			return errors.Trace(err)
 		}
 		startTS := txn.StartTS()
-		err = RemoveBackfillJob(sess, true, bJobs[0])
+		err = RemoveBackfillJob(se, true, bJobs[0])
 		if err == nil {
 			for _, bj := range bJobs {
 				bj.State = model.JobStateCancelled
 				bj.FinishTS = startTS
 			}
-			err = AddBackfillHistoryJob(sess, bJobs)
+			err = AddBackfillHistoryJob(se, bJobs)
 		}
 		logutil.BgLogger().Info("[ddl] move backfill jobs to history table", zap.Int("job count", len(bJobs)))
 		return errors.Trace(err)

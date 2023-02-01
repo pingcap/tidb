@@ -21,14 +21,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -149,6 +153,8 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 }
 
 func TestGCHistoryStatsAfterDropTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -173,6 +179,7 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 		tableInfo.Meta().ID)).Check(testkit.Rows("1"))
 	// drop the table and gc stats
 	tk.MustExec("drop table t")
+	is = dom.InfoSchema()
 	h.GCStats(is, 0)
 
 	// assert stats_history tables delete the record of dropped table
@@ -182,7 +189,56 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 		tableInfo.Meta().ID)).Check(testkit.Rows("0"))
 }
 
+func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10),c int, KEY `idx` (`c`))")
+	tk.MustExec("analyze table test.t")
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	// dump historical stats
+	h := dom.StatsHandle()
+	hsWorker := dom.GetHistoricalStatsWorker()
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+	snapshot := oracle.GoTimeToTS(time.Now())
+	jsTable, err := h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.NotEqual(t, jsTable.Version, uint64(0))
+	originVersion := jsTable.Version
+
+	// assert historical stats non-change after drop column
+	tk.MustExec("alter table t drop column b")
+	h.GCStats(is, 0)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, err = h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.Equal(t, jsTable.Version, originVersion)
+
+	// assert historical stats non-change after drop index
+	tk.MustExec("alter table t drop index idx")
+	h.GCStats(is, 0)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, err = h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.Equal(t, jsTable.Version, originVersion)
+}
+
 func TestGCOutdatedHistoryStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -218,6 +274,8 @@ func TestGCOutdatedHistoryStats(t *testing.T) {
 }
 
 func TestPartitionTableHistoricalStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -242,4 +300,68 @@ PARTITION p0 VALUES LESS THAN (6)
 	err = hsWorker.DumpHistoricalStats(tblID, h)
 	require.NoError(t, err)
 	tk.MustQuery("select count(*) from mysql.stats_history").Check(testkit.Rows("2"))
+}
+
+func TestDumpHistoricalStatsByTable(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/domain/sendHistoricalStats")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (a int, b int, index idx(b))
+PARTITION BY RANGE ( a ) (
+PARTITION p0 VALUES LESS THAN (6)
+)`)
+	// dump historical stats
+	h := dom.StatsHandle()
+
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tbl)
+
+	// dump historical stats
+	hsWorker := dom.GetHistoricalStatsWorker()
+	// only partition p0 stats will be dumped in static mode
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	require.NotEqual(t, tblID, -1)
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	tblID = hsWorker.GetOneHistoricalStatsTable()
+	require.Equal(t, tblID, int64(-1))
+
+	time.Sleep(1 * time.Second)
+	snapshot := oracle.GoTimeToTS(time.Now())
+	jsTable, err := h.DumpHistoricalStatsBySnapshot("test", tbl.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	// only has p0 stats
+	require.NotNil(t, jsTable.Partitions["p0"])
+	require.Nil(t, jsTable.Partitions["global"])
+
+	// change static to dynamic then assert
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("analyze table t")
+	require.NoError(t, err)
+	// global and p0's stats will be dumped
+	tblID = hsWorker.GetOneHistoricalStatsTable()
+	require.NotEqual(t, tblID, -1)
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	tblID = hsWorker.GetOneHistoricalStatsTable()
+	require.NotEqual(t, tblID, -1)
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.NoError(t, err)
+	time.Sleep(1 * time.Second)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, err = h.DumpHistoricalStatsBySnapshot("test", tbl.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	// has both global and p0 stats
+	require.NotNil(t, jsTable.Partitions["p0"])
+	require.NotNil(t, jsTable.Partitions["global"])
 }

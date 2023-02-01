@@ -431,7 +431,7 @@ func SplitLargeFile(
 			if err = parser.SetPos(endOffset, prevRowIDMax); err != nil {
 				return 0, nil, nil, err
 			}
-			pos, err := parser.ReadUntilTerminator()
+			_, pos, err := parser.ReadUntilTerminator()
 			if err != nil {
 				if !errors.ErrorEqual(err, io.EOF) {
 					return 0, nil, nil, err

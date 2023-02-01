@@ -47,19 +47,19 @@ func (*ResourceManager) exec(pool *util.PoolContainer, cmd scheduler.Command) {
 	if cmd == scheduler.Hold {
 		return
 	}
-	if time.Since(pool.Pool.LastTunerTs()) > 200*time.Millisecond {
+	if time.Since(pool.Pool.LastTunerTs()) > util.MinSchedulerInterval.Load() {
 		con := pool.Pool.Cap()
 		switch cmd {
 		case scheduler.Downclock:
 			concurrency := con - 1
-			log.Info("downclock goroutine pool",
+			log.Info("[resource manager] downclock goroutine pool",
 				zap.Int("origin concurrency", con),
 				zap.Int("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))
 			pool.Pool.Tune(concurrency)
 		case scheduler.Overclock:
 			concurrency := con + 1
-			log.Info("overclock goroutine pool",
+			log.Info("[resource manager] overclock goroutine pool",
 				zap.Int("origin concurrency", con),
 				zap.Int("concurrency", concurrency),
 				zap.String("name", pool.Pool.Name()))

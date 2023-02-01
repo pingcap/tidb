@@ -528,6 +528,7 @@ import (
 	recover               "RECOVER"
 	redundant             "REDUNDANT"
 	reload                "RELOAD"
+	remote                "REMOTE"
 	remove                "REMOVE"
 	reorganize            "REORGANIZE"
 	repair                "REPAIR"
@@ -622,7 +623,7 @@ import (
 	truncate              "TRUNCATE"
 	ttl                   "TTL"
 	ttlEnable             "TTL_ENABLE"
-	ttlJobInterval    "TTL_JOB_INTERVAL"
+	ttlJobInterval        "TTL_JOB_INTERVAL"
 	unbounded             "UNBOUNDED"
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
@@ -905,6 +906,7 @@ import (
 	DropDatabaseStmt           "DROP DATABASE statement"
 	DropImportStmt             "DROP IMPORT statement"
 	DropIndexStmt              "DROP INDEX statement"
+	DropResourceGroupStmt      "DROP RESOURCE GROUP statement"
 	DropStatisticsStmt         "DROP STATISTICS statement"
 	DropStatsStmt              "DROP STATS statement"
 	DropTableStmt              "DROP TABLE statement"
@@ -1115,6 +1117,7 @@ import (
 	LoadDataSetList                        "Load data specifications"
 	LoadDataSetItem                        "Single load data specification"
 	LocalOpt                               "Local opt"
+	LocationOpt                            "Data file location of LOAD DATA"
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	MaxValPartOpt                          "MAXVALUE partition option"
@@ -5900,19 +5903,22 @@ FieldList:
 	{
 		field := $1.(*ast.SelectField)
 		field.Offset = parser.startOffset(&yyS[yypt])
+		if field.Expr != nil && field.AsName.O == "" {
+			endOffset := parser.yylval.offset
+			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+		}
 		$$ = []*ast.SelectField{field}
 	}
 |	FieldList ',' Field
 	{
 		fl := $1.([]*ast.SelectField)
-		last := fl[len(fl)-1]
-		if last.Expr != nil && last.AsName.O == "" {
-			lastEnd := parser.endOffset(&yyS[yypt-1])
-			last.SetText(parser.lexer.client, parser.src[last.Offset:lastEnd])
+		field := $3.(*ast.SelectField)
+		field.Offset = parser.startOffset(&yyS[yypt])
+		if field.Expr != nil && field.AsName.O == "" {
+			endOffset := parser.yylval.offset
+			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
-		newField := $3.(*ast.SelectField)
-		newField.Offset = parser.startOffset(&yyS[yypt])
-		$$ = append(fl, newField)
+		$$ = append(fl, field)
 	}
 
 GroupByClause:
@@ -6221,6 +6227,7 @@ UnReservedKeyword:
 |	"QUICK"
 |	"REBUILD"
 |	"REDUNDANT"
+|	"REMOTE"
 |	"REORGANIZE"
 |	"RESOURCE"
 |	"RESTART"
@@ -7279,8 +7286,13 @@ SimpleExpr:
 		if tp.GetDecimal() == types.UnspecifiedLength {
 			tp.SetDecimal(defaultDecimal)
 		}
-		tp.SetArray($6.(bool))
+		isArray := $6.(bool)
+		tp.SetArray(isArray)
 		explicitCharset := parser.explicitCharset
+		if isArray && !explicitCharset && tp.GetCharset() != charset.CharsetBin {
+			tp.SetCharset(charset.CharsetUTF8MB4)
+			tp.SetCollate(charset.CollationUTF8MB4)
+		}
 		parser.explicitCharset = false
 		$$ = &ast.FuncCastExpr{
 			Expr:            $3,
@@ -8667,30 +8679,6 @@ SelectStmt:
 		st := $1.(*ast.SelectStmt)
 		if $6 != nil {
 			st.LockInfo = $6.(*ast.SelectLockInfo)
-		}
-		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-		if lastField.Expr != nil && lastField.AsName.O == "" {
-			src := parser.src
-			var lastEnd int
-			if $2 != nil {
-				lastEnd = yyS[yypt-5].offset - 1
-			} else if $3 != nil {
-				lastEnd = yyS[yypt-4].offset - 1
-			} else if $4 != nil {
-				lastEnd = yyS[yypt-3].offset - 1
-			} else if $5 != nil {
-				lastEnd = yyS[yypt-2].offset - 1
-			} else if st.LockInfo != nil && st.LockInfo.LockType != ast.SelectLockNone {
-				lastEnd = yyS[yypt-1].offset - 1
-			} else if $7 != nil {
-				lastEnd = yyS[yypt].offset - 1
-			} else {
-				lastEnd = len(src)
-				if src[lastEnd-1] == ';' {
-					lastEnd--
-				}
-			}
-			lastField.SetText(parser.lexer.client, src[lastField.Offset:lastEnd])
 		}
 		if $2 != nil {
 			st.Where = $2.(ast.ExprNode)
@@ -10783,6 +10771,13 @@ ShowStmt:
 			DBName: $5,
 		}
 	}
+|	"SHOW" "CREATE" "RESOURCE" "GROUP" ResourceGroupName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:                ast.ShowCreateResourceGroup,
+			ResourceGroupName: $5,
+		}
+	}
 |	"SHOW" "CREATE" "USER" Username
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/show-create-user.html
@@ -11491,6 +11486,7 @@ Statement:
 |	DropSequenceStmt
 |	DropViewStmt
 |	DropUserStmt
+|	DropResourceGroupStmt
 |	DropRoleStmt
 |	DropStatisticsStmt
 |	DropStatsStmt
@@ -13043,7 +13039,7 @@ ResourceGroupNameOption:
 	{
 		$$ = nil
 	}
-|	"RESOURCE" "GROUP" stringLit
+|	"RESOURCE" "GROUP" ResourceGroupName
 	{
 		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
 	}
@@ -13773,17 +13769,17 @@ RevokeRoleStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocationOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
 	{
 		x := &ast.LoadDataStmt{
+			FileLocRef:         $3.(ast.FileLocRefTp),
 			Path:               $5,
 			OnDuplicate:        $6.(ast.OnDuplicateKeyHandlingType),
 			Table:              $9.(*ast.TableName),
 			ColumnsAndUserVars: $14.([]*ast.ColumnNameOrUserVar),
 			IgnoreLines:        $13.(uint64),
 		}
-		if $3 != nil {
-			x.IsLocal = true
+		if x.FileLocRef == ast.FileLocClient {
 			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
 			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
 			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
@@ -13830,6 +13826,19 @@ LocalOpt:
 |	"LOCAL"
 	{
 		$$ = $1
+	}
+
+LocationOpt:
+	{
+		$$ = ast.FileLocServer
+	}
+|	"LOCAL"
+	{
+		$$ = ast.FileLocClient
+	}
+|	"REMOTE"
+	{
+		$$ = ast.FileLocRemote
 	}
 
 Fields:
@@ -14204,8 +14213,8 @@ AlterResourceGroupStmt:
 		}
 	}
 
-DropPolicyStmt:
-	"DROP" "RESOURCE" "GROUP" IfExists PolicyName
+DropResourceGroupStmt:
+	"DROP" "RESOURCE" "GROUP" IfExists ResourceGroupName
 	{
 		$$ = &ast.DropResourceGroupStmt{
 			IfExists:          $4.(bool),
