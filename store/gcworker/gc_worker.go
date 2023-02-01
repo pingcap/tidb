@@ -312,6 +312,22 @@ func getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
 	return safePoint, nil
 }
 
+func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint64) error {
+	now, err := w.getOracleTime()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	checkTs := oracle.GoTimeToTS(now.Add(-gcDefaultLifeTime * 2))
+	if checkTs > safePoint {
+		logutil.Logger(ctx).Info("[gc worker] gc safepoint is too early. " +
+			"Maybe there is a bit BR/Lightning/CDC task, " +
+			"or a long transaction is running" +
+			"or need a tidb without setting keyspace-name to calculate and update gc safe point.")
+	}
+	return nil
+}
+
 func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) error {
 	// Get safe point from PD.
 	// The update process of GC safe point is to resolve locks first and then update to pd.
@@ -327,6 +343,13 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) 
 		logutil.Logger(ctx).Info("[gc worker] skip keyspace delete range, because gc safe point is 0")
 		return nil
 	}
+
+	err = w.logIsGCSafePointTooEarly(ctx, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Info("[gc worker] log is gc safe point is too early error", zap.Error(errors.Trace(err)))
+		return nil
+	}
+
 	keyspaceID := w.store.GetCodec().GetKeyspaceID()
 	logutil.Logger(ctx).Info("[gc worker] start keyspace delete range",
 		zap.String("uuid", w.uuid),
