@@ -59,7 +59,7 @@ func SelectFromTTLTaskWithID(jobID string, scanID int64) (string, []interface{})
 
 // PeekWaitingTTLTask returns an SQL statement to get `limit` waiting ttl task
 func PeekWaitingTTLTask(limit int, hbExpire time.Time) (string, []interface{}) {
-	return selectFromTTLTask + " WHERE status = 'waiting' OR owner_hb_time < %? ORDER BY created_time ASC LIMIT %?", []interface{}{hbExpire.Format("2006-01-02 15:04:05"), limit}
+	return selectFromTTLTask + " WHERE status = 'waiting' OR (owner_hb_time < %? AND status = 'running') ORDER BY created_time ASC LIMIT %?", []interface{}{hbExpire.Format("2006-01-02 15:04:05"), limit}
 }
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
