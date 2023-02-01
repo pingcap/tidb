@@ -96,7 +96,12 @@ const (
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
 
-	flagFullBackupType = "type"
+  flagFullBackupType = "type"
+
+	flagHost     = "host"
+	flagPort     = "port"
+	flagUser     = "user"
+	flagPassword = "password"	
 )
 
 // FullBackupType type when doing full backup or restore
@@ -232,6 +237,11 @@ type Config struct {
 
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
+
+	Host     string
+	Port     int
+	User     string
+	Password string
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -286,6 +296,11 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 		"aes-crypter key, used to encrypt/decrypt the data "+
 			"by the hexadecimal string, eg: \"0123456789abcdef0123456789abcdef\"")
 	flags.String(flagCipherKeyFile, "", "FilePath, its content is used as the cipher-key")
+
+	flags.String(flagHost, "", "Host, its content is user as the host ip")
+	flags.Int(flagPort, 0, "Port, its content is user as the Port")
+	flags.String(flagUser, "", "User, its content is user name to login the db")
+	flags.String(flagPassword, "", "Password, its content is password to login the db")
 
 	storage.DefineFlags(flags)
 }
@@ -574,6 +589,22 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if err = cfg.parseCipherInfo(flags); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.Host, err = flags.GetString(flagHost); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.Port, err = flags.GetInt(flagPort); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.User, err = flags.GetString(flagUser); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.Password, err = flags.GetString(flagPassword); err != nil {
 		return errors.Trace(err)
 	}
 
