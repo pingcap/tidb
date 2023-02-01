@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1765,6 +1766,9 @@ func TestDDLBlockedCreateView(t *testing.T) {
 }
 
 func TestMDLTruncateTable(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skipf("test requires concurrent ddl")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
