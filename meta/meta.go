@@ -56,27 +56,28 @@ var (
 //
 
 var (
-	mMetaPrefix          = []byte("m")
-	mNextGlobalIDKey     = []byte("NextGlobalID")
-	mSchemaVersionKey    = []byte("SchemaVersionKey")
-	mDBs                 = []byte("DBs")
-	mDBPrefix            = "DB"
-	mTablePrefix         = "Table"
-	mSequencePrefix      = "SID"
-	mSeqCyclePrefix      = "SequenceCycle"
-	mTableIDPrefix       = "TID"
-	mIncIDPrefix         = "IID"
-	mRandomIDPrefix      = "TARID"
-	mBootstrapKey        = []byte("BootstrapKey")
-	mSchemaDiffPrefix    = "Diff"
-	mPolicies            = []byte("Policies")
-	mPolicyPrefix        = "Policy"
-	mResourceGroups      = []byte("ResourceGroups")
-	mResourceGroupPrefix = "RG"
-	mPolicyGlobalID      = []byte("PolicyGlobalID")
-	mPolicyMagicByte     = CurrentMagicByteVer
-	mDDLTableVersion     = []byte("DDLTableVersion")
-	mMetaDataLock        = []byte("metadataLock")
+	mMetaPrefix              = []byte("m")
+	mNextGlobalIDKey         = []byte("NextGlobalID")
+	mSchemaVersionKey        = []byte("SchemaVersionKey")
+	mDBs                     = []byte("DBs")
+	mDBPrefix                = "DB"
+	mTablePrefix             = "Table"
+	mSequencePrefix          = "SID"
+	mSeqCyclePrefix          = "SequenceCycle"
+	mTableIDPrefix           = "TID"
+	mIncIDPrefix             = "IID"
+	mRandomIDPrefix          = "TARID"
+	mBootstrapKey            = []byte("BootstrapKey")
+	mSchemaDiffPrefix        = "Diff"
+	mPolicies                = []byte("Policies")
+	mPolicyPrefix            = "Policy"
+	mResourceGroups          = []byte("ResourceGroups")
+	mResourceGroupPrefix     = "RG"
+	mPolicyGlobalID          = []byte("PolicyGlobalID")
+	mPolicyMagicByte         = CurrentMagicByteVer
+	mDDLTableVersion         = []byte("DDLTableVersion")
+	mMetaDataLock            = []byte("metadataLock")
+	mFlashbackClusterStartTS = []byte("flashbackClusterStartTS")
 )
 
 const (
@@ -147,6 +148,22 @@ func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
 	snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 	return &Meta{txn: t}
+}
+
+// GetFlashbackClusterStartTS get an uint64 value from key `mFlashbackClusterStartTS`
+func (m *Meta) GetFlashbackClusterStartTS() (uint64, error) {
+	tsString, err := m.txn.Get(mFlashbackClusterStartTS)
+	if err != nil || len(tsString) != 8 {
+		return 0, err
+	}
+	return binary.BigEndian.Uint64(tsString), nil
+}
+
+// SetFlashbackClusterStartTS set value for key `mFlashbackClusterStartTS`
+func (m *Meta) SetFlashbackClusterStartTS(ts uint64) error {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, ts)
+	return m.txn.Set(mFlashbackClusterStartTS, b)
 }
 
 // GenGlobalID generates next id globally.

@@ -484,7 +484,17 @@ func (do *Domain) Reload() error {
 		return err
 	}
 
-	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(ver.Ver)
+	m := meta.NewSnapshotMeta(do.store.GetSnapshot(ver))
+	version, err := m.GetFlashbackClusterStartTS()
+	// While the flashback was in progress, we couldn't read schema by currentTS.
+	// So use snapshot read to get the schema info.
+	if version == 0 || err != nil {
+		version = ver.Ver
+	} else {
+		version = version - 1
+	}
+
+	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version)
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
@@ -513,7 +523,7 @@ func (do *Domain) Reload() error {
 	}
 
 	// lease renew, so it must be executed despite it is cache or not
-	do.SchemaValidator.Update(ver.Ver, oldSchemaVersion, is.SchemaMetaVersion(), changes)
+	do.SchemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,

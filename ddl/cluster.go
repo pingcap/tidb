@@ -709,6 +709,9 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		if t.SetFlashbackClusterStartTS(startTS) != nil {
+			return ver, errors.Trace(err)
+		}
 		job.Args[commitTSOffset] = commitTS
 		job.SchemaState = model.StateWriteReorganization
 		return updateSchemaVersion(d, t, job)
@@ -785,6 +788,10 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 			if err = setTiDBTTLJobEnable(w.ctx, sess, ttlJobEnableValue); err != nil {
 				return err
 			}
+		}
+
+		if err = meta.NewMeta(txn).SetFlashbackClusterStartTS(0); err != nil {
+			return err
 		}
 
 		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
