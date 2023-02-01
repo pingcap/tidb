@@ -18,6 +18,8 @@ import (
 	"math"
 	"math/rand"
 
+	"github.com/go-faster/city"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/minheap"
 	"github.com/twmb/murmur3"
 )
@@ -82,8 +84,8 @@ func (topk *HeavyKeeper) Contains(val string) (uint32, bool) {
 // Add add item into heavykeeper and return if item had beend add into minheap.
 // if item had been add into minheap and some item was expelled, return the expelled item.
 func (topk *HeavyKeeper) Add(key string, incr uint32) bool {
-	keyBytes := []byte(key)
-	itemFingerprint := murmur3.Sum32(keyBytes)
+	keyBytes := hack.Slice(key)
+	itemFingerprint := uint32(city.CH64(keyBytes))
 	var maxCount uint32
 
 	// compute d hashes
