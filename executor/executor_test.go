@@ -204,6 +204,15 @@ func TestPlanReplayerCapture(t *testing.T) {
 func TestPlanReplayerContinuesCapture(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@global.tidb_enable_historical_stats='OFF'")
+	_, err := tk.Exec("set @@global.tidb_enable_plan_replayer_continues_capture='ON'")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continues_capture")
+
+	tk.MustExec("set @@global.tidb_enable_historical_stats='ON'")
+	tk.MustExec("set @@global.tidb_enable_plan_replayer_continues_capture='ON'")
+
 	prHandle := dom.GetPlanReplayerHandle()
 	tk.MustExec("delete from mysql.plan_replayer_status;")
 	tk.MustExec("use test")
@@ -280,6 +289,7 @@ func TestShow(t *testing.T) {
 		"RESTRICTED_USER_ADMIN Server Admin ",
 		"RESTRICTED_CONNECTION_ADMIN Server Admin ",
 		"RESTRICTED_REPLICA_WRITER_ADMIN Server Admin ",
+		"RESOURCE_GROUP_ADMIN Server Admin ",
 	))
 	require.Len(t, tk.MustQuery("show table status").Rows(), 1)
 }

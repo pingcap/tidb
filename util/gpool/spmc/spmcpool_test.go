@@ -15,9 +15,11 @@
 package spmc
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	rmutil "github.com/pingcap/tidb/resourcemanager/util"
@@ -112,6 +114,80 @@ func TestStopPool(t *testing.T) {
 	}()
 	// Waiting task finishing
 	control.Stop()
+	close(exit)
+	control.Wait()
+	// it should pass. Stop can be used after the pool is closed. we should prevent it from panic.
+	control.Stop()
+	wg.Wait()
+	// close pool
+	pool.ReleaseAndWait()
+}
+
+func TestTuneSimplePool(t *testing.T) {
+	testTunePool(t, "TestTuneSimplePool")
+}
+
+func TestTuneMultiPool(t *testing.T) {
+	var concurrency = 5
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func(id int) {
+			testTunePool(t, fmt.Sprintf("TestTuneMultiPool%d", id))
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+}
+
+func testTunePool(t *testing.T, name string) {
+	type ConstArgs struct {
+		a int
+	}
+	myArgs := ConstArgs{a: 10}
+	// init the pool
+	// input type， output type, constArgs type
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext](name, 10, rmutil.UNKNOWN)
+	require.NoError(t, err)
+	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
+		return task + constArgs.a
+	})
+
+	exit := make(chan struct{})
+
+	pfunc := func() (int, error) {
+		select {
+		case <-exit:
+			return 0, gpool.ErrProducerClosed
+		default:
+			return 1, nil
+		}
+	}
+	// add new task
+	resultCh, control := pool.AddProducer(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(10))
+	tid := control.TaskID()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for result := range resultCh {
+			require.Greater(t, result, 10)
+		}
+	}()
+	time.Sleep(1 * time.Second)
+	newSize := pool.Cap() - 1
+	pool.Tune(newSize)
+	time.Sleep(1 * time.Second)
+	require.Equal(t, newSize, pool.Cap())
+	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+
+	newSize = pool.Cap() + 1
+	pool.Tune(newSize)
+	time.Sleep(1 * time.Second)
+	require.Equal(t, newSize, pool.Cap())
+	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+
+	// exit test
 	close(exit)
 	control.Wait()
 	wg.Wait()

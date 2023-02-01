@@ -32,29 +32,29 @@ type tContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 	task *TaskBox[T, U, C, CT, TF]
 }
 
-type meta struct {
-	stats    *list.List
-	createTS time.Time
-	origin   int32
-	running  int32
+type meta[T any, U any, C any, CT any, TF Context[CT]] struct {
+	stats              *list.List
+	createTS           time.Time
+	initialConcurrency int32
+	running            atomic.Int32
 }
 
-func newStats(concurrency int32) *meta {
-	s := &meta{
-		createTS: time.Now(),
-		stats:    list.New(),
-		origin:   concurrency,
+func newStats[T any, U any, C any, CT any, TF Context[CT]](concurrency int32) *meta[T, U, C, CT, TF] {
+	s := &meta[T, U, C, CT, TF]{
+		createTS:           time.Now(),
+		stats:              list.New(),
+		initialConcurrency: concurrency,
 	}
 	return s
 }
 
-func (m *meta) getOriginConcurrency() int32 {
-	return m.origin
+func (m *meta[T, U, C, CT, TF]) getOriginConcurrency() int32 {
+	return m.initialConcurrency
 }
 
 // TaskStatusContainer is a container that can control or watch the pool.
 type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
-	stats map[uint64]*meta
+	stats map[uint64]*meta[T, U, C, CT, TF]
 	rw    sync.RWMutex
 }
 
@@ -70,7 +70,7 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](c int32) TaskMa
 	task := make([]TaskStatusContainer[T, U, C, CT, TF], shard)
 	for i := 0; i < shard; i++ {
 		task[i] = TaskStatusContainer[T, U, C, CT, TF]{
-			stats: make(map[uint64]*meta),
+			stats: make(map[uint64]*meta[T, U, C, CT, TF]),
 		}
 	}
 	return TaskManager[T, U, C, CT, TF]{
@@ -83,7 +83,7 @@ func NewTaskManager[T any, U any, C any, CT any, TF Context[CT]](c int32) TaskMa
 func (t *TaskManager[T, U, C, CT, TF]) RegisterTask(taskID uint64, concurrency int32) {
 	id := getShardID(taskID)
 	t.task[id].rw.Lock()
-	t.task[id].stats[taskID] = newStats(concurrency)
+	t.task[id].stats[taskID] = newStats[T, U, C, CT, TF](concurrency)
 	t.task[id].rw.Unlock()
 }
 
@@ -113,7 +113,7 @@ func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(taskID uint64, task *TaskBox[T
 	t.running.Inc()
 	t.task[shardID].rw.Lock()
 	t.task[shardID].stats[taskID].stats.PushBack(tc)
-	t.task[shardID].stats[taskID].running++ // running job in this task
+	t.task[shardID].stats[taskID].running.Inc() // running job in this task
 	t.task[shardID].rw.Unlock()
 }
 
@@ -122,7 +122,7 @@ func (t *TaskManager[T, U, C, CT, TF]) ExitSubTask(taskID uint64) {
 	shardID := getShardID(taskID)
 	t.running.Dec() // total running tasks
 	t.task[shardID].rw.Lock()
-	t.task[shardID].stats[taskID].running-- // running job in this task
+	t.task[shardID].stats[taskID].running.Dec() // running job in this task
 	t.task[shardID].rw.Unlock()
 }
 
@@ -131,7 +131,7 @@ func (t *TaskManager[T, U, C, CT, TF]) Running(taskID uint64) int32 {
 	shardID := getShardID(taskID)
 	t.task[shardID].rw.Lock()
 	defer t.task[shardID].rw.Unlock()
-	return t.task[shardID].stats[taskID].running
+	return t.task[shardID].stats[taskID].running.Load()
 }
 
 // StopTask is to stop a task by TaskID.
@@ -139,8 +139,12 @@ func (t *TaskManager[T, U, C, CT, TF]) StopTask(taskID uint64) {
 	shardID := getShardID(taskID)
 	t.task[shardID].rw.Lock()
 	defer t.task[shardID].rw.Unlock()
-	l := t.task[shardID].stats[taskID].stats
-	for e := l.Front(); e != nil; e = e.Next() {
-		e.Value.(tContainer[T, U, C, CT, TF]).task.SetStatus(StopTask)
+	// When call the StopTask, the task may have been deleted from the manager.
+	s, ok := t.task[shardID].stats[taskID]
+	if ok {
+		l := s.stats
+		for e := l.Front(); e != nil; e = e.Next() {
+			e.Value.(tContainer[T, U, C, CT, TF]).task.SetStatus(StopTask)
+		}
 	}
 }

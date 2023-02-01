@@ -49,6 +49,7 @@ import (
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const clusterLogBatchSize = 256
@@ -431,7 +432,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	serversInfo []infoschema.ServerInfo,
 	req *diagnosticspb.SearchLogRequest) ([]chan logStreamResult, error) {
 	// gRPC options
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()

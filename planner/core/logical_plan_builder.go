@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -50,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -67,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 const (
@@ -692,13 +689,6 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		if config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ds.ctx) {
-			// TiFlash is in disaggregated mode, need to make sure tiflash_compute node is available.
-			errMsg := "No available tiflash_compute node"
-			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			return
-		}
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				ds.preferStoreType |= preferTiFlash
@@ -714,15 +704,6 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
-}
-
-func isTiFlashComputeNodeAvailable(ctx sessionctx.Context) bool {
-	bo := backoff.NewBackofferWithVars(context.Background(), 5000, nil)
-	stores, err := ctx.GetStore().(tikv.Storage).GetRegionCache().GetTiFlashComputeStores(bo.TiKVBackoffer())
-	if err != nil || len(stores) == 0 {
-		return false
-	}
-	return true
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {

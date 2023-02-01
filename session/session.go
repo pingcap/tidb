@@ -25,7 +25,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	stderrs "errors"
-	"flag"
 	"fmt"
 	"math"
 	"math/rand"
@@ -92,6 +91,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
@@ -465,8 +465,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 		}
 		if s.nonPreparedPlanCache == nil { // lazy construction
 			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
-				plannercore.PickPlanFromBucket, s)
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
 		}
 		return s.nonPreparedPlanCache
 	}
@@ -477,8 +476,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 	}
 	if s.preparedPlanCache == nil { // lazy construction
 		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
-			plannercore.PickPlanFromBucket, s)
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
 	}
 	return s.preparedPlanCache
 }
@@ -2686,6 +2684,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte) err
 	} else {
 		s.sessionVars.ResourceGroupName = ""
 	}
+
 	if info.InSandBoxMode {
 		// Enter sandbox mode, only execute statement for resetting password.
 		s.EnableSandBoxMode()
@@ -4137,6 +4136,10 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 	if len(s.lockedTables) > 0 {
 		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has locked tables")
 	}
+	// It's insecure to migrate sandBoxMode because users can fake it.
+	if s.InSandBoxMode() {
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session is in sandbox mode")
+	}
 
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
 		return err
@@ -4214,7 +4217,7 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+	if intest.InTest {
 		panic("unexpected no source type context, if you see this error, " +
 			"the `RequestSourceTypeKey` is missing in your context")
 	} else {

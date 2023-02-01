@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	field_types "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -7616,10 +7617,14 @@ func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResour
 			return err
 		}
 	}
-	if !stmt.IfNotExists {
-		if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
-			return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+
+	if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
+		if stmt.IfNotExists {
+			err = infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
 		}
+		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
 	if groupName.L == defaultResourceGroupName {
@@ -7668,6 +7673,17 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 		return err
 	}
 
+	// check to see if some user has dependency on the group
+	checker := privilege.GetPrivilegeManager(ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	user, matched := checker.MatchUserResourceGroupName(groupName.L)
+	if matched {
+		err = errors.Errorf("user [%s] depends on the resource group to drop", user)
+		return err
+	}
+
 	job := &model.Job{
 		SchemaID:   group.ID,
 		SchemaName: group.Name.L,
@@ -7698,7 +7714,12 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)
 	if !ok {
-		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		err := infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
 	}
 	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList)
 	if err != nil {

@@ -526,6 +526,11 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundDuplicateKey"]
+error = '''
+found duplicate key '%s', value '%s'
+'''
+
 ["Lightning:Restore:ErrInvalidMetaStatus"]
 error = '''
 invalid meta status: '%s'
@@ -2538,7 +2543,7 @@ Unknown resource group '%-.192s'
 
 ["schema:8250"]
 error = '''
-Resource group feature is disabled
+Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
 '''
 
 ["session:8002"]

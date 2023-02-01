@@ -86,6 +86,7 @@ type copTask struct {
 
 	idxMergePartPlans      []PhysicalPlan
 	idxMergeIsIntersection bool
+	idxMergeAccessMVIndex  bool
 
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
@@ -688,6 +689,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			partialPlans:       t.idxMergePartPlans,
 			tablePlan:          t.tablePlan,
 			IsIntersectionType: t.idxMergeIsIntersection,
+			AccessMVIndex:      t.idxMergeAccessMVIndex,
 		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
@@ -1161,6 +1163,12 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	for _, t := range tasks {
 		if _, ok := t.(*mppTask); ok {
+			if p.TP() == plancodec.TypePartitionUnion {
+				// In attach2MppTasks(), will attach PhysicalUnion to mppTask directly.
+				// But PartitionUnion cannot pushdown to tiflash, so here disable PartitionUnion pushdown to tiflash explicitly.
+				// For now, return invalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
+				return invalidTask
+			}
 			return p.attach2MppTasks(tasks...)
 		}
 	}

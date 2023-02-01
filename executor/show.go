@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"golang.org/x/exp/slices"
@@ -81,16 +80,17 @@ var etcdDialTimeout = 5 * time.Second
 type ShowExec struct {
 	baseExecutor
 
-	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName    model.CIStr
-	Table     *ast.TableName       // Used for showing columns.
-	Partition model.CIStr          // Used for showing partition
-	Column    *ast.ColumnName      // Used for `desc table column`.
-	IndexName model.CIStr          // Used for show table regions.
-	Flag      int                  // Some flag parsed from sql, such as FULL.
-	Roles     []*auth.RoleIdentity // Used for show grants.
-	User      *auth.UserIdentity   // Used by show grants, show create user.
-	Extractor plannercore.ShowPredicateExtractor
+	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName            model.CIStr
+	Table             *ast.TableName       // Used for showing columns.
+	Partition         model.CIStr          // Used for showing partition
+	Column            *ast.ColumnName      // Used for `desc table column`.
+	IndexName         model.CIStr          // Used for show table regions.
+	ResourceGroupName model.CIStr          // Used for showing resource group
+	Flag              int                  // Some flag parsed from sql, such as FULL.
+	Roles             []*auth.RoleIdentity // Used for show grants.
+	User              *auth.UserIdentity   // Used by show grants, show create user.
+	Extractor         plannercore.ShowPredicateExtractor
 
 	is infoschema.InfoSchema
 
@@ -182,6 +182,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateDatabase()
 	case ast.ShowCreatePlacementPolicy:
 		return e.fetchShowCreatePlacementPolicy()
+	case ast.ShowCreateResourceGroup:
+		return e.fetchShowCreateResourceGroup()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowDrainerStatus:
@@ -314,7 +316,10 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		tmp = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
-	bindRecords := slice.Copy(tmp)
+	bindRecords := make([]*bindinfo.BindRecord, 0)
+	for _, bindRecord := range tmp {
+		bindRecords = append(bindRecords, bindRecord.Copy())
+	}
 	// Remove the invalid bindRecord.
 	ind := 0
 	for _, bindData := range bindRecords {
@@ -1452,6 +1457,11 @@ func ConstructResultOfShowCreatePlacementPolicy(policyInfo *model.PolicyInfo) st
 	return fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", policyInfo.Name.O, policyInfo.PlacementSettings.String())
 }
 
+// constructResultOfShowCreateResourceGroup constructs the result for show create resource group.
+func constructResultOfShowCreateResourceGroup(resourceGroup *model.ResourceGroupInfo) string {
+	return fmt.Sprintf("CREATE RESOURCE GROUP `%s` %s", resourceGroup.Name.O, resourceGroup.ResourceGroupSettings.String())
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -1482,6 +1492,17 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 	}
 	showCreate := ConstructResultOfShowCreatePlacementPolicy(policy)
 	e.appendRow([]interface{}{e.DBName.O, showCreate})
+	return nil
+}
+
+// fetchShowCreateResourceGroup composes show create resource group result.
+func (e *ShowExec) fetchShowCreateResourceGroup() error {
+	group, found := e.is.ResourceGroupByName(e.ResourceGroupName)
+	if !found {
+		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(e.ResourceGroupName.O)
+	}
+	showCreate := constructResultOfShowCreateResourceGroup(group)
+	e.appendRow([]interface{}{e.ResourceGroupName.O, showCreate})
 	return nil
 }
 

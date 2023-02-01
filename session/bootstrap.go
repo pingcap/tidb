@@ -21,7 +21,6 @@ package session
 import (
 	"context"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	osuser "os/user"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -516,6 +516,27 @@ const (
 		created_time timestamp NOT NULL,
 		primary key(job_id, scan_id),
 		key(created_time));`
+
+	// CreateTTLJobHistory is a table that stores ttl job's history
+	CreateTTLJobHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
+		job_id varchar(64) PRIMARY KEY,
+		table_id bigint(64) NOT NULL,
+        parent_table_id bigint(64) NOT NULL,
+    	table_schema varchar(64) NOT NULL,
+		table_name varchar(64) NOT NULL,
+    	partition_name varchar(64) DEFAULT NULL,
+		create_time timestamp NOT NULL,
+		finish_time timestamp NOT NULL,
+		ttl_expire timestamp NOT NULL,
+        summary_text text,
+		expired_rows bigint(64) DEFAULT NULL,
+    	deleted_rows bigint(64) DEFAULT NULL,
+    	error_delete_rows bigint(64) DEFAULT NULL,
+    	status varchar(64) NOT NULL,
+    	key(table_schema, table_name, create_time),
+    	key(parent_table_id, create_time),
+    	key(create_time)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -757,7 +778,7 @@ const (
 	version109 = 109
 	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
 	version110 = 110
-	// version111 adds the table tidb_ttl_task
+	// version111 adds the table tidb_ttl_task and tidb_ttl_job_history
 	version111 = 111
 )
 
@@ -2239,6 +2260,7 @@ func upgradeToVer111(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateTTLTask)
+	doReentrantDDL(s, CreateTTLJobHistory)
 }
 
 func writeOOMAction(s Session) {
@@ -2349,6 +2371,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLTableStatus)
 	// Create tidb_ttl_task table
 	mustExecute(s, CreateTTLTask)
+	// Create tidb_ttl_job_history table
+	mustExecute(s, CreateTTLJobHistory)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -2381,12 +2405,6 @@ func doBootstrapSQLFile(s Session) {
 			}
 		}
 	}
-}
-
-// inTestSuite checks if we are bootstrapping in the context of tests.
-// There are some historical differences in behavior between tests and non-tests.
-func inTestSuite() bool {
-	return flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -2433,11 +2451,11 @@ func doDMLWorks(s Session) {
 				vVal = variable.On
 			}
 		case variable.TiDBMemOOMAction:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.OOMActionLog
 			}
 		case variable.TiDBEnableAutoAnalyze:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.Off
 			}
 		// For the following sysvars, we change the default
