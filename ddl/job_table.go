@@ -650,7 +650,6 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 		if i != 0 {
 			sqlBuilder.WriteString(", ")
 		}
-		bj.InstanceLease.SetFsp(0)
 		sqlBuilder.WriteString(fmt.Sprintf("(%d, %d, %d, %s, %d, %d, '%s', '%s', %d, %s, %s, %s, %d, %d, %d, %s)",
 			bj.ID, bj.JobID, bj.EleID, wrapKey2String(bj.EleKey), bj.StoreID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State, wrapKey2String(bj.CurrKey),
 			wrapKey2String(bj.StartKey), wrapKey2String(bj.EndKey), bj.StartTS, bj.FinishTS, bj.RowCount, wrapKey2String(mateByte)))

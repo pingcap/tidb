@@ -112,6 +112,7 @@ go_library(
         "//util/generic",
         "//util/gpool/spmc",
         "//util/hack",
+        "//util/intest",
         "//util/logutil",
         "//util/mathutil",
         "//util/mock",

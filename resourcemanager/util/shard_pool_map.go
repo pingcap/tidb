@@ -15,31 +15,11 @@
 package util
 
 import (
-	"os"
-	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/intest"
 )
-
-// InTest is a flag to indicate whether the code is running in test.
-var InTest atomic.Bool
-
-func isInTests() bool {
-	for _, arg := range os.Args {
-		if strings.HasPrefix(arg, "-test.v=") || strings.HasPrefix(arg, "-test.run=") {
-			return true
-		}
-	}
-	return false
-}
-
-func init() {
-	if isInTests() {
-		InTest.Store(true)
-	}
-}
 
 const shard = 8
 
@@ -90,7 +70,7 @@ func newPoolMap() poolMap {
 func (p *poolMap) Add(key string, pool *PoolContainer) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if _, contain := p.poolMap[key]; contain && !InTest.Load() {
+	if _, contain := p.poolMap[key]; contain && !intest.InTest {
 		return errors.New("pool is already exist")
 	}
 	p.poolMap[key] = pool

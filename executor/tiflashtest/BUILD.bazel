@@ -22,6 +22,7 @@ go_test(
         "//testkit",
         "//testkit/external",
         "//util/israce",
+        "//util/tiflashcompute",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",

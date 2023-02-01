@@ -215,6 +215,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLQueryDuration)
 	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
 	prometheus.MustRegister(TTLJobStatus)
+	prometheus.MustRegister(TTLTaskStatus)
 	prometheus.MustRegister(TTLPhaseTime)
 
 	prometheus.MustRegister(EMACPUUsageGauge)

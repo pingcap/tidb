@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
@@ -42,7 +41,6 @@ func TestMain(m *testing.M) {
 	autoid.SetStep(5000)
 	ddl.ReorgWaitTimeout = 30 * time.Millisecond
 	ddl.RunInGoTest = true
-	util.InTest.Store(true)
 	ddl.SetBatchInsertDeleteRangeSize(2)
 
 	config.UpdateGlobal(func(conf *config.Config) {
