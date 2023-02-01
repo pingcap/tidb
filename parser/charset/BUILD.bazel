@@ -8,6 +8,7 @@ go_library(
         "encoding_ascii.go",
         "encoding_base.go",
         "encoding_bin.go",
+        "encoding_gb18030.go",
         "encoding_gbk.go",
         "encoding_latin1.go",
         "encoding_table.go",
