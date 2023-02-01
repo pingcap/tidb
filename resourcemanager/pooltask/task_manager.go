@@ -61,6 +61,7 @@ type TaskStatusContainer[T any, U any, C any, CT any, TF Context[CT]] struct {
 // TaskManager is a manager that can control or watch the pool.
 type TaskManager[T any, U any, C any, CT any, TF Context[CT]] struct {
 	task        []TaskStatusContainer[T, U, C, CT, TF]
+	subTaskCnt  atomic.Int32
 	running     atomic.Int32
 	concurrency int32
 }
@@ -115,14 +116,6 @@ func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(taskID uint64, task *TaskBox[T
 	t.task[shardID].stats[taskID].stats.PushBack(tc)
 	t.task[shardID].stats[taskID].running.Inc() // running job in this task
 	t.task[shardID].rw.Unlock()
-}
-
-// SubTaskCnt is to get the count of pool task in the queue.
-func (t *TaskManager[T, U, C, CT, TF]) SubTaskCnt(taskID uint64) int {
-	shardID := getShardID(taskID)
-	t.task[shardID].rw.RLock()
-	defer t.task[shardID].rw.RUnlock()
-	return t.task[shardID].stats[taskID].stats.Len()
 }
 
 // ExitSubTask is to exit a task, and it will decrease the count of running pooltask.
