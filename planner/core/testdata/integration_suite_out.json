@@ -4322,7 +4322,7 @@
     "Name": "TestKeepOrderHint",
     "Cases": [
       {
-        "SQL": "explain select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
           "Limit_12 1.00 root  offset:0, count:1",
           "└─Projection_17 1.00 root  test.t1.a, test.t1.b",
@@ -4334,7 +4334,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t, primary) */ * from t where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1;",
         "Plan": [
           "Limit_11 1.00 root  offset:0, count:1",
           "└─TableReader_15 1.00 root  data:Limit_14",
@@ -4344,7 +4344,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
           "TopN_9 1.00 root  test.t1.a, offset:0, count:1",
           "└─IndexLookUp_16 1.00 root  ",
@@ -4355,7 +4355,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t, primary) */ * from t where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─TableReader_15 1.00 root  data:TopN_14",
@@ -4365,7 +4365,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 limit 1;",
+        "SQL": "explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 limit 1;",
         "Plan": [
           "IndexLookUp_13 1.00 root  limit embedded(offset:0, count:1)",
           "├─Limit_12(Build) 1.00 cop[tikv]  offset:0, count:1",
@@ -4375,7 +4375,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t, primary) */ * from t where a<10 limit 1;",
+        "SQL": "explain select /*+ no_order_index(t, primary) */ * from t where a<10 limit 1;",
         "Plan": [
           "Limit_8 1.00 root  offset:0, count:1",
           "└─TableReader_12 1.00 root  data:Limit_11",
@@ -4385,7 +4385,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t1, idx_b) */ * from t1 where b<10 order by b limit 1;",
+        "SQL": "explain select /*+ order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t1.b, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4398,7 +4398,7 @@
         ]
       },
       {
-        "SQL": "explain select /*+ keep_order(t, idx_b) */ * from t where b<10 order by b limit 1;",
+        "SQL": "explain select /*+ order_index(t, idx_b) */ * from t where b<10 order by b limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t.b, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4411,7 +4411,7 @@
         ]
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t1, idx_b) */ * from t1 where b<10 order by b limit 1;",
+        "SQL": "explain select /*+ no_order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t1.b, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4424,7 +4424,7 @@
         ]
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t, idx_b) */ * from t where b<10 order by b limit 1;",
+        "SQL": "explain select /*+ no_order_index(t, idx_b) */ * from t where b<10 order by b limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t.b, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4437,7 +4437,7 @@
         ]
       },
       {
-        "SQL": "explain select /*+ keep_order(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
           "Limit_12 1.00 root  offset:0, count:1",
           "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
@@ -4449,7 +4449,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
         "Plan": [
           "Limit_12 1.00 root  offset:0, count:1",
           "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
@@ -4461,7 +4461,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
           "Limit_12 1.00 root  offset:0, count:1",
           "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
@@ -4473,7 +4473,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
         "Plan": [
           "Limit_12 1.00 root  offset:0, count:1",
           "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
@@ -4485,7 +4485,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t1.a, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4496,7 +4496,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
         "Plan": [
           "Limit_11 1.00 root  offset:0, count:1",
           "└─TableReader_16 1.00 root  data:Limit_15",
@@ -4506,7 +4506,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
         "Plan": [
           "Limit_11 1.00 root  offset:0, count:1",
           "└─TableReader_16 1.00 root  data:Limit_15",
@@ -4516,7 +4516,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
         "Plan": [
           "Limit_11 1.00 root  offset:0, count:1",
           "└─TableReader_16 1.00 root  data:Limit_15",
@@ -4526,7 +4526,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
         "Plan": [
           "Limit_11 1.00 root  offset:0, count:1",
           "└─TableReader_16 1.00 root  data:Limit_15",
@@ -4536,7 +4536,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ keep_order(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
         "Plan": [
           "Limit_11 1.00 root  offset:0, count:1",
           "└─TableReader_15 1.00 root  data:Limit_14",
@@ -4546,7 +4546,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4556,7 +4556,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4566,7 +4566,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4576,7 +4576,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4586,7 +4586,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─TableReader_15 1.00 root  data:TopN_14",
@@ -4596,7 +4596,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
           "TopN_9 1.00 root  test.t1.a, offset:0, count:1",
           "└─IndexLookUp_18 1.00 root  ",
@@ -4607,7 +4607,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
         "Plan": [
           "TopN_9 1.00 root  test.t1.a, offset:0, count:1",
           "└─IndexLookUp_18 1.00 root  ",
@@ -4618,7 +4618,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
           "TopN_9 1.00 root  test.t1.a, offset:0, count:1",
           "└─IndexLookUp_18 1.00 root  ",
@@ -4629,7 +4629,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
         "Plan": [
           "TopN_9 1.00 root  test.t1.a, offset:0, count:1",
           "└─IndexLookUp_18 1.00 root  ",
@@ -4640,7 +4640,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ no_keep_order(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+        "SQL": "explain select /*+ no_order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
         "Plan": [
           "TopN_8 1.00 root  test.t1.a, offset:0, count:1",
           "└─TableReader_16 1.00 root  data:TopN_15",
@@ -4651,7 +4651,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ qb_name(qb, v) keep_order(t1@qb, idx_a) */ * from v",
+        "SQL": "explain select /*+ qb_name(qb, v) order_index(t1@qb, idx_a) */ * from v",
         "Plan": [
           "Limit_14 1.00 root  offset:0, count:1",
           "└─Projection_19 1.00 root  test.t1.a, test.t1.b",
@@ -4663,7 +4663,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ qb_name(qb, v1) keep_order(t@qb, primary) */ * from v1",
+        "SQL": "explain select /*+ qb_name(qb, v1) order_index(t@qb, primary) */ * from v1",
         "Plan": [
           "Limit_13 1.00 root  offset:0, count:1",
           "└─TableReader_17 1.00 root  data:Limit_16",
@@ -4673,7 +4673,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ qb_name(qb, v) no_keep_order(t1@qb, idx_a) */ * from v",
+        "SQL": "explain select /*+ qb_name(qb, v) no_order_index(t1@qb, idx_a) */ * from v",
         "Plan": [
           "TopN_11 1.00 root  test.t1.a, offset:0, count:1",
           "└─IndexLookUp_18 1.00 root  ",
@@ -4684,7 +4684,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ qb_name(qb, v1) no_keep_order(t@qb, primary) */ * from v1",
+        "SQL": "explain select /*+ qb_name(qb, v1) no_order_index(t@qb, primary) */ * from v1",
         "Plan": [
           "TopN_10 1.00 root  test.t.a, offset:0, count:1",
           "└─TableReader_17 1.00 root  data:TopN_16",
@@ -4694,7 +4694,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain WITH CTE AS (select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+        "SQL": "explain WITH CTE AS (select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
           "HashAgg_30 2.00 root  group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9",
           "└─Union_31 1.28 root  ",
@@ -4714,7 +4714,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain WITH CTE AS (select /*+ keep_order(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+        "SQL": "explain WITH CTE AS (select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
           "HashAgg_28 2.00 root  group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#7, funcs:firstrow(Column#8)->Column#8",
           "└─Union_29 1.28 root  ",
@@ -4732,7 +4732,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain WITH CTE AS (select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+        "SQL": "explain WITH CTE AS (select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
           "HashAgg_29 2.00 root  group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9",
           "└─Union_30 1.28 root  ",
@@ -4751,7 +4751,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain WITH CTE AS (select /*+ no_keep_order(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+        "SQL": "explain WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
           "HashAgg_28 2.00 root  group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#7, funcs:firstrow(Column#8)->Column#8",
           "└─Union_29 1.28 root  ",
