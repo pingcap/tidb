@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -1258,6 +1259,12 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = true
 	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
+	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "", "", false)
+	require.NoError(t, err)
+
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1265,17 +1272,19 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	tk.MustExec("create table t(c1 int)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
 	err = tk.ExecToErr("select * from t;")
-	require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
+	// Expect error, because TestAutoScaler return empty topo.
+	require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = false
-	})
-	tk.MustQuery("select * from t;").Check(testkit.Rows())
+	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "", "", false)
+	require.NoError(t, err)
+	err = tk.ExecToErr("select * from t;")
+	// Expect error, because AWSAutoScaler is not setup, so http request will fail.
+	require.Contains(t, err.Error(), "[util:1815]Internal : get tiflash_compute topology failed")
 }
 
 func TestDisaggregatedTiFlashQuery(t *testing.T) {
