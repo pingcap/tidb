@@ -1277,7 +1277,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
 	err = tk.ExecToErr("select * from t;")
-	require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
+	require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
 
 	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "", "", false)
 	require.NoError(t, err)
