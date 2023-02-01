@@ -144,7 +144,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	p.capacity.Store(int32(size))
 	if size > capacity {
 		for i := 0; i < size-capacity; i++ {
-			if tid, boostTask := p.taskManager.Overclock(capacity); boostTask != nil {
+			if tid, boostTask := p.taskManager.Overclock(size); boostTask != nil {
 				p.addWaitingTask()
 				newTask := boostTask.Clone()
 				p.taskManager.AddSubTask(tid, newTask)
@@ -159,7 +159,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 		return
 	}
 	if size < capacity {
-		p.taskManager.Downclock(capacity)
+		p.taskManager.Downclock(size)
 	}
 }
 
