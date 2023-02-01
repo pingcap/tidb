@@ -55,7 +55,9 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		require.NoError(t, err)
 		return store
 	}
+	resourcemanager.InstanceResourceManager.Start()
 	t.Cleanup(func() {
+		resourcemanager.InstanceResourceManager.Stop()
 		view.Stop()
 	})
 	gctuner.GlobalMemoryLimitTuner.Stop()
@@ -70,9 +72,11 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom := bootstrap(t, store, 500*time.Millisecond)
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
+	resourcemanager.InstanceResourceManager.Start()
 	t.Cleanup(func() {
 		view.Stop()
 		gctuner.GlobalMemoryLimitTuner.Stop()
+		resourcemanager.InstanceResourceManager.Stop()
 	})
 	return schematracker.UnwrapStorage(store), dom
 }

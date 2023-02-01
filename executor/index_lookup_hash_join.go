@@ -175,7 +175,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	e.workerWg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
 		workerID := i
-		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
+		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, gscheduler.GetContext(), cancelFunc) }, e.finishJoinWorkers)
 	}
 	go e.wait4JoinWorkers()
 }
@@ -458,7 +458,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 	return iw
 }
 
-func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.CancelFunc) {
+func (iw *indexHashJoinInnerWorker) run(ctx, sctx context.Context, cancelFunc context.CancelFunc) {
 	defer trace.StartRegion(ctx, "IndexHashJoinInnerWorker").End()
 	var task *indexHashJoinTask
 	joinResult, ok := iw.getNewJoinResult(ctx)
@@ -480,6 +480,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		if !ok {
 			break
 		}
+		gscheduler.CheckPoint(sctx)
 		// We need to init resultCh before the err is returned.
 		if task.keepOuterOrder {
 			resultCh = task.resultCh

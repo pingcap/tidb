@@ -768,16 +768,7 @@
       "planner/core/plan.go": "planner/core/plan.go",
       "extension/": "extension code",
       "resourcemanager/": "resourcemanager code",
-      "keyspace/": "keyspace code",
-      "server/": "server code",
-      "meta": "meta code"
-    }
-  },
-  "SA1029": {
-    "exclude_files": {
-      "/external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code",
-      ".*_test\\.go$": "ignore test code"
+      "keyspace/": "keyspace code"
     }
   },
   "SA2000": {
