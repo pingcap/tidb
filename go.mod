@@ -35,6 +35,7 @@ require (
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.14.1
 	github.com/fsouza/fake-gcs-server v1.19.0
+	github.com/go-faster/city v1.0.1
 	github.com/go-kratos/aegis v0.1.4
 	github.com/go-sql-driver/mysql v1.7.0
 	github.com/gogo/protobuf v1.3.2

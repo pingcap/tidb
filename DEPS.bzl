@@ -1224,6 +1224,14 @@ def go_deps():
         version = "v1.0.1",
     )
     go_repository(
+        name = "com_github_go_faster_city",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/go-faster/city",
+        sum = "h1:4WAxSZ3V2Ws4QRDrscLEDcibJY8uf41H6AhXDrNDcGw=",
+        version = "v1.0.1",
+    )
+
+    go_repository(
         name = "com_github_go_gl_glfw",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-gl/glfw",

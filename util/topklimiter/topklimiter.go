@@ -18,9 +18,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-faster/city"
 	"github.com/go-kratos/aegis/ratelimit"
 	"github.com/go-kratos/aegis/ratelimit/bbr"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/topk"
 	"github.com/twmb/murmur3"
 )
@@ -41,7 +43,6 @@ func newLimiters() *limiters {
 
 func (l *limiters) Allow(key string) (ratelimit.DoneFunc, error) {
 	l.mu.RLock()
-
 	if limiter, ok := l.limiter[key]; ok {
 		defer l.mu.RUnlock()
 		return limiter.Allow()
@@ -75,7 +76,7 @@ type TopKLimiter struct {
 	wg       util.WaitGroupWrapper
 }
 
-const shard = 8
+const shard = 16
 
 // NewTopKLimiter creates a new top-k limiter
 func NewTopKLimiter(k, width, depth uint32, decay float64) *TopKLimiter {
@@ -93,7 +94,7 @@ func NewTopKLimiter(k, width, depth uint32, decay float64) *TopKLimiter {
 // Allow allows the key to pass
 func (l *TopKLimiter) Allow(key string) (ratelimit.DoneFunc, error) {
 	l.writeCh <- key
-	idx := murmur3.StringSum32(key) % shard
+	idx := city.CH64(hack.Slice(key)) % shard
 	return l.limiters[idx].Allow(key)
 }
 
