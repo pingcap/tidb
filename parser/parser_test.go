@@ -3900,38 +3900,38 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
 	// Test ORDER_INDEX
-	stmt, _, err = p.Parse("select /*+ ORDER_INDEX(T1,T2), ORDER_INDEX(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = p.Parse("select /*+ ORDER_INDEX(T1,T2), order_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
-	require.Equal(t, "ORDER_INDEX", hints[0].HintName.L)
+	require.Equal(t, "order_index", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
 	require.Len(t, hints[0].Indexes, 1)
 	require.Equal(t, "t2", hints[0].Indexes[0].L)
 
-	require.Equal(t, "ORDER_INDEX", hints[1].HintName.L)
+	require.Equal(t, "order_index", hints[1].HintName.L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Len(t, hints[1].Indexes, 1)
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
 	// Test NO_ORDER_INDEX
-	stmt, _, err = p.Parse("select /*+ NO_ORDER_INDEX(T1,T2), NO_ORDER_INDEX(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = p.Parse("select /*+ NO_ORDER_INDEX(T1,T2), no_order_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
-	require.Equal(t, "NO_ORDER_INDEX", hints[0].HintName.L)
+	require.Equal(t, "no_order_index", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 1)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
 	require.Len(t, hints[0].Indexes, 1)
 	require.Equal(t, "t2", hints[0].Indexes[0].L)
 
-	require.Equal(t, "NO_ORDER_INDEX", hints[1].HintName.L)
+	require.Equal(t, "no_order_index", hints[1].HintName.L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Len(t, hints[1].Indexes, 1)
