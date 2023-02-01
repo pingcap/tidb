@@ -353,18 +353,11 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 	} else {
 		return true, nil
 	}
-	val, err := txn.Get(ctx, uniqueTempKey)
-	if err != nil {
-		if kv.IsErrNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	dupHandle, err := FetchDuplicatedHandleForDistinctKey(ctx, uniqueTempKey, val, txn, tblID, isCommon)
+	foundKey, dupHandle, err := FetchDuplicatedHandle(ctx, uniqueTempKey, true, txn, tblID, isCommon)
 	if err != nil {
 		return false, err
 	}
-	if dupHandle != nil && !dupHandle.Equal(h) {
+	if foundKey && dupHandle != nil && !dupHandle.Equal(h) {
 		return false, kv.ErrKeyExists
 	}
 	return false, nil
@@ -510,51 +503,53 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 		if len(tempKey) > 0 {
 			key = tempKey
 		}
-		val, err := txn.Get(context.TODO(), key)
-		if err != nil {
-			if kv.IsErrNotFound(err) {
-				return false, nil, nil
-			}
+		foundKey, dupHandle, err := FetchDuplicatedHandle(context.TODO(), key, distinct, txn, c.tblInfo.ID, c.tblInfo.IsCommonHandle)
+		if err != nil || !foundKey {
 			return false, nil, err
 		}
-		if distinct {
-			dupHandle, err := FetchDuplicatedHandleForDistinctKey(context.TODO(), key, val, txn, c.tblInfo.ID, c.tblInfo.IsCommonHandle)
-			if err != nil {
-				return false, nil, err
-			}
-			if dupHandle == nil || !dupHandle.Equal(h) {
-				return false, nil, nil
-			}
-			continue
+		if dupHandle != nil && !dupHandle.Equal(h) {
+			return false, nil, err
 		}
+		continue
 	}
 	return true, h, nil
 }
 
-// FetchDuplicatedHandleForDistinctKey is used to find the duplicated row's handle for a given unique index key.
-func FetchDuplicatedHandleForDistinctKey(ctx context.Context, distinctKey kv.Key, val []byte,
-	txn kv.Transaction, tableID int64, isCommon bool) (dupHandle kv.Handle, err error) {
-	if isTemp, idxID := tablecodec.IsTempIndexKey(distinctKey); isTemp {
+// FetchDuplicatedHandle is used to find the duplicated row's handle for a given unique index key.
+func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
+	txn kv.Transaction, tableID int64, isCommon bool) (foundKey bool, dupHandle kv.Handle, err error) {
+	val, err := txn.Get(ctx, key)
+	if err != nil {
+		if kv.IsErrNotFound(err) {
+			return false, nil, nil
+		}
+		// Unexpected errors.
+		return false, nil, err // Unexpected errors.
+	}
+	if isTemp, idxID := tablecodec.IsTempIndexKey(key); isTemp {
 		originValInTmp, deletedHandle, deleted, _, _ := tablecodec.DecodeTempIndexValue(val, isCommon)
 		if deleted {
-			originKey := distinctKey.Clone()
+			originKey := key.Clone()
 			tablecodec.TempIndexKey2IndexKey(idxID, originKey)
 			originVal, err := txn.Get(ctx, originKey)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// The key has been deleted. This is not a duplicated key.
-					return nil, nil
+					return false, nil, nil
 				}
 				// Unexpected errors.
-				return nil, err
+				return false, nil, err
+			}
+			if !distinct {
+				return false, nil, nil
 			}
 			originHandle, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, isCommon)
 			if err != nil {
-				return nil, err
+				return false, nil, err
 			}
 			if originHandle.Equal(deletedHandle) {
 				// The key has been deleted. This is not a duplicated key.
-				return nil, nil
+				return false, nil, nil
 			}
 			// The inequality means multiple modifications happened in the same key.
 			// We use the handle in origin index value to check if the row exists.
@@ -563,18 +558,28 @@ func FetchDuplicatedHandleForDistinctKey(ctx context.Context, distinctKey kv.Key
 			_, err = txn.Get(context.Background(), rowKey)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
-					// The key has been deleted. This is not a duplicated key.
-					return nil, nil
+					// The row has been deleted. This is not a duplicated key.
+					return false, nil, nil
 				}
 				// Unexpected errors.
-				return nil, err
+				return false, nil, err
 			}
 			// The row exists. This is the duplicated key.
-			return originHandle, nil
+			return true, originHandle, nil
 		}
-		return tablecodec.DecodeHandleInUniqueIndexValue(originValInTmp, isCommon)
+		// The value in temp index is not the delete marker.
+		if !distinct {
+			return true, nil, nil
+		}
+		h, err := tablecodec.DecodeHandleInUniqueIndexValue(originValInTmp, isCommon)
+		return true, h, err
 	}
-	return tablecodec.DecodeHandleInUniqueIndexValue(val, isCommon)
+	// The index key is not from temp index.
+	if !distinct {
+		return true, nil, nil
+	}
+	h, err := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommon)
+	return true, h, err
 }
 
 func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
