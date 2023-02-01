@@ -2649,6 +2649,74 @@ func (rc *Client) SetWithSysTable(withSysTable bool) {
 	rc.withSysTable = withSysTable
 }
 
+func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	allSchema := info.AllSchemas()
+	recorder := tiflashrec.New()
+
+	expectTiFlashStoreCount := uint64(0)
+	needTiFlash := false
+	for _, s := range allSchema {
+		for _, t := range s.Tables {
+			if t.TiFlashReplica != nil {
+				expectTiFlashStoreCount = mathutil.Max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
+				recorder.AddTable(t.ID, *t.TiFlashReplica)
+				needTiFlash = true
+			}
+		}
+	}
+	if !needTiFlash {
+		log.Info("no need to set tiflash replica, since there is no tables enable tiflash replica")
+		return nil
+	}
+	// we wait for ten minutes to wait tiflash starts.
+	// since tiflash only starts when set unmark recovery mode finished.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	err = utils.WithRetry(timeoutCtx, func() error {
+		tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
+		log.Info("get tiflash store count for resetting TiFlash Replica",
+			zap.Uint64("count", tiFlashStoreCount))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tiFlashStoreCount < expectTiFlashStoreCount {
+			log.Info("still waiting for enough tiflash store start",
+				zap.Uint64("expect", expectTiFlashStoreCount),
+				zap.Uint64("actual", tiFlashStoreCount),
+			)
+			return errors.New("tiflash store count is less than expected")
+		}
+		return nil
+	}, &waitTiFlashBackoffer{
+		Attempts:    30,
+		BaseBackoff: 4 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+
+	sqls := recorder.GenerateResetAlterTableDDLs(info)
+	log.Info("Generating SQLs for resetting tiflash replica",
+		zap.Strings("sqls", sqls))
+
+	return g.UseOneShotSession(storage, false, func(se glue.Session) error {
+		for _, sql := range sqls {
+			if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(errExec),
+					zap.String("sql", sql),
+				)
+			}
+		}
+		return nil
+	})
+}
+
 // MockClient create a fake client used to test.
 func MockClient(dbs map[string]*utils.Database) *Client {
 	return &Client{databases: dbs}
@@ -2723,4 +2791,28 @@ func CheckNewCollationEnable(
 	collate.SetNewCollationEnabledForTest(enabled)
 	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
 	return nil
+}
+
+type waitTiFlashBackoffer struct {
+	Attempts    int
+	BaseBackoff time.Duration
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *waitTiFlashBackoffer) NextBackoff(error) time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
+		return 0
+	}
+	b.BaseBackoff *= 2
+	if b.BaseBackoff > 32*time.Second {
+		b.BaseBackoff = 32 * time.Second
+	}
+	return bo
+}
+
+// Attempt returns the remain attempt times
+func (b *waitTiFlashBackoffer) Attempt() int {
+	return b.Attempts
 }
