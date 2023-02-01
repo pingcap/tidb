@@ -612,8 +612,13 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
 			var task *indexMergeTableTask
 			util.WithRecovery(
-				func() { task = worker.pickAndExecTask(ctx1) },
-				worker.handlePickAndExecTaskPanic(ctx1, task),
+				// Note we use the address of `task` as the argument of both `pickAndExecTask` and `handlePickAndExecTaskPanic`
+				// because `task` is expected to be assigned in `pickAndExecTask`, and this assignment should also be visible
+				// in `handlePickAndExecTaskPanic` since it will get `doneCh` from `task`. Golang always pass argument by value,
+				// so if we don't use the address of `task` as the argument, the assignment to `task` in `pickAndExecTask` is
+				// not visible in `handlePickAndExecTaskPanic`
+				func() { worker.pickAndExecTask(ctx1, &task) },
+				worker.handlePickAndExecTaskPanic(ctx1, &task),
 			)
 			cancel()
 			e.tblWorkerWg.Done()
@@ -1107,12 +1112,12 @@ type indexMergeTableScanWorker struct {
 	memTracker *memory.Tracker
 }
 
-func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *indexMergeTableTask) {
+func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **indexMergeTableTask) {
 	var ok bool
 	for {
 		waitStart := time.Now()
 		select {
-		case task, ok = <-w.workCh:
+		case *task, ok = <-w.workCh:
 			if !ok {
 				return
 			}
@@ -1120,17 +1125,18 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *
 			return
 		}
 		execStart := time.Now()
-		err := w.executeTask(ctx, task)
+		err := w.executeTask(ctx, *task)
 		if w.stats != nil {
 			atomic.AddInt64(&w.stats.WaitTime, int64(execStart.Sub(waitStart)))
 			atomic.AddInt64(&w.stats.FetchRow, int64(time.Since(execStart)))
 			atomic.AddInt64(&w.stats.TableTaskNum, 1)
 		}
-		task.doneCh <- err
+		failpoint.Inject("testIndexMergePickAndExecTaskPanic", nil)
+		(*task).doneCh <- err
 	}
 }
 
-func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, task *indexMergeTableTask) func(r interface{}) {
+func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, task **indexMergeTableTask) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
 			return
@@ -1138,7 +1144,9 @@ func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Conte
 
 		err4Panic := errors.Errorf("panic in IndexMergeReaderExecutor indexMergeTableWorker: %v", r)
 		logutil.Logger(ctx).Error(err4Panic.Error())
-		task.doneCh <- err4Panic
+		if *task != nil {
+			(*task).doneCh <- err4Panic
+		}
 	}
 }
 
