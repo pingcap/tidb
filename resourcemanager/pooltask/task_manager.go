@@ -117,7 +117,7 @@ func (t *TaskManager[T, U, C, CT, TF]) AddSubTask(taskID uint64, task *TaskBox[T
 	t.task[shardID].rw.Unlock()
 }
 
-// SubTaskCnt is
+// SubTaskCnt is to get the count of pool task in the queue.
 func (t *TaskManager[T, U, C, CT, TF]) SubTaskCnt(taskID uint64) int {
 	shardID := getShardID(taskID)
 	t.task[shardID].rw.RLock()
