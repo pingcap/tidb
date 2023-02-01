@@ -16,7 +16,7 @@ package pooltask
 
 // Overclock is to increase the concurrency of pool.
 func (t *TaskManager[T, U, C, CT, TF]) Overclock() (tid uint64, task *TaskBox[T, U, C, CT, TF]) {
-	if t.running.Load()+1 > int32(t.SubTaskCnt(tid)) {
+	if t.running.Load()+1 >= int32(t.SubTaskCnt(tid)) {
 		return
 	}
 	return t.getBoostTask()
