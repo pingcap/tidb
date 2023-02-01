@@ -3757,20 +3757,18 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 			case *ast.SelectStmt:
 				if sel.(*ast.SelectStmt).From != nil {
 					left := sel.(*ast.SelectStmt).From.TableRefs.Left
-					switch left.(type) {
+					switch lnode := left.(type) {
 					case *ast.Join:
-						l := left.(*ast.Join).Left
-						err := checkTblName(l)
+						err := checkTblName(lnode.Left)
 						if err != nil {
 							return n, err
 						}
-						r := left.(*ast.Join).Right
-						err = checkTblName(r)
+						err = checkTblName(lnode.Right)
 						if err != nil {
 							return n, err
 						}
 					case *ast.TableSource:
-						err = checkTblName(left)
+						err = checkTblName(lnode)
 						if err != nil {
 							return n, err
 						}
