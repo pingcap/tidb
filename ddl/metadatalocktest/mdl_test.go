@@ -14,6 +14,8 @@
 
 package metadatalocktest
 
+//go:build !featuretag
+
 import (
 	"fmt"
 	"sync"
