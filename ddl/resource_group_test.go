@@ -67,6 +67,15 @@ func TestResourceGroupBasic(t *testing.T) {
 	g := testResourceGroupNameFromIS(t, tk.Session(), "x")
 	checkFunc(g)
 
+	// test create if not exists
+	tk.MustExec("create resource group if not exists x RU_PER_SEC=10000")
+	// Check the resource group is not changed
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	checkFunc(g)
+	// Check warning message
+	res := tk.MustQuery("show warnings")
+	res.Check(testkit.Rows("Note 8248 Resource group 'x' already exists"))
+
 	tk.MustExec("set global tidb_enable_resource_control = DEFAULT")
 	tk.MustGetErrCode("alter resource group x RU_PER_SEC=2000 ", mysql.ErrResourceGroupSupportDisabled)
 	tk.MustGetErrCode("drop resource group x ", mysql.ErrResourceGroupSupportDisabled)
@@ -79,8 +88,12 @@ func TestResourceGroupBasic(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(2000), g.RURate)
 
-	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x' ").Check(testkit.Rows(strconv.FormatInt(g.ID, 10) + " x 2000"))
+	tk.MustExec("alter resource group if exists not_exists RU_PER_SEC=2000")
+	// Check warning message
+	res = tk.MustQuery("show warnings")
+	res.Check(testkit.Rows("Note 8249 Unknown resource group 'not_exists'"))
 
+	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x' ").Check(testkit.Rows(strconv.FormatInt(g.ID, 10) + " x 2000"))
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Nil(g)

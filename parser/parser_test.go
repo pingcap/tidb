@@ -7140,3 +7140,21 @@ func TestTTLTableOption(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestMultiStmt(t *testing.T) {
+	p := parser.New()
+	stmts, _, err := p.Parse("SELECT 'foo'; SELECT 'foo;bar','baz'; select 'foo' , 'bar' , 'baz' ;select 1", "", "")
+	require.NoError(t, err)
+	require.Equal(t, len(stmts), 4)
+	stmt1 := stmts[0].(*ast.SelectStmt)
+	stmt2 := stmts[1].(*ast.SelectStmt)
+	stmt3 := stmts[2].(*ast.SelectStmt)
+	stmt4 := stmts[3].(*ast.SelectStmt)
+	require.Equal(t, "'foo'", stmt1.Fields.Fields[0].Text())
+	require.Equal(t, "'foo;bar'", stmt2.Fields.Fields[0].Text())
+	require.Equal(t, "'baz'", stmt2.Fields.Fields[1].Text())
+	require.Equal(t, "'foo'", stmt3.Fields.Fields[0].Text())
+	require.Equal(t, "'bar'", stmt3.Fields.Fields[1].Text())
+	require.Equal(t, "'baz'", stmt3.Fields.Fields[2].Text())
+	require.Equal(t, "1", stmt4.Fields.Fields[0].Text())
+}
