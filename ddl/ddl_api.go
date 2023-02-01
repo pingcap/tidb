@@ -3047,9 +3047,12 @@ func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettin
 	case ast.ResourceUnitIOWriteBandwidth:
 		resourceGroupSettings.IOWriteBandwidth = stringVal
 	case ast.ResourceBurstableOpiton:
+		// Some about BurstLimit(b):
+		//   - If b == 0, that means the limiter is unlimited capacity. default use in resource controller (burst with a rate within a unlimited capacity).
+		//   - If b < 0, that means the limiter is unlimited capacity and filerate(r) is ignored, can be seen as r == Inf (burst with a inf rate within a unlimited capacity).
+		//   - If b > 0, that means the limiter is limited capacity. (current not used).
 		limit := int64(0)
 		if boolValue {
-			// negative means no limit within burst setting.
 			limit = -1
 		}
 		resourceGroupSettings.BurstLimit = limit

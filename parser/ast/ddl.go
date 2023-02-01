@@ -2149,7 +2149,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 		case ResourceBurstableOpiton:
-			ctx.WriteKeyWord("BURSTABLE ")
+			ctx.WriteKeyWord("BURSTABLE")
 		default:
 			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
 		}

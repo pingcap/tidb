@@ -6635,6 +6635,7 @@ NotKeywordToken:
 |	"IO_WRITE_BANDWIDTH"
 |	"RRU_PER_SEC"
 |	"WRU_PER_SEC"
+|	"BURSTABLE"
 
 /************************************************************************************
  *
