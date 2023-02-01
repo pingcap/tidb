@@ -195,7 +195,7 @@ func TestDumpPartitionTableStats(t *testing.T) {
 	defer func() {
 		require.NoError(t, resp1.Body.Close())
 	}()
-	js, err = io.ReadAll(resp1.Body)
+	_, err = io.ReadAll(resp1.Body)
 	require.NoError(t, err)
 
 	path1 := "/tmp/stats2_history.json"
