@@ -232,4 +232,5 @@ const (
 	LblAggressiveLockingTxnEffective  = "txn-effective"
 	LblAggressiveLockingStmtUsed      = "stmt-used"
 	LblAggressiveLockingStmtEffective = "stmt-effective"
+	LblAggressiveLockingSkipRetry     = "skipretry"
 )

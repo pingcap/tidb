@@ -91,6 +91,7 @@ var (
 	AggressiveLockingStmtUsedCount      = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtUsed)
 	AggressiveLockingTxnEffectiveCount  = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingTxnEffective)
 	AggressiveLockingStmtEffectiveCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtEffective)
+	AggressiveLockingSkipRetryCounter   = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingSkipRetry)
 )
 
 // processinfoSetter is the interface use to set current running process info.

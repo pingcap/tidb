@@ -1370,6 +1370,8 @@ func handleErrLockedWithConflict(ctx context.Context, se sessionctx.Context, err
 		}
 		if !invalidated {
 			return errLockedWithConflict.ToWriteConflict()
+		} else {
+			AggressiveLockingSkipRetryCounter.Inc()
 		}
 	}
 
