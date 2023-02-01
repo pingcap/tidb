@@ -138,6 +138,8 @@ type mppAddr struct {
 	addr string
 }
 
+var _ kv.MPPTaskMeta = &mppAddr{}
+
 func (m *mppAddr) GetAddress() string {
 	return m.addr
 }

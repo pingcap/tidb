@@ -1339,10 +1339,10 @@ func TestKeepOrderHint(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view v1 as select * from t where a<10 order by a limit 1;")
 
 	// If the optimizer can not generate the keep order plan, it will report error
-	err := tk.ExecToErr("explain select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 limit 1;")
+	err := tk.ExecToErr("explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 limit 1;")
 	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 
-	err = tk.ExecToErr("explain select /*+ keep_order(t, primary) */ * from t where a<10 limit 1;")
+	err = tk.ExecToErr("explain select /*+ order_index(t, primary) */ * from t where a<10 limit 1;")
 	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 
 	// The partition table can not keep order
@@ -1350,7 +1350,7 @@ func TestKeepOrderHint(t *testing.T) {
 	err = tk.ExecToErr("select a from th where a<1 order by a limit 1;")
 	require.NoError(t, err)
 
-	err = tk.ExecToErr("select /*+ keep_order(th, a) */ a from th where a<1 order by a limit 1;")
+	err = tk.ExecToErr("select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1;")
 	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 
 	var input []string
@@ -1382,15 +1382,15 @@ func TestKeepOrderHintWithBinding(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int, index idx_a(a));")
 
-	// create binding for keep_order hint
+	// create binding for order_index hint
 	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
-	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
 	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 	res := tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, res[0][0], "select * from `test` . `t1` where `a` < ? order by `a` limit ?")
-	require.Equal(t, res[0][1], "SELECT /*+ keep_order(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
+	require.Equal(t, res[0][1], "SELECT /*+ order_index(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
 
 	tk.MustExec("drop global binding for select * from t1 where a<10 order by a limit 1;")
 	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
@@ -1398,13 +1398,13 @@ func TestKeepOrderHintWithBinding(t *testing.T) {
 	res = tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, len(res), 0)
 
-	// create binding for no_keep_order hint
-	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_keep_order(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
+	// create binding for no_order_index hint
+	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
 	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 	res = tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, res[0][0], "select * from `test` . `t1` where `a` < ? order by `a` limit ?")
-	require.Equal(t, res[0][1], "SELECT /*+ no_keep_order(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
+	require.Equal(t, res[0][1], "SELECT /*+ no_order_index(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
 
 	tk.MustExec("drop global binding for select * from t1 where a<10 order by a limit 1;")
 	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
