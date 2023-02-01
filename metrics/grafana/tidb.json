@@ -18547,7 +18547,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Total RU / QPS",
+          "title": "Total RU Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -18761,7 +18761,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "RRU / QPS",
+          "title": "RRU Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -18975,7 +18975,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "WRU / QPS",
+          "title": "WRU Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -19189,7 +19189,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "KV Request Count / QPS",
+          "title": "KV Request Count Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -19404,7 +19404,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Read Byte / QPS",
+          "title": "Read Byte Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -19619,7 +19619,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Write Byte / QPS",
+          "title": "Write Byte Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -19834,7 +19834,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "KV CPU / QPS",
+          "title": "KV CPU Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
@@ -20049,7 +20049,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "SQL CPU / QPS",
+          "title": "SQL CPU Per Query",
           "tooltip": {
             "msResolution": true,
             "shared": true,
