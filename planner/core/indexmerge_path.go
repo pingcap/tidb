@@ -587,8 +587,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 		}
 
 		accessFilters, remainingFilters := ds.collectFilters4MVIndex(filters, idxCols)
-		if len(accessFilters) == 0 && // cannot use any filter on this MVIndex
-			!ds.possibleAccessPaths[idx].Forced { // whether this index is forced by use-index hint
+		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
 
