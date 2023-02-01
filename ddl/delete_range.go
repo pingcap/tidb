@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
@@ -301,7 +302,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 					return errors.Trace(err)
 				}
 			}
-			return nil
+			// logical table may contain global index regions, so delete the logical table range.
+			startKey = tablecodec.EncodeTablePrefix(tableID)
+			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+			elemID := ea.allocForPhysicalID(tableID)
+			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
 		}
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
@@ -361,6 +366,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			return errors.Trace(err)
 		}
 		if len(partitionIDs) > 0 {
+			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
+				if val.(bool) {
+					panic("drop global index must not delete partition index range")
+				}
+			})
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)

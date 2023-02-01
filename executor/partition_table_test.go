@@ -3164,6 +3164,32 @@ partition p2 values less than (10))`)
 	tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
 }
 
+func TestDropGlobalIndex(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists p")
+	tk.MustExec(`create table p (id int, c int) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	tk.MustExec("alter table p add unique idx(id)")
+
+	failpoint.Enable("github.com/pingcap/tidb/ddl/checkDropGlobalIndex", `return(true)`)
+	tk.MustExec("alter table p drop index idx")
+	failpoint.Disable("github.com/pingcap/tidb/ddl/checkDropGlobalIndex")
+}
+
+
 func TestIssue20028(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
