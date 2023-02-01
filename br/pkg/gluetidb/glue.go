@@ -288,6 +288,8 @@ func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, tabl
 		return errors.Trace(err)
 	}
 	gs.se.SetValue(sessionctx.QueryString, query)
+	// Disable foreign key check when batch create tables.
+	gs.se.GetSessionVars().ForeignKeyChecks = false
 	// Clone() does not clone partitions yet :(
 	table = table.Clone()
 	if table.Partition != nil {
