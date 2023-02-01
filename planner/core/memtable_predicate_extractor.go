@@ -1428,8 +1428,8 @@ func (e *StatementsSummaryExtractor) Extract(
 	// Extract time range
 	// SELECT ... WHERE summary_begin_time <= endTime AND summary_end_time >= startTime
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone
-	remained, _, endTime := e.extractTimeRange(sctx, schema, names, remained, "summary_begin_time", tz)
-	remained, startTime, _ := e.extractTimeRange(sctx, schema, names, remained, "summary_end_time", tz)
+	_, _, endTime := e.extractTimeRange(sctx, schema, names, remained, "summary_begin_time", tz)
+	_, startTime, _ := e.extractTimeRange(sctx, schema, names, remained, "summary_end_time", tz)
 	e.setTimeRange(startTime, endTime)
 	if len(e.TimeRanges) > 0 && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime) {
 		e.SkipRequest = true
