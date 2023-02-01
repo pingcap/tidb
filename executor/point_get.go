@@ -175,6 +175,16 @@ func (e *PointGetExecutor) buildVirtualColumnInfo() {
 	}
 }
 
+func (e *PointGetExecutor) getSnapshot() (kv.Snapshot, error) {
+	if e.snapshot == nil {
+		if err := e.initSnapshot(); err != nil {
+			return nil, err
+		}
+	}
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	return e.snapshot, nil
+}
+
 func (e *PointGetExecutor) initSnapshot() error {
 	if e.snapshot != nil {
 		return nil
@@ -201,9 +211,6 @@ func (e *PointGetExecutor) initSnapshot() error {
 
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
-	if err := e.initSnapshot(); err != nil {
-		return err
-	}
 	var err error
 	e.txn, err = e.ctx.Txn(false)
 	if err != nil {
@@ -212,7 +219,6 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
-	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 
@@ -514,11 +520,15 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
+	snapshot, err := e.getSnapshot()
+	if err != nil {
+		return nil, err
+	}
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {
 			cacheDB := e.ctx.GetStore().GetMemCache()
-			val, err = cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
+			val, err = cacheDB.UnionGet(ctx, e.tblInfo.ID, snapshot, key)
 			if err != nil {
 				return nil, err
 			}
@@ -526,7 +536,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
-	return e.snapshot.Get(ctx, key)
+	return snapshot.Get(ctx, key)
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
