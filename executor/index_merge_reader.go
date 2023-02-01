@@ -612,6 +612,11 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
 			var task *indexMergeTableTask
 			util.WithRecovery(
+				// Note we use the address of `task` as the argument of both `pickAndExecTask` and `handlePickAndExecTaskPanic`
+				// because `task` is expected to be assigned in `pickAndExecTask`, and this assignment should also be visible
+				// in `handlePickAndExecTaskPanic` since it will get `doneCh` from `task`. Golang always pass argument by value,
+				// so if we don't use the address of `task` as the argument, the assignment to `task` in `pickAndExecTask` is
+				// not visible in `handlePickAndExecTaskPanic`
 				func() { worker.pickAndExecTask(ctx1, &task) },
 				worker.handlePickAndExecTaskPanic(ctx1, &task),
 			)
