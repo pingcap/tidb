@@ -1656,6 +1656,8 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		// the table when table is created.
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
+		// TODO: use a failpoint
+		needSplit = true
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
