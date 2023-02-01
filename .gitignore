@@ -30,6 +30,9 @@ export-20*/
 # Files generated when testing
 out
 /_bazel
-/bazel-*
+bazel-bin
+bazel-out
+bazel-testlogs
+bazel-tidb
 .ijwb/
 /oom_record/
