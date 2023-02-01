@@ -182,7 +182,7 @@ var (
 	AggressiveLockingUsageCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
+			Subsystem: "session",
 			Name:      "transaction_aggressive_locking_usage",
 			Help:      "The counter of statements and transactions that aggressive locking is used or takes effect",
 		}, []string{LblType})
