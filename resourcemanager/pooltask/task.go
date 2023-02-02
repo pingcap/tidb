@@ -128,7 +128,6 @@ type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
 // TaskController is a controller that can control or watch the pool.
 type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
 	pool           GPool[T, U, C, CT, TF]
-	closeCh        chan struct{}
 	productCloseCh chan struct{}
 	wg             *sync.WaitGroup
 	prodWg         *sync.WaitGroup
@@ -137,11 +136,10 @@ type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
 }
 
 // NewTaskController create a controller to deal with pooltask's status.
-func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh, productCloseCh chan struct{}, wg, prodWg *sync.WaitGroup, resultCh chan U) TaskController[T, U, C, CT, TF] {
+func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, productCloseCh chan struct{}, wg, prodWg *sync.WaitGroup, resultCh chan U) TaskController[T, U, C, CT, TF] {
 	return TaskController[T, U, C, CT, TF]{
 		pool:           p,
 		taskID:         taskID,
-		closeCh:        closeCh,
 		productCloseCh: productCloseCh,
 		wg:             wg,
 		prodWg:         prodWg,
@@ -151,7 +149,7 @@ func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U
 
 // Wait is to wait the pool task to stop.
 func (t *TaskController[T, U, C, CT, TF]) Wait() {
-	<-t.closeCh
+	t.prodWg.Wait()
 	t.wg.Wait()
 	close(t.resultCh)
 	t.pool.DeleteTask(t.taskID)
