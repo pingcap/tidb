@@ -19,6 +19,11 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/mpp"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tipb/go-tipb"
+>>>>>>> 07af605381 (*: add memory tracker for mppIterator (#40901))
 )
 
 // MPPTaskMeta means the meta info such as location of a mpp task.
@@ -81,7 +86,11 @@ type MPPClient interface {
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, map[string]time.Time, time.Duration) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
+<<<<<<< HEAD
 	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, startTs uint64) Response
+=======
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID MPPQueryID, mppVersion MppVersion, memTracker *memory.Tracker) Response
+>>>>>>> 07af605381 (*: add memory tracker for mppIterator (#40901))
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
