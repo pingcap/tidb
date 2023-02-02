@@ -657,9 +657,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SchemaState = model.StateWriteReorganization
 
 		if job.MultiSchemaInfo == nil {
-			if err := initDistReorg(job.ReorgMeta, d.store, schemaID, tblInfo); err != nil {
-				return ver, errors.Trace(err)
-			}
+			initDistReorg(job.ReorgMeta)
 		}
 	case model.StateWriteReorganization:
 		// reorganization -> public
@@ -1802,6 +1800,11 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
+	// TODO: Support typeAddIndexMergeTmpWorker.
+	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+		return w.controlWriteTableRecord(w.sessPool, t, typeAddIndexWorker, reorgInfo)
+	}
+
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
@@ -1814,7 +1817,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				break
 			}
-			finish, err = w.updateReorgInfo(tbl, reorgInfo)
+			finish, err = updateReorgInfo(w.sessPool, tbl, reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1822,15 +1825,6 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	} else {
 		//nolint:forcetypeassert
 		phyTbl := t.(table.PhysicalTable)
-		// TODO: Support typeAddIndexMergeTmpWorker.
-		if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-			sCtx, err := w.sessPool.get()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			defer w.sessPool.put(sCtx)
-			return w.controlWritePhysicalTableRecord(newSession(sCtx), phyTbl, typeAddIndexWorker, reorgInfo)
-		}
 		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
 	}
 	return errors.Trace(err)
@@ -1839,7 +1833,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 // updateReorgInfo will find the next partition according to current reorgInfo.
 // If no more partitions, or table t is not a partitioned table, returns true to
 // indicate that the reorganize work is finished.
-func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+func updateReorgInfo(sessPool *sessionPool, t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return true, nil
@@ -1883,7 +1877,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	reorg.PhysicalTableID = pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
+	err = reorg.UpdateReorgMeta(reorg.StartKey, sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo",
 		zap.Int64("jobID", reorg.Job.ID),
 		zap.Stringer("element", reorg.currElement),

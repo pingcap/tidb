@@ -639,7 +639,7 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 	sqlBuilder := strings.Builder{}
 	sqlBuilder.WriteString("insert into mysql.")
 	sqlBuilder.WriteString(tableName)
-	sqlBuilder.WriteString("(id, ddl_job_id, ele_id, ele_key, store_id, type, exec_id, exec_lease, state, curr_key, start_key, end_key, start_ts, finish_ts, row_count, backfill_meta) values")
+	sqlBuilder.WriteString("(id, ddl_job_id, ele_id, ele_key, ddl_physical_id, type, exec_id, exec_lease, state, curr_key, start_key, end_key, start_ts, finish_ts, row_count, backfill_meta) values")
 	jobs := ""
 	for i, bj := range backfillJobs {
 		mateByte, err := bj.Meta.Encode()
@@ -650,8 +650,8 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 		if i != 0 {
 			sqlBuilder.WriteString(", ")
 		}
-		sqlBuilder.WriteString(fmt.Sprintf("(%d, %d, %d, %s, %d, %d, '%s', '%s', %d, %s, %s, %s, %d, %d, %d, %s)",
-			bj.ID, bj.JobID, bj.EleID, wrapKey2String(bj.EleKey), bj.StoreID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State, wrapKey2String(bj.CurrKey),
+		sqlBuilder.WriteString(fmt.Sprintf("(%d, %d, %d, %s, %d, %d, '%s', '%s', %d, %s, %s, %s, %d, %d, %d, %s)", bj.ID, bj.JobID, bj.EleID,
+			wrapKey2String(bj.EleKey), bj.PhysicalTableID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State, wrapKey2String(bj.CurrKey),
 			wrapKey2String(bj.StartKey), wrapKey2String(bj.EndKey), bj.StartTS, bj.FinishTS, bj.RowCount, wrapKey2String(mateByte)))
 		jobs += fmt.Sprintf("job:%#v; ", bj.AbbrStr())
 	}
@@ -844,21 +844,21 @@ func GetBackfillJobs(sess *session, tblName, condition string, label string) ([]
 	bJobs := make([]*BackfillJob, 0, len(rows))
 	for _, row := range rows {
 		bfJob := BackfillJob{
-			ID:            row.GetInt64(0),
-			JobID:         row.GetInt64(1),
-			EleID:         row.GetInt64(2),
-			EleKey:        row.GetBytes(3),
-			StoreID:       row.GetInt64(4),
-			Tp:            backfillerType(row.GetInt64(5)),
-			InstanceID:    row.GetString(6),
-			InstanceLease: row.GetTime(7),
-			State:         model.JobState(row.GetInt64(8)),
-			CurrKey:       row.GetBytes(9),
-			StartKey:      row.GetBytes(10),
-			EndKey:        row.GetBytes(11),
-			StartTS:       row.GetUint64(12),
-			FinishTS:      row.GetUint64(13),
-			RowCount:      row.GetInt64(14),
+			ID:              row.GetInt64(0),
+			JobID:           row.GetInt64(1),
+			EleID:           row.GetInt64(2),
+			EleKey:          row.GetBytes(3),
+			PhysicalTableID: row.GetInt64(4),
+			Tp:              backfillerType(row.GetInt64(5)),
+			InstanceID:      row.GetString(6),
+			InstanceLease:   row.GetTime(7),
+			State:           model.JobState(row.GetInt64(8)),
+			CurrKey:         row.GetBytes(9),
+			StartKey:        row.GetBytes(10),
+			EndKey:          row.GetBytes(11),
+			StartTS:         row.GetUint64(12),
+			FinishTS:        row.GetUint64(13),
+			RowCount:        row.GetInt64(14),
 		}
 		bfJob.Meta = &model.BackfillMeta{}
 		err = bfJob.Meta.Decode(row.GetBytes(15))

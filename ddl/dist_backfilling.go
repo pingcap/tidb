@@ -219,9 +219,9 @@ func (bwm *backfilWorkerManager) close(d *ddl) error {
 func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBackfillTask, error) {
 	pt := t.(table.PhysicalTable)
 	if tbl, ok := t.(table.PartitionedTable); ok {
-		pt = tbl.GetPartition(bfJob.Meta.PhysicalTableID)
+		pt = tbl.GetPartition(bfJob.PhysicalTableID)
 		if pt == nil {
-			return nil, dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", bfJob.Meta.PhysicalTableID, t.Meta().ID)
+			return nil, dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", bfJob.PhysicalTableID, t.Meta().ID)
 		}
 	}
 	endKey := bfJob.EndKey

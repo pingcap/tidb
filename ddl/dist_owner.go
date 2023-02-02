@@ -20,13 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -35,25 +35,54 @@ import (
 // CheckBackfillJobFinishInterval is export for test.
 var CheckBackfillJobFinishInterval = 300 * time.Millisecond
 
-func initDistReorg(reorgMeta *model.DDLReorgMeta, store kv.Storage, schemaID int64, tblInfo *model.TableInfo) error {
-	tbl, err := getTable(store, schemaID, tblInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
+const (
+	distPhysicalTableConcurrency = 16
+)
 
+func initDistReorg(reorgMeta *model.DDLReorgMeta) {
 	isDistReorg := variable.DDLEnableDistributeReorg.Load()
-	// TODO: Support partitionTable.
-	if _, ok := tbl.(table.PartitionedTable); ok {
-		isDistReorg = false
-	}
 	reorgMeta.IsDistReorg = isDistReorg
-	return nil
 }
 
-func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
+type maxBackfillJob struct {
+	pTblID        int64
+	backfillJobID int64
+	endKey        []byte
+}
+
+func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 	if startKey == nil && endKey == nil {
 		return nil
+	}
+
+	sCtx, err := sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.put(sCtx)
+	sess := newSession(sCtx)
+
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		var finish bool
+		for !finish {
+			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
+			if p == nil {
+				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+			}
+			err = w.addPhysicalTableIndex(p, reorgInfo)
+			if err != nil {
+				break
+			}
+			finish, err = updateReorgInfo(sessPool, tbl, reorgInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	} else {
+		//nolint:forcetypeassert
+		phyTbl := t.(table.PhysicalTable)
+		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
 	}
 
 	ddlJobID := reorgInfo.Job.ID
@@ -69,7 +98,7 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 	// Make timestamp type can be inserted ZeroTimestamp.
 	sess.GetSessionVars().SQLMode = mysql.ModeNone
 	currBackfillJobID := int64(1)
-	err := checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEle.ID, currEle.TypeKey)
+	err = checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEle.ID, currEle.TypeKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -84,13 +113,18 @@ func (dc *ddlCtx) controlWritePhysicalTableRecord(sess *session, t table.Physica
 
 	var isUnique bool
 	if bfWorkerType == typeAddIndexWorker {
-		idxInfo := model.FindIndexInfoByID(t.Meta().Indices, currEle.ID)
+		idxInfo := model.FindIndexInfoByID(pTbl.Meta().Indices, currEle.ID)
 		isUnique = idxInfo.Unique
 	}
-	err = dc.splitTableToBackfillJobs(sess, reorgInfo, t, isUnique, bfWorkerType, startKey, currBackfillJobID)
+	// TODO: endkey
+	// TODO: currBackfillJobID
+	wg := tidbutil.WaitGroupWrapper{}
+	isMultiPhyTbl := true
+	err = dc.splitTableToBackfillJobs(sess, reorgInfo, isMultiPhyTbl, pTbl, isUnique, bfWorkerType, startKey, endKey, genTaskBatch, minGenTaskBatch, currBackfillJobID)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	wg.Wait()
 	return checkReorgJobFinished(dc.ctx, sess, &dc.reorgCtx, ddlJobID, currEle)
 }
 
@@ -217,14 +251,15 @@ func checkAndHandleInterruptedBackfillJobs(sess *session, ddlJobID, currEleID in
 	return errors.Trace(err)
 }
 
-func checkBackfillJobCount(sess *session, ddlJobID, currEleID int64, currEleKey []byte) (backfillJobCnt int, err error) {
+func checkBackfillJobCount(sess *session, ddlJobID, currEleID int64, currEleKey []byte, pTblID int64) (backfillJobCnt int, err error) {
 	err = checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEleID, currEleKey)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	backfillJobCnt, err = GetBackfillJobCount(sess, BackfillTable, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s",
-		ddlJobID, currEleID, wrapKey2String(currEleKey)), "check_backfill_job_count")
+	backfillJobCnt, err = GetBackfillJobCount(sess, BackfillTable,
+		fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s and ddl_physical_id = %d",
+			ddlJobID, currEleID, wrapKey2String(currEleKey), pTblID), "check_backfill_job_count")
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

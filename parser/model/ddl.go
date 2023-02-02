@@ -437,10 +437,9 @@ type JobMeta struct {
 
 // BackfillMeta is meta info of the backfill job.
 type BackfillMeta struct {
-	PhysicalTableID int64         `json:"physical_table_id"`
-	IsUnique        bool          `json:"is_unique"`
-	EndInclude      bool          `json:"end_include"`
-	Error           *terror.Error `json:"err"`
+	IsUnique   bool          `json:"is_unique"`
+	EndInclude bool          `json:"end_include"`
+	Error      *terror.Error `json:"err"`
 
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
