@@ -530,9 +530,8 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 	if distinct {
 		h, err := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommon)
 		return true, h, err
-	} else {
-		return true, nil, nil
 	}
+	return true, nil, nil
 }
 
 func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, distinct bool,
@@ -554,9 +553,8 @@ func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 				return false, nil, err
 			}
 			return true, originHandle, err
-		} else {
-			return false, nil, nil
 		}
+		return false, nil, nil
 	}
 	originValInTmp, deletedHandle, deleted, _, _ := tablecodec.DecodeTempIndexValue(tempVal, isCommon)
 	if deleted {
@@ -585,17 +583,15 @@ func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 			}
 			// The row exists. This is the duplicated key.
 			return true, originHandle, nil
-		} else {
-			return false, nil, nil
 		}
+		return false, nil, nil
 	}
 	// The value in temp index is not the delete marker.
 	if distinct {
 		h, err := tablecodec.DecodeHandleInUniqueIndexValue(originValInTmp, isCommon)
 		return true, h, err
-	} else {
-		return true, nil, nil
 	}
+	return true, nil, nil
 }
 
 func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
