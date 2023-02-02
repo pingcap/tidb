@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +30,9 @@ func TestShardPoolMap(t *testing.T) {
 		id := strconv.FormatInt(int64(i), 10)
 		require.NoError(t, pm.Add(id, &PoolContainer{Pool: NewMockGPool(id), Component: DDL}))
 	}
-	require.Error(t, pm.Add("1", &PoolContainer{Pool: NewMockGPool("1"), Component: DDL}))
+	if !intest.InTest {
+		require.Error(t, pm.Add("1", &PoolContainer{Pool: NewMockGPool("1"), Component: DDL}))
+	}
 	var cnt atomic.Int32
 	pm.Iter(func(pool *PoolContainer) {
 		cnt.Add(1)

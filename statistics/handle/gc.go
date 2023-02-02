@@ -54,8 +54,11 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		if err := h.gcTableStats(is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
-		if err := h.gcHistoryStatsFromKV(row.GetInt64(0)); err != nil {
-			return errors.Trace(err)
+		_, existed := is.TableByID(row.GetInt64(0))
+		if !existed {
+			if err := h.gcHistoryStatsFromKV(row.GetInt64(0)); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	if err := h.ClearOutdatedHistoryStats(); err != nil {

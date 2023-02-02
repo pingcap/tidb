@@ -55,6 +55,7 @@ go_test(
     ],
     embed = [":ttlworker"],
     flaky = True,
+    race = "on",
     deps = [
         "//domain",
         "//infoschema",
@@ -69,6 +70,7 @@ go_test(
         "//testkit",
         "//ttl/cache",
         "//ttl/client",
+        "//ttl/metrics",
         "//ttl/session",
         "//types",
         "//util/chunk",
@@ -76,6 +78,7 @@ go_test(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_time//rate",
