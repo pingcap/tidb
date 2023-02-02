@@ -319,7 +319,7 @@ func BuildBackupRangeAndSchema(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) {
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
 			continue
 		}
 
