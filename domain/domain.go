@@ -114,9 +114,9 @@ type Domain struct {
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
 	// `unprefixedEtcdCli` will never set etcd namespace prefix by keyspace.
-	// It's only used in storeMinStartTS and RemoveMinStartTS now.
-	// It's must be used when the etcd path isn't need to separate by keyspaces.
-	// See: https://github.com/pingcap/tidb/pull/39685
+	// It only used in storeMinStartTS and RemoveMinStartTS now.
+	// It must be used when the etcd path isn't need to separate by keyspace.
+	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
 	unprefixedEtcdCli       *clientv3.Client
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
