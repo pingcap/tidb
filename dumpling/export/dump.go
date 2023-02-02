@@ -1564,7 +1564,10 @@ func setSessionParam(d *Dumper) error {
 	if si.ServerType == version.ServerTypeTiDB && conf.TiDBMemQuotaQuery != UnspecifiedSize {
 		sessionParam[TiDBMemQuotaQueryName] = conf.TiDBMemQuotaQuery
 	}
-	var err error
+	var (
+		err               error
+		ignorableSnapshot = false
+	)
 	if snapshot != "" {
 		if si.ServerType != version.ServerTypeTiDB {
 			return errors.New("snapshot consistency is not supported for this server")
@@ -1573,13 +1576,14 @@ func setSessionParam(d *Dumper) error {
 			conf.ServerInfo.HasTiKV, err = CheckTiDBWithTiKV(pool)
 			if err != nil {
 				d.L().Info("cannot check whether TiDB has TiKV, will apply tidb_snapshot by default. This won't affect dump process", log.ShortError(err))
+				ignorableSnapshot = true
 			}
 			if conf.ServerInfo.HasTiKV {
 				sessionParam["tidb_snapshot"] = snapshot
 			}
 		}
 	}
-	if d.dbHandle, err = resetDBWithSessionParams(d.tctx, pool, conf.GetDriverConfig(""), conf.SessionParams); err != nil {
+	if d.dbHandle, err = resetDBWithSessionParams(d.tctx, pool, conf.GetDriverConfig(""), conf.SessionParams, ignorableSnapshot); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
