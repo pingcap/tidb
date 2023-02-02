@@ -3396,65 +3396,69 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	}
 	rows := make([][]types.Datum, 0, len(resourceGroups))
 	for _, group := range resourceGroups {
-		mode := ""
+		//mode := ""
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
-			mode = "RU_MODE"
-			rruSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.RRU.Settings.String(), ":")[1], " "))
+			//mode = "RU_MODE"
+			ruSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.RU.Settings.String(), ":")[1], " "))
 			if err != nil {
-				return errors.Errorf("invalid fill rate of RRU for resource group %s", group.Name)
+				return errors.Errorf("invalid fill rate of RU for resource group %s", group.Name)
 			}
-			wruSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.WRU.Settings.String(), ":")[1], " "))
-			if err != nil {
-				return errors.Errorf("invalid fill rate of WRU for resource group %s", group.Name)
-			}
-			row := types.MakeDatums(
-				group.Name,
-				mode,
-				rruSetting,
-				int(group.RUSettings.RRU.Tokens),
-				wruSetting,
-				int(group.RUSettings.WRU.Tokens),
-				nil,
-				nil,
-				nil,
-			)
-			rows = append(rows, row)
-		case rmpb.GroupMode_RawMode:
-			mode = "RAW_MODE"
-			cpuSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.Cpu.Settings.String(), ":")[1], " "))
-			if err != nil {
-				return errors.Errorf("invalid fill rate of CPU for resource group %s", group.Name)
-			}
-			readIoSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoRead.Settings.String(), ":")[1], " "))
-			if err != nil {
-				return errors.Errorf("invalid fill rate of READ for resource group %s", group.Name)
-			}
-			writeIoSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoWrite.Settings.String(), ":")[1], " "))
-			if err != nil {
-				return errors.Errorf("invalid fill rate of WRITE for resource group %s", group.Name)
+			burstable := false
+			if group.RUSettings.RU.GetSettings().BurstLimit < 0 {
+				burstable = true
 			}
 			row := types.MakeDatums(
 				group.Name,
-				mode,
-				nil,
-				nil,
-				nil,
-				nil,
-				cpuSetting,
-				readIoSetting,
-				writeIoSetting,
+				//mode,
+				ruSetting,
+				int(group.RUSettings.RU.Tokens),
+				//nil,
+				//nil,
+				//nil,
+				burstable,
 			)
 			rows = append(rows, row)
+		/*
+			case rmpb.GroupMode_RawMode:
+				mode = "RAW_MODE"
+				cpuSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.Cpu.Settings.String(), ":")[1], " "))
+				if err != nil {
+					return errors.Errorf("invalid fill rate of CPU for resource group %s", group.Name)
+				}
+				readIoSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoRead.Settings.String(), ":")[1], " "))
+				if err != nil {
+					return errors.Errorf("invalid fill rate of READ for resource group %s", group.Name)
+				}
+				writeIoSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoWrite.Settings.String(), ":")[1], " "))
+				if err != nil {
+					return errors.Errorf("invalid fill rate of WRITE for resource group %s", group.Name)
+				}
+
+				burstable := false
+				if group.RawResourceSettings. < 0 {
+					burstable = true
+				}
+				row := types.MakeDatums(
+					group.Name,
+					mode,
+					nil,
+					nil,
+					cpuSetting,
+					readIoSetting,
+					writeIoSetting,
+			        burstable,
+				)
+				rows = append(rows, row)
+		*/
 		default:
-			mode = "UNKNOWN_MODE"
+			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
-				mode,
-				nil,
-				nil,
-				nil,
-				nil,
+				//mode,
+				//nil,
+				//nil,
+				//nil,
 				nil,
 				nil,
 				nil,

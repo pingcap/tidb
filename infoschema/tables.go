@@ -1594,15 +1594,13 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 
 var tableResourceGroupsCols = []columnInfo{
 	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
-	{name: "MODE", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
-	{name: "RRU", tp: mysql.TypeLonglong, size: 21},
-	{name: "RRU_TOKEN", tp: mysql.TypeLonglong, size: 21},
-	{name: "WRU", tp: mysql.TypeLonglong, size: 21},
-	{name: "WRU_TOKEN", tp: mysql.TypeLonglong, size: 21},
-	{name: "CPU", tp: mysql.TypeLonglong, size: 21},
-	{name: "READ_BANDWIDTH", tp: mysql.TypeLonglong, size: 21},
-	{name: "WRITE_BANDWIDTH", tp: mysql.TypeLonglong, size: 21},
-	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 5},
+	//{name: "MODE", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
+	{name: "RU", tp: mysql.TypeLonglong, size: 21},
+	{name: "RU_TOKEN", tp: mysql.TypeLonglong, size: 21},
+	//{name: "CPU", tp: mysql.TypeLonglong, size: 21},
+	//{name: "READ_BANDWIDTH", tp: mysql.TypeLonglong, size: 21},
+	//{name: "WRITE_BANDWIDTH", tp: mysql.TypeLonglong, size: 21},
+	{name: "BURSTABLE", tp: mysql.TypeBit},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
