@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -629,8 +630,39 @@ func TestDispatchTaskRetry(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "3*return(true)"))
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from t group by b").Check(testkit.Rows("4"))
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"))
+}
+
+func TestMppVersionError(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("insert into t values(1,0),(2,0),(3,0),(4,0)")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	{
+		item := fmt.Sprintf("return(%d)", kv.GetNewestMppVersion()+1)
+		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError", item))
+	}
+	{
+		err := tk.QueryToErr("select count(*) from t group by b")
+		require.Error(t, err)
+	}
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError"))
+	{
+		item := fmt.Sprintf("return(%d)", kv.GetNewestMppVersion())
+		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError", item))
+	}
+	{
+		tk.MustQuery("select count(*) from t group by b").Check(testkit.Rows("4"))
+	}
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/MppVersionError"))
 }
 
 func TestCancelMppTasks(t *testing.T) {
@@ -1325,15 +1357,15 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustQuery("explain select * from t1 where c1 < 2").Check(testkit.Rows(
 		"PartitionUnion_10 9970.00 root  ",
-		"├─TableReader_15 3323.33 root  data:ExchangeSender_14",
+		"├─TableReader_15 3323.33 root  MppVersion: 1, data:ExchangeSender_14",
 		"│ └─ExchangeSender_14 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_13 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"│     └─TableFullScan_12 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
-		"├─TableReader_19 3323.33 root  data:ExchangeSender_18",
+		"├─TableReader_19 3323.33 root  MppVersion: 1, data:ExchangeSender_18",
 		"│ └─ExchangeSender_18 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"│   └─Selection_17 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"│     └─TableFullScan_16 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
-		"└─TableReader_23 3323.33 root  data:ExchangeSender_22",
+		"└─TableReader_23 3323.33 root  MppVersion: 1, data:ExchangeSender_22",
 		"  └─ExchangeSender_22 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
