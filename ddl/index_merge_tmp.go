@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -198,6 +199,12 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 		return nil
 	})
 
+	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && MockDMLExecutionMerging != nil {
+			MockDMLExecutionMerging()
+		}
+	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexMergeDataInTxn", 3000)
 	return
 }
