@@ -1404,9 +1404,6 @@ type StatementsSummaryExtractor struct {
 	// Digests represents digest applied to, and we should apply all digest if there is no digest specified.
 	// e.g: SELECT * FROM STATEMENTS_SUMMARY WHERE digest='8019af26debae8aa7642c501dbc43212417b3fb14e6aec779f709976b7e521be'
 	Digests set.StringSet
-	// Enable is true means the executor should use digest to locate statement summary.
-	// Enable is false, means the executor should keep the behavior compatible with before.
-	Enable bool
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1422,8 +1419,7 @@ func (e *StatementsSummaryExtractor) Extract(
 		e.SkipRequest = true
 		return nil
 	}
-	if len(predicates) != len(remained) {
-		e.Enable = true
+	if !digests.Empty() {
 		e.Digests = digests
 	}
 	// Extract time range
@@ -1444,7 +1440,7 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 		return "skip_request: true"
 	}
 	buf := bytes.NewBuffer(nil)
-	if e.Enable {
+	if !e.Digests.Empty() {
 		buf.WriteString(fmt.Sprintf("digests: [%s], ", extractStringFromStringSet(e.Digests)))
 	}
 	if len(e.TimeRanges) > 0 && p.ctx.GetSessionVars() != nil && p.ctx.GetSessionVars().StmtCtx != nil {

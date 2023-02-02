@@ -119,7 +119,7 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 	}
 
 	reader := stmtsummary.NewStmtSummaryReader(user, priv, columns, instanceAddr, tz)
-	if e.extractor != nil && e.extractor.Enable {
+	if e.extractor != nil && !e.extractor.Digests.Empty() {
 		// set checker to filter out statements not matching the given digests
 		checker := stmtsummary.NewStmtSummaryChecker(e.extractor.Digests)
 		reader.SetChecker(checker)
@@ -269,7 +269,7 @@ func (r *stmtSummaryRetrieverV2) getRuntimeStats() execdetails.RuntimeStats {
 }
 
 func (r *stmtSummaryRetrieverV2) getDigestsFromExtractor() set.StringSet {
-	if r.extractor != nil && r.extractor.Enable {
+	if r.extractor != nil && !r.extractor.Digests.Empty() {
 		return r.extractor.Digests
 	}
 	return nil
