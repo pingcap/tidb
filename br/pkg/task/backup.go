@@ -78,15 +78,15 @@ type CompressionConfig struct {
 type BackupConfig struct {
 	Config
 
-	TimeAgo          time.Duration              `json:"time-ago" toml:"time-ago"`
-	BackupTS         uint64                     `json:"backup-ts" toml:"backup-ts"`
-	LastBackupTS     uint64                     `json:"last-backup-ts" toml:"last-backup-ts"`
-	GCTTL            int64                      `json:"gc-ttl" toml:"gc-ttl"`
-	RemoveSchedulers bool                       `json:"remove-schedulers" toml:"remove-schedulers"`
-	IgnoreStats      bool                       `json:"ignore-stats" toml:"ignore-stats"`
-	UseBackupMetaV2  bool                       `json:"use-backupmeta-v2"`
-	UseCheckpoint    bool                       `json:"use-checkpoint" toml:"use-checkpoint"`
-	ReplicaRead      backuppb.BackupReplicaRead `json:"backup-replica-read" toml:"backup-replica-read"`
+	TimeAgo          time.Duration     `json:"time-ago" toml:"time-ago"`
+	BackupTS         uint64            `json:"backup-ts" toml:"backup-ts"`
+	LastBackupTS     uint64            `json:"last-backup-ts" toml:"last-backup-ts"`
+	GCTTL            int64             `json:"gc-ttl" toml:"gc-ttl"`
+	RemoveSchedulers bool              `json:"remove-schedulers" toml:"remove-schedulers"`
+	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
+	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
+	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
+	ReplicaReadLabel map[string]string `json:"backup-replica-read-label" toml:"backup-replica-read-label"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -142,7 +142,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
-	flags.String(flagBackupReplicaRead, "leader", "specify the replica read type for backup, available values are 'leader', 'leader-and-follower' or 'learner'")
+	flags.String(flagBackupReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -247,7 +247,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		}
 	}
 
-	cfg.ReplicaRead, err = parseReplicaReadFlag(flags)
+	cfg.ReplicaReadLabel, err = parseReplicaReadLabelFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -494,7 +494,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		CompressionType:  cfg.CompressionType,
 		CompressionLevel: cfg.CompressionLevel,
 		CipherInfo:       &cfg.CipherInfo,
-		ReplicaRead:      cfg.ReplicaRead,
+		ReplicaRead:      len(cfg.ReplicaReadLabel) != 0,
 	}
 	brVersion := g.GetVersion()
 	clusterVersion, err := mgr.GetClusterVersion(ctx)
@@ -629,7 +629,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}()
 	}
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaRead, metawriter, progressCallBack)
+	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -748,19 +748,14 @@ func parseCompressionType(s string) (backuppb.CompressionType, error) {
 	return ct, nil
 }
 
-func parseReplicaReadFlag(flags *pflag.FlagSet) (backuppb.BackupReplicaRead, error) {
-	replicaReadStr, err := flags.GetString(flagBackupReplicaRead)
+func parseReplicaReadLabelFlag(flags *pflag.FlagSet) (map[string]string, error) {
+	replicaReadLabelStr, err := flags.GetString(flagBackupReplicaReadLabel)
 	if err != nil {
-		return backuppb.BackupReplicaRead_LEADER, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	switch replicaReadStr {
-	case "leader":
-		return backuppb.BackupReplicaRead_LEADER, nil
-	case "leader-and-follower":
-		return backuppb.BackupReplicaRead_LEADER_AND_FOLLOWER, nil
-	case "learner":
-		return backuppb.BackupReplicaRead_LEARNER, nil
-	default:
-		return backuppb.BackupReplicaRead_LEADER, errors.Annotatef(berrors.ErrInvalidArgument, "invalid replica-read option: %s", replicaReadStr)
+	kv := strings.Split(replicaReadLabelStr, ":")
+	if len(kv) != 2 {
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "invalid replica read label '%s'", replicaReadLabelStr)
 	}
+	return map[string]string{kv[0]: kv[1]}, nil
 }

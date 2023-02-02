@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/ranger"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -764,7 +763,7 @@ func (bc *Client) BackupRanges(
 	ranges []rtree.Range,
 	request backuppb.BackupRequest,
 	concurrency uint,
-	replicaRead backuppb.BackupReplicaRead,
+	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
 ) error {
@@ -794,7 +793,7 @@ func (bc *Client) BackupRanges(
 		}
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
-			err := bc.BackupRange(elctx, req, replicaRead, pr, metaWriter, progressCallBack)
+			err := bc.BackupRange(elctx, req, replicaReadLabel, pr, metaWriter, progressCallBack)
 			if err != nil {
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
@@ -814,7 +813,7 @@ func (bc *Client) BackupRanges(
 func (bc *Client) BackupRange(
 	ctx context.Context,
 	request backuppb.BackupRequest,
-	replicaRead backuppb.BackupReplicaRead,
+	replicaReadLabel map[string]string,
 	progressRange *rtree.ProgressRange,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
@@ -839,6 +838,16 @@ func (bc *Client) BackupRange(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	var targetStores []*metapb.Store
+	var targetStoreIds map[uint64]struct{}
+	for _, store := range allStores {
+		for _, label := range store.Labels {
+			if val, ok := replicaReadLabel[label.Key]; ok && val == label.Value {
+				targetStores = append(targetStores, store)
+				targetStoreIds[store.GetId()] = struct{}{}
+			}
+		}
+	}
 
 	logutil.CL(ctx).Info("backup push down started")
 	// either the `incomplete` is origin range itself,
@@ -862,8 +871,8 @@ func (bc *Client) BackupRange(
 			req.EndKey = progressRange.Incomplete[0].EndKey
 		}
 
-		push := newPushDown(bc.mgr, len(allStores))
-		err = push.pushBackup(ctx, req, progressRange, allStores, bc.checkpointRunner, progressCallBack)
+		push := newPushDown(bc.mgr, len(targetStores))
+		err = push.pushBackup(ctx, req, progressRange, targetStores, bc.checkpointRunner, progressCallBack)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -872,7 +881,7 @@ func (bc *Client) BackupRange(
 
 	// Find and backup remaining ranges.
 	// TODO: test fine grained backup.
-	if err := bc.fineGrainedBackup(ctx, request, replicaRead, progressRange, progressCallBack); err != nil {
+	if err := bc.fineGrainedBackup(ctx, request, targetStoreIds, progressRange, progressCallBack); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -915,7 +924,7 @@ func (bc *Client) BackupRange(
 	return nil
 }
 
-func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, replicaRead backuppb.BackupReplicaRead) (*metapb.Peer, error) {
+func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, targetStoreIds map[uint64]struct{}) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
@@ -927,7 +936,7 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 			time.Sleep(time.Millisecond * time.Duration(100*i))
 			continue
 		}
-		if replicaRead == backuppb.BackupReplicaRead_LEADER {
+		if len(targetStoreIds) == 0 {
 			if region.Leader != nil {
 				log.Info("find leader",
 					zap.Reflect("Leader", region.Leader), logutil.Key("key", key))
@@ -936,19 +945,7 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 		} else {
 			candidates := make([]*metapb.Peer, 0, len(region.Meta.Peers))
 			for _, peer := range region.Meta.Peers {
-				if peer.Role == metapb.PeerRole_Learner {
-					// if the peer is a learner, we should check whether this is a TiKV learner or a TiFlash learner.
-					store, err := bc.mgr.GetPDClient().GetStore(ctx, peer.StoreId)
-					if err != nil {
-						log.Error("get store failed", zap.Error(err), zap.Reflect("region", region))
-						return nil, errors.Trace(err)
-					}
-					if engine.IsTiFlash(store) {
-						continue
-					}
-					candidates = append(candidates, peer)
-				} else if replicaRead != backuppb.BackupReplicaRead_LEARNER {
-					// if this peer is not a learner, it can only be added to the candidate list if the replica read is not learner.
+				if _, ok := targetStoreIds[peer.StoreId]; ok {
 					candidates = append(candidates, peer)
 				}
 			}
@@ -971,7 +968,7 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 func (bc *Client) fineGrainedBackup(
 	ctx context.Context,
 	req backuppb.BackupRequest,
-	replicaRead backuppb.BackupReplicaRead,
+	targetStoreIds map[uint64]struct{},
 	pr *rtree.ProgressRange,
 	progressCallBack func(ProgressUnit),
 ) error {
@@ -1022,7 +1019,7 @@ func (bc *Client) fineGrainedBackup(
 				for rg := range retry {
 					subReq := req
 					subReq.StartKey, subReq.EndKey = rg.StartKey, rg.EndKey
-					backoffMs, err := bc.handleFineGrained(ctx, boFork, subReq, replicaRead, respCh)
+					backoffMs, err := bc.handleFineGrained(ctx, boFork, subReq, targetStoreIds, respCh)
 					if err != nil {
 						errCh <- err
 						return
@@ -1174,10 +1171,10 @@ func (bc *Client) handleFineGrained(
 	ctx context.Context,
 	bo *tikv.Backoffer,
 	req backuppb.BackupRequest,
-	replicaRead backuppb.BackupReplicaRead,
+	targetStoreIds map[uint64]struct{},
 	respCh chan<- *backuppb.BackupResponse,
 ) (int, error) {
-	targetPeer, pderr := bc.findTargetPeer(ctx, req.StartKey, req.IsRawKv, replicaRead)
+	targetPeer, pderr := bc.findTargetPeer(ctx, req.StartKey, req.IsRawKv, targetStoreIds)
 	if pderr != nil {
 		return 0, errors.Trace(pderr)
 	}
