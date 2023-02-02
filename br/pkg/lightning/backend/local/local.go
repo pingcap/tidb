@@ -1615,6 +1615,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		// the table when table is created.
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
+		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+			needSplit = true
+		})
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
@@ -2004,7 +2007,8 @@ func nextKey(key []byte) []byte {
 
 	// in tikv <= 4.x, tikv will truncate the row key, so we should fetch the next valid row key
 	// See: https://github.com/tikv/tikv/blob/f7f22f70e1585d7ca38a59ea30e774949160c3e8/components/raftstore/src/coprocessor/split_observer.rs#L36-L41
-	if tablecodec.IsRecordKey(key) {
+	// we only do this for IntHandle, which is checked by length
+	if tablecodec.IsRecordKey(key) && len(key) == tablecodec.RecordRowKeyLen {
 		tableID, handle, _ := tablecodec.DecodeRecordKey(key)
 		nextHandle := handle.Next()
 		// int handle overflow, use the next table prefix as nextKey
@@ -2014,7 +2018,7 @@ func nextKey(key []byte) []byte {
 		return tablecodec.EncodeRowKeyWithHandle(tableID, nextHandle)
 	}
 
-	// if key is an index, directly append a 0x00 to the key.
+	// for index key and CommonHandle, directly append a 0x00 to the key.
 	res := make([]byte, 0, len(key)+1)
 	res = append(res, key...)
 	res = append(res, 0)
