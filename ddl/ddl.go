@@ -528,7 +528,6 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-// TODO: 1. real async; 2. exponential backoff.
 func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 	if d.ddlEventCh != nil {
 		if d.lease == 0 {

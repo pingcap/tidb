@@ -2620,3 +2620,38 @@ func TestStatsLockForDelta(t *testing.T) {
 	stats1 = h.GetTableStats(tableInfo1)
 	require.Equal(t, int64(30), stats1.Count)
 }
+
+func TestFillMissingStatsMeta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+
+	tk.MustQuery("select * from mysql.stats_meta").Check(testkit.Rows())
+
+	is := dom.InfoSchema()
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl1ID := tbl1.Meta().ID
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl2Info := tbl2.Meta()
+	tbl2ID := tbl2Info.ID
+	require.Len(t, tbl2Info.Partition.Definitions, 2)
+	p0ID := tbl2Info.Partition.Definitions[0].ID
+	p1ID := tbl2Info.Partition.Definitions[1].ID
+	h := dom.StatsHandle()
+
+	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	rows := tk.MustQuery(fmt.Sprintf("select version, modify_count, count from mysql.stats_meta where table_id = %v", tbl1ID)).Rows()
+	require.Len(t, rows, 1)
+	ver1, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, "2", rows[0][1])
+	require.Equal(t, "2", rows[0][2])
+	tk.MustExec("delete from t1 where a = 1")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+
+}
