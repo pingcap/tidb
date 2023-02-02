@@ -294,7 +294,7 @@ type Config struct {
 	TiFlashComputeAutoScalerType string `toml:"autoscaler-type" json:"autoscaler-type"`
 	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
 	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
-	ClusterName                  string `toml:"cluster-name" json:"cluster-name"`
+	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
 	// todo: remove this after AutoScaler is stable.
 	UseAutoScaler bool `toml:"use-autoscaler" json:"use-autoscaler"`
 
@@ -1013,8 +1013,8 @@ var defaultConf = Config{
 	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
 	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
+	AutoScalerClusterID:                  "",
 	UseAutoScaler:                        true,
-	ClusterName:                          "",
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,
@@ -1046,22 +1046,22 @@ func StoreGlobalConfig(config *Config) {
 	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
-// GetClusterName returns KeyspaceName or ClusterName.
-func GetClusterName() (string, error) {
+// GetAutoScalerClusterID returns KeyspaceName or AutoScalerClusterID.
+func GetAutoScalerClusterID() (string, error) {
 	c := GetGlobalConfig()
 	keyspaceName := c.KeyspaceName
-	clusterName := c.ClusterName
+	clusterID := c.AutoScalerClusterID
 
-	if keyspaceName != "" && clusterName != "" {
-		return "", errors.Errorf("config.KeyspaceName(%s) and config.ClusterName(%s) are not empty both", keyspaceName, clusterName)
+	if keyspaceName != "" && clusterID != "" {
+		return "", errors.Errorf("config.KeyspaceName(%s) and config.AutoScalerClusterID(%s) are not empty both", keyspaceName, clusterID)
 	}
-	if keyspaceName == "" && clusterName == "" {
-		return "", errors.Errorf("config.KeyspaceName and config.ClusterName are both empty")
+	if keyspaceName == "" && clusterID == "" {
+		return "", errors.Errorf("config.KeyspaceName and config.AutoScalerClusterID are both empty")
 	}
 
 	res := keyspaceName
 	if res == "" {
-		res = clusterName
+		res = clusterID
 	}
 	return res, nil
 }

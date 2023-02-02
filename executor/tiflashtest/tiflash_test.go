@@ -1277,11 +1277,13 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
 	err = tk.ExecToErr("select * from t;")
+	// Expect error, because TestAutoScaler return empty topo.
 	require.Contains(t, err.Error(), "Cannot find proper topo from AutoScaler")
 
 	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "", "", false)
 	require.NoError(t, err)
 	err = tk.ExecToErr("select * from t;")
+	// Expect error, because AWSAutoScaler is not setup, so http request will fail.
 	require.Contains(t, err.Error(), "[util:1815]Internal : get tiflash_compute topology failed")
 }
 

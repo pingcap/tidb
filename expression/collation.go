@@ -299,14 +299,6 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 	return ec, nil
 }
 
-// DeriveCollationFromExprs derives collation information from these expressions.
-// Deprecated, use CheckAndDeriveCollationFromExprs instead.
-// TODO: remove this function after the all usage is replaced by CheckAndDeriveCollationFromExprs
-func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
-	collation := inferCollation(exprs...)
-	return collation.Charset, collation.Collation
-}
-
 // CheckAndDeriveCollationFromExprs derives collation information from these expressions, return error if derives collation error.
 func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, evalType types.EvalType, args ...Expression) (et *ExprCollation, err error) {
 	ec := inferCollation(args...)
