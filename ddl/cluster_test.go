@@ -141,7 +141,8 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteOnly {
-			_, err := tk.Exec("alter table t add column b int")
+			tk1 := testkit.NewTestKit(t, store)
+			_, err := tk1.Exec("alter table test.t add column b int")
 			assert.ErrorContains(t, err, "Can't add ddl job, have flashback cluster job")
 		}
 	}
