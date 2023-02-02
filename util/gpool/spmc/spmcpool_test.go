@@ -120,6 +120,48 @@ func TestStopPool(t *testing.T) {
 	pool.ReleaseAndWait()
 }
 
+func TestStopPoolWithSlice(t *testing.T) {
+	type ConstArgs struct {
+		a int
+	}
+	myArgs := ConstArgs{a: 10}
+	// init the pool
+	// input type， output type, constArgs type
+	pool, err := NewSPMCPool[int, int, ConstArgs, any, pooltask.NilContext]("TestStopPoolWithSlice", 3, rmutil.UNKNOWN)
+	require.NoError(t, err)
+	pool.SetConsumerFunc(func(task int, constArgs ConstArgs, ctx any) int {
+		return task + constArgs.a
+	})
+
+	exit := make(chan struct{})
+
+	pfunc := func() ([]int, error) {
+		select {
+		case <-exit:
+			return nil, gpool.ErrProducerClosed
+		default:
+			return []int{1, 2, 3}, nil
+		}
+	}
+	// add new task
+	resultCh, control := pool.AddProduceBySlice(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(4))
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for result := range resultCh {
+			require.Greater(t, result, 10)
+		}
+	}()
+	// Waiting task finishing
+	control.Stop()
+	control.Wait()
+	wg.Wait()
+	// close pool
+	pool.ReleaseAndWait()
+}
+
 func TestTuneSimplePool(t *testing.T) {
 	testTunePool(t, "TestTuneSimplePool")
 }
