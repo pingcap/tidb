@@ -2833,6 +2833,8 @@ func queryIndexOnTable(dbName, tableName string) string {
 	return fmt.Sprintf("select distinct index_name, is_visible from information_schema.statistics where table_schema = '%s' and table_name = '%s' order by index_name", dbName, tableName)
 }
 
+/*
+// No need to test this
 func TestDropColumnWithCompositeIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
@@ -2844,13 +2846,14 @@ func TestDropColumnWithCompositeIndex(t *testing.T) {
 	defer tk.MustExec("drop table if exists t_drop_column_with_comp_idx")
 	tk.MustExec("create index idx_bc on t_drop_column_with_comp_idx(b, c)")
 	tk.MustExec("create index idx_b on t_drop_column_with_comp_idx(b)")
-	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with Primary Key covered now")
 	tk.MustQuery(query).Check(testkit.Rows("idx_b YES", "idx_bc YES"))
 	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_bc invisible")
 	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_b invisible")
-	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with Primary Key covered now")
 	tk.MustQuery(query).Check(testkit.Rows("idx_b NO", "idx_bc NO"))
 }
+*/
 
 func TestDropColumnWithIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())

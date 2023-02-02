@@ -6625,7 +6625,7 @@ func TestPrimaryKeyRequiredSysvar(t *testing.T) {
        c1 int(11) DEFAULT NULL,
        PRIMARY KEY(id) NONCLUSTERED)`)
 	tk.MustGetErrMsg(`ALTER TABLE t2
-       DROP COLUMN id`, "[ddl:8200]can't drop column id with composite index covered or Primary Key covered now")
+       DROP COLUMN id`, "[ddl:8200]can't drop column id with Primary Key covered now")
 	tk.MustGetErrCode(`ALTER TABLE t2 DROP PRIMARY KEY`, errno.ErrTableWithoutPrimaryKey)
 
 	// this sysvar is ignored in internal sessions
