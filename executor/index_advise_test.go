@@ -65,3 +65,137 @@ func TestIndexAdvise(t *testing.T) {
 	require.Equal(t, uint64(4), ia.MaxIndexNum.PerTable)
 	require.Equal(t, uint64(5), ia.MaxIndexNum.PerDB)
 }
+
+func TestIndexJoinProjPattern(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1(
+pnbrn_cnaps varchar(5) not null,
+new_accno varchar(18) not null,
+primary key(pnbrn_cnaps,new_accno) nonclustered
+);`)
+	tk.MustExec(`create table t2(
+pnbrn_cnaps varchar(5) not null,
+txn_accno varchar(18) not null,
+txn_dt date not null,
+yn_frz varchar(1) default null,
+txn_curr_tp varchar(3) default null
+);`)
+	sql := `explain update
+/*+ inl_join(a) */
+t2 b,
+(
+select t1.pnbrn_cnaps,
+t1.new_accno
+from t1
+where t1.pnbrn_cnaps = '40001'
+) a
+set b.yn_frz = '1'
+where b._tidb_rowid between 1 and 10000
+and b.txn_dt = str_to_date('20221201', '%Y%m%d')
+and b.pnbrn_cnaps = a.pnbrn_cnaps
+and b.txn_accno = a.new_accno;`
+	rows := [][]interface{}{
+		{"Update_8"},
+		{"└─IndexJoin_14"},
+		{"  ├─TableReader_25(Build)"},
+		{"  │ └─Selection_24"},
+		{"  │   └─TableRangeScan_23"},
+		{"  └─IndexReader_12(Probe)"},
+		{"    └─Selection_11"},
+		{"      └─IndexRangeScan_10"},
+	}
+	tk.MustExec("set @@session.tidb_enable_index_join_inner_multi_pattern='ON';")
+	tk.MustQuery(sql).CheckAt([]int{0}, rows)
+	rows = [][]interface{}{
+		{"Update_8"},
+		{"└─HashJoin_11"},
+		{"  ├─TableReader_14(Build)"},
+		{"  │ └─Selection_13"},
+		{"  │   └─TableRangeScan_12"},
+		{"  └─IndexReader_17(Probe)"},
+		{"    └─IndexRangeScan_16"},
+	}
+	tk.MustExec("set @@session.tidb_enable_index_join_inner_multi_pattern='OFF';")
+	tk.MustQuery(sql).CheckAt([]int{0}, rows)
+}
+
+func TestIndexJoinSelPattern(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table tbl_miss(
+id bigint(20) unsigned not null auto_random(5)
+,txn_dt date default null
+,perip_sys_uuid varchar(32) not null
+,rvrs_idr varchar(1) not null
+,file_pnbrn_cnaps varchar(5) default null
+,glbl_sn varchar(34) default null
+,glbl_bsn_trck_no varchar(200)
+,sbmsn_scn_refno varchar(8) default null
+,primary key(id) clustered
+,key idx1 (txn_dt, perip_sys_uuid, rvrs_idr)
+,key idx2 (txn_dt, glbl_sn,glbl_bsn_trck_no,sbmsn_scn_refno,rvrs_idr)
+);`)
+	tk.MustExec(`create table tbl_src(
+txn_dt date default null
+,uuid varchar(32) not null
+,ctiq_trty char(4)
+,txn_tlr_refno char(7)
+,txn_org_refno char(5)
+,atomt_cd varchar(10)
+,orgnt_cd varchar(10)
+,txn_chnl char(6)
+,rvrs_idr char(1)
+,expd_inf varchar(5000)
+,last_mnplt_idr char(2)
+,glbl_sn varchar(34)
+,primary key(uuid,rvrs_idr) nonclustered
+);`)
+	sql := `explain select /*+ use_index(mis,) inl_join(src) */
+    *
+ from tbl_miss mis
+     ,tbl_src src
+ where src.txn_dt >= str_to_date('20221201', '%Y%m%d')
+ and mis.id between 1 and 10000
+ and mis.perip_sys_uuid = src.uuid
+ and mis.rvrs_idr = src.rvrs_idr
+ and mis.txn_dt = src.txn_dt
+ and (
+     case when isnull(src.expd_inf) = 1 then ''
+          when instr(concat_ws('',src.expd_inf,'~~'), '~~a4' ) = 0 then ''
+     else
+         substr(concat_ws('',src.expd_inf,'~~'),
+             instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4,
+             instr(substr(concat_ws('',src.expd_inf,'~~'),
+                 instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
+     end
+ ) != '01';`
+	rows := [][]interface{}{
+		{"HashJoin_9"},
+		{"├─TableReader_12(Build)"},
+		{"│ └─Selection_11"},
+		{"│   └─TableRangeScan_10"},
+		{"└─Selection_13(Probe)"},
+		{"  └─TableReader_16"},
+		{"    └─Selection_15"},
+		{"      └─TableFullScan_14"},
+	}
+	tk.MustExec("set @@session.tidb_enable_index_join_inner_multi_pattern='OFF';")
+	tk.MustQuery(sql).CheckAt([]int{0}, rows)
+	rows = [][]interface{}{
+		{"IndexJoin_13"},
+		{"├─TableReader_25(Build)"},
+		{"│ └─Selection_24"},
+		{"│   └─TableRangeScan_23"},
+		{"└─Selection_12(Probe)"},
+		{"  └─IndexLookUp_11"},
+		{"    ├─IndexRangeScan_8(Build)"},
+		{"    └─Selection_10(Probe)"},
+		{"      └─TableRowIDScan_9"},
+	}
+	tk.MustExec("set @@session.tidb_enable_index_join_inner_multi_pattern='ON';")
+	tk.MustQuery(sql).CheckAt([]int{0}, rows)
+}
