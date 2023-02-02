@@ -129,11 +129,12 @@ func (a *allocator) Reset() {
 
 	//column objects and put them to the column allocator for reuse.
 	for id, pool := range a.columnAlloc.pool {
-		for _, col := range pool.allocColumns {
+		for i, col := range pool.allocColumns {
 			if (len(pool.freeColumns) < a.columnAlloc.freeColumnsPerType) && checkColumnType(id, col) {
 				col.reset()
 				pool.freeColumns = append(pool.freeColumns, col)
 			}
+			pool.allocColumns[i] = nil
 		}
 		pool.allocColumns = pool.allocColumns[:0]
 	}
@@ -196,6 +197,7 @@ func (cList *columnList) pop() *Column {
 		return nil
 	}
 	col := cList.freeColumns[len(cList.freeColumns)-1]
+	cList.freeColumns[len(cList.freeColumns)-1] = nil
 	cList.freeColumns = cList.freeColumns[:len(cList.freeColumns)-1]
 	return col
 }
