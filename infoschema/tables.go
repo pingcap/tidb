@@ -1593,8 +1593,7 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 var tableResourceGroupsCols = []columnInfo{
 	{name: "GROUP_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "GROUP_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
-	{name: "RRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
-	{name: "WRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
+	{name: "RU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
 	// {name: "BURSTABLE", tp: mysql.TypeVarchar, size: 10},
 }
 
