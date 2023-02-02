@@ -1151,13 +1151,15 @@ func TestOutOfOrderUpdate(t *testing.T) {
 
 	testKit.MustExec("delete from t")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("1"))
+	// If count < -Delta, then update count to 0.
+	// Check https://github.com/pingcap/tidb/pull/38301#discussion_r1094050951 for details.
+	testKit.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableInfo.ID)).Check(testkit.Rows("0"))
 
 	// Now another tidb has updated the delta info.
 	testKit.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 3 where table_id = %d", tableInfo.ID))
 
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("0"))
+	testKit.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableInfo.ID)).Check(testkit.Rows("3"))
 }
 
 func TestUpdateStatsByLocalFeedback(t *testing.T) {
