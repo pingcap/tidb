@@ -416,7 +416,6 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	}
 	tbl, ok := h.statsCache.Load().(statsCache).Get(id)
 	if !ok {
-		// TODO: do we need to return true here?
 		// No need to dump if the stats is invalid.
 		return false
 	}
