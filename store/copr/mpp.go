@@ -355,6 +355,7 @@ func (m *mppIterator) cancelMppTasks() {
 
 	// send cancel cmd to all stores where tasks run
 	wg := util.WaitGroupWrapper{}
+	gotErr := atomic.Bool{}
 	for addr := range usedStoreAddrs {
 		storeAddr := addr
 		wg.Run(func() {
