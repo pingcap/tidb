@@ -232,6 +232,9 @@ type Transaction interface {
 	// Will block until all keys are locked successfully or an error occurs.
 	// fn is called before LockKeys unlocks the keys.
 	LockKeysFunc(ctx context.Context, lockCtx *LockCtx, fn func(), keys ...Key) error
+	// CheckConstraintForAlreadyLockedKeys checks if the key satisfies the key existence constraint for some keys that are
+	// already locked, including those locked in aggressive-locking state.
+	CheckConstraintForAlreadyLockedKeys(keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt int, val interface{})

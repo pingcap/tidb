@@ -71,6 +71,11 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	txn.idxNameCache[id] = info
 }
 
+func (txn *tikvTxn) CheckConstraintForAlreadyLockedKeys(keys ...kv.Key) error {
+	err := txn.KVTxn.CheckConstraintForAlreadyLockedKeys(toTiKVKeys(keys)...)
+	return txn.extractKeyErr(err)
+}
+
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
 	txn.exitAggressiveLockingIfInapplicable(ctx, keys)

@@ -48,6 +48,10 @@ func (t *mockTxn) String() string {
 	return ""
 }
 
+func (t *mockTxn) CheckConstraintForAlreadyLockedKeys(_ ...Key) error {
+	return nil
+}
+
 func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 	return nil
 }

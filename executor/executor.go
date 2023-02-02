@@ -1346,14 +1346,14 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
-	err = handleErrLockedWithConflict(ctx, se, err)
+	err = handleErrLockedWithConflict(ctx, se, err, txn, keys...)
 	if lockKeyStats != nil {
 		sctx.MergeLockKeysExecDetails(lockKeyStats)
 	}
 	return err
 }
 
-func handleErrLockedWithConflict(ctx context.Context, se sessionctx.Context, err error) error {
+func handleErrLockedWithConflict(ctx context.Context, se sessionctx.Context, err error, tx kv.Transaction, keys ...kv.Key) error {
 	if errLockedWithConflict, ok := err.(*txn.ErrLockedWithConflict); ok {
 		stmtCtx := se.GetSessionVars().StmtCtx
 		if stmtCtx.KvReadOperationsCount.Load() > 0 {
@@ -1366,13 +1366,19 @@ func handleErrLockedWithConflict(ctx context.Context, se sessionctx.Context, err
 		txnManager := sessiontxn.GetTxnManager(se)
 		invalidated, err := txnManager.InvalidateForUpdateTS(ctx)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
-		if !invalidated {
-			return errLockedWithConflict.ToWriteConflict()
-		} else {
+
+		if invalidated {
+			err := tx.CheckConstraintForAlreadyLockedKeys(keys...)
+			if err != nil {
+				return err
+			}
+
 			AggressiveLockingSkipRetryCounter.Inc()
+			return nil
 		}
+		return errLockedWithConflict.ToWriteConflict()
 	}
 
 	return err

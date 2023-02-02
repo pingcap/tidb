@@ -3064,7 +3064,7 @@ func mustTimeout[T interface{}](t *testing.T, ch <-chan T, timeout time.Duration
 
 func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
 	select {
-	case <-time.After(time.Second * 10000):
+	case <-time.After(time.Second):
 	case res := <-ch:
 		return res
 	}
