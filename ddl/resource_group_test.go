@@ -84,9 +84,10 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustGetErrCode("create resource group x RU_PER_SEC=1000 ", mysql.ErrResourceGroupExists)
 
-	tk.MustExec("alter resource group x RU_PER_SEC=2000")
+	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(2000), g.RURate)
+	re.Equal(int64(-1), g.BurstLimit)
 
 	tk.MustExec("alter resource group if exists not_exists RU_PER_SEC=2000")
 	// Check warning message
