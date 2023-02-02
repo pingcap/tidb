@@ -396,7 +396,9 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// Do keyspace delete range
+	// Gc safe point is not separated by keyspace now, the whole cluster has only one global gc safe point.
+	// So at least one tidb without set `keyspace-name` is required in the whole cluster to calculate and update gc safe point.
+	// If TiDB set `keyspace-name` it will only do its own delete range, and will not calculate gc safe point and resolve locks.
 	if w.store.GetCodec().GetKeyspace() != nil {
 		err = w.runKeyspaceGCJob(ctx, concurrency)
 		if err != nil {
