@@ -35,19 +35,13 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		Name: groupName,
 	}
 	var isRUMode bool
-	if options.RRURate > 0 || options.WRURate > 0 {
+	if options.RURate > 0 {
 		isRUMode = true
 		group.Mode = rmpb.GroupMode_RUMode
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{
-			RRU: &rmpb.TokenBucket{
+			RU: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate:   options.RRURate,
-					BurstLimit: options.BurstLimit,
-				},
-			},
-			WRU: &rmpb.TokenBucket{
-				Settings: &rmpb.TokenLimitSettings{
-					FillRate:   options.WRURate,
+					FillRate:   options.RURate,
 					BurstLimit: options.BurstLimit,
 				},
 			},

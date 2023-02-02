@@ -3036,10 +3036,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 // SetDirectResourceGroupUnit tries to set the ResourceGroupSettings.
 func SetDirectResourceGroupUnit(resourceGroupSettings *model.ResourceGroupSettings, typ ast.ResourceUnitType, stringVal string, uintVal uint64, boolValue bool) error {
 	switch typ {
-	case ast.ResourceRRURate:
-		resourceGroupSettings.RRURate = uintVal
-	case ast.ResourceWRURate:
-		resourceGroupSettings.WRURate = uintVal
+	case ast.ResourceRURate:
+		resourceGroupSettings.RURate = uintVal
 	case ast.ResourceUnitCPU:
 		resourceGroupSettings.CPULimiter = stringVal
 	case ast.ResourceUnitIOReadBandwidth:
@@ -7627,10 +7625,14 @@ func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResour
 			return err
 		}
 	}
-	if !stmt.IfNotExists {
-		if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
-			return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+
+	if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
+		if stmt.IfNotExists {
+			err = infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
 		}
+		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
 	if groupName.L == defaultResourceGroupName {
@@ -7720,7 +7722,12 @@ func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResource
 	// Check group existence.
 	group, ok := is.ResourceGroupByName(groupName)
 	if !ok {
-		return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		err := infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
 	}
 	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList)
 	if err != nil {

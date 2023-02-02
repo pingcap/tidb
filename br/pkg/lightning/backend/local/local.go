@@ -69,12 +69,14 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
@@ -148,7 +150,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if f.tls.TLSConfig() != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
 	}
@@ -347,12 +349,13 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
-	pdCtl    *pdutil.PdController
-	splitCli split.SplitClient
-	tikvCli  *tikvclient.KVStore
-	tls      *common.TLS
-	pdAddr   string
-	g        glue.Glue
+	pdCtl     *pdutil.PdController
+	splitCli  split.SplitClient
+	tikvCli   *tikvclient.KVStore
+	tls       *common.TLS
+	pdAddr    string
+	g         glue.Glue
+	tikvCodec tikvclient.Codec
 
 	localStoreDir string
 
@@ -417,6 +420,7 @@ func NewLocalBackend(
 	g glue.Glue,
 	maxOpenFiles int,
 	errorMgr *errormanager.ErrorManager,
+	keyspaceName string,
 ) (backend.Backend, error) {
 	localFile := cfg.TikvImporter.SortedKVDir
 	rangeConcurrency := cfg.TikvImporter.RangeConcurrency
@@ -458,8 +462,19 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()))
-	pdCliForTiKV := tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCtl.GetPDClient())
+
+	var pdCliForTiKV *tikvclient.CodecPDClient
+	if keyspaceName == "" {
+		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCtl.GetPDClient())
+	} else {
+		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCtl.GetPDClient(), keyspaceName)
+		if err != nil {
+			return backend.MakeBackend(nil), common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
+		}
+	}
+
+	tikvCodec := pdCliForTiKV.GetCodec()
+	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
 	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
@@ -482,13 +497,14 @@ func NewLocalBackend(
 		LastAlloc = alloc
 	}
 	local := &local{
-		engines:  sync.Map{},
-		pdCtl:    pdCtl,
-		splitCli: splitCli,
-		tikvCli:  tikvCli,
-		tls:      tls,
-		pdAddr:   cfg.TiDB.PdAddr,
-		g:        g,
+		engines:   sync.Map{},
+		pdCtl:     pdCtl,
+		splitCli:  splitCli,
+		tikvCli:   tikvCli,
+		tls:       tls,
+		pdAddr:    cfg.TiDB.PdAddr,
+		g:         g,
+		tikvCodec: tikvCodec,
 
 		localStoreDir:     localFile,
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
@@ -973,6 +989,7 @@ func (local *local) WriteToTiKV(
 			Start: firstKey,
 			End:   lastKey,
 		},
+		ApiVersion: local.tikvCodec.GetAPIVersion(),
 	}
 
 	leaderID := region.Leader.GetId()
@@ -1674,7 +1691,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	}()
 
 	atomicHasDupe := atomic.NewBool(false)
-	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
+	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
 		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
@@ -1692,7 +1709,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	}()
 
 	atomicHasDupe := atomic.NewBool(false)
-	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
+	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
 		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
@@ -1726,13 +1743,18 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		return err
 	}
 
+	tableIDs := physicalTableIDs(tbl.Meta())
+	keyInTable := func(key []byte) bool {
+		return slices.Contains(tableIDs, tablecodec.DecodeTableID(key))
+	}
+
 	errLimiter := rate.NewLimiter(1, 1)
 	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
 	err = local.errorMgr.ResolveAllConflictKeys(
 		ctx, tableName, pool,
 		func(ctx context.Context, handleRows [][2][]byte) error {
 			for {
-				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
+				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder, keyInTable)
 				if err == nil {
 					return nil
 				}
@@ -1755,7 +1777,13 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	return errors.Trace(err)
 }
 
-func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error) {
+func (local *local) deleteDuplicateRows(
+	ctx context.Context,
+	logger *log.Task,
+	handleRows [][2][]byte,
+	decoder *kv.TableKVDecoder,
+	keyInTable func(key []byte) bool,
+) (err error) {
 	// Starts a Delete transaction.
 	txn, err := local.tikvCli.Begin()
 	if err != nil {
@@ -1780,6 +1808,12 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 	// (if the number of duplicates is small this should fit entirely in memory)
 	// (Txn's MemBuf's bufferSizeLimit is currently infinity)
 	for _, handleRow := range handleRows {
+		// Skip the row key if it's not in the table.
+		// This can happen if the table has been recreated or truncated,
+		// and the duplicate key is from the old table.
+		if !keyInTable(handleRow[0]) {
+			continue
+		}
 		logger.Debug("[resolve-dupe] found row to resolve",
 			logutil.Key("handle", handleRow[0]),
 			logutil.Key("row", handleRow[1]))
@@ -1889,16 +1923,17 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
+	return openLocalWriter(cfg, engine, local.tikvCodec, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
 }
 
-func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,
 		kvBuffer:           kvBuffer,
 		isKVSorted:         cfg.IsKVSorted,
 		isWriteBatchSorted: true,
+		tikvCodec:          tikvCodec,
 	}
 	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
 	// this can help save about 3% of CPU.
