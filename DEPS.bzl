@@ -3342,8 +3342,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:LB+BrfyO5fsz5pwN3V4HvTrpZTAmsjB4VkCEBLbjYUw=",
-        version = "v0.0.0-20230119031034-25f1909b7934",
+        sum = "h1:oYUK4V5PMlyIooU/+pPkKrJ3vELwcuuCNyKKlqSQa5c=",
+        version = "v0.0.0-20230131104319-a7c51106dfe7",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4062,8 +4062,8 @@ def go_deps():
         name = "com_github_tikv_pd",
         build_file_proto_mode = "disable",
         importpath = "github.com/tikv/pd",
-        sum = "h1:cj3bhdIBJcLL2304EDEmd3eX+r73+hbGSYRFn/APiDU=",
-        version = "v1.1.0-beta.0.20230119114149-402c2bfee2f3",
+        sum = "h1:ef+kODGby/rmF9fabJzqRM15NcGufkTRftROdy7jvAk=",
+        version = "v1.1.0-beta.0.20230201064005-6ca9a3398f15",
     )
 
     go_repository(
@@ -6075,4 +6075,11 @@ def go_deps():
         importpath = "gotest.tools/gotestsum",
         sum = "h1:RwpqwwFKBAa2h+F6pMEGpE707Edld0etUD3GhqqhDNc=",
         version = "v1.7.0",
+    )
+    go_repository(
+        name = "tools_gotest_v3",
+        build_file_proto_mode = "disable",
+        importpath = "gotest.tools/v3",
+        sum = "h1:4AuOwCGf4lLR9u3YOe2awrHygurzhO/HeQ6laiA6Sx0=",
+        version = "v3.0.3",
     )
