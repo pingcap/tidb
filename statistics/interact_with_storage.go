@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go.uber.org/zap"
 	"strconv"
 	"time"
 
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // StatsReader is used for simplifying code that needs to read statistics from system tables(mysql.stats_xxx) in different sqls
@@ -95,6 +95,7 @@ func (sr *StatsReader) Close() error {
 	return err
 }
 
+// HistogramFromStorage reads histogram from storage.
 func HistogramFromStorage(reader *StatsReader, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *Histogram, err error) {
 	rows, fields, err := reader.Read("select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
@@ -143,6 +144,7 @@ func HistogramFromStorage(reader *StatsReader, tableID int64, colID int64, tp *t
 	return hg, nil
 }
 
+// CMSketchAndTopNFromStorage reads CMSketch and TopN from storage.
 func CMSketchAndTopNFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64) (_ *CMSketch, _ *TopN, err error) {
 	topNRows, _, err := reader.Read("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
@@ -158,6 +160,7 @@ func CMSketchAndTopNFromStorage(reader *StatsReader, tblID int64, isIndex, histI
 	return DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
 
+// FMSketchFromStorage reads FMSketch from storage
 func FMSketchFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64) (_ *FMSketch, err error) {
 	rows, _, err := reader.Read("select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil || len(rows) == 0 {
@@ -166,6 +169,7 @@ func FMSketchFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64
 	return DecodeFMSketch(rows[0].GetBytes(0))
 }
 
+// ColumnCountFromStorage reads column count from storage
 func ColumnCountFromStorage(reader *StatsReader, tableID, colID, statsVer int64) (int64, error) {
 	count := int64(0)
 	rows, _, err := reader.Read("select sum(count) from mysql.stats_buckets where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
@@ -199,15 +203,7 @@ func ColumnCountFromStorage(reader *StatsReader, tableID, colID, statsVer int64)
 	return count, err
 }
 
-const (
-	// ExtendedStatsInited is the status for extended stats which are just registered but have not been analyzed yet.
-	ExtendedStatsInited uint8 = iota
-	// ExtendedStatsAnalyzed is the status for extended stats which have been collected in analyze.
-	ExtendedStatsAnalyzed
-	// ExtendedStatsDeleted is the status for extended stats which were dropped. These "deleted" records would be removed from storage by GCStats().
-	ExtendedStatsDeleted
-)
-
+// ExtendedStatsFromStorage reads extended stats from storage.
 func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int64, loadAll bool) (*Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
 		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
