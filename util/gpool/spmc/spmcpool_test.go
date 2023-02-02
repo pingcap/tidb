@@ -175,17 +175,22 @@ func testTunePool(t *testing.T, name string) {
 		}
 	}()
 	time.Sleep(1 * time.Second)
-	newSize := pool.Cap() - 1
-	pool.Tune(newSize)
-	time.Sleep(1 * time.Second)
-	require.Equal(t, newSize, pool.Cap())
-	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+	downclockPool(t, pool, tid)
+	overclockPool(t, pool, tid)
 
-	newSize = pool.Cap() + 1
-	pool.Tune(newSize)
+	// at Overclock mode
+	overclockPool(t, pool, tid)
+
+	// Overclock mode, But it is invalid. It should keep the same size.
+	size := pool.Cap()
+	pool.Tune(pool.Cap() + 1)
 	time.Sleep(1 * time.Second)
-	require.Equal(t, newSize, pool.Cap())
-	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+	require.Equal(t, size, pool.Cap())
+	require.Equal(t, int32(size), pool.taskManager.Running(tid))
+
+	for n := pool.Cap(); n > 1; n-- {
+		downclockPool(t, pool, tid)
+	}
 
 	// exit test
 	close(exit)
@@ -193,6 +198,22 @@ func testTunePool(t *testing.T, name string) {
 	wg.Wait()
 	// close pool
 	pool.ReleaseAndWait()
+}
+
+func overclockPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](t *testing.T, pool *Pool[T, U, C, CT, TF], tid uint64) {
+	newSize := pool.Cap() + 1
+	pool.Tune(newSize)
+	time.Sleep(1 * time.Second)
+	require.Equal(t, newSize, pool.Cap())
+	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
+}
+
+func downclockPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](t *testing.T, pool *Pool[T, U, C, CT, TF], tid uint64) {
+	newSize := pool.Cap() - 1
+	pool.Tune(newSize)
+	time.Sleep(1 * time.Second)
+	require.Equal(t, newSize, pool.Cap())
+	require.Equal(t, int32(newSize), pool.taskManager.Running(tid))
 }
 
 func TestPoolWithEnoughCapacity(t *testing.T) {

@@ -72,8 +72,8 @@ func (w *goWorker[T, U, C, CT, TF]) run() {
 					f.GetResultCh() <- w.pool.consumerFunc(t.Task, f.ConstArgs(), ctx)
 					f.Done()
 				}
-				w.pool.ExitSubTask(f.TaskID())
 			}
+			w.pool.ExitSubTask(f.TaskID())
 			f.Finish()
 			if ok := w.pool.revertWorker(w); !ok {
 				return

@@ -23,6 +23,9 @@ import (
 var (
 	// MinSchedulerInterval is the minimum interval between two scheduling.
 	MinSchedulerInterval = atomic.NewDuration(200 * time.Millisecond)
+
+	// MaxOverclockCount is the maximum number of overclock goroutine.
+	MaxOverclockCount = 1
 )
 
 // GoroutinePool is a pool interface
