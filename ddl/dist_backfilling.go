@@ -262,7 +262,7 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, con
 			}
 			if kv.ErrWriteConflict.Equal(err) {
 				logutil.BgLogger().Info("GetAndMarkBackfillJobsForOneEle failed", zap.Error(err))
-				time.Sleep(retrySQLInterval)
+				time.Sleep(RetrySQLInterval)
 				continue
 			}
 		}

@@ -160,7 +160,7 @@ func checkJobIsFinished(sess *session, ddlJobID int64) (bool, error) {
 
 		logutil.BgLogger().Info("[ddl] checkJobIsSynced failed",
 			zap.Strings("unsyncedInstanceIDs", unsyncedInstanceIDs), zap.Int("tryTimes", i), zap.Error(err))
-		time.Sleep(retrySQLInterval)
+		time.Sleep(RetrySQLInterval)
 	}
 
 	return false, errors.Trace(err)
@@ -183,7 +183,7 @@ func GetBackfillErr(sess *session, ddlJobID, currEleID int64, currEleKey []byte)
 		}
 
 		logutil.BgLogger().Info("[ddl] GetBackfillMetas failed in checkJobIsSynced", zap.Int("tryTimes", i), zap.Error(err))
-		time.Sleep(retrySQLInterval)
+		time.Sleep(RetrySQLInterval)
 	}
 
 	return errors.Trace(err)
@@ -197,7 +197,7 @@ func checkAndHandleInterruptedBackfillJobs(sess *session, ddlJobID, currEleID in
 			break
 		}
 		logutil.BgLogger().Info("[ddl] getInterruptedBackfillJobsForOneEle failed", zap.Error(err))
-		time.Sleep(retrySQLInterval)
+		time.Sleep(RetrySQLInterval)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -212,7 +212,7 @@ func checkAndHandleInterruptedBackfillJobs(sess *session, ddlJobID, currEleID in
 			return bJobs[0].Meta.Error
 		}
 		logutil.BgLogger().Info("[ddl] MoveBackfillJobsToHistoryTable failed", zap.Error(err))
-		time.Sleep(retrySQLInterval)
+		time.Sleep(RetrySQLInterval)
 	}
 	return errors.Trace(err)
 }

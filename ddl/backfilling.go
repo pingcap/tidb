@@ -67,8 +67,10 @@ const (
 	minGenTaskBatch     = 1024
 	minDistTaskCnt      = 32
 	retrySQLTimes       = 10
-	retrySQLInterval    = 300 * time.Millisecond
 )
+
+// RetrySQLInterval is export for test.
+var RetrySQLInterval = 300 * time.Millisecond
 
 func (bT backfillerType) String() string {
 	switch bT {
@@ -1190,7 +1192,7 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 			if bJobCnt < minGenTaskBatch {
 				break
 			}
-			time.Sleep(retrySQLInterval)
+			time.Sleep(RetrySQLInterval)
 		}
 		startKey = remains[0].StartKey
 	}
