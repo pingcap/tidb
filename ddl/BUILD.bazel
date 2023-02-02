@@ -157,6 +157,7 @@ go_test(
         "column_modify_test.go",
         "column_test.go",
         "column_type_change_test.go",
+        "column_with_index_test.go",
         "db_cache_test.go",
         "db_change_failpoints_test.go",
         "db_change_test.go",

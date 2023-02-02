@@ -121,6 +121,10 @@ ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
+utclean:
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
 	@mkdir -p $(TEST_COVERAGE_DIR)
@@ -245,7 +249,7 @@ ifeq ("$(pkg)", "")
 else
 	@echo "Running unit test for github.com/pingcap/tidb/$(pkg)"
 	@export log_level=fatal; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -tags 'intest' -v -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
