@@ -8,6 +8,7 @@ go_test(
         "merge_test.go",
     ],
     flaky = True,
+    race = "on",
     shard_count = 4,
     deps = [
         "//config",
