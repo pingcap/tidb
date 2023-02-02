@@ -33,7 +33,7 @@ require (
 	github.com/docker/go-units v0.4.0
 	github.com/emirpasic/gods v1.18.1
 	github.com/fatanugraha/noloopclosure v0.1.1
-	github.com/fatih/color v1.13.0
+	github.com/fatih/color v1.14.1
 	github.com/fsouza/fake-gcs-server v1.19.0
 	github.com/go-sql-driver/mysql v1.7.0
 	github.com/gogo/protobuf v1.3.2
@@ -61,7 +61,7 @@ require (
 	github.com/klauspost/compress v1.15.13
 	github.com/kyoh86/exportloopref v0.1.8
 	github.com/lestrrat-go/jwx/v2 v2.0.6
-	github.com/mgechev/revive v1.2.4
+	github.com/mgechev/revive v1.2.5
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/nishanths/predeclared v0.2.2
 	github.com/opentracing/basictracer-go v1.0.0
@@ -71,7 +71,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20230119031034-25f1909b7934
+	github.com/pingcap/kvproto v0.0.0-20230131104319-a7c51106dfe7
 	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -93,7 +93,7 @@ require (
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.5-0.20230120021435-f89383775234
-	github.com/tikv/pd v1.1.0-beta.0.20230119114149-402c2bfee2f3
+	github.com/tikv/pd v1.1.0-beta.0.20230201064005-6ca9a3398f15
 	github.com/tikv/pd/client v0.0.0-20230119115149-5c518d079b93
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
@@ -151,7 +151,7 @@ require (
 	github.com/bmatcuk/doublestar/v2 v2.0.4 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
-	github.com/chavacava/garif v0.0.0-20220630083739-93517212f375 // indirect
+	github.com/chavacava/garif v0.0.0-20221024190013-b3ef35877348 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20190617123548-eb05cc24525f // indirect
 	github.com/cockroachdb/redact v1.0.8 // indirect
 	github.com/cockroachdb/sentry-go v0.6.1-cockroachdb.2 // indirect
@@ -207,7 +207,7 @@ require (
 	github.com/lestrrat-go/option v1.0.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/mattn/go-isatty v0.0.16 // indirect
+	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/mattn/go-runewidth v0.0.14 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/mitchellh/copystructure v1.0.0 // indirect
@@ -230,7 +230,7 @@ require (
 	github.com/prometheus/tsdb v0.8.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
-	github.com/rivo/uniseg v0.4.2 // indirect
+	github.com/rivo/uniseg v0.4.3 // indirect
 	github.com/rogpeppe/go-internal v1.6.1 // indirect
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20190707220628-8d4bc4ba7749 // indirect

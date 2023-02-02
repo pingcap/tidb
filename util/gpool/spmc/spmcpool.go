@@ -137,14 +137,18 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	if capacity == -1 || size <= 0 || size == capacity {
 		return
 	}
+	if p.taskManager.GetOriginConcurrency()+int32(util.MaxOverclockCount) < int32(size) {
+		return
+	}
 	p.SetLastTuneTs(time.Now())
 	p.capacity.Store(int32(size))
 	if size > capacity {
 		for i := 0; i < size-capacity; i++ {
-			if tid, boostTask := p.taskManager.Overclock(); boostTask != nil {
+			if tid, boostTask := p.taskManager.Overclock(size); boostTask != nil {
 				p.addWaitingTask()
-				p.taskManager.AddSubTask(tid, boostTask.Clone())
-				p.taskCh <- boostTask
+				newTask := boostTask.Clone()
+				p.taskManager.AddSubTask(tid, newTask)
+				p.taskCh <- newTask
 			}
 		}
 		if size-capacity == 1 {
@@ -155,7 +159,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 		return
 	}
 	if size < capacity {
-		p.taskManager.Downclock()
+		p.taskManager.Downclock(size)
 	}
 }
 

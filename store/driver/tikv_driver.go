@@ -113,7 +113,6 @@ func TrySetupGlobalResourceController(ctx context.Context, serverID uint64, s kv
 
 // TiKVDriver implements engine TiKV.
 type TiKVDriver struct {
-	keyspaceName    string
 	pdConfig        config.PDClient
 	security        config.Security
 	tikvConfig      config.TiKVClient

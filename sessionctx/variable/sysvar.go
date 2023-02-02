@@ -2237,6 +2237,54 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: MppExchangeCompressionMode, Type: TypeStr, Value: DefaultExchangeCompressionMode.Name(),
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := kv.ToExchangeCompressionMode(normalizedValue)
+			if !ok {
+				var msg string
+				for m := kv.ExchangeCompressionModeNONE; m <= kv.ExchangeCompressionModeUnspecified; m += 1 {
+					if m == 0 {
+						msg = m.Name()
+					} else {
+						msg = fmt.Sprintf("%s, %s", msg, m.Name())
+					}
+				}
+				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
+					originalValue,
+					MppExchangeCompressionMode, msg)
+				return normalizedValue, err
+			}
+			return normalizedValue, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.mppExchangeCompressionMode, _ = kv.ToExchangeCompressionMode(val)
+			if s.ChooseMppVersion() == kv.MppVersionV0 && s.mppExchangeCompressionMode != kv.ExchangeCompressionModeUnspecified {
+				s.StmtCtx.AppendWarning(fmt.Errorf("mpp exchange compression won't work under current mpp version %d", kv.MppVersionV0))
+			}
+
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: MppVersion, Type: TypeStr, Value: kv.MppVersionUnspecifiedName,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := kv.ToMppVersion(normalizedValue)
+			if ok {
+				return normalizedValue, nil
+			}
+			errMsg := fmt.Sprintf("incorrect value: %s. %s options: %d (unspecified)",
+				originalValue, MppVersion, kv.MppVersionUnspecified)
+			for i := kv.MppVersionV0; i <= kv.GetNewestMppVersion(); i += 1 {
+				errMsg = fmt.Sprintf("%s, %d", errMsg, i)
+			}
+
+			return normalizedValue, errors.New(errMsg)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			version, _ := kv.ToMppVersion(val)
+			s.mppVersion = version
+			return nil
+		},
+	},
 	{
 		Scope: ScopeGlobal, Name: TiDBTTLJobScheduleWindowStartTime, Value: DefTiDBTTLJobScheduleWindowStartTime, Type: TypeTime, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			startTime, err := time.ParseInLocation(FullDayTimeFormat, s, time.UTC)
