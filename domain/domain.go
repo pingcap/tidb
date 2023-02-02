@@ -133,7 +133,7 @@ type Domain struct {
 	expiredTimeStamp4PC   types.Time
 	logBackupAdvancer     *daemon.OwnerDaemon
 	historicalStatsWorker *HistoricalStatsWorker
-	ttlJobManager         *ttlworker.JobManager
+	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -2513,7 +2513,7 @@ func (do *Domain) StartTTLJobManager() {
 		}()
 
 		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
-		do.ttlJobManager = ttlJobManager
+		do.ttlJobManager.Store(ttlJobManager)
 		ttlJobManager.Start()
 
 		<-do.exit
@@ -2528,7 +2528,7 @@ func (do *Domain) StartTTLJobManager() {
 
 // TTLJobManager returns the ttl job manager on this domain
 func (do *Domain) TTLJobManager() *ttlworker.JobManager {
-	return do.ttlJobManager
+	return do.ttlJobManager.Load()
 }
 
 func init() {
