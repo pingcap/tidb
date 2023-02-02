@@ -553,10 +553,10 @@ func TestReloadExtStatsLockRelease(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
 	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	tk.MustExec("analyze table t")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr", `return("")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/injectExtStatsLoadErr", `return("")`))
 	err := tk.ExecToErr("admin reload stats_extended")
 	require.Equal(t, "gofail extendedStatsFromStorage error", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/injectExtStatsLoadErr"))
 	// Check the lock is released by `admin reload stats_extended` if error happens.
 	tk.MustExec("analyze table t")
 }
