@@ -549,6 +549,10 @@ const (
     	key(parent_table_id, create_time),
     	key(create_time)
 	);`
+
+	// CreateTTLResourceGroup creates the resource group for ttl
+	// TODO: set a more proper value for the RU_PER_SECOND
+	CreateTTLResourceGroup = `CREATE RESOURCE GROUP IF NOT EXISTS tidb_ttl RU_PER_SEC=10000000`
 )
 
 // bootstrap initiates system DB for a store.
@@ -804,11 +808,13 @@ const (
 	// - tidb_enable_foreign_key: off -> on
 	// - tidb_store_batch_size: 0 -> 4
 	version134 = 134
+	// version135 adds the tidb_ttl resource group
+	version135 = 135
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version134
+var currentBootstrapVersion int64 = version135
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -930,6 +936,7 @@ var (
 		upgradeToVer132,
 		upgradeToVer133,
 		upgradeToVer134,
+		upgradeToVer135,
 	}
 )
 
@@ -2316,6 +2323,13 @@ func upgradeToVer134(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE = %? WHERE VARIABLE_NAME = %? AND VARIABLE_VALUE = %?;", mysql.SystemDB, mysql.GlobalVariablesTable, "4", variable.TiDBStoreBatchSize, "0")
 }
 
+func upgradeToVer135(s Session, ver int64) {
+	if ver >= version135 {
+		return
+	}
+	doReentrantDDL(s, CreateTTLResourceGroup)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2426,6 +2440,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLTask)
 	// Create tidb_ttl_job_history table
 	mustExecute(s, CreateTTLJobHistory)
+	// Create tidb_ttl resource group
+	mustExecute(s, CreateTTLResourceGroup)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

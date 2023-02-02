@@ -211,6 +211,7 @@ type mockScanTask struct {
 	tbl      *cache.PhysicalTable
 	sessPool *mockSessionPool
 	sqlRetry []int
+	sqlErr   map[int]error
 
 	delCh               chan *ttlDeleteTask
 	prevSQL             string
@@ -237,6 +238,7 @@ func newMockScanTask(t *testing.T, sqlCnt int) *mockScanTask {
 		delCh:           make(chan *ttlDeleteTask, sqlCnt*(scanTaskExecuteSQLMaxRetry+1)),
 		sessPool:        newMockSessionPool(t),
 		sqlRetry:        make([]int, sqlCnt),
+		sqlErr:          make(map[int]error),
 		schemaChangeIdx: -1,
 	}
 	task.sessPool.se.executeSQL = task.execSQL
@@ -379,6 +381,9 @@ func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...interface{}) 
 	}
 
 	if curRetry < t.sqlRetry[i] {
+		if err := t.sqlErr[i]; err != nil {
+			return nil, err
+		}
 		return nil, errors.New("mockErr")
 	}
 
@@ -406,4 +411,14 @@ func TestScanTaskDoScan(t *testing.T) {
 	task.schemaChangeIdx = 1
 	task.schemaChangeInRetry = 2
 	task.runDoScanForTest(1, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
+}
+
+func TestScanTaskRetryWithLimit(t *testing.T) {
+	task := newMockScanTask(t, 3)
+	task.sqlRetry[1] = scanTaskExecuteSQLMaxRetry + 1
+	task.runDoScanForTest(1, "mockErr")
+
+	task.sqlRetry[1] = scanTaskExecuteSQLMaxRetry + 1
+	task.sqlErr[1] = fmt.Errorf("[resource group controller] limiter has no enough token or needs wait too long")
+	task.runDoScanForTest(3, "")
 }

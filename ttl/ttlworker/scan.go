@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -173,7 +174,12 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 				return t.result(sqlErr)
 			}
 			retrySQL = sql
-			retryTimes++
+
+			// if the sql returns this error, it means we have reached the limit of resource group (and has waited for 1 second).
+			// TODO: throttle the traffic rather than a stable interval to make it easier to pass the limiter.
+			if !strings.Contains(sqlErr.Error(), "[resource group controller] limiter has no enough token or needs wait too long") {
+				retryTimes++
+			}
 
 			tracer.EnterPhase(metrics.PhaseWaitRetry)
 			select {
