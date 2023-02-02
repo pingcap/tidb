@@ -556,7 +556,7 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 			// We use the handle in origin index value to check if the row exists.
 			recPrefix := tablecodec.GenTableRecordPrefix(tableID)
 			rowKey := tablecodec.EncodeRecordKey(recPrefix, originHandle)
-			_, err = txn.Get(context.Background(), rowKey)
+			_, err = txn.Get(ctx, rowKey)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// The row has been deleted. This is not a duplicated key.
