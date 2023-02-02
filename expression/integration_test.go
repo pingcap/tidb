@@ -4303,6 +4303,19 @@ func TestValuesForBinaryLiteral(t *testing.T) {
 	tk.MustExec("drop table testValuesBinary;")
 }
 
+func TestValuesForBinaryLiteral2(t *testing.T) {
+	// See issue #40653
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists testValuesBit")
+	tk.MustExec("create table testValuesBit (id bigint(20) NOT NULL AUTO_INCREMENT, test_bit bit(64) DEFAULT NULL, PRIMARY KEY(id))")
+	tk.MustExec("insert into testValuesBit (id,test_bit) values(1,x'AAFF')")
+	tk.MustExec("insert into testValuesBit (id,test_bit) values(1,x'AAFF') on duplicate key update test_bit=values(test_bit)")
+	tk.MustQuery("select hex(test_bit) from testValuesBit").Check(testkit.Rows("AAFF"))
+}
+
 func TestIssue14159(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
