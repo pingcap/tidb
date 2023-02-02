@@ -494,7 +494,10 @@ func buildBatchCopTasksForNonPartitionedTable(
 	balanceWithContinuity bool,
 	balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		return buildBatchCopTasksConsistentHash(ctx, bo, store, []*KeyRanges{ranges}, storeType, ttl)
+		if config.GetGlobalConfig().UseAutoScaler {
+			return buildBatchCopTasksConsistentHash(ctx, bo, store, []*KeyRanges{ranges}, storeType, ttl)
+		}
+		return buildBatchCopTasksConsistentHashForPD(bo, store, []*KeyRanges{ranges}, storeType, ttl)
 	}
 	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 }
@@ -511,7 +514,12 @@ func buildBatchCopTasksForPartitionedTable(
 	balanceContinuousRegionCount int64,
 	partitionIDs []int64) (batchTasks []*batchCopTask, err error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		batchTasks, err = buildBatchCopTasksConsistentHash(ctx, bo, store, rangesForEachPhysicalTable, storeType, ttl)
+		if config.GetGlobalConfig().UseAutoScaler {
+			batchTasks, err = buildBatchCopTasksConsistentHash(ctx, bo, store, rangesForEachPhysicalTable, storeType, ttl)
+		} else {
+			// todo: remove this after AutoScaler is stable.
+			batchTasks, err = buildBatchCopTasksConsistentHashForPD(bo, store, rangesForEachPhysicalTable, storeType, ttl)
+		}
 	} else {
 		batchTasks, err = buildBatchCopTasksCore(bo, store, rangesForEachPhysicalTable, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 	}
@@ -1168,4 +1176,93 @@ func (b *batchCopIterator) handleCollectExecutionInfo(bo *Backoffer, resp *batch
 		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 	}
 	resp.detail.CalleeAddress = task.storeAddr
+}
+
+// Only called when UseAutoScaler is false.
+func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
+	kvStore *kvStore,
+	rangesForEachPhysicalTable []*KeyRanges,
+	storeType kv.StoreType,
+	ttl time.Duration) (res []*batchCopTask, err error) {
+	const cmdType = tikvrpc.CmdBatchCop
+	var retryNum int
+	cache := kvStore.GetRegionCache()
+
+	for {
+		retryNum++
+		var rangesLen int
+		tasks := make([]*copTask, 0)
+		regionIDs := make([]tikv.RegionVerID, 0)
+
+		for i, ranges := range rangesForEachPhysicalTable {
+			rangesLen += ranges.Len()
+			locations, err := cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, lo := range locations {
+				tasks = append(tasks, &copTask{
+					region:         lo.Location.Region,
+					ranges:         lo.Ranges,
+					cmdType:        cmdType,
+					storeType:      storeType,
+					partitionIndex: int64(i),
+				})
+				regionIDs = append(regionIDs, lo.Location.Region)
+			}
+		}
+
+		stores, err := cache.GetTiFlashComputeStores(bo.TiKVBackoffer())
+		if err != nil {
+			return nil, err
+		}
+		stores = filterAliveStores(bo.GetCtx(), stores, ttl, kvStore)
+		if len(stores) == 0 {
+			return nil, errors.New("tiflash_compute node is unavailable")
+		}
+
+		rpcCtxs, err := cache.GetTiFlashComputeRPCContextByConsistentHash(bo.TiKVBackoffer(), regionIDs, stores)
+		if err != nil {
+			return nil, err
+		}
+		if rpcCtxs == nil {
+			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
+			err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			continue
+		}
+		if len(rpcCtxs) != len(tasks) {
+			return nil, errors.Errorf("length should be equal, len(rpcCtxs): %d, len(tasks): %d", len(rpcCtxs), len(tasks))
+		}
+		taskMap := make(map[string]*batchCopTask)
+		for i, rpcCtx := range rpcCtxs {
+			regionInfo := RegionInfo{
+				// tasks and rpcCtxs are correspond to each other.
+				Region:         tasks[i].region,
+				Meta:           rpcCtx.Meta,
+				Ranges:         tasks[i].ranges,
+				AllStores:      []uint64{rpcCtx.Store.StoreID()},
+				PartitionIndex: tasks[i].partitionIndex,
+			}
+			if batchTask, ok := taskMap[rpcCtx.Addr]; ok {
+				batchTask.regionInfos = append(batchTask.regionInfos, regionInfo)
+			} else {
+				batchTask := &batchCopTask{
+					storeAddr:   rpcCtx.Addr,
+					cmdType:     cmdType,
+					ctx:         rpcCtx,
+					regionInfos: []RegionInfo{regionInfo},
+				}
+				taskMap[rpcCtx.Addr] = batchTask
+				res = append(res, batchTask)
+			}
+		}
+		logutil.BgLogger().Info("buildBatchCopTasksConsistentHash done", zap.Any("len(tasks)", len(taskMap)), zap.Any("len(tiflash_compute)", len(stores)))
+		break
+	}
+
+	failpointCheckForConsistentHash(res)
+	return res, nil
 }

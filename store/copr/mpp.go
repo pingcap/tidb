@@ -250,6 +250,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	var rpcResp *tikvrpc.Response
 	var err error
 	var retry bool
+	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler
 
 	// If copTasks is not empty, we should send request according to region distribution.
 	// Or else it's the task without region, which always happens in high layer task without table.
@@ -262,6 +263,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		// That's a hard job but we can try it in the future.
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Warn("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
+			if invalidPDCache {
+				m.store.GetRegionCache().InvalidateTiFlashComputeStores()
+			}
 			// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
 			if m.needTriggerFallback {
 				err = derr.ErrTiFlashServerTimeout
@@ -274,6 +278,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 			retry = false
 		} else if err != nil {
+			if invalidPDCache {
+				m.store.GetRegionCache().InvalidateTiFlashComputeStores()
+			}
 			if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil {
 				retry = true
 			}
@@ -351,7 +358,9 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 
 	// send cancel cmd to all stores where tasks run
+	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler
 	wg := util.WaitGroupWrapper{}
+	gotErr := atomic.Bool{}
 	for addr := range usedStoreAddrs {
 		storeAddr := addr
 		wg.Run(func() {
@@ -359,10 +368,16 @@ func (m *mppIterator) cancelMppTasks() {
 			logutil.BgLogger().Debug("cancel task", zap.Uint64("query id ", m.startTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", m.mppVersion.ToInt64()))
 			if err != nil {
 				logutil.BgLogger().Error("cancel task error", zap.Error(err), zap.Uint64("query id", m.startTs), zap.String("on addr", storeAddr), zap.Int64("mpp-version", m.mppVersion.ToInt64()))
+				if invalidPDCache {
+					gotErr.CompareAndSwap(false, true)
+				}
 			}
 		})
 	}
 	wg.Wait()
+	if invalidPDCache && gotErr.Load() {
+		m.store.GetRegionCache().InvalidateTiFlashComputeStores()
+	}
 }
 
 func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
@@ -389,6 +404,9 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	if err != nil {
 		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
+		if config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler {
+			m.store.GetRegionCache().InvalidateTiFlashComputeStores()
+		}
 		// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if m.needTriggerFallback {
 			m.sendError(derr.ErrTiFlashServerTimeout)

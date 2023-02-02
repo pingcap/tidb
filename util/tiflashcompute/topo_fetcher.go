@@ -44,6 +44,8 @@ const (
 	GCPASStr = "gcp"
 	// TestASStr is string value for test AutoScaler.
 	TestASStr = "test"
+	// InvalidASStr is string value for invalid AutoScaler.
+	InvalidASStr = "invalid"
 )
 
 const (
@@ -127,6 +129,7 @@ func InitGlobalTopoFetcher(typ string, addr string, clusterID string, isFixedPoo
 	case TestASType:
 		globalTopoFetcher = NewTestAutoScalerFetcher()
 	default:
+		globalTopoFetcher = nil
 		err = errors.Errorf("unexpected topo fetch type. expect: %s or %s or %s, got %s",
 			MockASStr, AWSASStr, GCPASStr, typ)
 	}
