@@ -17,6 +17,8 @@ package pooltask
 import (
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/util/channel"
 )
 
 // Context is a interface that can be used to create a context.
@@ -160,6 +162,7 @@ func (t *TaskController[T, U, C, CT, TF]) Stop() {
 	close(t.productCloseCh)
 	t.prodWg.Wait()
 	t.pool.StopTask(t.TaskID())
+	channel.Clear(t.resultCh)
 }
 
 // TaskID is to get the task id.
