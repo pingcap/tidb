@@ -40,7 +40,6 @@ run_sql 'DROP DATABASE IF EXISTS cpeng;'
 run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "tests/$TEST_NAME/config.toml" -L debug
 grep -Eq "split regions.*retryable error" "$TEST_DIR/lightning-local.log"
 
-read -p 123
 # Check that everything is correctly imported
 run_sql 'SELECT count(*), sum(c) FROM cpeng.a'
 check_contains 'count(*): 4'
