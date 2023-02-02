@@ -1421,7 +1421,7 @@ func (e *StatementsSummaryExtractor) Extract(
 		e.SkipRequest = true
 		return nil
 	}
-	if digests.Count() > 0 {
+	if len(predicates) != len(remained) {
 		e.Enable = true
 		e.Digests = digests
 	}
