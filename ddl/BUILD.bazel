@@ -108,6 +108,7 @@ go_library(
         "//util/gcutil",
         "//util/generic",
         "//util/hack",
+        "//util/intest",
         "//util/logutil",
         "//util/mathutil",
         "//util/mock",
