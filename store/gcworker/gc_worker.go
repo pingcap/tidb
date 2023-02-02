@@ -2093,7 +2093,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // because the tables can be flashed back or recovered.
 func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
 	if w.store.GetCodec().GetKeyspace() != nil {
-		logutil.BgLogger().Info("[gc worker] skip doGCPlacementRules when keyspace_name is set.")
+		logutil.BgLogger().Info("[gc worker] skip doGCPlacementRules when keyspace_name is set.", zap.String("uuid", w.uuid))
 		return nil
 	}
 
