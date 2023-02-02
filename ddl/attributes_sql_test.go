@@ -269,7 +269,7 @@ PARTITION BY RANGE (c) (
 func TestFlashbackTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -327,7 +327,7 @@ PARTITION BY RANGE (c) (
 func TestDropTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -380,7 +380,7 @@ PARTITION BY RANGE (c) (
 func TestCreateWithSameName(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -444,7 +444,7 @@ PARTITION BY RANGE (c) (
 func TestPartition(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -504,7 +504,7 @@ PARTITION BY RANGE (c) (
 func TestDropSchema(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -530,7 +530,7 @@ PARTITION BY RANGE (c) (
 func TestDefaultKeyword(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
