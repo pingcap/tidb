@@ -276,17 +276,13 @@ func (r *stmtSummaryRetrieverV2) getDigestsFromExtractor() set.StringSet {
 }
 
 func (r *stmtSummaryRetrieverV2) getTimeRangesFromExtractor() []*stmtsummaryv2.StmtTimeRange {
-	var timeRanges []*stmtsummaryv2.StmtTimeRange
-	if r.extractor != nil && len(r.extractor.TimeRanges) > 0 {
-		timeRanges = make([]*stmtsummaryv2.StmtTimeRange, len(r.extractor.TimeRanges))
-		for n, tr := range r.extractor.TimeRanges {
-			timeRanges[n] = &stmtsummaryv2.StmtTimeRange{
-				Begin: tr.StartTime.Unix(),
-				End:   tr.EndTime.Unix(),
-			}
-		}
+	if r.extractor != nil && r.extractor.CoarseTimeRange != nil {
+		return []*stmtsummaryv2.StmtTimeRange{{
+			Begin: r.extractor.CoarseTimeRange.StartTime.Unix(),
+			End:   r.extractor.CoarseTimeRange.EndTime.Unix(),
+		}}
 	}
-	return timeRanges
+	return nil
 }
 
 type rowsReader struct {
