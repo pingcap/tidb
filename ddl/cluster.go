@@ -706,6 +706,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
+
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
 		commitTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
@@ -723,10 +724,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
-
-		time.Sleep(1 * time.Second)
-		return ver, nil
-
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
@@ -794,6 +791,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 				return err
 			}
 		}
+
 		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
 	})
 	if err != nil {
