@@ -94,6 +94,15 @@ func NewExtendedStatsColl() *ExtendedStatsColl {
 	return &ExtendedStatsColl{Stats: make(map[string]*ExtendedStatsItem)}
 }
 
+const (
+	// ExtendedStatsInited is the status for extended stats which are just registered but have not been analyzed yet.
+	ExtendedStatsInited uint8 = iota
+	// ExtendedStatsAnalyzed is the status for extended stats which have been collected in analyze.
+	ExtendedStatsAnalyzed
+	// ExtendedStatsDeleted is the status for extended stats which were dropped. These "deleted" records would be removed from storage by GCStats().
+	ExtendedStatsDeleted
+)
+
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
 	PhysicalID int64
