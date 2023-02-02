@@ -799,6 +799,9 @@ const (
 
 	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
 	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
+
+	// TiDBEnableIndexJoinInnerMultiPattern indicates whether support multi pattern on index join's inner side
+	TiDBEnableIndexJoinInnerMultiPattern = "tidb_enable_index_join_inner_multi_pattern"
 )
 
 // TiDB vars that have only global scope
@@ -1171,6 +1174,7 @@ const (
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
+	DefTiDBEnableIndexJoinInnerMultiPattern                = false
 )
 
 // Process global variables.

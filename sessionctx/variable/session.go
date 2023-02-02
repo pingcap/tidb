@@ -1337,6 +1337,9 @@ type SessionVars struct {
 	// PessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
 	// is enabled.
 	PessimisticTransactionAggressiveLocking bool
+
+	// EnableIndexJoinInnerSideMultiPattern indicates whether enable multi pattern for index join inner side
+	EnableIndexJoinInnerSideMultiPattern bool
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
