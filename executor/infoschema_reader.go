@@ -2953,9 +2953,6 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 }
 
 func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
-	if table.Name.O == infoschema.TableStatementsSummary {
-		return input
-	}
 	if len(outColumns) == len(table.Columns) {
 		return input
 	}

@@ -56,97 +56,90 @@ type stmtSummaryRetriever struct {
 	table     *model.TableInfo
 	columns   []*model.ColumnInfo
 	extractor *plannercore.StatementsSummaryExtractor
-	retrieved bool
 
-	// only for evicted
-	initiliazed bool
-	rowIdx      int
-	rows        [][]types.Datum
+	// lazily initialized
+	rowsReader *rowsReader
 }
 
 func (e *stmtSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if (e.extractor != nil && e.extractor.SkipRequest) || e.retrieved {
+	if e.extractor != nil && e.extractor.SkipRequest {
 		return nil, nil
 	}
-	switch e.table.Name.O {
-	case infoschema.TableStatementsSummary,
-		infoschema.ClusterTableStatementsSummary:
-		return e.retrieveCurrent(sctx)
-	case infoschema.TableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryHistory:
-		return e.retrieveHistory(sctx)
-	case infoschema.TableStatementsSummaryEvicted,
-		infoschema.ClusterTableStatementsSummaryEvicted:
-		return e.retrieveEvicted(sctx)
+
+	if err := e.ensureRowsReader(sctx); err != nil {
+		return nil, err
 	}
-	return nil, nil
+	return e.rowsReader.read(1024), nil
 }
 
-func (e *stmtSummaryRetriever) retrieveCurrent(sctx sessionctx.Context) ([][]types.Datum, error) {
-	e.retrieved = true
-	var err error
-	var instanceAddr string
-	if e.table.Name.O == infoschema.ClusterTableStatementsSummary {
-		instanceAddr, err = infoschema.GetInstanceAddr(sctx)
-		if err != nil {
-			return nil, err
-		}
+func (e *stmtSummaryRetriever) ensureRowsReader(sctx sessionctx.Context) error {
+	if e.rowsReader != nil {
+		return nil
 	}
-	user := sctx.GetSessionVars().User
-	reader := stmtsummary.NewStmtSummaryReader(user, hasPriv(sctx, mysql.ProcessPriv), e.columns, instanceAddr, sctx.GetSessionVars().StmtCtx.TimeZone)
+
+	var err error
+	if isEvictedTable(e.table.Name.O) {
+		e.rowsReader, err = e.initEvictedRowsReader(sctx)
+	} else {
+		e.rowsReader, err = e.initSummaryRowsReader(sctx)
+	}
+
+	return err
+}
+
+func (e *stmtSummaryRetriever) initEvictedRowsReader(sctx sessionctx.Context) (*rowsReader, error) {
+	if err := checkPrivilege(sctx); err != nil {
+		return nil, err
+	}
+
+	rows := stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
+	if !isClusterTable(e.table.Name.O) {
+		// rows are full-columned, so we need to adjust them to the required columns.
+		return &rowsReader{rows: adjustColumns(rows, e.columns, e.table)}, nil
+	}
+
+	// Additional column `INSTANCE` for cluster table
+	rows, err := infoschema.AppendHostInfoToRows(sctx, rows)
+	if err != nil {
+		return nil, err
+	}
+	// rows are full-columned, so we need to adjust them to the required columns.
+	return &rowsReader{rows: adjustColumns(rows, e.columns, e.table)}, nil
+}
+
+func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*rowsReader, error) {
+	vars := sctx.GetSessionVars()
+	user := vars.User
+	tz := vars.StmtCtx.TimeZone
+	columns := e.columns
+	priv := hasPriv(sctx, mysql.ProcessPriv)
+	instanceAddr, err := e.clusterTableInstanceAddr(sctx)
+	if err != nil {
+		return nil, err
+	}
+
+	reader := stmtsummary.NewStmtSummaryReader(user, priv, columns, instanceAddr, tz)
 	if e.extractor != nil && e.extractor.Enable {
+		// set checker to filter out statements not matching the given digests
 		checker := stmtsummary.NewStmtSummaryChecker(e.extractor.Digests)
 		reader.SetChecker(checker)
 	}
-	return reader.GetStmtSummaryCurrentRows(), nil
+
+	var rows [][]types.Datum
+	if isCurrentTable(e.table.Name.O) {
+		rows = reader.GetStmtSummaryCurrentRows()
+	}
+	if isHistoryTable(e.table.Name.O) {
+		rows = reader.GetStmtSummaryHistoryRows()
+	}
+	return &rowsReader{rows: rows}, nil
 }
 
-func (e *stmtSummaryRetriever) retrieveHistory(sctx sessionctx.Context) ([][]types.Datum, error) {
-	e.retrieved = true
-	var err error
-	var instanceAddr string
-	if e.table.Name.O == infoschema.ClusterTableStatementsSummaryHistory {
-		instanceAddr, err = infoschema.GetInstanceAddr(sctx)
-		if err != nil {
-			return nil, err
-		}
+func (e *stmtSummaryRetriever) clusterTableInstanceAddr(sctx sessionctx.Context) (string, error) {
+	if isClusterTable(e.table.Name.O) {
+		return infoschema.GetInstanceAddr(sctx)
 	}
-	user := sctx.GetSessionVars().User
-	reader := stmtsummary.NewStmtSummaryReader(user, hasPriv(sctx, mysql.ProcessPriv), e.columns, instanceAddr, sctx.GetSessionVars().StmtCtx.TimeZone)
-	if e.extractor != nil && e.extractor.Enable {
-		checker := stmtsummary.NewStmtSummaryChecker(e.extractor.Digests)
-		reader.SetChecker(checker)
-	}
-	return reader.GetStmtSummaryHistoryRows(), nil
-}
-
-func (e *stmtSummaryRetriever) retrieveEvicted(sctx sessionctx.Context) ([][]types.Datum, error) {
-	if !e.initiliazed {
-		e.initiliazed = true
-		if !hasPriv(sctx, mysql.ProcessPriv) {
-			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-		}
-		e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
-		if e.table.Name.O == infoschema.ClusterTableStatementsSummaryEvicted {
-			var err error
-			e.rows, err = infoschema.AppendHostInfoToRows(sctx, e.rows)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	maxCount := 1024
-	retCount := maxCount
-	if e.rowIdx+maxCount > len(e.rows) {
-		retCount = len(e.rows) - e.rowIdx
-		e.retrieved = true
-	}
-	ret := make([][]types.Datum, retCount)
-	for i := e.rowIdx; i < e.rowIdx+retCount; i++ {
-		ret[i-e.rowIdx] = e.rows[i]
-	}
-	e.rowIdx += retCount
-	return adjustColumns(ret, e.columns, e.table), nil
+	return "", nil
 }
 
 // stmtSummaryRetriever is used to retrieve statements summary when
@@ -294,4 +287,67 @@ func (r *stmtSummaryRetrieverV2) getTimeRangesFromExtractor() []*stmtsummaryv2.S
 		}
 	}
 	return timeRanges
+}
+
+type rowsReader struct {
+	rows [][]types.Datum
+}
+
+func (r *rowsReader) read(maxCount int) [][]types.Datum {
+	if maxCount >= len(r.rows) {
+		ret := r.rows
+		r.rows = nil
+		return ret
+	}
+	ret := r.rows[:maxCount]
+	r.rows = r.rows[maxCount:]
+	return ret
+}
+
+func isClusterTable(originalTableName string) bool {
+	switch originalTableName {
+	case infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryEvicted:
+		return true
+	}
+
+	return false
+}
+
+func isCurrentTable(originalTableName string) bool {
+	switch originalTableName {
+	case infoschema.TableStatementsSummary,
+		infoschema.ClusterTableStatementsSummary:
+		return true
+	}
+
+	return false
+}
+
+func isHistoryTable(originalTableName string) bool {
+	switch originalTableName {
+	case infoschema.TableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		return true
+	}
+
+	return false
+}
+
+func isEvictedTable(originalTableName string) bool {
+	switch originalTableName {
+	case infoschema.TableStatementsSummaryEvicted,
+		infoschema.ClusterTableStatementsSummaryEvicted:
+		return true
+	}
+
+	return false
+}
+
+func checkPrivilege(sctx sessionctx.Context) error {
+	if !hasPriv(sctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+	return nil
 }
