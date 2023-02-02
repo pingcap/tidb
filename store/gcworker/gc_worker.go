@@ -330,9 +330,9 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 
 func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) error {
 	// Get safe point from PD.
-	// The update process of GC safe point is to resolve locks first and then update to pd.
-	// So, in the following code, the data of the range to be deleted must have been resolved locks,
-	// the range is safe to be deleted.
+	// The GC safe point is updated only after the global GC have done resolveLocks phase globally.
+	// So, in the following code, resolveLocks must have been done by the global GC on the ranges to be deleted,
+	// so its safe to delete the ranges.
 	safePoint, err := getGCSafePoint(ctx, w.pdClient)
 	if err != nil {
 		logutil.Logger(ctx).Info("[gc worker] get gc safe point error", zap.Error(errors.Trace(err)))
@@ -396,9 +396,11 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// Gc safe point is not separated by keyspace now, the whole cluster has only one global gc safe point.
-	// So at least one tidb without set `keyspace-name` is required in the whole cluster to calculate and update gc safe point.
-	// If TiDB set `keyspace-name` it will only do its own delete range, and will not calculate gc safe point and resolve locks.
+	// Gc safe point is not separated by keyspace now. The whole cluster has only one global gc safe point.
+	// So at least one TiDB with `keyspace-name` not set is required in the whole cluster to calculate and update gc safe point.
+	// If `keyspace-name` is set, the TiDB node will only do its own delete range, and will not calculate gc safe point and resolve locks.
+	// Note that when `keyspace-name` is set, `checkLeader` will be done within the key space.
+	// Therefore only one TiDB node in each key space will be responsible to do delete range.
 	if w.store.GetCodec().GetKeyspace() != nil {
 		err = w.runKeyspaceGCJob(ctx, concurrency)
 		if err != nil {
