@@ -35,6 +35,7 @@ import (
 	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -287,7 +288,16 @@ type Config struct {
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
 	MaxServerConnections       uint32     `toml:"max-server-connections" json:"max-server-connections"`
 	RunDDL                     bool       `toml:"run-ddl" json:"run-ddl"`
-	DisaggregatedTiFlash       bool       `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
+
+	// These configs are related to disaggregated-tiflash mode.
+	DisaggregatedTiFlash         bool   `toml:"disaggregated-tiflash" json:"disaggregated-tiflash"`
+	TiFlashComputeAutoScalerType string `toml:"autoscaler-type" json:"autoscaler-type"`
+	TiFlashComputeAutoScalerAddr string `toml:"autoscaler-addr" json:"autoscaler-addr"`
+	IsTiFlashComputeFixedPool    bool   `toml:"is-tiflashcompute-fixed-pool" json:"is-tiflashcompute-fixed-pool"`
+	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
+	// todo: remove this after AutoScaler is stable.
+	UseAutoScaler bool `toml:"use-autoscaler" json:"use-autoscaler"`
+
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
@@ -1000,6 +1010,11 @@ var defaultConf = Config{
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
 	DisaggregatedTiFlash:                 false,
+	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
+	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
+	IsTiFlashComputeFixedPool:            false,
+	AutoScalerClusterID:                  "",
+	UseAutoScaler:                        true,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,
@@ -1029,6 +1044,26 @@ func StoreGlobalConfig(config *Config) {
 	defer TikvConfigLock.Unlock()
 	cfg := *config.GetTiKVConfig()
 	tikvcfg.StoreGlobalConfig(&cfg)
+}
+
+// GetAutoScalerClusterID returns KeyspaceName or AutoScalerClusterID.
+func GetAutoScalerClusterID() (string, error) {
+	c := GetGlobalConfig()
+	keyspaceName := c.KeyspaceName
+	clusterID := c.AutoScalerClusterID
+
+	if keyspaceName != "" && clusterID != "" {
+		return "", errors.Errorf("config.KeyspaceName(%s) and config.AutoScalerClusterID(%s) are not empty both", keyspaceName, clusterID)
+	}
+	if keyspaceName == "" && clusterID == "" {
+		return "", errors.Errorf("config.KeyspaceName and config.AutoScalerClusterID are both empty")
+	}
+
+	res := keyspaceName
+	if res == "" {
+		res = clusterID
+	}
+	return res, nil
 }
 
 // removedConfig contains items that are no longer supported.
@@ -1313,6 +1348,17 @@ func (c *Config) Valid() error {
 	}
 	if c.Performance.StatsLoadQueueSize < DefStatsLoadQueueSizeLimit || c.Performance.StatsLoadQueueSize > DefMaxOfStatsLoadQueueSizeLimit {
 		return fmt.Errorf("stats-load-queue-size should be [%d, %d]", DefStatsLoadQueueSizeLimit, DefMaxOfStatsLoadQueueSizeLimit)
+	}
+
+	// Check tiflash_compute topo fetch is valid.
+	if c.DisaggregatedTiFlash && c.UseAutoScaler {
+		if !tiflashcompute.IsValidAutoScalerConfig(c.TiFlashComputeAutoScalerType) {
+			return fmt.Errorf("invalid AutoScaler type, expect %s, %s or %s, got %s",
+				tiflashcompute.MockASStr, tiflashcompute.AWSASStr, tiflashcompute.GCPASStr, c.TiFlashComputeAutoScalerType)
+		}
+		if c.TiFlashComputeAutoScalerAddr == "" {
+			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")
+		}
 	}
 
 	// test log level

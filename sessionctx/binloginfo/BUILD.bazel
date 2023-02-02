@@ -54,6 +54,7 @@ go_test(
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_goleak//:goleak",
     ],
 )

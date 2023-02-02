@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -231,6 +232,8 @@ type Controller struct {
 
 	preInfoGetter       PreRestoreInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
+
+	keyspaceName string
 }
 
 // LightningStatus provides the finished bytes and total bytes of the current task.
@@ -266,6 +269,8 @@ type ControllerParam struct {
 	CheckpointName string
 	// DupIndicator can expose the duplicate detection result to the caller
 	DupIndicator *atomic.Bool
+	// Keyspace name
+	KeyspaceName string
 }
 
 func NewRestoreController(
@@ -353,7 +358,7 @@ func NewRestoreControllerWithPauser(
 			}
 		}
 
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr)
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -437,6 +442,8 @@ func NewRestoreControllerWithPauser(
 
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
+
+		keyspaceName: p.KeyspaceName,
 	}
 
 	return rc, nil
@@ -1500,7 +1507,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 
 		// Disable GC because TiDB enables GC already.
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf("tikv://%s?disableGC=true", rc.cfg.TiDB.PdAddr),
+			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", rc.cfg.TiDB.PdAddr, rc.keyspaceName),
 			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
 		)
 		if err != nil {
@@ -2333,7 +2340,14 @@ func (cr *chunkRestore) deliverLoop(
 	var startRealOffset, currRealOffset int64 // save to 0 at first
 
 	for hasMoreKVs {
-		var dataChecksum, indexChecksum verify.KVChecksum
+		c := keyspace.CodecV1
+		if t.kvStore != nil {
+			c = t.kvStore.GetCodec()
+		}
+		var (
+			dataChecksum  = verify.NewKVChecksumWithKeyspace(c)
+			indexChecksum = verify.NewKVChecksumWithKeyspace(c)
+		)
 		var columns []string
 		var kvPacket []deliveredKVs
 		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
@@ -2360,7 +2374,7 @@ func (cr *chunkRestore) deliverLoop(
 						hasMoreKVs = false
 						break populate
 					}
-					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
+					p.kvs.ClassifyAndAppend(&dataKVs, dataChecksum, &indexKVs, indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
 					currRealOffset = p.realOffset
@@ -2427,8 +2441,8 @@ func (cr *chunkRestore) deliverLoop(
 		// No need to apply a lock since this is the only thread updating `cr.chunk.**`.
 		// In local mode, we should write these checkpoints after engine flushed.
 		lastOffset := cr.chunk.Chunk.Offset
-		cr.chunk.Checksum.Add(&dataChecksum)
-		cr.chunk.Checksum.Add(&indexChecksum)
+		cr.chunk.Checksum.Add(dataChecksum)
+		cr.chunk.Checksum.Add(indexChecksum)
 		cr.chunk.Chunk.Offset = currOffset
 		cr.chunk.Chunk.RealOffset = currRealOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID

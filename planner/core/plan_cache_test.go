@@ -78,7 +78,7 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_prepared_plan_cache_size").Check(testkit.Rows("1"))
 	sessionVar := tk.Session().GetSessionVars()
 
-	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, plannercore.PickPlanFromBucket, tk.Session())
+	lru := plannercore.NewLRUPlanCache(uint(sessionVar.PreparedPlanCacheSize), 0, 0, tk.Session())
 	require.NotNil(t, lru)
 }
 
@@ -469,6 +469,8 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		params []int
 	}{
 		{"prepare stmt from 'select * from t limit ?'", []int{1}},
+		{"prepare stmt from 'select * from t limit 1, ?'", []int{1}},
+		{"prepare stmt from 'select * from t limit ?, 1'", []int{1}},
 		{"prepare stmt from 'select * from t limit ?, ?'", []int{1, 2}},
 		{"prepare stmt from 'delete from t order by a limit ?'", []int{1}},
 		{"prepare stmt from 'insert into t select * from t order by a desc limit ?'", []int{1}},
@@ -491,7 +493,8 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-		if idx < 6 {
+		if idx < 9 {
+			// none point get plan
 			tk.MustExec("set @a0 = 6")
 			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -502,4 +505,23 @@ func TestPlanCacheWithLimit(t *testing.T) {
 	tk.MustExec("set @a = 10001")
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: limit count more than 10000"))
+}
+
+func TestIssue40679(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a));")
+	tk.MustExec("prepare st from 'select * from t use index(a) where a < ?'")
+	tk.MustExec("set @a1=1.1")
+	tk.MustExec("execute st using @a1")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.True(t, strings.Contains(rows[1][0].(string), "RangeScan")) // RangeScan not FullScan
+
+	tk.MustExec("execute st using @a1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '1.1' may be converted to INT"))
 }

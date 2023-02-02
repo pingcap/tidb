@@ -58,6 +58,7 @@ import (
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -1592,8 +1593,7 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 var tableResourceGroupsCols = []columnInfo{
 	{name: "GROUP_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "GROUP_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
-	{name: "RRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
-	{name: "WRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
+	{name: "RU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
 	// {name: "BURSTABLE", tp: mysql.TypeVarchar, size: 10},
 }
 
@@ -2333,7 +2333,7 @@ func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string
 }
 
 func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()
