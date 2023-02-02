@@ -4055,26 +4055,23 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        replace = "github.com/HuSharp/client-go/v2",
-        sum = "h1:uKRGfQyIWCbLomNy6eLPjrVeqj0OSvrb5vYlysuDPJA=",
-        version = "v2.0.0-20230202021713-c9a6ecd403ab",
+        sum = "h1:j2s6Gechj46t1GWxE0vZEPBqgp7sc7mb3v0srBmf5Tw=",
+        version = "v2.0.5-0.20230202101145-8fd09cd88cce",
     )
     go_repository(
         name = "com_github_tikv_pd",
         build_file_proto_mode = "disable",
         importpath = "github.com/tikv/pd",
-        replace = "github.com/HuSharp/pd",
-        sum = "h1:5TdzvzFzTh3Z4dUDayp2Ga5B6St8okqb5LSP55SLzTE=",
-        version = "v1.1.0-beta.0.20230202034438-68b5d80b943d",
+        sum = "h1:iY/RztOIZ2nTbINUiLGsSv3SUGoEiub1GN0SKVKHJYg=",
+        version = "v1.1.0-beta.0.20230202094356-18df271ce57f",
     )
 
     go_repository(
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        replace = "github.com/HuSharp/pd/client",
-        sum = "h1:GXXvn8QekeU0hr9tj7M/eP+lpzACMR5nCENwp8PDupo=",
-        version = "v0.0.0-20230202034438-68b5d80b943d",
+        sum = "h1:xHPPej9Z8IrYdyLED4byOGtGm/7yhxyRUf4m93CpDyg=",
+        version = "v0.0.0-20230202094356-18df271ce57f",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",

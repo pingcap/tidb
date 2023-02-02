@@ -92,9 +92,9 @@ require (
 	github.com/stretchr/testify v1.8.1
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.5-0.20230120021435-f89383775234
-	github.com/tikv/pd v1.1.0-beta.0.20230201064005-6ca9a3398f15
-	github.com/tikv/pd/client v0.0.0-20230119115149-5c518d079b93
+	github.com/tikv/client-go/v2 v2.0.5-0.20230202101145-8fd09cd88cce
+	github.com/tikv/pd v1.1.0-beta.0.20230202094356-18df271ce57f
+	github.com/tikv/pd/client v0.0.0-20230202094356-18df271ce57f
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -276,8 +276,5 @@ replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/pingcap/tidb/parser => ./parser
-	github.com/tikv/client-go/v2 => github.com/HuSharp/client-go/v2 v2.0.0-20230202021713-c9a6ecd403ab
-	github.com/tikv/pd => github.com/HuSharp/pd v1.1.0-beta.0.20230202034438-68b5d80b943d
-	github.com/tikv/pd/client => github.com/HuSharp/pd/client v0.0.0-20230202034438-68b5d80b943d
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
