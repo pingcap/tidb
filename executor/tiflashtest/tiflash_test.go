@@ -1322,8 +1322,8 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 // todo: remove this after AutoScaler is stable.
 func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.UseAutoScaler = false
 		conf.DisaggregatedTiFlash = true
+		conf.UseAutoScaler = false
 	})
 	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = false
@@ -1346,7 +1346,7 @@ func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 
 	err = tk.ExecToErr("select * from t;")
-	// This error message means we us PD instead of AutoScaler.
+	// This error message means we use PD instead of AutoScaler.
 	require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
 }
 
