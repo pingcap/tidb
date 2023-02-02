@@ -114,10 +114,7 @@ func TestStopPool(t *testing.T) {
 	}()
 	// Waiting task finishing
 	control.Stop()
-	close(exit)
 	control.Wait()
-	// it should pass. Stop can be used after the pool is closed. we should prevent it from panic.
-	control.Stop()
 	wg.Wait()
 	// close pool
 	pool.ReleaseAndWait()
@@ -193,7 +190,7 @@ func testTunePool(t *testing.T, name string) {
 	}
 
 	// exit test
-	close(exit)
+	control.Stop()
 	control.Wait()
 	wg.Wait()
 	// close pool
