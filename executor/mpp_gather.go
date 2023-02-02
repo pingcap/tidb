@@ -93,10 +93,14 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
 			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
+			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
+			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
+			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
+		)
 		req := &kv.MPPDispatchRequest{
 			Data:       pbData,
 			Meta:       mppTask.Meta,

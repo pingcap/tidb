@@ -115,11 +115,13 @@ func AllocMPPQueryID() uint64 {
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
-	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)))
+	mppVersion := e.ctx.GetSessionVars().ChooseMppVersion()
+	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)), zap.Int64("mpp-version", mppVersion.ToInt64()))
 	tidbTask := &kv.MPPTask{
 		StartTs:    e.startTS,
 		MppQueryID: e.mppQueryID,
 		ID:         -1,
+		MppVersion: mppVersion,
 	}
 	_, frags, err := e.generateMPPTasksForExchangeSender(s)
 	if err != nil {
@@ -157,6 +159,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask)
 				MppQueryID: e.mppQueryID,
 				StartTs:    e.startTS,
 				TableID:    -1,
+				MppVersion: e.ctx.GetSessionVars().ChooseMppVersion(),
 			}
 			newTasks = append(newTasks, mppTask)
 			addressMap[addr] = struct{}{}
@@ -422,6 +425,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		task := &kv.MPPTask{
 			Meta:                              meta,
 			ID:                                AllocMPPTaskID(e.ctx),
+			MppVersion:                        e.ctx.GetSessionVars().ChooseMppVersion(),
 			StartTs:                           e.startTS,
 			MppQueryID:                        e.mppQueryID,
 			TableID:                           ts.Table.ID,

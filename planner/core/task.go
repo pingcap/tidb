@@ -2243,6 +2243,14 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
+
+	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
+		// Use compress when exchange type is `Hash`
+		if sender.ExchangeType == tipb.ExchangeType_Hash {
+			sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
+		}
+	}
+
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
