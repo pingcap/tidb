@@ -131,18 +131,20 @@ type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
 	closeCh        chan struct{}
 	productCloseCh chan struct{}
 	wg             *sync.WaitGroup
+	prodWg         *sync.WaitGroup
 	taskID         uint64
 	resultCh       chan U
 }
 
 // NewTaskController create a controller to deal with pooltask's status.
-func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh, productCloseCh chan struct{}, wg *sync.WaitGroup, resultCh chan U) TaskController[T, U, C, CT, TF] {
+func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, closeCh, productCloseCh chan struct{}, wg, prodWg *sync.WaitGroup, resultCh chan U) TaskController[T, U, C, CT, TF] {
 	return TaskController[T, U, C, CT, TF]{
 		pool:           p,
 		taskID:         taskID,
 		closeCh:        closeCh,
 		productCloseCh: productCloseCh,
 		wg:             wg,
+		prodWg:         prodWg,
 		resultCh:       resultCh,
 	}
 }
@@ -158,6 +160,7 @@ func (t *TaskController[T, U, C, CT, TF]) Wait() {
 // Stop is to send stop command to the task. But you still need to wait the task to stop.
 func (t *TaskController[T, U, C, CT, TF]) Stop() {
 	close(t.productCloseCh)
+	t.wg.Wait()
 	t.pool.StopTask(t.TaskID())
 }
 

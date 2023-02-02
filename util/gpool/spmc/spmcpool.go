@@ -258,12 +258,12 @@ func (p *Pool[T, U, C, CT, TF]) SetConsumerFunc(consumerFunc func(T, C, CT) U) {
 func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, pooltask.TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.NewTaskID()
-	var wg sync.WaitGroup
+	var wg, prodWg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	closeCh := make(chan struct{})
 	productCloseCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, productCloseCh, &wg, result)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, productCloseCh, &wg, &prodWg, result)
 	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
@@ -275,6 +275,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
+	prodWg.Add(1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -282,6 +283,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 			}
 			close(closeCh)
 			close(inputCh)
+			prodWg.Done()
 		}()
 		for {
 			tasks, err := producer()
@@ -314,13 +316,13 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, pooltask.TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.NewTaskID()
-	var wg sync.WaitGroup
+	var wg, prodWg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
 	productCloseCh := make(chan struct{})
 	closeCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, productCloseCh, &wg, result)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, productCloseCh, &wg, &prodWg, result)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
@@ -331,6 +333,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
+	prodWg.Add(1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -338,6 +341,7 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 			}
 			close(closeCh)
 			close(inputCh)
+			prodWg.Done()
 		}()
 		for {
 			task, err := producer()
