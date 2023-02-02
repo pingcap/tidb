@@ -1404,8 +1404,8 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	if err != nil {
 		return nil, err
 	}
-	if reader.IsHistory() {
-		return statsTbl, err
+	if reader.IsHistory() || statsTbl == nil {
+		return statsTbl, nil
 	}
 	for histID, idx := range statsTbl.Indices {
 		if statistics.IsAnalyzed(idx.Flag) {
