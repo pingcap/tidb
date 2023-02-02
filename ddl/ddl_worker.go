@@ -1000,9 +1000,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionExchangeTablePartition:
 		ver, err = w.onExchangeTablePartition(d, t, job)
 	case model.ActionAddColumn:
-		ver, err = onAddColumn(d, t, job)
+		ver, err = onAddColumn(w, d, t, job)
 	case model.ActionDropColumn:
-		ver, err = onDropColumn(d, t, job)
+		ver, err = onDropColumn(w, d, t, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(d, t, job)
 	case model.ActionSetDefaultValue:

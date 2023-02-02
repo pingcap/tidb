@@ -15,6 +15,7 @@ go_library(
         "callback.go",
         "cluster.go",
         "column.go",
+        "column_with_index.go",
         "constant.go",
         "ddl.go",
         "ddl_algorithm.go",

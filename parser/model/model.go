@@ -53,6 +53,13 @@ const (
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
+	// StateCreateIndexDeleteOnly only use for Drop column with composite indices
+	// on create temp composite indices step
+	StateCreateIndexDeleteOnly SchemaState = 0xFE
+
+	// StateCreateIndexWriteOnly only use for Drop column with composite indices
+	// on create temp composite indices step
+	StateCreateIndexWriteOnly SchemaState = 0xFF
 )
 
 // String implements fmt.Stringer interface.
@@ -72,6 +79,10 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
+	case StateCreateIndexDeleteOnly:
+		return "create index delete only"
+	case StateCreateIndexWriteOnly:
+		return "create index write only"
 	default:
 		return "none"
 	}

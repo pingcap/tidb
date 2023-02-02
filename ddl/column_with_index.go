@@ -1,0 +1,638 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ddl
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+)
+
+// Reorg Composite index name design:
+//
+//	CIStr {
+//	   O: _CIdx$_[origin name]
+//	   L: _CIdx$_[origin name lower]_[origin index ID]
+//	}
+//
+// This design will generate a different value in CIStr, so no one can generate this name from
+// client.
+const (
+	tempCompositeIndexPrefix = "_CIdx$_"
+)
+
+func toJsonString(val interface{}) string {
+	r, err := json.Marshal(val)
+	if err != nil {
+		return ""
+	}
+	return string(r)
+}
+
+func getOrCreateTempCompositeIndexes(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, idxInfos []*model.IndexInfo) ([]*model.IndexInfo, error) {
+	ctidxInfos := getTempCompositeIndexes(tblInfo, idxInfos)
+	if len(ctidxInfos) > 0 {
+		return ctidxInfos, nil
+	}
+	ret := make([]*model.IndexInfo, 0)
+	for _, idxInfo := range idxInfos {
+		ctidxName := model.CIStr{
+			O: fmt.Sprintf("%s%s", tempCompositeIndexPrefix, idxInfo.Name.O),
+			L: fmt.Sprintf("%s%s_%d", tempCompositeIndexPrefix, idxInfo.Name.L, idxInfo.ID),
+		}
+		ctidxInfo := tblInfo.FindIndexByName(ctidxName.L)
+		if ctidxInfo != nil {
+			// If we have the index just ignore it.
+			continue
+		}
+		nctidxInfo := buildCompositeIndexInfo(ctidxName, idxInfo, colInfos, model.StateNone)
+		if nctidxInfo == nil {
+			// No need to create temp index and reorg this index
+			continue
+		}
+		nctidxInfo.ID = AllocateIndexID(tblInfo)
+		tblInfo.Indices = append(tblInfo.Indices, nctidxInfo)
+		ret = append(ret, nctidxInfo)
+	}
+	return ret, nil
+}
+
+func buildCompositeIndexInfo(idxName model.CIStr, idxInfo *model.IndexInfo, colInfos []*model.ColumnInfo, state model.SchemaState) *model.IndexInfo {
+	// For now we do not need to check index name length
+	idxColumns := make([]*model.IndexColumn, 0)
+	// Just remove dropped column from origin index columns
+	// We do not need to check the columns here.
+	for _, col := range idxInfo.Columns {
+		if inColumnInfos(col, colInfos) {
+			continue
+		}
+		idxColumns = append(idxColumns, col)
+	}
+	if len(idxColumns) == 0 {
+		// Index no columns, we should just drop this index and no need to reorg.
+		return nil
+	}
+	// Except Name, Columns, State, just copy other fields from origin index info.
+	nidxInfo := idxInfo.Clone()
+	nidxInfo.Name = idxName
+	nidxInfo.Columns = idxColumns
+	nidxInfo.State = state
+	return nidxInfo
+}
+
+func inColumnInfos(col *model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+	for _, colInfo := range colInfos {
+		if col.Name.L == colInfo.Name.L {
+			return true
+		}
+	}
+	return false
+}
+
+func getTempCompositeIndexes(tblInfo *model.TableInfo, idxInfos []*model.IndexInfo) []*model.IndexInfo {
+	ret := make([]*model.IndexInfo, 0)
+	for _, cidxInfo := range idxInfos {
+		ctidxOName := fmt.Sprintf("%s%s", tempCompositeIndexPrefix, cidxInfo.Name.O)
+		ctidxLName := fmt.Sprintf("%s%s_%d", tempCompositeIndexPrefix, cidxInfo.Name.L, cidxInfo.ID)
+		for _, idx := range tblInfo.Indices {
+			if idx.Name.L == ctidxLName && idx.Name.O == ctidxOName {
+				ret = append(ret, idx)
+				break
+			}
+		}
+	}
+	return ret
+}
+
+func renameTempCompositeIdxToOrigin(idx *model.IndexInfo, cidxInfos []*model.IndexInfo) model.CIStr {
+	for _, cidxInfo := range cidxInfos {
+		ctidxOName := fmt.Sprintf("%s%s", tempCompositeIndexPrefix, cidxInfo.Name.O)
+		ctidxLName := fmt.Sprintf("%s%s_%d", tempCompositeIndexPrefix, cidxInfo.Name.L, cidxInfo.ID)
+		if ctidxLName == idx.Name.L && idx.Name.O == ctidxOName {
+			return cidxInfo.Name
+		}
+	}
+	// We should not hit here
+	return model.NewCIStr(trimTempCompositeIdxPrefix(idx.Name.O))
+}
+
+func trimTempCompositeIdxPrefix(name string) string {
+	return strings.TrimPrefix(name, tempCompositeIndexPrefix)
+}
+
+func inColumnNames(col *model.IndexColumn, colNames []model.CIStr) bool {
+	for _, colName := range colNames {
+		if colName.L == col.Name.L {
+			return true
+		}
+	}
+	return false
+}
+
+func listIndexesWithColumn(colName string, indices []*model.IndexInfo) ([]*model.IndexInfo, []*model.IndexInfo) {
+	singleIndexes := make([]*model.IndexInfo, 0)
+	compositeIndexes := make([]*model.IndexInfo, 0)
+	for _, indexInfo := range indices {
+		if len(indexInfo.Columns) == 1 && colName == indexInfo.Columns[0].Name.L {
+			singleIndexes = append(singleIndexes, indexInfo)
+		} else if len(indexInfo.Columns) > 1 {
+			for _, col := range indexInfo.Columns {
+				if colName == col.Name.L {
+					compositeIndexes = append(compositeIndexes, indexInfo)
+					break
+				}
+			}
+		}
+	}
+	// We should sort compositeIndexes to make sure this list not changed by other DDL statements.
+	// If this order changed, reorg job may got some problem on reorg multi indices.
+	sort.Slice(compositeIndexes, func(i, j int) bool {
+		return compositeIndexes[i].ID < compositeIndexes[j].ID
+	})
+	return singleIndexes, compositeIndexes
+}
+
+func checkDropColumnsNeedReorg(tblInfo *model.TableInfo, colNames []model.CIStr) bool {
+	cidxInfos := make(map[int64]*model.IndexInfo)
+	for _, colName := range colNames {
+		_, cidxList := listIndexesWithColumn(colName.L, tblInfo.Indices)
+		for _, cidx := range cidxList {
+			cidxInfos[cidx.ID] = cidx
+		}
+	}
+	if len(cidxInfos) == 0 {
+		return false
+	}
+	needReorgs := 0
+	for _, idxInfo := range cidxInfos {
+		idxColumns := 0
+		for _, col := range idxInfo.Columns {
+			if inColumnNames(col, colNames) {
+				continue
+			}
+			idxColumns++
+		}
+		if idxColumns > 0 {
+			needReorgs++
+		}
+	}
+	return needReorgs > 0
+}
+
+func dropColumnWithoutCompositeIndex(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, colInfo *model.ColumnInfo, idxInfos []*model.IndexInfo, ifExists bool) (ver int64, err error) {
+	originalState := colInfo.State
+	switch colInfo.State {
+	case model.StatePublic:
+		// public -> write only
+		colInfo.State = model.StateWriteOnly
+		setIndicesState(idxInfos, model.StateWriteOnly)
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		err = checkDropColumnForStatePublic(colInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateWriteOnly:
+		// write only -> delete only
+		colInfo.State = model.StateDeleteOnly
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		if len(idxInfos) > 0 {
+			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+			for _, idx := range tblInfo.Indices {
+				if !indexInfoContains(idx.ID, idxInfos) {
+					newIndices = append(newIndices, idx)
+				}
+			}
+			tblInfo.Indices = newIndices
+		}
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.Args = append(job.Args, indexInfosToIDList(idxInfos))
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		colInfo.State = model.StateDeleteReorganization
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateDeleteReorganization:
+		// reorganization -> absent
+		// All reorganization jobs are done, drop this column.
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
+		colInfo.State = model.StateNone
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job.
+		if job.IsRollingback() {
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+		} else {
+			// We should set related index IDs for job
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, getPartitionIDs(tblInfo))
+		}
+	default:
+		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State))
+	}
+	job.SchemaState = colInfo.State
+	return ver, errors.Trace(err)
+}
+
+func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, colInfo *model.ColumnInfo, idxInfos []*model.IndexInfo, cidxInfos []*model.IndexInfo, ifExists bool) (ver int64, err error) {
+	colOriginalState := colInfo.State
+	if job.IsRollingback() {
+		// Handle rolling back
+		ctidxInfos := getTempCompositeIndexes(tblInfo, cidxInfos)
+		if len(ctidxInfos) == 0 {
+			// No indices need to be dropped just finish job
+			// Actually it will not run here, just for defense.
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, []int64{}, getPartitionIDs(tblInfo))
+			return ver, nil
+		}
+		ver, err = doDropIndexes(d, t, job, tblInfo, ctidxInfos)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
+	if colOriginalState == model.StatePublic {
+		ctidxInfos, err := getOrCreateTempCompositeIndexes(tblInfo, []*model.ColumnInfo{colInfo}, cidxInfos)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Create temp composite index
+		schemaID := job.SchemaID
+		fallThrough := false
+		idxOriginalState := ctidxInfos[0].State
+		switch ctidxInfos[0].State {
+		case model.StateNone:
+			// none -> delete only
+			setIndicesState(ctidxInfos, model.StateDeleteOnly)
+			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+			if err != nil {
+				return ver, err
+			}
+			job.SchemaState = model.StateCreateIndexDeleteOnly
+		case model.StateDeleteOnly:
+			// delete only -> write only
+			setIndicesState(ctidxInfos, model.StateWriteOnly)
+			ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+			if err != nil {
+				return ver, err
+			}
+			job.SchemaState = model.StateCreateIndexWriteOnly
+		case model.StateWriteOnly:
+			// write only -> reorg
+			setIndicesState(ctidxInfos, model.StateWriteReorganization)
+			// Initialize SnapshotVer to 0 for later reorganization check.
+			ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+			if err != nil {
+				return ver, err
+			}
+			job.SnapshotVer = 0
+			job.SchemaState = model.StateWriteReorganization
+		case model.StateWriteReorganization:
+			// reorganization -> public
+			tbl, err := getTable(d.store, schemaID, tblInfo)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+
+			var done bool
+			if job.MultiSchemaInfo != nil {
+				done, ver, err = doReorgWorkForCreateIndexesMultiSchema(w, d, t, job, tbl, ctidxInfos)
+			} else {
+				done, ver, err = doReorgWorkForCreateIndexes(w, d, t, job, tbl, ctidxInfos)
+			}
+			if !done {
+				return ver, err
+			}
+
+			// Set column index flag.
+			for _, idxInfo := range ctidxInfos {
+				AddIndexColumnFlag(tblInfo, idxInfo)
+			}
+
+			ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			fallThrough = true
+
+		default:
+			err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
+		}
+
+		if !fallThrough {
+			return ver, errors.Trace(err)
+		}
+	}
+
+	// Drop column
+	switch colInfo.State {
+	case model.StatePublic:
+		// public -> write only
+		colInfo.State = model.StateWriteOnly
+		setIndicesState(idxInfos, model.StateWriteOnly)
+		setIndicesState(cidxInfos, model.StateWriteOnly)
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		err = checkDropColumnForStatePublic(colInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, colOriginalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateWriteOnly:
+		// write only -> delete only
+		colInfo.State = model.StateDeleteOnly
+		setIndicesState(idxInfos, model.StateDeleteOnly)
+		setIndicesState(cidxInfos, model.StateDeleteOnly)
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, colOriginalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		colInfo.State = model.StateDeleteReorganization
+		setIndicesState(idxInfos, model.StateDeleteReorganization)
+		setIndicesState(cidxInfos, model.StateDeleteReorganization)
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, colOriginalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateDeleteReorganization:
+		// reorganization -> absent
+		if len(idxInfos) > 0 {
+			newIndexes := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+			for _, idx := range tblInfo.Indices {
+				if !indexInfoContains(idx.ID, idxInfos) {
+					newIndexes = append(newIndexes, idx)
+				}
+			}
+			tblInfo.Indices = newIndexes
+		}
+		indexIDs := indexInfosToIDList(idxInfos)
+
+		if len(cidxInfos) > 0 {
+			ctidxInfos := getTempCompositeIndexes(tblInfo, cidxInfos)
+			// Drop origin indexes
+			newIndexes := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+			for _, idx := range tblInfo.Indices {
+				if !indexInfoContains(idx.ID, cidxInfos) {
+					newIndexes = append(newIndexes, idx)
+				}
+			}
+			tblInfo.Indices = newIndexes
+
+			for _, idx := range ctidxInfos {
+				// Rename temp index
+				idx.Name = renameTempCompositeIdxToOrigin(idx, cidxInfos)
+				// Set state to public
+				idx.State = model.StatePublic
+			}
+			indexIDs = append(indexIDs, indexInfosToIDList(cidxInfos)...)
+		}
+
+		// All reorganization jobs are done, drop this column.
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
+		colInfo.State = model.StateNone
+
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, colOriginalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job.
+		if job.IsRollingback() {
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+		} else {
+			// We should set related index IDs for job
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
+		}
+	default:
+		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State))
+	}
+	job.SchemaState = colInfo.State
+	return ver, errors.Trace(err)
+}
+
+func doReorgWorkForCreateIndexesMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, idxInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+	if job.MultiSchemaInfo.Revertible {
+		done, ver, err = doReorgWorkForCreateIndexes(w, d, t, job, tbl, idxInfos)
+		if done {
+			job.MarkNonRevertible()
+			if err == nil {
+				ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+			}
+		}
+		// We need another round to wait for all the others sub-jobs to finish.
+		return false, ver, err
+	}
+	return true, ver, err
+}
+
+func doReorgWorkForCreateIndexes(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, idxInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+	return runIndexesReorgJobAndHandleErr(w, d, t, job, tbl, idxInfos)
+}
+
+func runIndexesReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, idxInfos []*model.IndexInfo) (done bool, ver int64, err error) {
+	elements := buildIndexesElements(idxInfos)
+	sctx, err1 := w.sessPool.get()
+	if err1 != nil {
+		err = err1
+		return
+	}
+	defer w.sessPool.put(sctx)
+	rh := newReorgHandler(newSession(sctx))
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfo(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, elements, false)
+	if err != nil || reorgInfo.first {
+		// If we run reorg firstly, we should update the job snapshot version
+		// and then run the reorg next time.
+		return false, ver, errors.Trace(err)
+	}
+	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIdxErr error) {
+		defer util.Recover(
+			metrics.LabelDDL,
+			"onDropColumn",
+			func() {
+				indexNames := []string{}
+				for _, idx := range idxInfos {
+					indexNames = append(indexNames, fmt.Sprintf("`%v`", idx.Name))
+				}
+				addIdxErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` indexes: [%s] panic", tbl.Meta().Name, strings.Join(indexNames, ", "))
+			},
+			false,
+		)
+		return w.addTableIndex(tbl, reorgInfo)
+	})
+	if err != nil {
+		if dbterror.ErrWaitReorgTimeout.Equal(err) {
+			// if timeout, we should return, check for the owner and re-wait job done.
+			return false, ver, nil
+		}
+		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
+			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+			ver, err = convertDropColumnWithCompositeIdxJob2RollbackJob(d, t, job, tbl.Meta(), nil, idxInfos, err)
+			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+			}
+		}
+		return false, ver, errors.Trace(err)
+	}
+	return true, ver, nil
+}
+
+func buildIndexesElements(changingIdxs []*model.IndexInfo) []*meta.Element {
+	elements := make([]*meta.Element, 0, len(changingIdxs))
+	for _, idx := range changingIdxs {
+		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
+	}
+	return elements
+}
+
+func convertDropColumnWithCompositeIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, indexInfos []*model.IndexInfo, err error) (int64, error) {
+	job.State = model.JobStateRollingback
+	originalState := indexInfos[0].State
+	setIndicesState(indexInfos, model.StateDeleteOnly)
+	job.SchemaState = model.StateDeleteOnly
+	ver, err1 := updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
+	if err1 != nil {
+		return ver, errors.Trace(err1)
+	}
+
+	if kv.ErrKeyExists.Equal(err) {
+		if indexInfo != nil {
+			return ver, kv.ErrKeyExists.GenWithStackByArgs("", trimTempCompositeIdxPrefix(indexInfo.Name.O))
+		}
+		return ver, kv.ErrKeyExists.GenWithStackByArgs("", trimTempCompositeIdxPrefix(indexInfos[0].Name.O))
+	}
+
+	return ver, errors.Trace(err)
+}
+
+func indexInfoContains2(idxID int64, idxInfos []*model.IndexInfo, cidxInfos []*model.IndexInfo) bool {
+	for _, idxInfo := range idxInfos {
+		if idxID == idxInfo.ID {
+			return true
+		}
+	}
+	for _, cidxInfo := range cidxInfos {
+		if idxID == cidxInfo.ID {
+			return true
+		}
+	}
+	return false
+}
+
+func doDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo) (ver int64, err error) {
+	// TODO: Do we need this check?
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
+	}
+	originalState := indexInfos[0].State
+	switch indexInfos[0].State {
+	case model.StatePublic:
+		// public -> write only
+		setIndicesState(indexInfos, model.StateWriteOnly)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateWriteOnly:
+		// write only -> delete only
+		setIndicesState(indexInfos, model.StateDeleteOnly)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		setIndicesState(indexInfos, model.StateDeleteReorganization)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	case model.StateDeleteReorganization:
+		// reorganization -> absent
+		setIndicesState(indexInfos, model.StateNone)
+		// Set column index flag.
+		for _, idxInfo := range indexInfos {
+			DropIndexColumnFlag(tblInfo, idxInfo)
+			RemoveDependentHiddenColumns(tblInfo, idxInfo)
+			removeIndexInfo(tblInfo, idxInfo)
+		}
+
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != model.StateNone)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job
+		indexIDs := indexInfosToIDList(indexInfos)
+		if job.IsRollingback() {
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+			/*
+				// At the beginning, this will not support LitMerge, so no need to check that.
+				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+					ingest.LitBackCtxMgr.Unregister(job.ID)
+				}
+			*/
+			job.Args[0] = indexIDs
+		} else {
+			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
+			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
+		}
+	default:
+		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfos[0].State))
+	}
+	job.SchemaState = indexInfos[0].State
+	return ver, errors.Trace(err)
+}

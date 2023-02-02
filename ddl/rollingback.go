@@ -175,10 +175,28 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, dbterror.ErrCancelledDDLJob
 }
 
-func rollingbackDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfo, idxInfos, _, err := checkDropColumn(d, t, job)
+func rollingbackDropColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, colInfo, idxInfos, cidxInfos, _, err := checkDropColumn(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	if job.State != model.JobStateNone && len(cidxInfos) > 0 && colInfo.State == model.StatePublic {
+		// In creating temp composite indexes
+		ctidxInfos := getTempCompositeIndexes(tblInfo, cidxInfos)
+		if len(ctidxInfos) > 0 {
+			switch ctidxInfos[0].State {
+			case model.StateWriteReorganization:
+				if needNotifyAndStopReorgWorker(job) {
+					logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
+					d.notifyReorgCancel(job)
+					return onDropColumn(w, d, t, job)
+				}
+				return convertDropColumnWithCompositeIdxJob2RollbackJob(d, t, job, tblInfo, nil, ctidxInfos, dbterror.ErrCancelledDDLJob)
+			case model.StateNone, model.StateDeleteOnly, model.StateWriteOnly:
+				return convertDropColumnWithCompositeIdxJob2RollbackJob(d, t, job, tblInfo, nil, ctidxInfos, dbterror.ErrCancelledDDLJob)
+			}
+		}
 	}
 
 	for _, indexInfo := range idxInfos {
@@ -366,7 +384,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(d, t, job)
 	case model.ActionDropColumn:
-		ver, err = rollingbackDropColumn(d, t, job)
+		ver, err = rollingbackDropColumn(w, d, t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:

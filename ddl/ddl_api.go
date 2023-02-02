@@ -4312,6 +4312,12 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return err
 	}
 
+	// Check Drop Column algorithm
+	// err = ResolveDropColumnsAlgorithm(ctx, t.Meta(), []model.CIStr{colName}, []*ast.AlterTableSpec{spec})
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+
 	job := &model.Job{
 		SchemaID:    schema.ID,
 		TableID:     t.Meta().ID,
@@ -4326,6 +4332,35 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
+}
+
+// ResolveDropColumnsAlgorithm resolves the algorithm for Drop Column
+// If drop column need reorg indices, it must be use inplace algorithm, if not it must be use instance algorithm.
+// In this function check spec.Tp is not needed. This function is called from ddl.DropColumn or ddl.DropColumns function.
+func ResolveDropColumnsAlgorithm(ctx sessionctx.Context, tblInfo *model.TableInfo, colNames []model.CIStr, specs []*ast.AlterTableSpec) error {
+	needReorg := checkDropColumnsNeedReorg(tblInfo, colNames)
+	for _, spec := range specs {
+		var (
+			algorithm ast.AlgorithmType
+			err       error
+		)
+		if needReorg {
+			// If need reorg, drop column will add index first, so just support INPLACE Algorithm
+			algorithm, err = getProperAlgorithm(spec.Algorithm, inplaceAlgorithm)
+		} else {
+			algorithm, err = getProperAlgorithm(spec.Algorithm, instantAlgorithm)
+		}
+		if err != nil {
+			if spec.Algorithm != ast.AlgorithmTypeCopy {
+				return err
+			}
+			// For the compatibility, we return warning instead of error when the algorithm is COPY,
+			// because the COPY ALGORITHM is not supported in TiDB.
+			ctx.GetSessionVars().StmtCtx.AppendError(err)
+		}
+		spec.Algorithm = algorithm
+	}
+	return nil
 }
 
 func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, schema *model.DBInfo, t table.Table, spec *ast.AlterTableSpec) (isDrapable bool, err error) {
