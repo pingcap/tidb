@@ -25,7 +25,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	stderrs "errors"
-	"flag"
 	"fmt"
 	"math"
 	"math/rand"
@@ -92,6 +91,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
@@ -3339,14 +3339,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		// Invalid client-go tiflash_compute store cache if necessary.
-		err = dom.WatchTiFlashComputeNodeChange()
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	if err = extensionimpl.Bootstrap(context.Background(), dom); err != nil {
 		return nil, err
 	}
@@ -4217,7 +4209,7 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+	if intest.InTest {
 		panic("unexpected no source type context, if you see this error, " +
 			"the `RequestSourceTypeKey` is missing in your context")
 	} else {

@@ -186,6 +186,17 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	m2.SetScanWorkers4Test([]ttlworker.Worker{scanWorker2})
 	m2.RescheduleTasks(sessionFactory(), now.Add(time.Hour))
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-2"))
+
+	// another task manager shouldn't fetch this task if it has finished
+	task := m2.GetRunningTasks()[0]
+	task.SetResult(nil)
+	m2.CheckFinishedTask(sessionFactory(), now)
+	scanWorker3 := ttlworker.NewMockScanWorker(t)
+	scanWorker3.Start()
+	m3 := ttlworker.NewTaskManager(context.Background(), nil, isc, "task-manager-3")
+	m3.SetScanWorkers4Test([]ttlworker.Worker{scanWorker3})
+	m3.RescheduleTasks(sessionFactory(), now.Add(time.Hour))
+	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("finished task-manager-2"))
 }
 
 func TestTaskMetrics(t *testing.T) {
