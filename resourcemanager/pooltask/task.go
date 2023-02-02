@@ -158,6 +158,7 @@ func (t *TaskController[T, U, C, CT, TF]) Wait() {
 // Stop is to send stop command to the task. But you still need to wait the task to stop.
 func (t *TaskController[T, U, C, CT, TF]) Stop() {
 	close(t.productCloseCh)
+	t.pool.StopTask(t.TaskID())
 }
 
 // TaskID is to get the task id.

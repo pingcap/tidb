@@ -298,11 +298,11 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 					Task: task,
 				}
 				inputCh <- task
-			}
-			select {
-			case <-productCloseCh:
-				return
-			default:
+				select {
+				case <-productCloseCh:
+					return
+				default:
+				}
 			}
 		}
 	}()
