@@ -680,13 +680,16 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 		job.Args[keyRangesOffset] = keyRanges
 		job.SchemaState = model.StateWriteOnly
-		return ver, nil
+		return updateSchemaVersion(d, t, job)
 	// Stage 3, get key ranges and get locks.
 	case model.StateWriteOnly:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
 			job.SchemaState = model.StateWriteReorganization
 			return updateSchemaVersion(d, t, job)
+		}
+		if err = t.SetFlashbackClusterStartTS(startTS); err != nil {
+			return ver, errors.Trace(err)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
 		splitRegionsByKeyRanges(d, keyRanges)
@@ -703,9 +706,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
-		if err = t.SetFlashbackClusterStartTS(startTS); err != nil {
-			return ver, errors.Trace(err)
-		}
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
 		commitTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
@@ -713,7 +713,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 		job.Args[commitTSOffset] = commitTS
 		job.SchemaState = model.StateWriteReorganization
-		return updateSchemaVersion(d, t, job)
+		return ver, nil
 	// Stage 4, get key ranges and send flashback RPC.
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
@@ -723,6 +723,9 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
+
+		time.Sleep(1 * time.Second)
+		return ver, nil
 
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
@@ -741,6 +744,9 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 
+		if err = t.SetFlashbackClusterStartTS(0); err != nil {
+			return ver, err
+		}
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
@@ -788,11 +794,6 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 				return err
 			}
 		}
-
-		if err = meta.NewMeta(txn).SetFlashbackClusterStartTS(0); err != nil {
-			return err
-		}
-
 		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
 	})
 	if err != nil {
