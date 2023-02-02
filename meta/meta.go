@@ -630,6 +630,12 @@ func (m *Meta) SetMDLTables() error {
 	return errors.Trace(err)
 }
 
+// SetBackfillTables write a key into storage.
+func (m *Meta) SetBackfillTables() error {
+	err := m.txn.Set(mDDLTableVersion, []byte("3"))
+	return errors.Trace(err)
+}
+
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	id, err := m.GetSystemDBID()
@@ -681,7 +687,24 @@ func (m *Meta) CheckMDLTableExists() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	return bytes.Equal(v, []byte("2")), nil
+	ver, err := strconv.ParseUint(string(v), 10, 64)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return ver >= 2, nil
+}
+
+// CheckBackfillTableExists check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckBackfillTableExists() (bool, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	ver, err := strconv.ParseUint(string(v), 10, 64)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return ver >= 3, nil
 }
 
 // SetMetadataLock sets the metadata lock.
