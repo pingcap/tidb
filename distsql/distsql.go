@@ -27,7 +27,11 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+<<<<<<< HEAD
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+=======
+	"github.com/pingcap/tidb/util/memory"
+>>>>>>> 07af605381 (*: add memory tracker for mppIterator (#40901))
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
@@ -35,10 +39,18 @@ import (
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
+<<<<<<< HEAD
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs)
+=======
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64, mppQueryID kv.MPPQueryID, memTracker *memory.Tracker) (SelectResult, error) {
+	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
+	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+	ctx = SetTiFlashMaxThreadsInContext(ctx, sctx)
+	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs, mppQueryID, sctx.GetSessionVars().ChooseMppVersion(), memTracker)
+>>>>>>> 07af605381 (*: add memory tracker for mppIterator (#40901))
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}

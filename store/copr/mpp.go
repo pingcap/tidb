@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strconv"
 	"sync"
@@ -34,6 +35,11 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
+>>>>>>> 07af605381 (*: add memory tracker for mppIterator (#40901))
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
@@ -144,6 +150,13 @@ type mppIterator struct {
 	needTriggerFallback bool
 
 	mu sync.Mutex
+<<<<<<< HEAD
+=======
+
+	enableCollectExecutionInfo bool
+
+	memTracker *memory.Tracker
+>>>>>>> 07af605381 (*: add memory tracker for mppIterator (#40901))
 }
 
 func (m *mppIterator) run(ctx context.Context) {
@@ -181,6 +194,22 @@ func (m *mppIterator) sendError(err error) {
 }
 
 func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("mppIterator panic", zap.Stack("stack"), zap.Any("recover", r))
+			m.sendError(errors.New(fmt.Sprint(r)))
+		}
+	}()
+	if m.memTracker != nil {
+		respSize := resp.MemSize()
+		failpoint.Inject("testMPPOOMPanic", func(val failpoint.Value) {
+			if val.(bool) && respSize != 0 {
+				respSize = 1 << 30
+			}
+		})
+		m.memTracker.Consume(respSize)
+		defer m.memTracker.Consume(-respSize)
+	}
 	select {
 	case m.respChan <- resp:
 	case <-m.finishCh:
@@ -488,6 +517,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
+<<<<<<< HEAD
 func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
@@ -500,6 +530,25 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		startTs:             startTs,
 		vars:                vars,
 		needTriggerFallback: needTriggerFallback,
+=======
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64, mppQueryID kv.MPPQueryID, mppVersion kv.MppVersion, memTracker *memory.Tracker) kv.Response {
+	vars := variables.(*tikv.Variables)
+	ctxChild, cancelFunc := context.WithCancel(ctx)
+	iter := &mppIterator{
+		store:                      c.store,
+		tasks:                      dispatchReqs,
+		finishCh:                   make(chan struct{}),
+		wgDoneChan:                 make(chan struct{}),
+		cancelFunc:                 cancelFunc,
+		respChan:                   make(chan *mppResponse),
+		startTs:                    startTs,
+		mppQueryID:                 mppQueryID,
+		mppVersion:                 mppVersion,
+		vars:                       vars,
+		needTriggerFallback:        needTriggerFallback,
+		enableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load(),
+		memTracker:                 memTracker,
+>>>>>>> 07af605381 (*: add memory tracker for mppIterator (#40901))
 	}
 	go iter.run(ctxChild)
 	return iter
