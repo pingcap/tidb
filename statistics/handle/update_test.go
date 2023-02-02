@@ -2643,15 +2643,31 @@ func TestFillMissingStatsMeta(t *testing.T) {
 	p1ID := tbl2Info.Partition.Definitions[1].ID
 	h := dom.StatsHandle()
 
+	checkStatsMeta := func(id int64, expectedModifyCount, expectedCount string) int64 {
+		rows := tk.MustQuery(fmt.Sprintf("select version, modify_count, count from mysql.stats_meta where table_id = %v", id)).Rows()
+		require.Len(t, rows, 1)
+		ver, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		require.Equal(t, expectedModifyCount, rows[0][1])
+		require.Equal(t, expectedCount, rows[0][2])
+		return ver
+	}
+
 	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	rows := tk.MustQuery(fmt.Sprintf("select version, modify_count, count from mysql.stats_meta where table_id = %v", tbl1ID)).Rows()
-	require.Len(t, rows, 1)
-	ver1, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	require.Equal(t, "2", rows[0][1])
-	require.Equal(t, "2", rows[0][2])
+	ver1 := checkStatsMeta(tbl1ID, "2", "2")
 	tk.MustExec("delete from t1 where a = 1")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	ver2 := checkStatsMeta(tbl1ID, "3", "1")
+	require.Greater(t, ver2, ver1)
 
+	tk.MustExec("insert into t2 values (1, 2), (3, 4)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	checkStatsMeta(p0ID, "2", "2")
+	globalVer1 := checkStatsMeta(tbl2ID, "2", "2")
+	tk.MustExec("insert into t2 values (11, 12)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	checkStatsMeta(p1ID, "1", "1")
+	globalVer2 := checkStatsMeta(tbl2ID, "3", "3")
+	require.Greater(t, globalVer2, globalVer1)
 }
