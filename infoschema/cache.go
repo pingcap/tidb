@@ -37,22 +37,19 @@ var (
 // It only promised to cache the infoschema, if it is newer than all the cached.
 type InfoCache struct {
 	mu sync.RWMutex
-	// cache is sorted by SchemaVersion in descending order
-	cache []InfoSchema
-	// schema versions sorted by tiemstamp
-	sortedTS []versionAndTimestamp
+	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
+	cache []schemaAndTimestamp
 }
 
-type versionAndTimestamp struct {
-	version   int64
-	timestamp int64
+type schemaAndTimestamp struct {
+	infoschema InfoSchema
+	timestamp  int64
 }
 
 // NewCache creates a new InfoCache.
 func NewCache(capacity int) *InfoCache {
 	return &InfoCache{
-		cache:    make([]InfoSchema, 0, capacity),
-		sortedTS: make([]versionAndTimestamp, 0, capacity),
+		cache: make([]schemaAndTimestamp, 0, capacity),
 	}
 }
 
@@ -60,8 +57,7 @@ func NewCache(capacity int) *InfoCache {
 func (h *InfoCache) Reset(capacity int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.cache = make([]InfoSchema, 0, capacity)
-	h.sortedTS = make([]versionAndTimestamp, 0, capacity)
+	h.cache = make([]schemaAndTimestamp, 0, capacity)
 }
 
 // GetLatest gets the newest information schema.
@@ -71,27 +67,27 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	getLatestCounter.Inc()
 	if len(h.cache) > 0 {
 		hitLatestCounter.Inc()
-		return h.cache[0]
+		return h.cache[0].infoschema
 	}
 	return nil
 }
 
-// GetVersionByTimestamp returns the schema version used at the specific timestamp
-func (h *InfoCache) GetVersionByTimestamp(ts uint64) (int64, error) {
+// GetSchemaByTimestamp returns the schema used at the specific timestamp
+func (h *InfoCache) GetSchemaByTimestamp(ts uint64) (InfoSchema, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return h.getVersionByTimestampNoLock(ts)
+	return h.getSchemaByTimestampNoLock(ts)
 }
 
-func (h *InfoCache) getVersionByTimestampNoLock(ts uint64) (int64, error) {
-	i := sort.Search(len(h.sortedTS), func(i int) bool {
-		return uint64(h.sortedTS[i].timestamp) <= ts
+func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, error) {
+	i := sort.Search(len(h.cache), func(i int) bool {
+		return uint64(h.cache[i].timestamp) <= ts
 	})
-	if i < len(h.sortedTS) {
-		return h.sortedTS[i].version, nil
+	if i < len(h.cache) {
+		return h.cache[i].infoschema, nil
 	}
 
-	return 0, fmt.Errorf("no schema cached for timestamp %d", ts)
+	return nil, fmt.Errorf("no schema cached for timestamp %d", ts)
 }
 
 // GetByVersion gets the information schema based on schemaVersion. Returns nil if it is not loaded.
@@ -104,7 +100,7 @@ func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 	getVersionCounter.Inc()
 	i := sort.Search(len(h.cache), func(i int) bool {
-		return h.cache[i].SchemaMetaVersion() <= version
+		return h.cache[i].infoschema.SchemaMetaVersion() <= version
 	})
 
 	// `GetByVersion` is allowed to load the latest schema that is less than argument `version`.
@@ -125,9 +121,9 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 	//		}
 	// ```
 
-	if i < len(h.cache) && (i != 0 || h.cache[i].SchemaMetaVersion() == version) {
+	if i < len(h.cache) && (i != 0 || h.cache[i].infoschema.SchemaMetaVersion() == version) {
 		hitVersionCounter.Inc()
-		return h.cache[i]
+		return h.cache[i].infoschema
 	}
 	return nil
 }
@@ -140,9 +136,9 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	defer h.mu.RUnlock()
 
 	getTSCounter.Inc()
-	if version, err := h.getVersionByTimestampNoLock(snapshotTS); err == nil {
+	if schema, err := h.getSchemaByTimestampNoLock(snapshotTS); err == nil {
 		hitTSCounter.Inc()
-		return h.getByVersionNoLock(version)
+		return schema
 	}
 	return nil
 }
@@ -156,37 +152,16 @@ func (h *InfoCache) Insert(is InfoSchema, snapshotTS uint64) bool {
 
 	version := is.SchemaMetaVersion()
 
-	i := sort.Search(len(h.sortedTS), func(i int) bool {
-		return h.sortedTS[i].version <= version
-	})
-	if i < len(h.sortedTS) && h.sortedTS[i].version == version {
-		// find the version, update the schema timestamp if the new timestamp is earlier
-		if snapshotTS < uint64(h.sortedTS[i].timestamp) {
-			h.sortedTS[i].timestamp = int64(snapshotTS)
-		}
-	} else {
-		if len(h.sortedTS) < cap(h.sortedTS) {
-			h.sortedTS = h.sortedTS[:len(h.sortedTS)+1]
-			copy(h.sortedTS[i+1:], h.sortedTS[i:])
-			h.sortedTS[i] = versionAndTimestamp{
-				version:   version,
-				timestamp: int64(snapshotTS),
-			}
-		} else if i < len(h.sortedTS) {
-			copy(h.sortedTS[i+1:], h.sortedTS[i:])
-			h.sortedTS[i] = versionAndTimestamp{
-				version:   version,
-				timestamp: int64(snapshotTS),
-			}
-		}
-	}
-
-	i = sort.Search(len(h.cache), func(i int) bool {
-		return h.cache[i].SchemaMetaVersion() <= version
+	// assume this is the timestamp order as well
+	i := sort.Search(len(h.cache), func(i int) bool {
+		return h.cache[i].infoschema.SchemaMetaVersion() <= version
 	})
 
 	// cached entry
-	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
+	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
+		if h.cache[i].timestamp > int64(snapshotTS) {
+			h.cache[i].timestamp = int64(snapshotTS)
+		}
 		return true
 	}
 
@@ -194,12 +169,18 @@ func (h *InfoCache) Insert(is InfoSchema, snapshotTS uint64) bool {
 		// has free space, grown the slice
 		h.cache = h.cache[:len(h.cache)+1]
 		copy(h.cache[i+1:], h.cache[i:])
-		h.cache[i] = is
+		h.cache[i] = schemaAndTimestamp{
+			infoschema: is,
+			timestamp:  int64(snapshotTS),
+		}
 		return true
 	} else if i < len(h.cache) {
 		// drop older schema
 		copy(h.cache[i+1:], h.cache[i:])
-		h.cache[i] = is
+		h.cache[i] = schemaAndTimestamp{
+			infoschema: is,
+			timestamp:  int64(snapshotTS),
+		}
 		return true
 	}
 	// older than all cached schemas, refuse to cache it
