@@ -170,12 +170,12 @@ type MetaReader struct {
 
 // NewMetaReader creates MetaReader.
 func NewMetaReader(
-	backpMeta *backuppb.BackupMeta,
+	backupMeta *backuppb.BackupMeta,
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo) *MetaReader {
 	return &MetaReader{
 		storage:    storage,
-		backupMeta: backpMeta,
+		backupMeta: backupMeta,
 		cipher:     cipher,
 	}
 }
