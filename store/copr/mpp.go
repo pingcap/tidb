@@ -354,6 +354,7 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 
 	// send cancel cmd to all stores where tasks run
+	invalidPDCache := config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler
 	wg := util.WaitGroupWrapper{}
 	gotErr := atomic.Bool{}
 	for addr := range usedStoreAddrs {
@@ -363,11 +364,14 @@ func (m *mppIterator) cancelMppTasks() {
 			logutil.BgLogger().Debug("cancel task", zap.Uint64("query id ", m.startTs), zap.String("on addr", storeAddr))
 			if err != nil {
 				logutil.BgLogger().Error("cancel task error", zap.Error(err), zap.Uint64("query id", m.startTs), zap.String("on addr", storeAddr))
+				if invalidPDCache {
+					gotErr.CompareAndSwap(false, true)
+				}
 			}
 		})
 	}
 	wg.Wait()
-	if gotErr.Load() && config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler {
+	if invalidPDCache && gotErr.Load() {
 		m.store.GetRegionCache().InvalidateTiFlashComputeStores()
 	}
 }
