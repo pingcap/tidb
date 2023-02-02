@@ -219,7 +219,6 @@ func (p *Pool[T, U, C, CT, TF]) release() {
 	// There might be some callers waiting in retrieveWorker(), so we need to wake them up to prevent
 	// those callers blocking infinitely.
 	p.cond.Broadcast()
-	close(p.taskCh)
 }
 
 func isClose(exitCh chan struct{}) bool {
@@ -258,11 +257,11 @@ func (p *Pool[T, U, C, CT, TF]) SetConsumerFunc(consumerFunc func(T, C, CT) U) {
 func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, pooltask.TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.NewTaskID()
-	var wg, prodWg sync.WaitGroup
+	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
-	productCloseCh := make(chan struct{})
+	productExitCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, productCloseCh, &wg, &prodWg, inputCh, result)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, productExitCh, &wg, inputCh, result)
 	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
@@ -274,37 +273,34 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
-	prodWg.Add(1)
+	wg.Add(1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			close(inputCh)
-			prodWg.Done()
+			wg.Done()
 		}()
 		for {
-			select {
-			case <-productCloseCh:
+			if isClose(productExitCh) {
 				return
-			default:
-				tasks, err := producer()
-				if err != nil {
-					if errors.Is(err, gpool.ErrProducerClosed) {
-						return
-					}
-					log.Error("producer error", zap.Error(err))
+			}
+			tasks, err := producer()
+			if err != nil {
+				if errors.Is(err, gpool.ErrProducerClosed) {
 					return
 				}
-				for _, task := range tasks {
-					wg.Add(1)
-					task := pooltask.Task[T]{
-						Task: task,
-					}
-					inputCh <- task
-				}
+				log.Error("producer error", zap.Error(err))
+				return
 			}
-
+			for _, task := range tasks {
+				wg.Add(1)
+				task := pooltask.Task[T]{
+					Task: task,
+				}
+				inputCh <- task
+			}
 		}
 	}()
 	return result, tc
@@ -315,12 +311,12 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg C, contextFn TF, options ...TaskOption) (<-chan U, pooltask.TaskController[T, U, C, CT, TF]) {
 	opt := loadTaskOptions(options...)
 	taskID := p.NewTaskID()
-	var wg, prodWg sync.WaitGroup
+	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
-	productCloseCh := make(chan struct{})
+	productExitCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, productCloseCh, &wg, &prodWg, inputCh, result)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, productExitCh, &wg, inputCh, result)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
@@ -331,34 +327,32 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
-	prodWg.Add(1)
+	wg.Add(1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			close(inputCh)
-			prodWg.Done()
+			wg.Done()
 		}()
 		for {
-			select {
-			case <-productCloseCh:
+			if isClose(productExitCh) {
 				return
-			default:
-				task, err := producer()
-				if err != nil {
-					if errors.Is(err, gpool.ErrProducerClosed) {
-						return
-					}
-					log.Error("producer error", zap.Error(err))
+			}
+			task, err := producer()
+			if err != nil {
+				if errors.Is(err, gpool.ErrProducerClosed) {
 					return
 				}
-				wg.Add(1)
-				t := pooltask.Task[T]{
-					Task: task,
-				}
-				inputCh <- t
+				log.Error("producer error", zap.Error(err))
+				return
 			}
+			wg.Add(1)
+			t := pooltask.Task[T]{
+				Task: task,
+			}
+			inputCh <- t
 		}
 	}()
 	return result, tc

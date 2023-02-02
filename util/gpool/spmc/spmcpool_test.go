@@ -53,7 +53,7 @@ func TestPool(t *testing.T) {
 		}
 	}
 	// add new task
-	resultCh, control := pool.AddProducer(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(4))
+	resultCh, control := pool.AddProducer(pfunc, myArgs, pooltask.NilContext{}, WithConcurrency(5))
 
 	var count atomic.Uint32
 	var wg sync.WaitGroup
@@ -112,8 +112,12 @@ func TestStopPool(t *testing.T) {
 			require.Greater(t, result, 10)
 		}
 	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		control.Stop()
+	}()
 	// Waiting task finishing
-	control.Stop()
 	control.Wait()
 	wg.Wait()
 	// close pool
@@ -152,10 +156,10 @@ func TestStopPoolWithSlice(t *testing.T) {
 		defer wg.Done()
 		for result := range resultCh {
 			require.Greater(t, result, 10)
+			control.Stop()
 		}
 	}()
 	// Waiting task finishing
-	control.Stop()
 	control.Wait()
 	wg.Wait()
 	// close pool
@@ -230,9 +234,12 @@ func testTunePool(t *testing.T, name string) {
 	for n := pool.Cap(); n > 1; n-- {
 		downclockPool(t, pool, tid)
 	}
-
-	// exit test
-	control.Stop()
+	wg.Add(1)
+	go func() {
+		// exit test
+		control.Stop()
+		wg.Done()
+	}()
 	control.Wait()
 	wg.Wait()
 	// close pool

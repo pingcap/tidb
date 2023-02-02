@@ -129,31 +129,28 @@ type GPool[T any, U any, C any, CT any, TF Context[CT]] interface {
 
 // TaskController is a controller that can control or watch the pool.
 type TaskController[T any, U any, C any, CT any, TF Context[CT]] struct {
-	pool           GPool[T, U, C, CT, TF]
-	productCloseCh chan struct{}
-	wg             *sync.WaitGroup
-	prodWg         *sync.WaitGroup
-	taskID         uint64
-	resultCh       chan U
-	inputCh        chan Task[T]
+	pool          GPool[T, U, C, CT, TF]
+	productExitCh chan struct{}
+	wg            *sync.WaitGroup
+	taskID        uint64
+	resultCh      chan U
+	inputCh       chan Task[T]
 }
 
 // NewTaskController create a controller to deal with pooltask's status.
-func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, productCloseCh chan struct{}, wg, prodWg *sync.WaitGroup, inputCh chan Task[T], resultCh chan U) TaskController[T, U, C, CT, TF] {
+func NewTaskController[T any, U any, C any, CT any, TF Context[CT]](p GPool[T, U, C, CT, TF], taskID uint64, productExitCh chan struct{}, wg *sync.WaitGroup, inputCh chan Task[T], resultCh chan U) TaskController[T, U, C, CT, TF] {
 	return TaskController[T, U, C, CT, TF]{
-		pool:           p,
-		taskID:         taskID,
-		productCloseCh: productCloseCh,
-		wg:             wg,
-		prodWg:         prodWg,
-		resultCh:       resultCh,
-		inputCh:        inputCh,
+		pool:          p,
+		taskID:        taskID,
+		productExitCh: productExitCh,
+		wg:            wg,
+		resultCh:      resultCh,
+		inputCh:       inputCh,
 	}
 }
 
 // Wait is to wait the pool task to stop.
 func (t *TaskController[T, U, C, CT, TF]) Wait() {
-	t.prodWg.Wait()
 	t.wg.Wait()
 	close(t.resultCh)
 	t.pool.DeleteTask(t.taskID)
@@ -161,9 +158,14 @@ func (t *TaskController[T, U, C, CT, TF]) Wait() {
 
 // Stop is to send stop command to the task. But you still need to wait the task to stop.
 func (t *TaskController[T, U, C, CT, TF]) Stop() {
-	close(t.productCloseCh)
-	channel.Clear(t.inputCh)
+	close(t.productExitCh)
+	// Clear all the task in the task queue and mark all task complete.
+	// so that ```t.Wait``` is able to close resultCh
+	for range t.inputCh {
+		t.wg.Done()
+	}
 	t.pool.StopTask(t.TaskID())
+	// Clear the resultCh to avoid blocking the consumer put result into the channel and cannot exit.
 	channel.Clear(t.resultCh)
 }
 

@@ -18,6 +18,8 @@ import (
 	"time"
 )
 
+const defaultTaskChanLen = 1
+
 // Option represents the optional function.
 type Option func(opts *Options)
 
@@ -104,7 +106,7 @@ func loadTaskOptions(options ...TaskOption) *TaskOptions {
 		opts.ResultChanLen = uint64(opts.Concurrency)
 	}
 	if opts.TaskChanLen == 0 {
-		opts.TaskChanLen = uint64(opts.Concurrency)
+		opts.TaskChanLen = defaultTaskChanLen
 	}
 	return opts
 }
