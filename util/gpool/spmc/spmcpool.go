@@ -284,26 +284,27 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 			prodWg.Done()
 		}()
 		for {
-			tasks, err := producer()
-			if err != nil {
-				if errors.Is(err, gpool.ErrProducerClosed) {
-					return
-				}
-				log.Error("producer error", zap.Error(err))
+			select {
+			case <-productCloseCh:
 				return
-			}
-			for _, task := range tasks {
-				wg.Add(1)
-				task := pooltask.Task[T]{
-					Task: task,
-				}
-				inputCh <- task
-				select {
-				case <-productCloseCh:
+			default:
+				tasks, err := producer()
+				if err != nil {
+					if errors.Is(err, gpool.ErrProducerClosed) {
+						return
+					}
+					log.Error("producer error", zap.Error(err))
 					return
-				default:
+				}
+				for _, task := range tasks {
+					wg.Add(1)
+					task := pooltask.Task[T]{
+						Task: task,
+					}
+					inputCh <- task
 				}
 			}
+
 		}
 	}()
 	return result, tc
@@ -340,23 +341,23 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 			prodWg.Done()
 		}()
 		for {
-			task, err := producer()
-			if err != nil {
-				if errors.Is(err, gpool.ErrProducerClosed) {
-					return
-				}
-				log.Error("producer error", zap.Error(err))
-				return
-			}
-			wg.Add(1)
-			t := pooltask.Task[T]{
-				Task: task,
-			}
-			inputCh <- t
 			select {
 			case <-productCloseCh:
 				return
 			default:
+				task, err := producer()
+				if err != nil {
+					if errors.Is(err, gpool.ErrProducerClosed) {
+						return
+					}
+					log.Error("producer error", zap.Error(err))
+					return
+				}
+				wg.Add(1)
+				t := pooltask.Task[T]{
+					Task: task,
+				}
+				inputCh <- t
 			}
 		}
 	}()
