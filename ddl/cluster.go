@@ -703,13 +703,12 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
-
+		if err = t.SetFlashbackClusterStartTS(startTS); err != nil {
+			return ver, errors.Trace(err)
+		}
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
 		commitTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		if t.SetFlashbackClusterStartTS(startTS) != nil {
 			return ver, errors.Trace(err)
 		}
 		job.Args[commitTSOffset] = commitTS
