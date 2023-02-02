@@ -60,7 +60,13 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 		}
 		executorID = p.ExplainID().String()
 	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeAggregation, Aggregation: aggExec, ExecutorId: &executorID}, nil
+	return &tipb.Executor{
+		Tp:                            tipb.ExecType_TypeAggregation,
+		Aggregation:                   aggExec,
+		ExecutorId:                    &executorID,
+		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedShuffleBatchSize:   ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+	}, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -303,6 +309,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		Child:           child,
 		Types:           hashColTypes,
 		AllFieldTypes:   allFieldTypes,
+		Compression:     e.CompressionMode.ToTipbCompressionMode(),
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
@@ -370,7 +377,7 @@ func (p *PhysicalIndexScan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Ex
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
 		IndexId:          p.Index.ID,
-		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true),
 		Desc:             p.Desc,
 		PrimaryColumnIds: pkColIds,
 	}
@@ -492,7 +499,13 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	}
 
 	executorID := p.ExplainID().String()
-	return &tipb.Executor{Tp: tipb.ExecType_TypeJoin, Join: join, ExecutorId: &executorID}, nil
+	return &tipb.Executor{
+		Tp:                            tipb.ExecType_TypeJoin,
+		Join:                          join,
+		ExecutorId:                    &executorID,
+		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedShuffleBatchSize:   ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+	}, nil
 }
 
 // ToPB converts FrameBound to tipb structure.

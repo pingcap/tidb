@@ -48,7 +48,6 @@ import (
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 )
 
 type clusterResourceCheckItem struct {
@@ -434,7 +433,7 @@ func (ci *largeFileCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		for _, db := range ci.dbMetas {
 			for _, t := range db.Tables {
 				for _, f := range t.DataFiles {
-					if f.FileMeta.FileSize > defaultCSVSize {
+					if f.FileMeta.RealSize > defaultCSVSize {
 						theResult.Message = fmt.Sprintf("large csv: %s file exists and it will slow down import performance", f.FileMeta.Path)
 						theResult.Passed = false
 					}
@@ -484,12 +483,14 @@ func (ci *localDiskPlacementCheckItem) Check(ctx context.Context) (*CheckResult,
 type localTempKVDirCheckItem struct {
 	cfg           *config.Config
 	preInfoGetter PreRestoreInfoGetter
+	dbMetas       []*mydump.MDDatabaseMeta
 }
 
-func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter) PrecheckItem {
+func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter, dbMetas []*mydump.MDDatabaseMeta) PrecheckItem {
 	return &localTempKVDirCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
+		dbMetas:       dbMetas,
 	}
 }
 
@@ -497,10 +498,28 @@ func (ci *localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
 	return CheckLocalTempKVDir
 }
 
+func (ci *localTempKVDirCheckItem) hasCompressedFiles() bool {
+	for _, dbMeta := range ci.dbMetas {
+		for _, tbMeta := range dbMeta.Tables {
+			for _, file := range tbMeta.DataFiles {
+				if file.FileMeta.Compression != mydump.CompressionNone {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*CheckResult, error) {
+	severity := Critical
+	// for cases that have compressed files, the estimated size may not be accurate, set severity to Warn to avoid failure
+	if ci.hasCompressedFiles() {
+		severity = Warn
+	}
 	theResult := &CheckResult{
 		Item:     ci.GetCheckItemID(),
-		Severity: Critical,
+		Severity: severity,
 	}
 	storageSize, err := common.GetStorageSize(ci.cfg.TikvImporter.SortedKVDir)
 	if err != nil {
@@ -713,11 +732,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                10 * time.Second,
-				Timeout:             3 * time.Second,
-				PermitWithoutStream: false,
-			}),
+			config.DefaultGrpcKeepaliveParams,
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},

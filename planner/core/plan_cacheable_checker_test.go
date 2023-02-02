@@ -26,11 +26,14 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	mockCtx := mock.NewContext()
+	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -53,7 +56,9 @@ func TestCacheable(t *testing.T) {
 
 	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: tbl}}}
 	// test InsertStmt
-	stmt = &ast.InsertStmt{Table: tableRefsClause}
+	stmt = &ast.InsertStmt{Table: tableRefsClause} // insert-values-stmt
+	require.False(t, core.Cacheable(stmt, is))
+	stmt = &ast.InsertStmt{Table: tableRefsClause, Select: &ast.SelectStmt{}} // insert-select-stmt
 	require.True(t, core.Cacheable(stmt, is))
 
 	// test DeleteStmt
@@ -85,7 +90,8 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ := core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -94,14 +100,16 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.DeleteStmt{
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.True(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
 		HintName: model.NewCIStr(core.HintIgnorePlanCache),
@@ -137,7 +145,8 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -146,14 +155,16 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.UpdateStmt{
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	require.True(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
 		HintName: model.NewCIStr(core.HintIgnorePlanCache),
@@ -186,7 +197,8 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{
 		Offset: &driver.ParamMarkerExpr{},
@@ -194,13 +206,15 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.False(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	require.True(t, core.Cacheable(stmt, is))
+	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	require.True(t, c)
 
 	paramExpr := &driver.ParamMarkerExpr{}
 	orderByClause := &ast.OrderByClause{Items: []*ast.ByItem{{Expr: paramExpr}}}

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -388,7 +389,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		e.evalBuffer.SetDatum(offset, val1)
 	}
 	// Row may lack of generated column, autoIncrement column, empty column here.
-	return e.fillRow(ctx, row, hasValue)
+	return e.fillRow(ctx, row, hasValue, rowIdx)
 }
 
 var emptyRow chunk.Row
@@ -422,7 +423,7 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		offset := e.insertColumns[i].Offset
 		row[offset], hasValue[offset] = val1, true
 	}
-	return e.fillRow(ctx, row, hasValue)
+	return e.fillRow(ctx, row, hasValue, rowIdx)
 }
 
 // setValueForRefColumn set some default values for the row to eval the row value with other columns,
@@ -537,7 +538,7 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
-	e.ctx.StmtCommit()
+	e.ctx.StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
@@ -562,7 +563,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 		hasValue[offset] = true
 	}
 
-	return e.fillRow(ctx, row, hasValue)
+	return e.fillRow(ctx, row, hasValue, 0)
 }
 
 // getColDefaultValue gets the column default value.
@@ -647,7 +648,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 // `insert|replace values` can guarantee consecutive autoID in a batch.
 // Other statements like `insert select from` don't guarantee consecutive autoID.
 // https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
-func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
+func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) ([]types.Datum, error) {
 	gCols := make([]*table.Column, 0)
 	tCols := e.Table.Cols()
 	if e.hasExtraHandle {
@@ -693,6 +694,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
+		if err != nil && gCol.FieldType.IsArray() {
+			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
+		}
 		if e.ctx.GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
 			return nil, err
 		}
@@ -706,6 +710,29 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		}
 	}
 	return row, nil
+}
+
+func completeError(tbl *model.TableInfo, offset int, rowIdx int, err error) error {
+	name := "expression_index"
+	for _, idx := range tbl.Indices {
+		for _, column := range idx.Columns {
+			if column.Offset == offset {
+				name = idx.Name.O
+				break
+			}
+		}
+	}
+
+	if expression.ErrInvalidJSONForFuncIndex.Equal(err) {
+		return expression.ErrInvalidJSONForFuncIndex.GenWithStackByArgs(name)
+	}
+	if types.ErrOverflow.Equal(err) {
+		return expression.ErrDataOutOfRangeFuncIndex.GenWithStackByArgs(name, rowIdx+1)
+	}
+	if types.ErrDataTooLong.Equal(err) {
+		return expression.ErrFuncIndexDataIsTooLong.GenWithStackByArgs(name)
+	}
+	return err
 }
 
 // isAutoNull can help judge whether a datum is AutoIncrement Null quickly.
@@ -745,7 +772,16 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 	var err error
 	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
 	if err == nil && d.GetInt64() < id {
-		// Auto ID is out of range, the truncated ID is possible to duplicate with an existing ID.
+		// Auto ID is out of range.
+		sc := ctx.GetSessionVars().StmtCtx
+		insertPlan, ok := sc.GetPlan().(*core.Insert)
+		if ok && sc.TruncateAsWarning && len(insertPlan.OnDuplicate) > 0 {
+			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
+			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.
+			// We should allow the SQL to be executed successfully.
+			return nil
+		}
+		// The truncated ID is possible to duplicate with an existing ID.
 		// To prevent updating unrelated rows in the REPLACE statement, it is better to throw an error.
 		return autoid.ErrAutoincReadFailed
 	}

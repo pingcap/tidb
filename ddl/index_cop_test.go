@@ -43,7 +43,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		endKey := startKey.PrefixNext()
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		idxRec, done, err := ddl.FetchRowsFromCop4Test(copCtx, startKey, endKey, txn.StartTS(), 10)
+		idxRec, done, err := ddl.FetchRowsFromCop4Test(copCtx, startKey, endKey, store, 10)
 		require.NoError(t, err)
 		require.False(t, done)
 		require.NoError(t, txn.Rollback())

@@ -15,20 +15,27 @@
 package executor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -40,13 +47,15 @@ import (
 var (
 	null          = []byte("NULL")
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
+	// InTest is a flag that bypass gcs authentication in unit tests.
+	InTest bool
 )
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
 	baseExecutor
 
-	IsLocal      bool
+	FileLocRef   ast.FileLocRefTp
 	OnDuplicate  ast.OnDuplicateKeyHandlingType
 	loadDataInfo *LoadDataInfo
 }
@@ -55,27 +64,71 @@ type LoadDataExec struct {
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	// TODO: support load data without local field.
-	if !e.IsLocal {
+	if e.FileLocRef == ast.FileLocServer {
 		return errors.New("Load Data: don't support load data without local field")
 	}
-	e.loadDataInfo.OnDuplicate = e.OnDuplicate
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
 		return errors.New("Load Data: don't support load data terminated is nil")
 	}
-
-	sctx := e.loadDataInfo.ctx
-	val := sctx.Value(LoadDataVarKey)
-	if val != nil {
-		sctx.SetValue(LoadDataVarKey, nil)
-		return errors.New("Load Data: previous load data option isn't closed normal")
-	}
 	if e.loadDataInfo.Path == "" {
 		return errors.New("Load Data: infile path is empty")
 	}
-	sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+	if !e.loadDataInfo.Table.Meta().IsBaseTable() {
+		return errors.New("can only load data into base tables")
+	}
 
+	switch e.FileLocRef {
+	case ast.FileLocServer:
+		panic("FileLocServer should be handled earlier")
+	case ast.FileLocClient:
+		// let caller use handleQuerySpecial to read data in this connection
+		sctx := e.loadDataInfo.ctx
+		val := sctx.Value(LoadDataVarKey)
+		if val != nil {
+			sctx.SetValue(LoadDataVarKey, nil)
+			return errors.New("Load Data: previous load data option wasn't closed normally")
+		}
+		sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+	case ast.FileLocRemote:
+		return e.loadFromRemote(ctx)
+	}
 	return nil
+}
+
+func (e *LoadDataExec) loadFromRemote(ctx context.Context) error {
+	u, err := storage.ParseRawURL(e.loadDataInfo.Path)
+	if err != nil {
+		return err
+	}
+	var filename string
+	u.Path, filename = filepath.Split(u.Path)
+	b, err := storage.ParseBackendFromURL(u, nil)
+	if err != nil {
+		return err
+	}
+	if b.GetLocal() != nil {
+		return errors.Errorf("Load Data: don't support load data from tidb-server when set REMOTE, path %s", e.loadDataInfo.Path)
+	}
+
+	opt := &storage.ExternalStorageOptions{}
+	if InTest {
+		opt.NoCredentials = true
+	}
+	s, err := storage.New(ctx, b, opt)
+	if err != nil {
+		return err
+	}
+	fileReader, err := s.Open(ctx, filename)
+	if err != nil {
+		return err
+	}
+	defer fileReader.Close()
+	reader := bufio.NewReader(fileReader)
+
+	return e.loadDataInfo.Load(ctx, func() ([]byte, error) {
+		return reader.ReadBytes('\n')
+	})
 }
 
 // Close implements the Executor Close interface.
@@ -103,6 +156,7 @@ type CommitTask struct {
 }
 
 // LoadDataInfo saves the information of loading data operation.
+// TODO: rename it and remove unnecessary public methods.
 type LoadDataInfo struct {
 	*InsertValues
 
@@ -130,6 +184,111 @@ type LoadDataInfo struct {
 type FieldMapping struct {
 	Column  *table.Column
 	UserVar *ast.VariableExpr
+}
+
+// Load reads from readerFn and do load data job.
+func (e *LoadDataInfo) Load(ctx context.Context, readerFn func() ([]byte, error)) error {
+	e.InitQueues()
+	e.SetMaxRowsInBatch(uint64(e.Ctx.GetSessionVars().DMLBatchSize))
+	e.StartStopWatcher()
+	// let stop watcher goroutine quit
+	defer e.ForceQuit()
+	err := sessiontxn.NewTxn(ctx, e.Ctx)
+	if err != nil {
+		return err
+	}
+	// processStream process input data, enqueue commit task
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go processStream(ctx, readerFn, e, wg)
+	err = e.CommitWork(ctx)
+	wg.Wait()
+	return err
+}
+
+// processStream process input stream from network
+func processStream(ctx context.Context, readerFn func() ([]byte, error), loadDataInfo *LoadDataInfo, wg *sync.WaitGroup) {
+	var err error
+	var shouldBreak bool
+	var prevData, curData []byte
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("process routine panicked",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+		}
+		if err != nil || r != nil {
+			loadDataInfo.ForceQuit()
+		} else {
+			loadDataInfo.CloseTaskQueue()
+		}
+		wg.Done()
+	}()
+	for {
+		curData, err = readerFn()
+		if err != nil {
+			if terror.ErrorNotEqual(err, io.EOF) {
+				logutil.Logger(ctx).Error("read data for LOAD DATA failed", zap.Error(err))
+				break
+			}
+			err = nil
+		}
+		if len(curData) == 0 {
+			loadDataInfo.Drained = true
+			shouldBreak = true
+			if len(prevData) == 0 {
+				break
+			}
+		}
+		select {
+		case <-loadDataInfo.QuitCh:
+			err = errors.New("processStream forced to quit")
+		default:
+		}
+		if err != nil {
+			break
+		}
+		// prepare batch and enqueue task
+		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
+		if err != nil {
+			break
+		}
+		if shouldBreak {
+			break
+		}
+	}
+	if err != nil {
+		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+		return
+	}
+	if err = loadDataInfo.EnqOneTask(ctx); err != nil {
+		logutil.Logger(ctx).Error("load data process stream error", zap.Error(err))
+		return
+	}
+}
+
+func insertDataWithCommit(ctx context.Context, prevData,
+	curData []byte, loadDataInfo *LoadDataInfo) ([]byte, error) {
+	var err error
+	var reachLimit bool
+	for {
+		prevData, reachLimit, err = loadDataInfo.InsertData(ctx, prevData, curData)
+		if err != nil {
+			return nil, err
+		}
+		if !reachLimit {
+			break
+		}
+		// push into commit task queue
+		err = loadDataInfo.EnqOneTask(ctx)
+		if err != nil {
+			return prevData, err
+		}
+		curData = prevData
+		prevData = nil
+	}
+	return prevData, nil
 }
 
 // reorderColumns reorder the e.insertColumns according to the order of columnNames
@@ -316,7 +475,7 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 	var err error
 	defer func() {
 		if err != nil {
-			e.Ctx.StmtRollback()
+			e.Ctx.StmtRollback(ctx, false)
 		}
 	}()
 	err = e.CheckAndInsertOneBatch(ctx, task.rows, task.cnt)
@@ -327,7 +486,7 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 	failpoint.Inject("commitOneTaskErr", func() error {
 		return errors.New("mock commit one task error")
 	})
-	e.Ctx.StmtCommit()
+	e.Ctx.StmtCommit(ctx)
 	// Make sure process stream routine never use invalid txn
 	e.txnInUse.Lock()
 	defer e.txnInUse.Unlock()
@@ -353,7 +512,7 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			e.ForceQuit()
 		}
 		if err != nil {
-			e.ctx.StmtRollback()
+			e.ctx.StmtRollback(ctx, false)
 		}
 	}()
 	var tasks uint64

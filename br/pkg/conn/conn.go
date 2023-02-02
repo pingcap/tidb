@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -174,7 +175,8 @@ func NewMgr(
 	}
 
 	// Disable GC because TiDB enables GC already.
-	storage, err := g.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddrs), securityOption)
+	path := fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", pdAddrs, config.GetGlobalKeyspaceName())
+	storage, err := g.Open(path, securityOption)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -191,7 +193,6 @@ func NewMgr(
 			return nil, errors.Trace(err)
 		}
 		// we must check tidb(tikv version) any time after concurrent ddl feature implemented in v6.2.
-		// when tidb < 6.2 we need set EnableConcurrentDDL false to make ddl works.
 		// we will keep this check until 7.0, which allow the breaking changes.
 		// NOTE: must call it after domain created!
 		// FIXME: remove this check in v7.0
@@ -281,7 +282,8 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 }
 
 // GetMergeRegionSizeAndCount returns the tikv config `coprocessor.region-split-size` and `coprocessor.region-split-key`.
-func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64, error) {
+// returns the default config when failed.
+func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64) {
 	regionSplitSize := DefaultMergeRegionSizeBytes
 	regionSplitKeys := DefaultMergeRegionKeyCount
 	type coprocessor struct {
@@ -310,9 +312,10 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 		return nil
 	})
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		log.Warn("meet error when getting config from TiKV; using default", logutil.ShortError(err))
+		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount
 	}
-	return regionSplitSize, regionSplitKeys, nil
+	return regionSplitSize, regionSplitKeys
 }
 
 // GetConfigFromTiKV get configs from all alive tikv stores.

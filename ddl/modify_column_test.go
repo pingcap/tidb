@@ -17,12 +17,14 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
@@ -71,7 +73,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	var currJob *model.Job
 	var elements []*meta.Element
@@ -117,14 +119,18 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	require.NoError(t, checkErr)
 	// Check whether the reorg information is cleaned up when executing "modify column" failed.
 	checkReorgHandle := func(gotElements, expectedElements []*meta.Element) {
+		require.Equal(t, len(expectedElements), len(gotElements))
 		for i, e := range gotElements {
 			require.Equal(t, expectedElements[i], e)
 		}
+		// check the consistency of the tables.
+		currJobID := strconv.FormatInt(currJob.ID, 10)
+		tk.MustQuery("select job_id, reorg, schema_ids, table_ids, type, processing from mysql.tidb_ddl_job where job_id = " + currJobID).Check(testkit.Rows())
+		tk.MustQuery("select job_id from mysql.tidb_ddl_history where job_id = " + currJobID).Check(testkit.Rows(currJobID))
+		tk.MustQuery("select job_id, ele_id, ele_type, physical_id from mysql.tidb_ddl_reorg where job_id = " + currJobID).Check(testkit.Rows())
 		require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
-		txn, err := ctx.Txn(true)
-		require.NoError(t, err)
-		m := meta.NewMeta(txn)
-		e, start, end, physicalID, err := ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
+		e, start, end, physicalID, err := ddl.NewReorgHandlerForTest(testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
+		require.Error(t, err, "Error not ErrDDLReorgElementNotExists, found orphan row in tidb_ddl_reorg for job.ID %d: e: '%s', physicalID: %d, start: 0x%x end: 0x%x", currJob.ID, e, physicalID, start, end)
 		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 		require.Nil(t, e)
 		require.Nil(t, start)
@@ -193,7 +199,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
@@ -248,7 +254,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error

@@ -54,7 +54,9 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	tableIDs := map[int64]struct{}{}
 	for tableID := range globalStatsTableIDs {
+		tableIDs[tableID] = struct{}{}
 		tableAllPartitionStats := make(map[int64]*statistics.Table)
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
@@ -101,14 +103,16 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.String("info", job.JobInfo),
 							zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", tableID))
 					}
-					// Dump stats to historical storage.
-					if err1 := recordHistoricalStats(e.ctx, globalStatsID.tableID); err1 != nil {
-						logutil.BgLogger().Error("record historical stats failed", zap.String("info", job.JobInfo), zap.Int64("histID", hg.ID), zap.Error(err1))
-					}
 				}
 				return err
 			}()
 			FinishAnalyzeMergeJob(e.ctx, job, mergeStatsErr)
+		}
+	}
+	for tableID := range tableIDs {
+		// Dump stats to historical storage.
+		if err := recordHistoricalStats(e.ctx, tableID); err != nil {
+			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 		}
 	}
 	return nil
