@@ -2108,9 +2108,9 @@ type ResourceGroupOption struct {
 type ResourceUnitType int
 
 const (
-	ResourceRRURate ResourceUnitType = iota
-	ResourceWRURate
-	// Native mode
+	// RU mode
+	ResourceRURate ResourceUnitType = iota
+	// Raw mode
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
 	ResourceUnitIOWriteBandwidth
@@ -2122,12 +2122,8 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	}
 	fn := func() error {
 		switch n.Tp {
-		case ResourceRRURate:
-			ctx.WriteKeyWord("RRU_PER_SEC ")
-			ctx.WritePlain("= ")
-			ctx.WritePlainf("%d", n.UintValue)
-		case ResourceWRURate:
-			ctx.WriteKeyWord("WRU_PER_SEC ")
+		case ResourceRURate:
+			ctx.WriteKeyWord("RU_PER_SEC ")
 			ctx.WritePlain("= ")
 			ctx.WritePlainf("%d", n.UintValue)
 		case ResourceUnitCPU:
