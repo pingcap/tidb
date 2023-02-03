@@ -2288,15 +2288,6 @@ var defaultSysVars = []*SysVar{
 		s.EnablePlanCacheForParamLimit = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexJoinInnerMultiPattern, Value: BoolToOnOff(DefTiDBEnableIndexJoinInnerMultiPattern), Type: TypeBool,
-		SetSession: func(s *SessionVars, val string) error {
-			s.EnableIndexJoinInnerSideMultiPattern = TiDBOptOn(val)
-			return nil
-		},
-		GetSession: func(s *SessionVars) (string, error) {
-			return BoolToOnOff(s.EnableIndexJoinInnerSideMultiPattern), nil
-		},
-	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

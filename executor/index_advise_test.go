@@ -107,7 +107,7 @@ and b.txn_accno = a.new_accno;`
 		{"    └─Selection_11"},
 		{"      └─IndexRangeScan_10"},
 	}
-	tk.MustExec("set @@session.tidb_enable_index_join_inner_multi_pattern='ON';")
+	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = true
 	tk.MustQuery(sql).CheckAt([]int{0}, rows)
 	rows = [][]interface{}{
 		{"Update_8"},
@@ -118,7 +118,7 @@ and b.txn_accno = a.new_accno;`
 		{"  └─IndexReader_17(Probe)"},
 		{"    └─IndexRangeScan_16"},
 	}
-	tk.MustExec("set @@session.tidb_enable_index_join_inner_multi_pattern='OFF';")
+	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = false
 	tk.MustQuery(sql).CheckAt([]int{0}, rows)
 }
 
@@ -183,7 +183,7 @@ txn_dt date default null
 		{"    └─Selection_15"},
 		{"      └─TableFullScan_14"},
 	}
-	tk.MustExec("set @@session.tidb_enable_index_join_inner_multi_pattern='OFF';")
+	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = false
 	tk.MustQuery(sql).CheckAt([]int{0}, rows)
 	rows = [][]interface{}{
 		{"IndexJoin_13"},
@@ -196,6 +196,6 @@ txn_dt date default null
 		{"    └─Selection_10(Probe)"},
 		{"      └─TableRowIDScan_9"},
 	}
-	tk.MustExec("set @@session.tidb_enable_index_join_inner_multi_pattern='ON';")
+	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = true
 	tk.MustQuery(sql).CheckAt([]int{0}, rows)
 }
