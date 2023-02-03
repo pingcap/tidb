@@ -99,7 +99,7 @@ func TestParallelLockNewJob(t *testing.T) {
 					successCounter.Add(1)
 					successJob = job
 				} else {
-					logutil.BgLogger().Error("lock new job with error", zap.Error(err))
+					logutil.BgLogger().Info("lock new job with error", zap.Error(err))
 				}
 				wg.Done()
 			}()
