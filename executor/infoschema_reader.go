@@ -3400,18 +3400,13 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		burstable := "NO"
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
-			//mode = "RU_MODE"
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
 				burstable = "YES"
 			}
 			row := types.MakeDatums(
 				group.Name,
-				//mode,
 				group.RUSettings.RU.Settings.FillRate,
 				uint64(group.RUSettings.RU.Tokens),
-				//nil,
-				//nil,
-				//nil,
 				burstable,
 			)
 			rows = append(rows, row)
@@ -3419,10 +3414,6 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
-				//mode,
-				//nil,
-				//nil,
-				//nil,
 				nil,
 				nil,
 				nil,
