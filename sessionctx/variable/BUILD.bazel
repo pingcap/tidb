@@ -68,6 +68,7 @@ go_library(
         "@org_golang_x_exp//maps",
         "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

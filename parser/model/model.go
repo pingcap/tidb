@@ -1880,7 +1880,7 @@ func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
 	return &cloned
 }
 
-// ResourceGroupInfo is the struct to store the placement policy.
+// ResourceGroupInfo is the struct to store the resource group.
 type ResourceGroupInfo struct {
 	*ResourceGroupSettings
 	ID    int64       `json:"id"`

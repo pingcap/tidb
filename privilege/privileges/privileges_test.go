@@ -1137,7 +1137,7 @@ func TestCreateDropUser(t *testing.T) {
 	tk.MustExec(`DROP USER tcd3`)
 
 	tk.MustExec(`CREATE USER usr1`)
-	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{\"resource_group\": \"default\"}"))
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{}"))
 	tk.MustExec(`DROP USER usr1`)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")

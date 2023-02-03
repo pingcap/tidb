@@ -38,23 +38,22 @@ import (
 // TF is the type of the context getter. It is used to get a context.
 // if we don't need to use CT/TF, we can define CT as any and TF as NilContext.
 type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
+	workerCache  sync.Pool
+	lock         sync.Locker
+	stopCh       chan struct{}
+	consumerFunc func(T, C, CT) U
+	cond         *sync.Cond
+	taskCh       chan *pooltask.TaskBox[T, U, C, CT, TF]
+	workers      *loopQueue[T, U, C, CT, TF]
+	options      *Options
 	gpool.BasePool
-	workerCache   sync.Pool
-	workers       *loopQueue[T, U, C, CT, TF]
-	lock          sync.Locker
-	cond          *sync.Cond
-	taskCh        chan *pooltask.TaskBox[T, U, C, CT, TF]
 	taskManager   pooltask.TaskManager[T, U, C, CT, TF]
-	options       *Options
-	stopCh        chan struct{}
-	consumerFunc  func(T, C, CT) U
+	waitingTask   atomicutil.Uint32
 	capacity      atomic.Int32
 	running       atomic.Int32
 	state         atomic.Int32
 	waiting       atomic.Int32 // waiting is the number of goroutines that are waiting for the pool to be available.
 	heartbeatDone atomic.Bool
-
-	waitingTask atomicutil.Uint32 // waitingTask is the number of tasks that are waiting for the pool to be available.
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.

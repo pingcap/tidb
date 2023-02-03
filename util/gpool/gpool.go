@@ -46,8 +46,8 @@ var (
 
 // BasePool is base class of pool
 type BasePool struct {
-	name       string
 	lastTuneTs atomicutil.Time
+	name       string
 	generator  atomic.Uint64
 }
 
