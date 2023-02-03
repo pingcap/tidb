@@ -34,9 +34,11 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/client"
+	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/util/logutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -97,7 +99,7 @@ func TestParallelLockNewJob(t *testing.T) {
 					successCounter.Add(1)
 					successJob = job
 				} else {
-					logutil.BgLogger().Error("lock new job with error", zap.Error(err))
+					logutil.BgLogger().Info("lock new job with error", zap.Error(err))
 				}
 				wg.Done()
 			}()
@@ -613,4 +615,42 @@ func TestGCTTLHistory(t *testing.T) {
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
 	ttlworker.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func TestJobMetrics(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+
+	waitAndStopTTLManager(t, dom)
+
+	now := time.Now()
+	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+
+	se := sessionFactory()
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil)
+	m.TaskManager().ResizeWorkersWithSysVar()
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+	// schedule jobs
+	m.RescheduleJobs(se, now)
+	// set the worker to be empty, so none of the tasks will be scheduled
+	m.TaskManager().SetScanWorkers4Test([]ttlworker.Worker{})
+
+	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
+	rows, err := se.ExecuteSQL(ctx, sql, args...)
+	require.NoError(t, err)
+	tableStatus, err := cache.RowToTableStatus(se, rows[0])
+	require.NoError(t, err)
+
+	require.NotEmpty(t, tableStatus.CurrentJobID)
+	require.Equal(t, "manager-1", tableStatus.CurrentJobOwnerID)
+	require.Equal(t, cache.JobStatusRunning, tableStatus.CurrentJobStatus)
+
+	m.ReportMetrics()
+	out := &dto.Metric{}
+	require.NoError(t, metrics.RunningJobsCnt.Write(out))
+	require.Equal(t, float64(1), out.GetGauge().GetValue())
 }

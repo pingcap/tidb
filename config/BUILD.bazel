@@ -13,6 +13,7 @@ go_library(
         "//br/pkg/streamhelper/config",
         "//parser/terror",
         "//util/logutil",
+        "//util/tiflashcompute",
         "//util/tikvutil",
         "//util/versioninfo",
         "@com_github_burntsushi_toml//:toml",

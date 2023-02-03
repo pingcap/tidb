@@ -34,15 +34,39 @@ func SetUpSuite() *GlobalConfigTestSuite {
 	return s
 }
 
-func TestLoadAndStore(t *testing.T) {
+func TestLoad(t *testing.T) {
+	s := SetUpSuite()
+	err := s.client.StoreGlobalConfig(context.Background(), "", []pd.GlobalConfigItem{{Name: "LoadOkGlobalConfig", Value: "ok"}})
+	require.Equal(t, nil, err)
+	res, _, err := s.client.LoadGlobalConfig(context.Background(), []string{"LoadOkGlobalConfig", "LoadErrGlobalConfig"}, "")
+	require.Equal(t, err, nil)
+	for _, j := range res {
+		println(j.Name)
+		switch j.Name {
+		case "/global/config/LoadOkGlobalConfig":
+			require.Equal(t, "ok", j.Value)
+		case "/global/config/LoadErrGlobalConfig":
+			require.Equal(t, "", j.Value)
+		default:
+			require.Equal(t, true, false)
+		}
+	}
+	s.TearDownSuite()
+}
+
+func TestStore(t *testing.T) {
 	s := SetUpSuite()
 
-	err := s.client.StoreGlobalConfig(context.Background(), "/global/config", []pd.GlobalConfigItem{{Name: "NewObject", Value: "ok"}})
-	require.Equal(t, nil, err)
+	res, _, err := s.client.LoadGlobalConfig(context.Background(), []string{"NewObject"}, "")
+	require.Equal(t, err, nil)
+	require.Equal(t, res[0].Value, "")
 
-	res, _, err := s.client.LoadGlobalConfig(context.Background(), "/global/config")
-	require.Equal(t, nil, err)
-	require.Equal(t, 1, len(res))
+	err = s.client.StoreGlobalConfig(context.Background(), "", []pd.GlobalConfigItem{{Name: "NewObject", Value: "ok"}})
+	require.Equal(t, err, nil)
+
+	res, _, err = s.client.LoadGlobalConfig(context.Background(), []string{"NewObject"}, "")
+	require.Equal(t, err, nil)
+	require.Equal(t, res[0].Value, "ok")
 
 	s.TearDownSuite()
 }

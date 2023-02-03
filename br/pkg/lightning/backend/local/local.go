@@ -349,12 +349,13 @@ func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.Che
 type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
-	pdCtl    *pdutil.PdController
-	splitCli split.SplitClient
-	tikvCli  *tikvclient.KVStore
-	tls      *common.TLS
-	pdAddr   string
-	g        glue.Glue
+	pdCtl     *pdutil.PdController
+	splitCli  split.SplitClient
+	tikvCli   *tikvclient.KVStore
+	tls       *common.TLS
+	pdAddr    string
+	g         glue.Glue
+	tikvCodec tikvclient.Codec
 
 	localStoreDir string
 
@@ -419,6 +420,7 @@ func NewLocalBackend(
 	g glue.Glue,
 	maxOpenFiles int,
 	errorMgr *errormanager.ErrorManager,
+	keyspaceName string,
 ) (backend.Backend, error) {
 	localFile := cfg.TikvImporter.SortedKVDir
 	rangeConcurrency := cfg.TikvImporter.RangeConcurrency
@@ -460,8 +462,19 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()))
-	pdCliForTiKV := tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCtl.GetPDClient())
+
+	var pdCliForTiKV *tikvclient.CodecPDClient
+	if keyspaceName == "" {
+		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCtl.GetPDClient())
+	} else {
+		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCtl.GetPDClient(), keyspaceName)
+		if err != nil {
+			return backend.MakeBackend(nil), common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
+		}
+	}
+
+	tikvCodec := pdCliForTiKV.GetCodec()
+	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
 	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
@@ -484,13 +497,14 @@ func NewLocalBackend(
 		LastAlloc = alloc
 	}
 	local := &local{
-		engines:  sync.Map{},
-		pdCtl:    pdCtl,
-		splitCli: splitCli,
-		tikvCli:  tikvCli,
-		tls:      tls,
-		pdAddr:   cfg.TiDB.PdAddr,
-		g:        g,
+		engines:   sync.Map{},
+		pdCtl:     pdCtl,
+		splitCli:  splitCli,
+		tikvCli:   tikvCli,
+		tls:       tls,
+		pdAddr:    cfg.TiDB.PdAddr,
+		g:         g,
+		tikvCodec: tikvCodec,
 
 		localStoreDir:     localFile,
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
@@ -975,6 +989,7 @@ func (local *local) WriteToTiKV(
 			Start: firstKey,
 			End:   lastKey,
 		},
+		ApiVersion: local.tikvCodec.GetAPIVersion(),
 	}
 
 	leaderID := region.Leader.GetId()
@@ -1641,6 +1656,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		// the table when table is created.
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
+		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+			needSplit = true
+		})
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
@@ -1676,7 +1694,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	}()
 
 	atomicHasDupe := atomic.NewBool(false)
-	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
+	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
 		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
@@ -1694,7 +1712,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	}()
 
 	atomicHasDupe := atomic.NewBool(false)
-	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
+	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
 		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
 	if err != nil {
 		return false, errors.Trace(err)
@@ -1908,16 +1926,17 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
+	return openLocalWriter(cfg, engine, local.tikvCodec, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
 }
 
-func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,
 		kvBuffer:           kvBuffer,
 		isKVSorted:         cfg.IsKVSorted,
 		isWriteBatchSorted: true,
+		tikvCodec:          tikvCodec,
 	}
 	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
 	// this can help save about 3% of CPU.
@@ -2047,7 +2066,8 @@ func nextKey(key []byte) []byte {
 
 	// in tikv <= 4.x, tikv will truncate the row key, so we should fetch the next valid row key
 	// See: https://github.com/tikv/tikv/blob/f7f22f70e1585d7ca38a59ea30e774949160c3e8/components/raftstore/src/coprocessor/split_observer.rs#L36-L41
-	if tablecodec.IsRecordKey(key) {
+	// we only do this for IntHandle, which is checked by length
+	if tablecodec.IsRecordKey(key) && len(key) == tablecodec.RecordRowKeyLen {
 		tableID, handle, _ := tablecodec.DecodeRecordKey(key)
 		nextHandle := handle.Next()
 		// int handle overflow, use the next table prefix as nextKey
@@ -2057,7 +2077,7 @@ func nextKey(key []byte) []byte {
 		return tablecodec.EncodeRowKeyWithHandle(tableID, nextHandle)
 	}
 
-	// if key is an index, directly append a 0x00 to the key.
+	// for index key and CommonHandle, directly append a 0x00 to the key.
 	res := make([]byte, 0, len(key)+1)
 	res = append(res, key...)
 	res = append(res, 0)
