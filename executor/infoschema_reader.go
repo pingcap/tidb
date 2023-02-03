@@ -3397,21 +3397,17 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	rows := make([][]types.Datum, 0, len(resourceGroups))
 	for _, group := range resourceGroups {
 		//mode := ""
+		burstable := "NO"
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
 			//mode = "RU_MODE"
-			ruSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RUSettings.RU.Settings.String(), ":")[1], " "))
-			if err != nil {
-				return errors.Errorf("invalid fill rate of RU for resource group %s", group.Name)
-			}
-			burstable := "YES"
-			if group.RUSettings.RU.GetSettings().BurstLimit < 0 {
-				burstable = "NO"
+			if group.RUSettings.RU.Settings.BurstLimit < 0 {
+				burstable = "YES"
 			}
 			row := types.MakeDatums(
 				group.Name,
 				//mode,
-				ruSetting,
+				group.RUSettings.RU.Settings.FillRate,
 				uint64(group.RUSettings.RU.Tokens),
 				//nil,
 				//nil,
