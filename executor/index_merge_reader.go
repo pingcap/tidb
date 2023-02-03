@@ -280,6 +280,12 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 }
 
 func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask, workID int) error {
+	failpoint.Inject("testIndexMergeResultChCloseEarly", func(_ failpoint.Value) {
+		// Wait for processWorker to close resultCh.
+		time.Sleep(2)
+		// Should use fetchCh instead of resultCh to send error.
+		syncErr(ctx, e.finished, fetchCh, errors.New("testIndexMergeResultChCloseEarly"))
+	})
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
@@ -742,6 +748,9 @@ type indexMergeProcessWorker struct {
 
 func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-chan *indexMergeTableTask,
 	workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished <-chan struct{}) {
+	failpoint.Inject("testIndexMergeResultChCloseEarly", func(_ failpoint.Value) {
+		failpoint.Return()
+	})
 	defer close(workCh)
 
 	distinctHandles := make(map[int64]*kv.HandleMap)
