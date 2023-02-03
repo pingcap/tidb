@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -168,7 +169,12 @@ func (d *ddl) startDispatchLoop() {
 	if d.etcdCli != nil {
 		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
-	ticker := time.NewTicker(1 * time.Second)
+	var ticker *time.Ticker
+	if intest.InTest {
+		ticker = time.NewTicker(2 * time.Millisecond)
+	} else {
+		ticker = time.NewTicker(1 * time.Second)
+	}
 	defer ticker.Stop()
 	for {
 		if isChanClosed(d.ctx.Done()) {
@@ -176,7 +182,11 @@ func (d *ddl) startDispatchLoop() {
 		}
 		if !d.isOwner() || d.waiting.Load() {
 			d.once.Store(true)
-			time.Sleep(time.Second)
+			if intest.InTest {
+				time.Sleep(2 * time.Millisecond)
+			} else {
+				time.Sleep(time.Second)
+			}
 			continue
 		}
 		select {
