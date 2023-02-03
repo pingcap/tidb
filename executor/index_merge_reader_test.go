@@ -834,14 +834,24 @@ func TestIndexMergePanic(t *testing.T) {
 	tk.MustExec("analyze table t1;")
 	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
 	for _, fp := range panicFPPaths {
-		require.NoError(t, failpoint.Enable(fp, `panic("TestIndexMergePanic")`))
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		for i := 0; i < 1000; i++ {
-			sql := fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d", rand.Intn(1000), rand.Intn(1000))
-			res := tk.MustQuery("explain " + sql).Rows()
-			require.Contains(t, res[1][0], "IndexMerge")
-			err := tk.QueryToErr(sql)
-			require.Contains(t, err.Error(), "TestIndexMergePanic")
+			if !strings.Contains(fp, "Intersection") {
+				sql := "select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 1000 or c2 < 800;"
+				res := tk.MustQuery("explain " + sql).Rows()
+				require.Contains(t, res[1][0], "IndexMerge")
+				err := tk.QueryToErr(sql)
+				fmt.Println("gjt debug", fp, err)
+				require.Contains(t, err.Error(), fp)
+			} else {
+				sql := "select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < 1000 and c2 < 800"
+				res := tk.MustQuery("explain " + sql).Rows()
+				require.Contains(t, res[1][0], "IndexMerge")
+				err := tk.QueryToErr(sql)
+				require.Contains(t, err.Error(), fp)
+			}
+			require.NoError(t, failpoint.Disable(fp))
+			break
 		}
-		require.NoError(t, failpoint.Disable(fp))
 	}
 }
