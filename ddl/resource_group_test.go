@@ -140,9 +140,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x'").Check(testkit.Rows("x RU_MODE 1000 0 2000 0 <nil> <nil> <nil>"))
 	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RRU_PER_SEC=1000 WRU_PER_SEC=2000"))
 
-	tk.MustExec("create resource group y " +
-		"RRU_PER_SEC=2000 " +
-		"WRU_PER_SEC=3000")
+	tk.MustExec("create resource group y RU_PER_SEC=2000")
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y RU_MODE 2000 0 3000 0 <nil> <nil> <nil>"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RRU_PER_SEC=2000 WRU_PER_SEC=3000"))
 

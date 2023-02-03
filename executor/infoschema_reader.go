@@ -3404,15 +3404,15 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			if err != nil {
 				return errors.Errorf("invalid fill rate of RU for resource group %s", group.Name)
 			}
-			burstable := false
+			burstable := "YES"
 			if group.RUSettings.RU.GetSettings().BurstLimit < 0 {
-				burstable = true
+				burstable = "NO"
 			}
 			row := types.MakeDatums(
 				group.Name,
 				//mode,
 				ruSetting,
-				int(group.RUSettings.RU.Tokens),
+				uint64(group.RUSettings.RU.Tokens),
 				//nil,
 				//nil,
 				//nil,
