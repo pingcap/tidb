@@ -483,6 +483,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	callback := &callback.TestDDLCallback{Do: dom}
 
 	runPessimisticTxn := false
+	afterPessDML := make(chan struct{}, 1)
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -505,6 +506,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 			assert.NoError(t, err)
 			_, err = tk2.Exec("update t set a = 3 where id = 1;")
 			assert.NoError(t, err)
+			afterPessDML <- struct{}{}
 		}
 	}
 	dom.DDL().SetHook(callback)
@@ -520,6 +522,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	case <-afterCommit:
 		require.Fail(t, "should be blocked by the pessimistic txn")
 	}
+	<-afterPessDML
 	tk2.MustExec("rollback;")
 	<-afterCommit
 	dom.DDL().SetHook(originHook)
