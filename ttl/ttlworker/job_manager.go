@@ -45,7 +45,7 @@ const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
 	SET current_job_id = %?,
 		current_job_owner_id = %?,
 		current_job_start_time = %?,
-		current_job_status = 'waiting',
+		current_job_status = 'running',
 		current_job_status_update_time = %?,
 		current_job_ttl_expire = %?,
 		current_job_owner_hb_time = %?
@@ -161,6 +161,7 @@ func (m *JobManager) jobLoop() error {
 	m.taskManager.resizeWorkersWithSysVar()
 	for {
 		m.reportMetrics()
+		m.taskManager.reportMetrics()
 		now := se.Now()
 
 		select {
@@ -651,7 +652,7 @@ func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *ca
 		// information from schema cache directly
 		tbl: table,
 
-		status: cache.JobStatusWaiting,
+		status: cache.JobStatusRunning,
 	}
 }
 
