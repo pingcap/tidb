@@ -137,14 +137,18 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	if capacity == -1 || size <= 0 || size == capacity {
 		return
 	}
+	if p.taskManager.GetOriginConcurrency()+int32(util.MaxOverclockCount) < int32(size) {
+		return
+	}
 	p.SetLastTuneTs(time.Now())
 	p.capacity.Store(int32(size))
 	if size > capacity {
 		for i := 0; i < size-capacity; i++ {
-			if tid, boostTask := p.taskManager.Overclock(); boostTask != nil {
+			if tid, boostTask := p.taskManager.Overclock(size); boostTask != nil {
 				p.addWaitingTask()
-				p.taskManager.AddSubTask(tid, boostTask.Clone())
-				p.taskCh <- boostTask
+				newTask := boostTask.Clone()
+				p.taskManager.AddSubTask(tid, newTask)
+				p.taskCh <- newTask
 			}
 		}
 		if size-capacity == 1 {
@@ -155,7 +159,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 		return
 	}
 	if size < capacity {
-		p.taskManager.Downclock()
+		p.taskManager.Downclock(size)
 	}
 }
 
@@ -215,7 +219,6 @@ func (p *Pool[T, U, C, CT, TF]) release() {
 	// There might be some callers waiting in retrieveWorker(), so we need to wake them up to prevent
 	// those callers blocking infinitely.
 	p.cond.Broadcast()
-	close(p.taskCh)
 }
 
 func isClose(exitCh chan struct{}) bool {
@@ -256,9 +259,9 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 	taskID := p.NewTaskID()
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
-	closeCh := make(chan struct{})
+	productExitCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, productExitCh, &wg, inputCh, result)
 	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
@@ -270,15 +273,19 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
+	wg.Add(1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			close(closeCh)
 			close(inputCh)
+			wg.Done()
 		}()
 		for {
+			if isClose(productExitCh) {
+				return
+			}
 			tasks, err := producer()
 			if err != nil {
 				if errors.Is(err, gpool.ErrProducerClosed) {
@@ -306,10 +313,10 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 	taskID := p.NewTaskID()
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
-	closeCh := make(chan struct{})
+	productExitCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, productExitCh, &wg, inputCh, result)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
@@ -320,15 +327,19 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
+	wg.Add(1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			close(closeCh)
 			close(inputCh)
+			wg.Done()
 		}()
 		for {
+			if isClose(productExitCh) {
+				return
+			}
 			task, err := producer()
 			if err != nil {
 				if errors.Is(err, gpool.ErrProducerClosed) {

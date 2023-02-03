@@ -469,6 +469,8 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		params []int
 	}{
 		{"prepare stmt from 'select * from t limit ?'", []int{1}},
+		{"prepare stmt from 'select * from t limit 1, ?'", []int{1}},
+		{"prepare stmt from 'select * from t limit ?, 1'", []int{1}},
 		{"prepare stmt from 'select * from t limit ?, ?'", []int{1, 2}},
 		{"prepare stmt from 'delete from t order by a limit ?'", []int{1}},
 		{"prepare stmt from 'insert into t select * from t order by a desc limit ?'", []int{1}},
@@ -491,7 +493,8 @@ func TestPlanCacheWithLimit(t *testing.T) {
 		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-		if idx < 6 {
+		if idx < 9 {
+			// none point get plan
 			tk.MustExec("set @a0 = 6")
 			tk.MustExec("execute stmt using " + strings.Join(using, ", "))
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))

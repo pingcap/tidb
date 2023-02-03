@@ -232,6 +232,9 @@ type Config struct {
 
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
+
+	// KeyspaceName is the name of the keyspace of the task
+	KeyspaceName string `json:"keyspace-name" toml:"keyspace-name"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.

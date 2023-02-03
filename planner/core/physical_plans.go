@@ -1503,7 +1503,8 @@ type PhysicalExchangeSender struct {
 	ExchangeType tipb.ExchangeType
 	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
-	Tasks []*kv.MPPTask
+	Tasks           []*kv.MPPTask
+	CompressionMode kv.ExchangeCompressionMode
 }
 
 // Clone implment PhysicalPlan interface.
@@ -1516,6 +1517,7 @@ func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np.basePhysicalPlan = *base
 	np.ExchangeType = p.ExchangeType
 	np.HashCols = p.HashCols
+	np.CompressionMode = p.CompressionMode
 	return np, nil
 }
 
