@@ -39,6 +39,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
@@ -809,7 +810,12 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		// which may act like a deadlock.
 		logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
 			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
-		time.Sleep(GetWaitTimeWhenErrorOccurred())
+
+		// In test and job is cancelling we can ignore the sleep
+		if !(intest.InTest && job.IsCancelling()) {
+			// fmt.Println(time.Now(), "runDDLJob got error sleep", GetWaitTimeWhenErrorOccurred(), job.State, runJobErr)
+			time.Sleep(GetWaitTimeWhenErrorOccurred())
+		}
 	}
 
 	return schemaVer, nil
