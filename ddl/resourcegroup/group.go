@@ -41,7 +41,8 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate: options.RURate,
+					FillRate:   options.RURate,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 		}
@@ -77,17 +78,20 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		group.RawResourceSettings = &rmpb.GroupRawResourceSettings{
 			Cpu: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate: cpuRate,
+					FillRate:   cpuRate,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 			IoRead: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate: ioReadRate,
+					FillRate:   ioReadRate,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 			IoWrite: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate: ioWriteRate,
+					FillRate:   ioWriteRate,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 		}
