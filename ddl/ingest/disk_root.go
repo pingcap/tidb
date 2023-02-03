@@ -15,12 +15,8 @@
 package ingest
 
 import (
-<<<<<<< HEAD
-	"github.com/pingcap/errors"
-=======
 	"sync"
 
->>>>>>> f7d5db24b3 (ddl/ingest: add mutex to disk root (#41029))
 	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
@@ -76,7 +72,7 @@ func (d *diskRootImpl) UpdateUsageAndQuota() error {
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
 		logutil.BgLogger().Error(LitErrGetStorageQuota, zap.Error(err))
-		return errors.New(LitErrGetStorageQuota)
+		return err
 	}
 	maxQuota := mathutil.Min(variable.DDLDiskQuota.Load(), uint64(capacityThreshold*float64(sz.Capacity)))
 	d.mu.Lock()
