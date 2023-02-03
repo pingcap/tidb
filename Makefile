@@ -112,7 +112,7 @@ explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 ddltest:
-	@cd cmd/ddltest && $(GO) test -o --tags=deadllock,intest ../../bin/ddltest -c
+	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
 
 CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm
 
