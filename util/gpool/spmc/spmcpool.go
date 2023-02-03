@@ -219,7 +219,6 @@ func (p *Pool[T, U, C, CT, TF]) release() {
 	// There might be some callers waiting in retrieveWorker(), so we need to wake them up to prevent
 	// those callers blocking infinitely.
 	p.cond.Broadcast()
-	close(p.taskCh)
 }
 
 func isClose(exitCh chan struct{}) bool {
@@ -260,9 +259,9 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 	taskID := p.NewTaskID()
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
-	closeCh := make(chan struct{})
+	productExitCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, productExitCh, &wg, inputCh, result)
 	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
@@ -274,15 +273,19 @@ func (p *Pool[T, U, C, CT, TF]) AddProduceBySlice(producer func() ([]T, error), 
 		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
+	wg.Add(1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			close(closeCh)
 			close(inputCh)
+			wg.Done()
 		}()
 		for {
+			if isClose(productExitCh) {
+				return
+			}
 			tasks, err := producer()
 			if err != nil {
 				if errors.Is(err, gpool.ErrProducerClosed) {
@@ -310,10 +313,10 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 	taskID := p.NewTaskID()
 	var wg sync.WaitGroup
 	result := make(chan U, opt.ResultChanLen)
-	closeCh := make(chan struct{})
+	productExitCh := make(chan struct{})
 	inputCh := make(chan pooltask.Task[T], opt.TaskChanLen)
 	p.taskManager.RegisterTask(taskID, int32(opt.Concurrency))
-	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, closeCh, &wg, result)
+	tc := pooltask.NewTaskController[T, U, C, CT, TF](p, taskID, productExitCh, &wg, inputCh, result)
 	for i := 0; i < opt.Concurrency; i++ {
 		err := p.run()
 		if err == gpool.ErrPoolClosed {
@@ -324,15 +327,19 @@ func (p *Pool[T, U, C, CT, TF]) AddProducer(producer func() (T, error), constArg
 		p.taskManager.AddSubTask(taskID, &taskBox)
 		p.taskCh <- &taskBox
 	}
+	wg.Add(1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				logutil.BgLogger().Error("producer panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			close(closeCh)
 			close(inputCh)
+			wg.Done()
 		}()
 		for {
+			if isClose(productExitCh) {
+				return
+			}
 			task, err := producer()
 			if err != nil {
 				if errors.Is(err, gpool.ErrProducerClosed) {
