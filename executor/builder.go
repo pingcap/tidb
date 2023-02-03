@@ -3402,7 +3402,9 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
+		memTracker:   memory.NewTracker(v.ID(), -1),
 	}
+	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return gather
 }
 
