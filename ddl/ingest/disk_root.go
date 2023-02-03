@@ -52,7 +52,7 @@ func NewDiskRootImpl(path string, bcCtx *backendCtxManager) DiskRoot {
 
 // CurrentUsage implements DiskRoot interface.
 func (d *diskRootImpl) CurrentUsage() uint64 {
-	d.mu.RUnlock()
+	d.mu.RLock()
 	usage := d.currentUsage
 	d.mu.RUnlock()
 	return usage
@@ -60,7 +60,7 @@ func (d *diskRootImpl) CurrentUsage() uint64 {
 
 // MaxQuota implements DiskRoot interface.
 func (d *diskRootImpl) MaxQuota() uint64 {
-	d.mu.RUnlock()
+	d.mu.RLock()
 	quota := d.maxQuota
 	d.mu.RUnlock()
 	return quota
