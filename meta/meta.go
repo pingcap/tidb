@@ -122,6 +122,7 @@ var (
 	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
 
+// DDLTableVersion is to display ddl related table versions
 type DDLTableVersion int
 
 const (
