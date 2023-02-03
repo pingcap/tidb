@@ -241,12 +241,13 @@ func (r *HistoryReader) Rows() ([][]types.Datum, error) {
 }
 
 // Close ends reading and closes all files.
-func (r *HistoryReader) Close() {
+func (r *HistoryReader) Close() error {
 	r.files.close()
 	if r.cancel != nil {
 		r.cancel()
 	}
 	r.wg.Wait()
+	return nil
 }
 
 func (r *HistoryReader) fetchAndSendRows() {

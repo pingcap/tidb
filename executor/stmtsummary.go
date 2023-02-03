@@ -29,47 +29,81 @@ import (
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 )
 
+const (
+	defaultRetrieveCount = 1024
+)
+
 func buildStmtSummaryRetriever(
 	ctx sessionctx.Context,
 	table *model.TableInfo,
 	columns []*model.ColumnInfo,
 	extractor *plannercore.StatementsSummaryExtractor,
 ) memTableRetriever {
-	if ctx.GetSessionVars().StmtSummary.EnablePersistent {
-		return &stmtSummaryRetrieverV2{
-			stmtSummary: ctx.GetSessionVars().StmtSummary.StmtSummaryV2,
+	if extractor == nil {
+		extractor = &plannercore.StatementsSummaryExtractor{}
+	}
+	if extractor.Digests.Empty() {
+		extractor.Digests = nil
+	}
+
+	var retriever memTableRetriever
+
+	ss := ctx.GetSessionVars().StmtSummary
+	if extractor.SkipRequest {
+		retriever = &dummyRetriever{}
+	} else if ss.EnablePersistent {
+		retriever = &stmtSummaryRetrieverV2{
+			stmtSummary: ss.StmtSummaryV2,
 			table:       table,
 			columns:     columns,
-			extractor:   extractor,
+			digests:     extractor.Digests,
+			timeRanges:  buildTimeRanges(extractor.CoarseTimeRange),
+		}
+	} else {
+		retriever = &stmtSummaryRetriever{
+			table:   table,
+			columns: columns,
+			digests: extractor.Digests,
 		}
 	}
-	return &stmtSummaryRetriever{
-		table:     table,
-		columns:   columns,
-		extractor: extractor,
-	}
+
+	return retriever
+}
+
+type dummyRetriever struct {
+	dummyCloser
+}
+
+func (e *dummyRetriever) retrieve(_ context.Context, _ sessionctx.Context) ([][]types.Datum, error) {
+	return nil, nil
 }
 
 // stmtSummaryRetriever is used to retrieve statements summary.
 type stmtSummaryRetriever struct {
-	dummyCloser
-	table     *model.TableInfo
-	columns   []*model.ColumnInfo
-	extractor *plannercore.StatementsSummaryExtractor
+	table   *model.TableInfo
+	columns []*model.ColumnInfo
+	digests set.StringSet
 
 	// lazily initialized
 	rowsReader *rowsReader
 }
 
 func (e *stmtSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.extractor != nil && e.extractor.SkipRequest {
-		return nil, nil
-	}
-
 	if err := e.ensureRowsReader(sctx); err != nil {
 		return nil, err
 	}
-	return e.rowsReader.read(1024), nil
+	return e.rowsReader.read(defaultRetrieveCount)
+}
+
+func (e *stmtSummaryRetriever) close() error {
+	if e.rowsReader != nil {
+		return e.rowsReader.close()
+	}
+	return nil
+}
+
+func (e *stmtSummaryRetriever) getRuntimeStats() execdetails.RuntimeStats {
+	return nil
 }
 
 func (e *stmtSummaryRetriever) ensureRowsReader(sctx sessionctx.Context) error {
@@ -95,7 +129,7 @@ func (e *stmtSummaryRetriever) initEvictedRowsReader(sctx sessionctx.Context) (*
 	rows := stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	if !isClusterTable(e.table.Name.O) {
 		// rows are full-columned, so we need to adjust them to the required columns.
-		return &rowsReader{rows: adjustColumns(rows, e.columns, e.table)}, nil
+		return newSimpleRowsReader(adjustColumns(rows, e.columns, e.table)), nil
 	}
 
 	// Additional column `INSTANCE` for cluster table
@@ -104,7 +138,7 @@ func (e *stmtSummaryRetriever) initEvictedRowsReader(sctx sessionctx.Context) (*
 		return nil, err
 	}
 	// rows are full-columned, so we need to adjust them to the required columns.
-	return &rowsReader{rows: adjustColumns(rows, e.columns, e.table)}, nil
+	return newSimpleRowsReader(adjustColumns(rows, e.columns, e.table)), nil
 }
 
 func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*rowsReader, error) {
@@ -113,15 +147,15 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 	tz := vars.StmtCtx.TimeZone
 	columns := e.columns
 	priv := hasPriv(sctx, mysql.ProcessPriv)
-	instanceAddr, err := e.clusterTableInstanceAddr(sctx)
+	instanceAddr, err := clusterTableInstanceAddr(sctx, e.table.Name.O)
 	if err != nil {
 		return nil, err
 	}
 
 	reader := stmtsummary.NewStmtSummaryReader(user, priv, columns, instanceAddr, tz)
-	if e.extractor != nil && !e.extractor.Digests.Empty() {
+	if e.digests != nil {
 		// set checker to filter out statements not matching the given digests
-		checker := stmtsummary.NewStmtSummaryChecker(e.extractor.Digests)
+		checker := stmtsummary.NewStmtSummaryChecker(e.digests)
 		reader.SetChecker(checker)
 	}
 
@@ -132,14 +166,7 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 	if isHistoryTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryHistoryRows()
 	}
-	return &rowsReader{rows: rows}, nil
-}
-
-func (e *stmtSummaryRetriever) clusterTableInstanceAddr(sctx sessionctx.Context) (string, error) {
-	if isClusterTable(e.table.Name.O) {
-		return infoschema.GetInstanceAddr(sctx)
-	}
-	return "", nil
+	return newSimpleRowsReader(rows), nil
 }
 
 // stmtSummaryRetriever is used to retrieve statements summary when
@@ -148,118 +175,23 @@ type stmtSummaryRetrieverV2 struct {
 	stmtSummary *stmtsummaryv2.StmtSummary
 	table       *model.TableInfo
 	columns     []*model.ColumnInfo
-	extractor   *plannercore.StatementsSummaryExtractor
+	digests     set.StringSet
+	timeRanges  []*stmtsummaryv2.StmtTimeRange
 
-	retrieved     bool
-	memReader     *stmtsummaryv2.MemReader
-	historyReader *stmtsummaryv2.HistoryReader
+	// lazily initialized
+	rowsReader *rowsReader
 }
 
 func (r *stmtSummaryRetrieverV2) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if r.extractor != nil && r.extractor.SkipRequest {
-		return nil, nil
-	}
-	switch r.table.Name.O {
-	case infoschema.TableStatementsSummary,
-		infoschema.ClusterTableStatementsSummary:
-		return r.retrieveCurrent(sctx)
-	case infoschema.TableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryHistory:
-		return r.retrieveHistory(ctx, sctx)
-	case infoschema.TableStatementsSummaryEvicted,
-		infoschema.ClusterTableStatementsSummaryEvicted:
-		return r.retrieveEvicted(sctx)
-	}
-	return nil, nil
-}
-
-func (r *stmtSummaryRetrieverV2) retrieveCurrent(sctx sessionctx.Context) ([][]types.Datum, error) {
-	if r.retrieved {
-		return nil, nil
-	}
-	r.retrieved = true
-	if r.memReader == nil {
-		var err error
-		var instanceAddr string
-		if r.table.Name.O == infoschema.ClusterTableStatementsSummary {
-			instanceAddr, err = infoschema.GetInstanceAddr(sctx)
-			if err != nil {
-				return nil, err
-			}
-		}
-		timeLocation := sctx.GetSessionVars().TimeZone
-		user := sctx.GetSessionVars().User
-		hasProcessPriv := hasPriv(sctx, mysql.ProcessPriv)
-		digests := r.getDigestsFromExtractor()
-		timeRanges := r.getTimeRangesFromExtractor()
-		r.memReader = stmtsummaryv2.NewMemReader(r.stmtSummary, r.columns, instanceAddr, timeLocation, user, hasProcessPriv, digests, timeRanges)
-	}
-	return r.memReader.Rows(), nil
-}
-
-func (r *stmtSummaryRetrieverV2) retrieveHistory(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if r.historyReader == nil {
-		var err error
-		var instanceAddr string
-		if r.table.Name.O == infoschema.ClusterTableStatementsSummaryHistory {
-			instanceAddr, err = infoschema.GetInstanceAddr(sctx)
-			if err != nil {
-				return nil, err
-			}
-		}
-		timeLocation := sctx.GetSessionVars().TimeZone
-		user := sctx.GetSessionVars().User
-		hasProcessPriv := hasPriv(sctx, mysql.ProcessPriv)
-		digests := r.getDigestsFromExtractor()
-		timeRanges := r.getTimeRangesFromExtractor()
-		r.historyReader, err = stmtsummaryv2.NewHistoryReader(ctx, r.columns, instanceAddr, timeLocation, user, hasProcessPriv, digests, timeRanges)
-		if err != nil {
-			return nil, err
-		}
-		if r.memReader == nil {
-			r.memReader = stmtsummaryv2.NewMemReader(r.stmtSummary, r.columns, instanceAddr, timeLocation, user, hasProcessPriv, digests, timeRanges)
-		}
-	}
-	rows, err := r.historyReader.Rows()
-	if err != nil {
+	if err := r.ensureRowsReader(ctx, sctx); err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		if r.retrieved {
-			return nil, nil
-		}
-		r.retrieved = true
-		return r.memReader.Rows(), nil
-	}
-	return rows, nil
-}
-
-func (r *stmtSummaryRetrieverV2) retrieveEvicted(sctx sessionctx.Context) ([][]types.Datum, error) {
-	if r.retrieved {
-		return nil, nil
-	}
-	r.retrieved = true
-	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	row := r.stmtSummary.Evicted()
-	if row == nil {
-		return nil, nil
-	}
-	rows := [][]types.Datum{row}
-	if r.table.Name.O == infoschema.ClusterTableStatementsSummaryEvicted {
-		var err error
-		rows, err = infoschema.AppendHostInfoToRows(sctx, rows)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return adjustColumns(rows, r.columns, r.table), nil
+	return r.rowsReader.read(defaultRetrieveCount)
 }
 
 func (r *stmtSummaryRetrieverV2) close() error {
-	if r.historyReader != nil {
-		r.historyReader.Close()
+	if r.rowsReader != nil {
+		return r.rowsReader.close()
 	}
 	return nil
 }
@@ -268,40 +200,144 @@ func (r *stmtSummaryRetrieverV2) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }
 
-func (r *stmtSummaryRetrieverV2) getDigestsFromExtractor() set.StringSet {
-	if r.extractor != nil && !r.extractor.Digests.Empty() {
-		return r.extractor.Digests
+func (r *stmtSummaryRetrieverV2) ensureRowsReader(ctx context.Context, sctx sessionctx.Context) error {
+	if r.rowsReader != nil {
+		return nil
 	}
-	return nil
+
+	var err error
+	if isEvictedTable(r.table.Name.O) {
+		r.rowsReader, err = r.initEvictedRowsReader(sctx)
+	} else {
+		r.rowsReader, err = r.initSummaryRowsReader(ctx, sctx)
+	}
+
+	return err
 }
 
-func (r *stmtSummaryRetrieverV2) getTimeRangesFromExtractor() []*stmtsummaryv2.StmtTimeRange {
-	var timeRanges []*stmtsummaryv2.StmtTimeRange
-	if r.extractor != nil && len(r.extractor.TimeRanges) > 0 {
-		timeRanges = make([]*stmtsummaryv2.StmtTimeRange, len(r.extractor.TimeRanges))
-		for n, tr := range r.extractor.TimeRanges {
-			timeRanges[n] = &stmtsummaryv2.StmtTimeRange{
-				Begin: tr.StartTime.Unix(),
-				End:   tr.EndTime.Unix(),
-			}
-		}
+func (r *stmtSummaryRetrieverV2) initEvictedRowsReader(sctx sessionctx.Context) (*rowsReader, error) {
+	if err := checkPrivilege(sctx); err != nil {
+		return nil, err
 	}
-	return timeRanges
+
+	var rows [][]types.Datum
+
+	row := r.stmtSummary.Evicted()
+	if row != nil {
+		rows = append(rows, row)
+	}
+	if !isClusterTable(r.table.Name.O) {
+		// rows are full-columned, so we need to adjust them to the required columns.
+		return newSimpleRowsReader(adjustColumns(rows, r.columns, r.table)), nil
+	}
+
+	// Additional column `INSTANCE` for cluster table
+	rows, err := infoschema.AppendHostInfoToRows(sctx, rows)
+	if err != nil {
+		return nil, err
+	}
+	// rows are full-columned, so we need to adjust them to the required columns.
+	return newSimpleRowsReader(adjustColumns(rows, r.columns, r.table)), nil
+}
+
+func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx sessionctx.Context) (*rowsReader, error) {
+	vars := sctx.GetSessionVars()
+	user := vars.User
+	tz := vars.StmtCtx.TimeZone
+	stmtSummary := r.stmtSummary
+	columns := r.columns
+	timeRanges := r.timeRanges
+	digests := r.digests
+	priv := hasPriv(sctx, mysql.ProcessPriv)
+	instanceAddr, err := clusterTableInstanceAddr(sctx, r.table.Name.O)
+	if err != nil {
+		return nil, err
+	}
+
+	mem := stmtsummaryv2.NewMemReader(stmtSummary, columns, instanceAddr, tz, user, priv, digests, timeRanges)
+	memRows := mem.Rows()
+
+	var rowsReader *rowsReader
+	if isCurrentTable(r.table.Name.O) {
+		rowsReader = newSimpleRowsReader(memRows)
+	}
+	if isHistoryTable(r.table.Name.O) {
+		// history table should return all rows including mem and disk
+		history, err := stmtsummaryv2.NewHistoryReader(ctx, columns, instanceAddr, tz, user, priv, digests, timeRanges)
+		if err != nil {
+			return nil, err
+		}
+		rowsReader = newRowsReader(memRows, history)
+	}
+
+	return rowsReader, nil
+}
+
+type rowsPuller interface {
+	Closeable
+	Rows() ([][]types.Datum, error)
 }
 
 type rowsReader struct {
-	rows [][]types.Datum
+	puller rowsPuller
+	rows   [][]types.Datum
 }
 
-func (r *rowsReader) read(maxCount int) [][]types.Datum {
+func newSimpleRowsReader(rows [][]types.Datum) *rowsReader {
+	return &rowsReader{rows: rows}
+}
+
+func newRowsReader(rows [][]types.Datum, puller rowsPuller) *rowsReader {
+	return &rowsReader{puller: puller, rows: rows}
+}
+
+func (r *rowsReader) read(maxCount int) ([][]types.Datum, error) {
+	if err := r.pull(); err != nil {
+		return nil, err
+	}
+
 	if maxCount >= len(r.rows) {
 		ret := r.rows
 		r.rows = nil
-		return ret
+		return ret, nil
 	}
 	ret := r.rows[:maxCount]
 	r.rows = r.rows[maxCount:]
-	return ret
+	return ret, nil
+}
+
+func (r *rowsReader) pull() error {
+	if r.puller == nil {
+		return nil
+	}
+	if r.rows != nil {
+		return nil
+	}
+
+	rows, err := r.puller.Rows()
+	if err != nil {
+		return err
+	}
+
+	if len(rows) != 0 {
+		r.rows = rows
+		return nil
+	}
+
+	// reach the end of the puller
+	err = r.puller.Close()
+	if err != nil {
+		return err
+	}
+	r.puller = nil
+	return nil
+}
+
+func (r *rowsReader) close() error {
+	if r.puller != nil {
+		return r.puller.Close()
+	}
+	return nil
 }
 
 func isClusterTable(originalTableName string) bool {
@@ -350,4 +386,22 @@ func checkPrivilege(sctx sessionctx.Context) error {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	return nil
+}
+
+func clusterTableInstanceAddr(sctx sessionctx.Context, originalTableName string) (string, error) {
+	if isClusterTable(originalTableName) {
+		return infoschema.GetInstanceAddr(sctx)
+	}
+	return "", nil
+}
+
+func buildTimeRanges(tr *plannercore.TimeRange) []*stmtsummaryv2.StmtTimeRange {
+	if tr == nil {
+		return nil
+	}
+
+	return []*stmtsummaryv2.StmtTimeRange{{
+		Begin: tr.StartTime.Unix(),
+		End:   tr.EndTime.Unix(),
+	}}
 }
