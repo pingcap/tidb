@@ -248,6 +248,7 @@ type TxnUsage struct {
 	AssertionLevel                string                          `json:"assertionLevel"`
 	RcCheckTS                     bool                            `json:"rcCheckTS"`
 	RCWriteCheckTS                bool                            `json:"rcWriteCheckTS"`
+	AggressiveLocking             bool                            `json:"aggressiveLocking""`
 	SavepointCounter              int64                           `json:"SavepointCounter"`
 	LazyUniqueCheckSetCounter     int64                           `json:"lazyUniqueCheckSetCounter"`
 	AggressiveLockingUsageCounter m.AggressiveLockingUsageCounter `json:"AggressiveLockingUsageCounter"`
@@ -294,6 +295,10 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCWriteCheckTs); err == nil {
 		rcWriteCheckTSUsed = val == variable.On
 	}
+	aggressiveLockingUsed := false
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBPessimisticTransactionAggressiveLocking); err == nil {
+		aggressiveLockingUsed = val == variable.On
+	}
 
 	currSavepointCount := m.GetSavepointStmtCounter()
 	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
@@ -306,7 +311,7 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 
 	return &TxnUsage{asyncCommitUsed, onePCUsed, diff,
 		mutationCheckerUsed, assertionUsed, rcCheckTSUsed, rcWriteCheckTSUsed,
-		diffSavepointCount, diffLazyUniqueCheckSetCount, diffAggressiveLockingUsageCounter,
+		aggressiveLockingUsed, diffSavepointCount, diffLazyUniqueCheckSetCount, diffAggressiveLockingUsageCounter,
 	}
 }
 

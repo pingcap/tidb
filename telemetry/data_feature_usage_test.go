@@ -73,6 +73,14 @@ func TestTxnUsageInfo(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCWriteCheckTs))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RCWriteCheckTS)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBPessimisticTransactionAggressiveLocking))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.False(t, txnUsage.AggressiveLocking)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBPessimisticTransactionAggressiveLocking))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.AggressiveLocking)
 	})
 
 	t.Run("Count", func(t *testing.T) {
