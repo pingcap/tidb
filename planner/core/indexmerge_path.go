@@ -587,8 +587,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 		}
 
 		accessFilters, remainingFilters := ds.collectFilters4MVIndex(filters, idxCols)
-		if len(accessFilters) == 0 && // cannot use any filter on this MVIndex
-			!ds.possibleAccessPaths[idx].Forced { // whether this index is forced by use-index hint
+		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
 
@@ -669,7 +668,7 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 		isIntersection = true
 		virColVals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1], jsonType)
-		if !ok {
+		if !ok || len(virColVals) == 0 { // json_contains(JSON, '[]') is TRUE
 			return nil, false, false, nil
 		}
 	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
@@ -683,7 +682,7 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		}
 		var ok bool
 		virColVals, ok = jsonArrayExpr2Exprs(ds.ctx, sf.GetArgs()[1-jsonPathIdx], jsonType)
-		if !ok {
+		if !ok || len(virColVals) == 0 { // forbid empty array for safety
 			return nil, false, false, nil
 		}
 	default:
