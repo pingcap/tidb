@@ -40,7 +40,7 @@ func TestLoadAndStore(t *testing.T) {
 	err := s.client.StoreGlobalConfig(context.Background(), "/global/config", []pd.GlobalConfigItem{{Name: "NewObject", Value: "ok"}})
 	require.Equal(t, nil, err)
 
-	res, _, err := s.client.LoadGlobalConfig(context.Background(), "/global/config")
+	res, _, err := s.client.LoadGlobalConfig(context.Background(), nil, "/global/config")
 	require.Equal(t, nil, err)
 	require.Equal(t, 1, len(res))
 
