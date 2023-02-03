@@ -149,6 +149,7 @@ type Handle interface {
 	// IntValue returns the int64 value if IsInt is true, it panics if IsInt returns false.
 	IntValue() int64
 	// Next returns the minimum handle that is greater than this handle.
+	// The returned handle is not guaranteed to be able to decode.
 	Next() Handle
 	// Equal returns if the handle equals to another handle, it panics if the types are different.
 	Equal(h Handle) bool
@@ -299,6 +300,7 @@ func (*CommonHandle) IntValue() int64 {
 }
 
 // Next implements the Handle interface.
+// Note that the returned encoded field is not guaranteed to be able to decode.
 func (ch *CommonHandle) Next() Handle {
 	return &CommonHandle{
 		encoded:       Key(ch.encoded).PrefixNext(),

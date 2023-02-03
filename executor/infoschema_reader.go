@@ -184,6 +184,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForMemoryUsageOpsHistory(sctx)
 		case infoschema.ClusterTableMemoryUsageOpsHistory:
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
+		case infoschema.TableResourceGroups:
+			err = e.setDataFromResourceGroups(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3379,6 +3381,22 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 			policy.PlacementSettings.Schedule,
 			followerCnt,
 			policy.PlacementSettings.Learners,
+		)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromResourceGroups(sctx sessionctx.Context) error {
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	resourceGroups := is.AllResourceGroups()
+	rows := make([][]types.Datum, 0, len(resourceGroups))
+	for _, group := range resourceGroups {
+		row := types.MakeDatums(
+			group.ID,
+			group.Name.O,
+			group.RURate,
 		)
 		rows = append(rows, row)
 	}

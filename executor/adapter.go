@@ -1429,17 +1429,7 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 // 4. update the `PrevStmt` in session variable.
 // 5. reset `DurationParse` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults bool) {
-	se := a.Ctx
-	if !se.GetSessionVars().InRestrictedSQL && se.GetSessionVars().IsPlanReplayerCaptureEnabled() {
-		stmtNode := a.GetStmtNode()
-		if se.GetSessionVars().EnablePlanReplayedContinuesCapture {
-			if checkPlanReplayerContinuesCaptureValidStmt(stmtNode) {
-				checkPlanReplayerContinuesCapture(se, stmtNode, txnTS)
-			}
-		} else {
-			checkPlanReplayerCaptureTask(se, stmtNode, txnTS)
-		}
-	}
+	a.checkPlanReplayerCapture(txnTS)
 
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
@@ -1520,6 +1510,23 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 		if sessVars.TxnCtx.AggressiveLockingEffective {
 			AggressiveLockingTxnEffectiveCount.Inc()
+		}
+	}
+}
+
+func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
+	if kv.GetInternalSourceType(a.GoCtx) == kv.InternalTxnStats {
+		return
+	}
+	se := a.Ctx
+	if !se.GetSessionVars().InRestrictedSQL && se.GetSessionVars().IsPlanReplayerCaptureEnabled() {
+		stmtNode := a.GetStmtNode()
+		if se.GetSessionVars().EnablePlanReplayedContinuesCapture {
+			if checkPlanReplayerContinuesCaptureValidStmt(stmtNode) {
+				checkPlanReplayerContinuesCapture(se, stmtNode, txnTS)
+			}
+		} else {
+			checkPlanReplayerCaptureTask(se, stmtNode, txnTS)
 		}
 	}
 }
@@ -2151,7 +2158,6 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 	dumpTask := &domain.PlanReplayerDumpTask{
 		PlanReplayerTaskKey: key,
 		StartTS:             startTS,
-		EncodePlan:          GetEncodedPlan,
 		TblStats:            stmtCtx.TableStats,
 		SessionBindings:     handle.GetAllBindRecord(),
 		SessionVars:         sctx.GetSessionVars(),
@@ -2160,6 +2166,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,
 	}
+	dumpTask.EncodedPlan, _ = GetEncodedPlan(stmtCtx, false)
 	if _, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		nsql, _ := sctx.GetSessionVars().StmtCtx.SQLDigest()
 		dumpTask.InExecute = true
