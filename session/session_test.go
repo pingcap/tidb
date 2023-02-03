@@ -37,10 +37,16 @@ func TestInitMetaTable(t *testing.T) {
 		tk.MustExec(sql.SQL)
 	}
 
+	for _, sql := range session.BackfillTables {
+		tk.MustExec(sql.SQL)
+	}
+
 	tbls := map[string]struct{}{
-		"tidb_ddl_job":     {},
-		"tidb_ddl_reorg":   {},
-		"tidb_ddl_history": {},
+		"tidb_ddl_job":              {},
+		"tidb_ddl_reorg":            {},
+		"tidb_ddl_history":          {},
+		"tidb_ddl_backfill":         {},
+		"tidb_ddl_backfill_history": {},
 	}
 
 	for tbl := range tbls {
