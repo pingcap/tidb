@@ -155,14 +155,13 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustGetErrCode("alter user user2 resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustContainErrMsg("alter user user2 resource group nil_group", "Unknown resource group 'nil_group'")
 
-	/* RAW_MODE is disabled at this time
 	tk.MustExec("create resource group z " +
 		"CPU='4000m' " +
 		"IO_READ_BANDWIDTH='1G' " +
 		"IO_WRITE_BANDWIDTH='300M'")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'z'").Check(testkit.Rows("z RAW_MODE <nil> <nil> <nil> <nil> 4000 1000000000 300000000"))
+	// RAW_MODE is not supported by information_schema.resource_groups
+	//tk.MustQuery("select * from information_schema.resource_groups where name = 'z'").Check(testkit.Rows("z RAW_MODE <nil> <nil> <nil> <nil> 4000 1000000000 300000000"))
 	tk.MustQuery("show create resource group z").Check(testkit.Rows("z CREATE RESOURCE GROUP `z` CPU=\"4000m\" IO_READ_BANDWIDTH=\"1G\" IO_WRITE_BANDWIDTH=\"300M\""))
-	*/
 
 	tk.MustExec("create resource group do_not_delete_rg ru_per_sec=100")
 	tk.MustExec("create user usr3 resource group do_not_delete_rg")
