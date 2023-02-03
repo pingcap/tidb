@@ -75,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topklimiter"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -882,6 +883,7 @@ func (do *Domain) Close() {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
 	}
+	log.Info("do exit")
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -901,6 +903,7 @@ func (do *Domain) Close() {
 	if do.onClose != nil {
 		do.onClose()
 	}
+	topklimiter.GlobalTopKLimiter.Stop()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -925,6 +928,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 			jobsIdsMap: make(map[int64]string),
 		},
 	}
+	topklimiter.GlobalTopKLimiter.Start()
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
@@ -1422,7 +1426,9 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			case <-do.exit:
 				return
 			case _, ok = <-watchCh:
+				log.Info("watchCh")
 			case <-time.After(duration):
+				log.Info("tricker")
 			}
 
 			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
@@ -1433,6 +1439,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				// That's the problem, each testSuit use different storage to update some same local variables.
 				// So just skip `RebuildSysVarCache` in some integration testing.
 				if val.(bool) {
+					logutil.BgLogger().Info("skipLoadSysVarCacheLoop enable")
 					failpoint.Continue()
 				}
 			})
@@ -1447,7 +1454,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				continue
 			}
 			count = 0
-			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
+			logutil.BgLogger().Info("Rebuilding sysvar cache from etcd watch event.")
 			err := do.rebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {

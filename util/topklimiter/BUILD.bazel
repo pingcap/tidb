@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "topklimiter",
+    srcs = ["topklimiter.go"],
+    importpath = "github.com/pingcap/tidb/util/topklimiter",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util",
+        "//util/hack",
+        "//util/topk",
+        "@com_github_go_faster_city//:city",
+        "@com_github_go_kratos_aegis//ratelimit",
+        "@com_github_go_kratos_aegis//ratelimit/bbr",
+        "@com_github_twmb_murmur3//:murmur3",
+    ],
+)

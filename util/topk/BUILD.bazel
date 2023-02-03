@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "topk",
+    srcs = ["heavykeeper.go"],
+    importpath = "github.com/pingcap/tidb/util/topk",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/hack",
+        "//util/minheap",
+        "@com_github_go_faster_city//:city",
+        "@com_github_twmb_murmur3//:murmur3",
+    ],
+)
+
+go_test(
+    name = "topk_test",
+    srcs = ["heavykeeper_test.go"],
+    embed = [":topk"],
+)

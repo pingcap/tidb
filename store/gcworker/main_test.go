@@ -28,6 +28,9 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/go-kratos/aegis/pkg/cpu.init.0.func1"),
+		goleak.IgnoreTopFunction("github.com/go-kratos/aegis/ratelimit/bbr.cpuproc"),
+		goleak.IgnoreTopFunction("github.com/shirou/gopsutil/v3/internal/common.Sleep"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),

@@ -29,6 +29,9 @@ func TestMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/go-kratos/aegis/pkg/cpu.init.0.func1"),
+		goleak.IgnoreTopFunction("github.com/go-kratos/aegis/ratelimit/bbr.cpuproc"),
+		goleak.IgnoreTopFunction("github.com/shirou/gopsutil/v3/internal/common.Sleep"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/executor.readProjection[...]"),

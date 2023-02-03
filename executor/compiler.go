@@ -21,6 +21,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/topklimiter"
 	"go.uber.org/zap"
 )
 
@@ -130,6 +132,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	stmtCtx.SetPlan(finalPlan)
+
 	stmt := &ExecStmt{
 		GoCtx:         ctx,
 		InfoSchema:    is,
@@ -153,6 +156,15 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 				preparedObj.PreparedAst.CachedPlan = nil
 			}
 		}
+	}
+	_, planDigest := stmtCtx.GetPlanDigest()
+	if planDigest != nil && planDigest.String() != "" {
+		doneFunc, err := topklimiter.GlobalTopKLimiter.Allow(planDigest.String())
+		if err != nil {
+			log.Warn("topk limiter allow failed", zap.Error(err), zap.String("sql", stmtCtx.OriginalSQL))
+			return nil, err
+		}
+		stmt.limiterDoneFunc = doneFunc
 	}
 	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
 		return nil, err

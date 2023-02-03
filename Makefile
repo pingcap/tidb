@@ -399,6 +399,11 @@ bazel_prepare:
 	bazel run //:gazelle
 	bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable
 
+bazel_release:
+	mkdir bin
+	bazel build //tidb-server:tidb-server --workspace_status_command=./build/print-workspace-status.sh
+	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
+
 check-bazel-prepare:
 	@echo "make bazel_prepare"
 	./tools/check/check-bazel-prepare.sh

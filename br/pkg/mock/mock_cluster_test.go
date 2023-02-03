@@ -13,6 +13,9 @@ import (
 func TestSmoke(t *testing.T) {
 	defer goleak.VerifyNone(
 		t,
+		goleak.IgnoreTopFunction("github.com/go-kratos/aegis/pkg/cpu.init.0.func1"),
+		goleak.IgnoreTopFunction("github.com/go-kratos/aegis/ratelimit/bbr.cpuproc"),
+		goleak.IgnoreTopFunction("github.com/shirou/gopsutil/v3/internal/common.Sleep"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("github.com/klauspost/compress/zstd.(*blockDec).startDecoder"),

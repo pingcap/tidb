@@ -66,6 +66,7 @@ go_library(
         "//util/servermemorylimit",
         "//util/sqlexec",
         "//util/syncutil",
+        "//util/topklimiter",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
