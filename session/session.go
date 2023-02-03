@@ -3103,39 +3103,27 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg, tidb_ddl_history, tidb_ddl_backfill and tidb_ddl_backfill_history.
-func InitDDLJobTables(store kv.Storage) error {
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_ddl_backfill and tidb_ddl_backfill_history.
+func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
+	targetTables := DDLJobTables
+	if targetVer == meta.BackfillTableVersion {
+		targetTables = BackfillTables
+	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		exists, err := t.CheckDDLTableExists()
-		if err != nil {
+		tableVer, err := t.CheckDDLTableVersion()
+		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
 		}
-		if exists {
-			return initBackfillJobTables(store, t, dbID)
-		}
-
-		if err = createAndSplitTables(store, t, dbID, DDLJobTables); err != nil {
+		if err = createAndSplitTables(store, t, dbID, targetTables); err != nil {
 			return err
 		}
-		if err = initBackfillJobTables(store, t, dbID); err != nil {
-			return err
-		}
-		return t.SetDDLTables()
+		return t.SetDDLTables(targetVer)
 	})
-}
-
-// initBackfillJobTables is to create tidb_ddl_backfill and tidb_ddl_backfill_history.
-func initBackfillJobTables(store kv.Storage, t *meta.Meta, dbID int64) error {
-	tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
-	if err != nil || tblExist {
-		return errors.Trace(err)
-	}
-	return createAndSplitTables(store, t, dbID, BackfillTables)
 }
 
 func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []tableBasicInfo) error {
@@ -3169,8 +3157,8 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		exists, err := t.CheckMDLTableExists()
-		if err != nil || exists {
+		ver, err := t.CheckDDLTableVersion()
+		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
@@ -3195,7 +3183,7 @@ func InitMDLTable(store kv.Storage) error {
 			return errors.Trace(err)
 		}
 
-		return t.SetMDLTables()
+		return t.SetDDLTables(meta.MDLTableVersion)
 	})
 }
 
@@ -3272,11 +3260,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
-	err := InitDDLJobTables(store)
+	err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
 	if err != nil {
 		return nil, err
 	}
 	err = InitMDLTable(store)
+	if err != nil {
+		return nil, err
+	}
+	err = InitDDLJobTables(store, meta.BackfillTableVersion)
 	if err != nil {
 		return nil, err
 	}
