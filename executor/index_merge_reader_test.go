@@ -841,7 +841,6 @@ func TestIndexMergePanic(t *testing.T) {
 				res := tk.MustQuery("explain " + sql).Rows()
 				require.Contains(t, res[1][0], "IndexMerge")
 				err := tk.QueryToErr(sql)
-				fmt.Println("gjt debug", fp, err)
 				require.Contains(t, err.Error(), fp)
 			} else {
 				sql := "select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < 1000 and c2 < 800"
