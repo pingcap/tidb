@@ -720,7 +720,7 @@ func (e *IndexMergeReaderExecutor) handleHandlesFetcherPanic(ctx context.Context
 			return
 		}
 
-		err4Panic := errors.Errorf("panic in IndexMergeReaderExecutor %s: %v", worker, r)
+		err4Panic := errors.Errorf("IndexMergeReaderExecutor %s: %v", worker, r)
 		logutil.Logger(ctx).Error(err4Panic.Error())
 		doneCh := make(chan error, 1)
 		doneCh <- err4Panic
@@ -1025,7 +1025,7 @@ func (w *indexMergeProcessWorker) handleIntersectionProcessWorkerPanic(ctx conte
 		}
 		errCh <- true
 
-		err4Panic := errors.Errorf("panic in IndexMergeReaderExecutor IndexMergeIntersectionProcessWorker: %v", r)
+		err4Panic := errors.Errorf("IndexMergeReaderExecutor IndexMergeIntersectionProcessWorker: %v", r)
 		logutil.Logger(ctx).Error(err4Panic.Error())
 		doneCh := make(chan error, 1)
 		doneCh <- err4Panic
@@ -1053,7 +1053,7 @@ func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, fi
 			return
 		}
 
-		err4Panic := errors.Errorf("panic in IndexMergeReaderExecutor idxMergeProcessWorker: %v", r)
+		err4Panic := errors.Errorf("IndexMergeReaderExecutor idxMergeProcessWorker: %v", r)
 		logutil.Logger(ctx).Error(err4Panic.Error())
 		doneCh := make(chan error, 1)
 		doneCh <- err4Panic
@@ -1242,7 +1242,7 @@ func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Conte
 			return
 		}
 
-		err4Panic := errors.Errorf("panic in IndexMergeReaderExecutor indexMergeTableWorker: %v", r)
+		err4Panic := errors.Errorf("IndexMergeReaderExecutor indexMergeTableWorker: %v", r)
 		logutil.Logger(ctx).Error(err4Panic.Error())
 		if *task != nil {
 			select {
