@@ -1004,6 +1004,8 @@ func (w *indexMergeProcessWorker) handleIntersectionProcessWorkerPanic(ctx conte
 
 func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, resultCh chan<- *indexMergeTableTask) func(r interface{}) {
 	return func(r interface{}) {
+		// There is only one indexMergeProcessWorker, so close(resultCh) is safe.
+		defer close(resultCh)
 		if r == nil {
 			return
 		}
@@ -1017,8 +1019,6 @@ func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, re
 				doneCh: doneCh,
 			},
 		}
-		// There is only one indexMergeProcessWorker, so close(resultCh) is safe.
-		close(resultCh)
 	}
 }
 
