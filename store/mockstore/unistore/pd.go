@@ -50,7 +50,7 @@ func newPDClient(pd *us.MockPD) *pdClient {
 	}
 }
 
-func (c *pdClient) LoadGlobalConfig(ctx context.Context, configPath string) ([]pd.GlobalConfigItem, int64, error) {
+func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
 	ret := make([]pd.GlobalConfigItem, 0)
 	for k, v := range c.globalConfig {
 		if strings.HasPrefix(k, configPath) {
