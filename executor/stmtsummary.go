@@ -29,6 +29,10 @@ import (
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 )
 
+const (
+	defaultRetrieveCount = 1024
+)
+
 func buildStmtSummaryRetriever(
 	ctx sessionctx.Context,
 	table *model.TableInfo,
@@ -88,7 +92,7 @@ func (e *stmtSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Con
 	if err := e.ensureRowsReader(sctx); err != nil {
 		return nil, err
 	}
-	return e.rowsReader.read(1024)
+	return e.rowsReader.read(defaultRetrieveCount)
 }
 
 func (e *stmtSummaryRetriever) close() error {
@@ -182,7 +186,7 @@ func (r *stmtSummaryRetrieverV2) retrieve(ctx context.Context, sctx sessionctx.C
 	if err := r.ensureRowsReader(ctx, sctx); err != nil {
 		return nil, err
 	}
-	return r.rowsReader.read(1024)
+	return r.rowsReader.read(defaultRetrieveCount)
 }
 
 func (r *stmtSummaryRetrieverV2) close() error {
@@ -258,6 +262,7 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 		rowsReader = newSimpleRowsReader(memRows)
 	}
 	if isHistoryTable(r.table.Name.O) {
+		// history table should return all rows including mem and disk
 		history, err := stmtsummaryv2.NewHistoryReader(ctx, columns, instanceAddr, tz, user, priv, digests, timeRanges)
 		if err != nil {
 			return nil, err
