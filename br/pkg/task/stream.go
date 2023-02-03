@@ -1066,10 +1066,6 @@ func RunStreamRestore(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	if err := checkTaskExists(ctx, cfg); err != nil {
-		return errors.Trace(err)
-	}
-
 	logInfo, err := getLogRange(ctx, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
@@ -1115,7 +1111,7 @@ func RunStreamRestore(
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
-		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
+		if err = runRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
