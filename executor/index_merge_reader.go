@@ -618,7 +618,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 				// so if we don't use the address of `task` as the argument, the assignment to `task` in `pickAndExecTask` is
 				// not visible in `handlePickAndExecTaskPanic`
 				func() { worker.pickAndExecTask(ctx1, &task) },
-				worker.handlePickAndExecTaskPanic(ctx1, &task),
+				worker.handlePickAndExecTaskPanic(ctx1, e.finished, &task),
 			)
 			cancel()
 			e.tblWorkerWg.Done()
@@ -1177,7 +1177,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 	}
 }
 
-func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, task **indexMergeTableTask) func(r interface{}) {
+func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
 			return
@@ -1186,7 +1186,14 @@ func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Conte
 		err4Panic := errors.Errorf("panic in IndexMergeReaderExecutor indexMergeTableWorker: %v", r)
 		logutil.Logger(ctx).Error(err4Panic.Error())
 		if *task != nil {
-			(*task).doneCh <- err4Panic
+			select {
+			case <-ctx.Done():
+				return
+			case <- finished:
+				return
+			case (*task).doneCh <- err4Panic:
+				return
+			}
 		}
 	}
 }
