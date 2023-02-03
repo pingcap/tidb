@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"math"
 	"strings"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 )
 
 var (
@@ -1561,7 +1561,18 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // with int constant if the int constant falls into a sensible year representation.
 // This refine operation depends on the values of these args, but these values can change when using plan-cache.
 // So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
-func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
+func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) (refinedArgs []Expression) {
+	defer func() {
+		if MaybeOverOptimized4PlanCache(ctx, args) {
+			for i := range args {
+				if !args[i].Equal(ctx, refinedArgs[i]) {
+					ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(
+						errors.Errorf("skip plan-cache: %v is refined to %v", args[i], refinedArgs[i]))
+				}
+			}
+		}
+	}()
+
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
@@ -1571,11 +1582,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg1}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg1.String()))
-			RemoveMutableConst(ctx, args)
-		}
-
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		// Why check not null flag
 		// eg: int_col > const_val(which is less than min_int32)
@@ -1603,11 +1609,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String()))
-			RemoveMutableConst(ctx, args)
-		}
-
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())) {
 			finalArg0 = arg0
@@ -1625,11 +1626,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// int constant [cmp] year type
 	if arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear && !arg0.Value.IsNull() {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to YEAR", arg0.String()))
-			RemoveMutableConst(ctx, args)
-		}
-
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
 			arg0.Value.SetInt64(adjusted)
@@ -1638,11 +1634,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// year type [cmp] int constant
 	if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1.Value.IsNull() {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{arg1}) {
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to YEAR", arg1.String()))
-			RemoveMutableConst(ctx, args)
-		}
-
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
 			arg1.Value.SetInt64(adjusted)
