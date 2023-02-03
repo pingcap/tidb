@@ -3415,38 +3415,6 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 				burstable,
 			)
 			rows = append(rows, row)
-		/*
-			case rmpb.GroupMode_RawMode:
-				mode = "RAW_MODE"
-				cpuSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.Cpu.Settings.String(), ":")[1], " "))
-				if err != nil {
-					return errors.Errorf("invalid fill rate of CPU for resource group %s", group.Name)
-				}
-				readIoSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoRead.Settings.String(), ":")[1], " "))
-				if err != nil {
-					return errors.Errorf("invalid fill rate of READ for resource group %s", group.Name)
-				}
-				writeIoSetting, err := strconv.Atoi(strings.Trim(strings.Split(group.RawResourceSettings.IoWrite.Settings.String(), ":")[1], " "))
-				if err != nil {
-					return errors.Errorf("invalid fill rate of WRITE for resource group %s", group.Name)
-				}
-
-				burstable := false
-				if group.RawResourceSettings. < 0 {
-					burstable = true
-				}
-				row := types.MakeDatums(
-					group.Name,
-					mode,
-					nil,
-					nil,
-					cpuSetting,
-					readIoSetting,
-					writeIoSetting,
-			        burstable,
-				)
-				rows = append(rows, row)
-		*/
 		default:
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
