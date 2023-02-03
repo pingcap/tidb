@@ -263,45 +263,43 @@ func (m *taskManager) rescheduleTasks(se session.Session, now time.Time) {
 		return
 	}
 
-	for len(idleScanWorkers) > 0 {
-		tasks, err := m.peekWaitingScanTasks(se, len(idleScanWorkers), now)
+	tasks, err := m.peekWaitingScanTasks(se, now)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to peek scan task", zap.Error(err))
+		return
+	}
+
+	for _, t := range tasks {
+		logger := logutil.Logger(m.ctx).With(zap.String("jobID", t.JobID), zap.Int64("scanID", t.ScanID))
+
+		task, err := m.lockScanTask(se, t, now)
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to peek scan task", zap.Error(err))
+			// If other nodes lock the task, it will return an error. It's expected
+			// so the log level is only `info`
+			logutil.Logger(m.ctx).Info("fail to lock scan task", zap.Error(err))
+			continue
+		}
+
+		idleWorker := idleScanWorkers[0]
+		idleScanWorkers = idleScanWorkers[1:]
+
+		err = idleWorker.Schedule(task.ttlScanTask)
+		if err != nil {
+			logger.Warn("fail to schedule task", zap.Error(err))
+			continue
+		}
+
+		logger.Info("scheduled ttl task")
+		m.runningTasks = append(m.runningTasks, task)
+
+		if len(idleScanWorkers) == 0 {
 			return
-		}
-
-		if len(tasks) == 0 {
-			break
-		}
-
-		for _, t := range tasks {
-			logger := logutil.Logger(m.ctx).With(zap.String("jobID", t.JobID), zap.Int64("scanID", t.ScanID))
-
-			task, err := m.lockScanTask(se, t, now)
-			if err != nil {
-				// If other nodes lock the task, it will return an error. It's expected
-				// so the log level is only `info`
-				logutil.Logger(m.ctx).Info("fail to lock scan task", zap.Error(err))
-				continue
-			}
-
-			idleWorker := idleScanWorkers[0]
-			idleScanWorkers = idleScanWorkers[1:]
-
-			err = idleWorker.Schedule(task.ttlScanTask)
-			if err != nil {
-				logger.Warn("fail to schedule task", zap.Error(err))
-				continue
-			}
-
-			logger.Info("scheduled ttl task")
-			m.runningTasks = append(m.runningTasks, task)
 		}
 	}
 }
 
-func (m *taskManager) peekWaitingScanTasks(se session.Session, limit int, now time.Time) ([]*cache.TTLTask, error) {
-	sql, args := cache.PeekWaitingTTLTask(limit, now.Add(-2*ttlTaskHeartBeatTickerInterval))
+func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([]*cache.TTLTask, error) {
+	sql, args := cache.PeekWaitingTTLTask(now.Add(-2 * ttlTaskHeartBeatTickerInterval))
 	rows, err := se.ExecuteSQL(m.ctx, sql, args...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "execute sql: %s", sql)
