@@ -5,6 +5,8 @@ labels = { exclusive = "restore" }
 
 [storage]
 reserve-space = "1KB"
+enable-ttl = true
+api-version = 2
 
 [coprocessor]
 region-max-keys = 20
