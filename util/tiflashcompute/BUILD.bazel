@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "tiflashcompute",
+    srcs = ["topo_fetcher.go"],
+    importpath = "github.com/pingcap/tidb/util/tiflashcompute",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//util/dbterror",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)

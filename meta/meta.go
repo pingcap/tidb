@@ -123,6 +123,25 @@ var (
 	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
 
+// DDLTableVersion is to display ddl related table versions
+type DDLTableVersion int
+
+const (
+	// InitDDLTableVersion is the original version.
+	InitDDLTableVersion DDLTableVersion = 0
+	// BaseDDLTableVersion is for support concurrent DDL, it added tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+	BaseDDLTableVersion DDLTableVersion = 1
+	// MDLTableVersion is for support MDL tables.
+	MDLTableVersion DDLTableVersion = 2
+	// BackfillTableVersion is for support distributed reorg stage, it added tidb_ddl_backfill, tidb_ddl_backfill_history.
+	BackfillTableVersion DDLTableVersion = 3
+)
+
+// Bytes returns the byte slice.
+func (ver DDLTableVersion) Bytes() []byte {
+	return []byte(strconv.Itoa(int(ver)))
+}
+
 // Meta is for handling meta information in a transaction.
 type Meta struct {
 	txn        *structure.TxStructure
@@ -636,15 +655,25 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // SetDDLTables write a key into storage.
-func (m *Meta) SetDDLTables() error {
-	err := m.txn.Set(mDDLTableVersion, []byte("1"))
+func (m *Meta) SetDDLTables(ddlTableVersion DDLTableVersion) error {
+	err := m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes())
 	return errors.Trace(err)
 }
 
-// SetMDLTables write a key into storage.
-func (m *Meta) SetMDLTables() error {
-	err := m.txn.Set(mDDLTableVersion, []byte("2"))
-	return errors.Trace(err)
+// CheckDDLTableVersion check if the tables related to concurrent DDL exists.
+func (m *Meta) CheckDDLTableVersion() (DDLTableVersion, error) {
+	v, err := m.txn.Get(mDDLTableVersion)
+	if err != nil {
+		return -1, errors.Trace(err)
+	}
+	if string(v) == "" {
+		return InitDDLTableVersion, nil
+	}
+	ver, err := strconv.Atoi(string(v))
+	if err != nil {
+		return -1, errors.Trace(err)
+	}
+	return DDLTableVersion(ver), nil
 }
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
@@ -681,24 +710,6 @@ func (m *Meta) GetSystemDBID() (int64, error) {
 		}
 	}
 	return 0, nil
-}
-
-// CheckDDLTableExists check if the tables related to concurrent DDL exists.
-func (m *Meta) CheckDDLTableExists() (bool, error) {
-	v, err := m.txn.Get(mDDLTableVersion)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return len(v) != 0, nil
-}
-
-// CheckMDLTableExists check if the tables related to concurrent DDL exists.
-func (m *Meta) CheckMDLTableExists() (bool, error) {
-	v, err := m.txn.Get(mDDLTableVersion)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return bytes.Equal(v, []byte("2")), nil
 }
 
 // SetMetadataLock sets the metadata lock.

@@ -3396,8 +3396,7 @@ func (e *memtableRetriever) setDataFromResourceGroups(sctx sessionctx.Context) e
 		row := types.MakeDatums(
 			group.ID,
 			group.Name.O,
-			group.RRURate,
-			group.WRURate,
+			group.RURate,
 		)
 		rows = append(rows, row)
 	}
