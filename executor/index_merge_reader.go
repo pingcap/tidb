@@ -1042,6 +1042,7 @@ type partialIndexWorker struct {
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
+	logutil.BgLogger().Error("IndexMergeReaderExecutor.syncErr", zap.Error(err))
 	doneCh := make(chan error, 1)
 	doneCh <- err
 	task := &indexMergeTableTask{
