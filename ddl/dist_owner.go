@@ -16,11 +16,15 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,6 +33,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -44,10 +49,145 @@ func initDistReorg(reorgMeta *model.DDLReorgMeta) {
 	reorgMeta.IsDistReorg = isDistReorg
 }
 
-type maxBackfillJob struct {
-	pTblID        int64
-	backfillJobID int64
-	endKey        []byte
+// BackfillJobRangeMeta is export for test.
+type BackfillJobRangeMeta struct {
+	ID       int64
+	PhyTblID int64
+	PhyTbl   table.PhysicalTable
+	StartKey []byte
+	EndKey   []byte
+}
+
+func (m *BackfillJobRangeMeta) String() string {
+	physicalID := strconv.FormatInt(m.PhyTblID, 10)
+	startKey := hex.EncodeToString(m.StartKey)
+	endKey := hex.EncodeToString(m.EndKey)
+	rangeStr := "taskID_" + strconv.Itoa(int(m.ID)) + "_physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey + ")"
+	return rangeStr
+}
+
+type splitJobContext struct {
+	ctx               context.Context
+	cancel            context.CancelFunc
+	isMultiPhyTbl     bool
+	bfWorkerType      backfillerType
+	isUnique          bool
+	batchSize         int
+	minBatchSize      int
+	currBackfillJobID *atomicutil.Int64
+	currPhysicalID    int64
+	phyTblMetaCh      chan *BackfillJobRangeMeta
+	resultCh          chan error
+}
+
+func getRunningPhysicalTableMetas(sess *session, sJobCtx *splitJobContext, reorgInfo *reorgInfo) ([]*BackfillJobRangeMeta, error) {
+	ddlJobID, eleID, eleKey, currPID := reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, reorgInfo.PhysicalTableID
+	pTblMetas, err := GetPhysicalTableMetas(sess, ddlJobID, eleID, eleKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	currBfJobID := int64(1)
+	physicalTIDs := make([]int64, 0, len(pTblMetas))
+	phyTblMetas := make([]*BackfillJobRangeMeta, 0, len(pTblMetas))
+	if len(pTblMetas) == 0 {
+		bfJM := &BackfillJobRangeMeta{PhyTblID: currPID, StartKey: reorgInfo.StartKey, EndKey: reorgInfo.EndKey}
+		phyTblMetas = append(phyTblMetas, bfJM)
+		physicalTIDs = append(physicalTIDs, bfJM.PhyTblID)
+	} else {
+		for _, pMeta := range pTblMetas {
+			phyTblMetas = append(phyTblMetas, pMeta)
+			if pMeta.PhyTblID > currPID {
+				currPID = pMeta.PhyTblID
+			}
+			if pMeta.ID > currBfJobID {
+				currBfJobID = pMeta.ID
+			}
+			physicalTIDs = append(physicalTIDs, pMeta.PhyTblID)
+		}
+	}
+	sJobCtx.currPhysicalID = currPID
+	sJobCtx.currBackfillJobID = atomicutil.NewInt64(currBfJobID)
+	logutil.BgLogger().Info("[ddl] unprocessed physical table ranges get from table", zap.Int64("jobID", ddlJobID),
+		zap.Int64("eleID", eleID), zap.ByteString("eleKey", eleKey),
+		zap.Int64("currPID", sJobCtx.currPhysicalID), zap.Int64s("phyTblIDs", physicalTIDs))
+	return phyTblMetas, nil
+}
+
+func (dc *ddlCtx) sendPhysicalTableMetas(reorgInfo *reorgInfo, t table.Table, sJobCtx *splitJobContext, runningPTblMetas []*BackfillJobRangeMeta) {
+	var err error
+	physicalTIDs := make([]int64, 0, distPhysicalTableConcurrency)
+	defer func() {
+		if err != nil {
+			logutil.BgLogger().Info("[ddl] send physical table ranges to split failed", zap.Int64("jobID", reorgInfo.Job.ID),
+				zap.Stringer("ele", reorgInfo.currElement), zap.Int64s("phyTblIDs", physicalTIDs), zap.Error(err))
+			sJobCtx.cancel()
+		} else {
+			logutil.BgLogger().Info("[ddl] send physical table ranges to split finished", zap.Int64("jobID", reorgInfo.Job.ID),
+				zap.Stringer("ele", reorgInfo.currElement), zap.Int64s("phyTblIDs", physicalTIDs))
+			close(sJobCtx.phyTblMetaCh)
+		}
+	}()
+
+	for _, pTblM := range runningPTblMetas {
+		err = dc.isReorgRunnable(reorgInfo.Job.ID, false)
+		if err != nil {
+			return
+		}
+
+		if tbl, ok := t.(table.PartitionedTable); ok {
+			pTblM.PhyTbl = tbl.GetPartition(pTblM.PhyTblID)
+			sJobCtx.phyTblMetaCh <- pTblM
+		} else {
+			//nolint:forcetypeassert
+			phyTbl := t.(table.PhysicalTable)
+			pTblM.PhyTbl = phyTbl
+			sJobCtx.phyTblMetaCh <- pTblM
+		}
+		physicalTIDs = append(physicalTIDs, pTblM.PhyTblID)
+	}
+
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		currPhysicalID := sJobCtx.currPhysicalID
+		for {
+			err = dc.isReorgRunnable(reorgInfo.Job.ID, false)
+			if err != nil {
+				return
+			}
+			select {
+			case <-sJobCtx.ctx.Done():
+				err = sJobCtx.ctx.Err()
+				return
+			default:
+			}
+
+			pID, startKey, endKey, err1 := getNextPartitionInfo(reorgInfo, tbl, currPhysicalID)
+			if err1 != nil {
+				err = err1
+				return
+			}
+			if pID == 0 {
+				// Next partition does not exist, all the job done.
+				return
+			}
+			pTbl := tbl.GetPartition(pID)
+			if pTbl == nil {
+				err = dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", pID, t.Meta().ID)
+				return
+			}
+			bfJM := &BackfillJobRangeMeta{PhyTblID: pID, PhyTbl: pTbl, StartKey: startKey, EndKey: endKey}
+			sJobCtx.phyTblMetaCh <- bfJM
+			currPhysicalID = pID
+
+			physicalTIDs = append(physicalTIDs, pID)
+		}
+	} //else {
+	//	//nolint:forcetypeassert
+	//	phyTbl := t.(table.PhysicalTable)
+	//	bfJM := &BackfillJobRangeMeta{PhyTblID: phyTbl.Meta().ID, PhyTbl: phyTbl, StartKey: reorgInfo.StartKey, EndKey: reorgInfo.EndKey}
+	//	sJobCtx.phyTblMetaCh <- bfJM
+	//	physicalTIDs = append(physicalTIDs, bfJM.PhyTblID)
+	// }
 }
 
 func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
@@ -56,6 +196,11 @@ func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, 
 		return nil
 	}
 
+	ddlJobID := reorgInfo.Job.ID
+	currEle := reorgInfo.currElement
+	logutil.BgLogger().Info("[ddl] control write table record start",
+		zap.Int64("jobID", ddlJobID), zap.Stringer("ele", currEle),
+		zap.Int64("tblID", t.Meta().ID), zap.Int64("currPID", reorgInfo.PhysicalTableID))
 	sCtx, err := sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
@@ -63,69 +208,121 @@ func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, 
 	defer sessPool.put(sCtx)
 	sess := newSession(sCtx)
 
-	if tbl, ok := t.(table.PartitionedTable); ok {
-		var finish bool
-		for !finish {
-			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
-			if p == nil {
-				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
-			}
-			err = w.addPhysicalTableIndex(p, reorgInfo)
-			if err != nil {
-				break
-			}
-			finish, err = updateReorgInfo(sessPool, tbl, reorgInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	} else {
-		//nolint:forcetypeassert
-		phyTbl := t.(table.PhysicalTable)
-		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
-	}
-
-	ddlJobID := reorgInfo.Job.ID
 	if err := dc.isReorgRunnable(ddlJobID, true); err != nil {
 		return errors.Trace(err)
 	}
+	var isUnique bool
+	if bfWorkerType == typeAddIndexWorker {
+		idxInfo := model.FindIndexInfoByID(t.Meta().Indices, currEle.ID)
+		isUnique = idxInfo.Unique
+	}
 
-	currEle := reorgInfo.currElement
-	defaultSQLMode := sess.GetSessionVars().SQLMode
-	defer func() {
-		sess.GetSessionVars().SQLMode = defaultSQLMode
-	}()
-	// Make timestamp type can be inserted ZeroTimestamp.
-	sess.GetSessionVars().SQLMode = mysql.ModeNone
-	currBackfillJobID := int64(1)
+	wg := tidbutil.WaitGroupWrapper{}
+	sJobCtx := &splitJobContext{
+		bfWorkerType: bfWorkerType,
+		isUnique:     isUnique,
+		batchSize:    genTaskBatch,
+		minBatchSize: minGenTaskBatch,
+		phyTblMetaCh: make(chan *BackfillJobRangeMeta, 1),
+		resultCh:     make(chan error, distPhysicalTableConcurrency),
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	sJobCtx.ctx, sJobCtx.cancel = context.WithCancel(ctx)
+	concurrency := 1
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		ids := len(tbl.GetAllPartitionIDs())
+		if ids > 1 {
+			sJobCtx.isMultiPhyTbl = true
+			concurrency = ids
+		}
+		if ids > distPhysicalTableConcurrency {
+			concurrency = distPhysicalTableConcurrency
+		}
+		sJobCtx.batchSize = genPhysicalTableTaskBatch
+		sJobCtx.minBatchSize = minGenPhysicalTableTaskBatch
+	}
+
 	err = checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEle.ID, currEle.TypeKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	maxBfJob, err := GetMaxBackfillJob(sess, ddlJobID, currEle.ID, currEle.TypeKey)
+	phyTblMetas, err := getRunningPhysicalTableMetas(sess, sJobCtx, reorgInfo)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	if maxBfJob != nil {
-		startKey = maxBfJob.EndKey
-		currBackfillJobID = maxBfJob.ID + 1
+		return err
 	}
 
-	var isUnique bool
-	if bfWorkerType == typeAddIndexWorker {
-		idxInfo := model.FindIndexInfoByID(pTbl.Meta().Indices, currEle.ID)
-		isUnique = idxInfo.Unique
+	sCtxs := make([]sessionctx.Context, 0, concurrency)
+	for i := 0; i < concurrency; i++ {
+		sCtx, err := sessPool.get()
+		if err != nil {
+			return err
+		}
+		sCtxs = append(sCtxs, sCtx)
 	}
-	// TODO: endkey
-	// TODO: currBackfillJobID
-	wg := tidbutil.WaitGroupWrapper{}
-	isMultiPhyTbl := true
-	err = dc.splitTableToBackfillJobs(sess, reorgInfo, isMultiPhyTbl, pTbl, isUnique, bfWorkerType, startKey, endKey, genTaskBatch, minGenTaskBatch, currBackfillJobID)
-	if err != nil {
-		return errors.Trace(err)
+
+	wg.Run(func() {
+		defer tidbutil.Recover(metrics.LabelDistReorg, "sendPhysicalTableMeta", nil, false)
+		dc.sendPhysicalTableMetas(reorgInfo, t, sJobCtx, phyTblMetas)
+	})
+	for _, sCtx := range sCtxs {
+		func(ctx sessionctx.Context) {
+			wg.Run(func() {
+				defer func() {
+					tidbutil.Recover(metrics.LabelDistReorg, "splitTableToBackfillJobs", nil, false)
+				}()
+				se := newSession(ctx)
+				dc.splitPhysicalTableToBackfillJobs(se, reorgInfo, sJobCtx)
+			})
+		}(sCtx)
 	}
 	wg.Wait()
+	for _, sCtx := range sCtxs {
+		sessPool.put(sCtx)
+	}
 	return checkReorgJobFinished(dc.ctx, sess, &dc.reorgCtx, ddlJobID, currEle)
+}
+
+func (dc *ddlCtx) splitPhysicalTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext) error {
+	defaultSQLMode := sess.GetSessionVars().SQLMode
+	defer func() { sess.GetSessionVars().SQLMode = defaultSQLMode }()
+	// Make timestamp type can be inserted ZeroTimestamp.
+	sess.GetSessionVars().SQLMode = mysql.ModeNone
+
+	var err error
+	var pTblMeta *BackfillJobRangeMeta
+	defer func() {
+		if err != nil {
+			sJobCtx.cancel()
+			logutil.BgLogger().Info("[ddl] split backfill jobs to table failed",
+				zap.Int64("jobID", reorgInfo.Job.ID), zap.Stringer("ele", reorgInfo.currElement),
+				zap.Stringer("physical_tbl", pTblMeta), zap.Error(err))
+		}
+	}()
+
+	var ok bool
+	var pTblMetaCnt int
+	for {
+		select {
+		case <-sJobCtx.ctx.Done():
+			err = sJobCtx.ctx.Err()
+		case pTblMeta, ok = <-sJobCtx.phyTblMetaCh:
+			logutil.BgLogger().Info("[ddl] split backfill jobs to table start", zap.Int64("jobID", reorgInfo.Job.ID),
+				zap.Stringer("ele", reorgInfo.currElement), zap.Int("donePTbls", pTblMetaCnt), zap.Bool("more", ok))
+			if !ok {
+				return nil
+			}
+			if err = dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+				return err
+			}
+
+			err = dc.splitTableToBackfillJobs(sess, reorgInfo, sJobCtx, pTblMeta)
+			if err != nil {
+				return err
+			}
+			pTblMetaCnt++
+		}
+	}
+	return nil
 }
 
 func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgContexts, ddlJobID int64, currEle *meta.Element) error {
@@ -155,12 +352,12 @@ func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgC
 					return errors.Trace(err)
 				}
 
-				bfJob, err = getBackfillJobWithRetry(sess, BackfillTable, ddlJobID, currEle.ID, currEle.TypeKey, false)
+				bfJobs, err := getBackfillJobWithRetry(sess, BackfillTable, ddlJobID, currEle.ID, currEle.TypeKey)
 				if err != nil {
 					logutil.BgLogger().Info("[ddl] getBackfillJobWithRetry failed", zap.Int64("job ID", ddlJobID), zap.Error(err))
 					return errors.Trace(err)
 				}
-				if bfJob == nil {
+				if len(bfJobs) == 0 {
 					backfillJobFinished = true
 					logutil.BgLogger().Info("[ddl] finish all backfill jobs", zap.Int64("job ID", ddlJobID))
 				}
@@ -258,7 +455,7 @@ func checkBackfillJobCount(sess *session, ddlJobID, currEleID int64, currEleKey 
 	}
 
 	backfillJobCnt, err = GetBackfillJobCount(sess, BackfillTable,
-		fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s and ddl_physical_id = %d",
+		fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s and ddl_physical_tid = %d",
 			ddlJobID, currEleID, wrapKey2String(currEleKey), pTblID), "check_backfill_job_count")
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -267,50 +464,46 @@ func checkBackfillJobCount(sess *session, ddlJobID, currEleID int64, currEleKey 
 	return backfillJobCnt, nil
 }
 
-func getBackfillJobWithRetry(sess *session, tableName string, ddlJobID, currEleID int64, currEleKey []byte, isDesc bool) (*BackfillJob, error) {
+func getBackfillJobWithRetry(sess *session, tableName string, ddlJobID, currEleID int64, currEleKey []byte) ([]*BackfillJob, error) {
 	var err error
 	var bJobs []*BackfillJob
-	descStr := ""
-	if isDesc {
-		descStr = "order by id desc"
-	}
 	for i := 0; i < retrySQLTimes; i++ {
-		bJobs, err = GetBackfillJobs(sess, tableName, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s %s limit 1",
-			ddlJobID, currEleID, wrapKey2String(currEleKey), descStr), "check_backfill_job_state")
+		bJobs, err = GetBackfillJobs(sess, tableName, fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s limit 1",
+			ddlJobID, currEleID, wrapKey2String(currEleKey)), "check_backfill_job_state")
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] GetBackfillJobs failed", zap.Error(err))
+			time.Sleep(retrySQLInterval)
 			continue
 		}
 
-		if len(bJobs) != 0 {
-			return bJobs[0], nil
-		}
-		break
+		return bJobs, nil
 	}
 	return nil, errors.Trace(err)
 }
 
-// GetMaxBackfillJob gets the max backfill job in BackfillTable and BackfillHistoryTable.
-func GetMaxBackfillJob(sess *session, ddlJobID, currEleID int64, currEleKey []byte) (*BackfillJob, error) {
-	bfJob, err := getBackfillJobWithRetry(sess, BackfillTable, ddlJobID, currEleID, currEleKey, true)
+// GetPhysicalTableMetas gets the max backfill metas per physical table in BackfillTable and BackfillHistoryTable.
+func GetPhysicalTableMetas(sess *session, ddlJobID, currEleID int64, currEleKey []byte) (map[int64]*BackfillJobRangeMeta, error) {
+	condition := fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s", ddlJobID, currEleID, wrapKey2String(currEleKey))
+	pTblMs, err := GetBackfillIDAndMetas(sess, BackfillTable, condition, "get_ptbl_metas")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	hJob, err := getBackfillJobWithRetry(sess, BackfillHistoryTable, ddlJobID, currEleID, currEleKey, true)
+	hPTblMs, err := GetBackfillIDAndMetas(sess, BackfillHistoryTable, condition, "get_ptbl_metas")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if bfJob == nil {
-		return hJob, nil
+	metaMap := make(map[int64]*BackfillJobRangeMeta, len(pTblMs)+len(hPTblMs))
+	for _, m := range pTblMs {
+		metaMap[m.PhyTblID] = m
 	}
-	if hJob == nil {
-		return bfJob, nil
+	for _, m := range hPTblMs {
+		val, ok := metaMap[m.PhyTblID]
+		if !ok || (ok && m.ID > val.ID) {
+			metaMap[m.PhyTblID] = m
+		}
 	}
-	if bfJob.ID > hJob.ID {
-		return bfJob, nil
-	}
-	return hJob, nil
+	return metaMap, nil
 }
 
 // MoveBackfillJobsToHistoryTable moves backfill table jobs to the backfill history table.

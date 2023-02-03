@@ -669,9 +669,8 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 	return nil
 }
 
-func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
+func getBatchTasks(t table.Table, reorgInfo *reorgInfo, pID int64, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
 	batchTasks := make([]*reorgBackfillTask, 0, batch)
-	physicalTableID := reorgInfo.PhysicalTableID
 	var prefix kv.Key
 	if reorgInfo.mergingTmpIdx {
 		prefix = t.IndexPrefix()
@@ -682,7 +681,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 	job := reorgInfo.Job
 	//nolint:forcetypeassert
 	phyTbl := t.(table.PhysicalTable)
-	jobCtx := reorgInfo.d.jobContext(reorgInfo.Job.ID)
+	jobCtx := reorgInfo.d.jobContext(job.ID)
 	for i, keyRange := range kvRanges {
 		startKey := keyRange.StartKey
 		endKey := keyRange.EndKey
@@ -691,6 +690,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 			logutil.BgLogger().Info("[ddl] get backfill range task, get reverse key failed", zap.Error(err))
 		} else {
 			logutil.BgLogger().Info("[ddl] get backfill range task, change end key",
+				zap.Int64("pID", pID), zap.Int64("pTbl", phyTbl.GetPhysicalID()), zap.Bool("mergeTIdx", reorgInfo.mergingTmpIdx),
 				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
 			endKey = endK
 		}
@@ -703,8 +703,8 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 
 		task := &reorgBackfillTask{
 			id:              i,
-			jobID:           reorgInfo.Job.ID,
-			physicalTableID: physicalTableID,
+			jobID:           job.ID,
+			physicalTableID: pID,
 			physicalTable:   phyTbl,
 			priority:        reorgInfo.Priority,
 			startKey:        startKey,
@@ -723,7 +723,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, 
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
 func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
-	batchTasks := getBatchTasks(t, scheduler.reorgInfo, kvRanges, backfillTaskChanSize)
+	batchTasks := getBatchTasks(t, scheduler.reorgInfo, scheduler.reorgInfo.PhysicalTableID, kvRanges, backfillTaskChanSize)
 	if len(batchTasks) == 0 {
 		return nil, nil
 	}
@@ -1108,8 +1108,8 @@ func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
 	return nil
 }
 
-func addBatchBackfillJobs(sess *session, bfWorkerType backfillerType, reorgInfo *reorgInfo, notDistTask bool,
-	batchTasks []*reorgBackfillTask, bJobs []*BackfillJob, isUnique bool, id *int64) error {
+func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext, phyTblID int64, notDistTask bool,
+	batchTasks []*reorgBackfillTask, bJobs []*BackfillJob) error {
 	bJobs = bJobs[:0]
 	instanceID := ""
 	if notDistTask {
@@ -1119,7 +1119,7 @@ func addBatchBackfillJobs(sess *session, bfWorkerType backfillerType, reorgInfo 
 	// TODO: Adjust the number of ranges(region) for each task.
 	for _, task := range batchTasks {
 		bm := &model.BackfillMeta{
-			IsUnique:   isUnique,
+			IsUnique:   sJobCtx.isUnique,
 			EndInclude: task.endInclude,
 			ReorgTp:    reorgInfo.Job.ReorgMeta.ReorgTp,
 			SQLMode:    reorgInfo.ReorgMeta.SQLMode,
@@ -1132,12 +1132,12 @@ func addBatchBackfillJobs(sess *session, bfWorkerType backfillerType, reorgInfo 
 			},
 		}
 		bj := &BackfillJob{
-			ID:              *id,
+			ID:              sJobCtx.currBackfillJobID.Add(1),
 			JobID:           reorgInfo.Job.ID,
 			EleID:           reorgInfo.currElement.ID,
 			EleKey:          reorgInfo.currElement.TypeKey,
-			PhysicalTableID: reorgInfo.PhysicalTableID,
-			Tp:              bfWorkerType,
+			PhysicalTableID: phyTblID,
+			Tp:              sJobCtx.bfWorkerType,
 			State:           model.JobStateNone,
 			InstanceID:      instanceID,
 			CurrKey:         task.startKey,
@@ -1145,7 +1145,6 @@ func addBatchBackfillJobs(sess *session, bfWorkerType backfillerType, reorgInfo 
 			EndKey:          task.endKey,
 			Meta:            bm,
 		}
-		*id++
 		bJobs = append(bJobs, bj)
 	}
 	if err := AddBackfillJobs(sess, bJobs); err != nil {
@@ -1154,21 +1153,22 @@ func addBatchBackfillJobs(sess *session, bfWorkerType backfillerType, reorgInfo 
 	return nil
 }
 
-func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, isMultiPhyTbl bool, pTbl table.PhysicalTable, isUnique bool,
-	bfWorkerType backfillerType, startKey, endKey kv.Key, batchSize, minBatchSize int, currBackfillJobID int64) error {
-	isFirstOps := true
+func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext, pTblMeta *BackfillJobRangeMeta) error {
+	isFirstOps := !sJobCtx.isMultiPhyTbl
+	batchSize := sJobCtx.batchSize
+	startKey, endKey := pTblMeta.StartKey, pTblMeta.EndKey
 	bJobs := make([]*BackfillJob, 0, batchSize)
 	for {
-		kvRanges, err := splitTableRanges(pTbl, reorgInfo.d.store, startKey, endKey, batchSize)
+		kvRanges, err := splitTableRanges(pTblMeta.PhyTbl, reorgInfo.d.store, startKey, endKey, batchSize)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		batchTasks := getBatchTasks(pTbl, reorgInfo, kvRanges, batchSize)
+		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, pTblMeta.PhyTblID, kvRanges, batchSize)
 		if len(batchTasks) == 0 {
 			break
 		}
-		notNeedDistProcess := !isMultiPhyTbl && isFirstOps && (len(kvRanges) < minDistTaskCnt)
-		if err = addBatchBackfillJobs(sess, bfWorkerType, reorgInfo, notNeedDistProcess, batchTasks, bJobs, isUnique, &currBackfillJobID); err != nil {
+		notNeedDistProcess := isFirstOps && (len(kvRanges) < minDistTaskCnt)
+		if err = addBatchBackfillJobs(sess, reorgInfo, sJobCtx, pTblMeta.PhyTblID, notNeedDistProcess, batchTasks, bJobs); err != nil {
 			return errors.Trace(err)
 		}
 		isFirstOps = false
@@ -1176,6 +1176,7 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 		remains := kvRanges[len(batchTasks):]
 		dc.asyncNotifyWorker(dc.backfillJobCh, addingBackfillJob, reorgInfo.Job.ID, "backfill_job")
 		logutil.BgLogger().Info("[ddl] split backfill jobs to the backfill table",
+			zap.Int64("physicalID", pTblMeta.PhyTblID),
 			zap.Int("batchTasksCnt", len(batchTasks)),
 			zap.Int("totalRegionCnt", len(kvRanges)),
 			zap.Int("remainRegionCnt", len(remains)),
@@ -1187,11 +1188,11 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 		}
 
 		for {
-			bJobCnt, err := checkBackfillJobCount(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, pTbl.Meta().ID)
+			bJobCnt, err := checkBackfillJobCount(sess, reorgInfo.Job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey, pTblMeta.PhyTblID)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if bJobCnt < minBatchSize {
+			if bJobCnt < sJobCtx.minBatchSize {
 				break
 			}
 			time.Sleep(RetrySQLInterval)

@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"encoding/hex"
 	"sync"
 	"time"
 
@@ -107,19 +106,12 @@ func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {
 	return bw
 }
 
-func runBackfillJobs(d *ddl, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
+func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendContext, bJob *BackfillJob, jobCtx *JobContext) (table.Table, error) {
 	dbInfo, tbl, err := d.getTableByTxn(d.store, bJob.Meta.SchemaID, bJob.Meta.TableID)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs gets table failed", zap.String("bfJob", bJob.AbbrStr()), zap.Error(err))
 		return nil, err
 	}
-	se, err := d.sessPool.get()
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl] run backfill jobs get session failed", zap.Error(err))
-		return nil, err
-	}
-	defer d.sessPool.put(se)
-	sess := newSession(se)
 
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	// TODO: Different worker using different newBackfillerFunc.
@@ -224,25 +216,13 @@ func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBac
 			return nil, dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", bfJob.PhysicalTableID, t.Meta().ID)
 		}
 	}
-	endKey := bfJob.EndKey
-	// TODO: Check reorgInfo.mergingTmpIdx
-	endK, err := getRangeEndKey(dc.jobContext(bfJob.JobID), dc.store, bfJob.Meta.Priority, pt.RecordPrefix(), bfJob.StartKey, endKey)
-	if err != nil {
-		logutil.BgLogger().Info("[ddl] convert backfill job to task, get reverse key failed", zap.String("backfill job", bfJob.AbbrStr()), zap.Error(err))
-	} else {
-		logutil.BgLogger().Info("[ddl] convert backfill job to task, change end key", zap.String("backfill job",
-			bfJob.AbbrStr()), zap.String("current key", hex.EncodeToString(bfJob.StartKey)), zap.Bool("end include", bfJob.Meta.EndInclude),
-			zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
-		endKey = endK
-	}
-
 	return &reorgBackfillTask{
 		bfJob:         bfJob,
 		physicalTable: pt,
 		// TODO: Remove these fields after remove the old logic.
 		sqlQuery:   bfJob.Meta.Query,
 		startKey:   bfJob.StartKey,
-		endKey:     endKey,
+		endKey:     bfJob.EndKey,
 		endInclude: bfJob.Meta.EndInclude,
 		priority:   bfJob.Meta.Priority}, nil
 }
@@ -251,9 +231,10 @@ func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBac
 func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, concurrency int) ([]*reorgBackfillTask, error) {
 	// TODO: At present, only add index is processed. In the future, different elements need to be distinguished.
 	var err error
-	var bJobs []*BackfillJob
+	var pTblID int64
+	bJobs := make([]*BackfillJob, 0, concurrency)
 	for i := 0; i < retrySQLTimes; i++ {
-		bJobs, err = GetAndMarkBackfillJobsForOneEle(sess, concurrency, runningJobID, d.uuid, InstanceLease)
+		bJobs, err = GetAndMarkBackfillJobsForOneEle(sess, concurrency, runningJobID, d.uuid, pTblID, InstanceLease)
 		if err != nil {
 			// TODO: add test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {
@@ -266,6 +247,7 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, con
 				continue
 			}
 		}
+		pTblID = bJobs[0].PhysicalTableID
 
 		tasks := make([]*reorgBackfillTask, 0, len(bJobs))
 		for _, bJ := range bJobs {

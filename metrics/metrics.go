@@ -46,15 +46,15 @@ var (
 
 // metrics labels.
 const (
-	LabelSession        = "session"
-	LabelDomain         = "domain"
-	LabelDDLOwner       = "ddl-owner"
-	LabelDDL            = "ddl"
-	LabelDDLWorker      = "ddl-worker"
-	LabelBackfillWorker = "backfill-worker"
-	LabelDDLSyncer      = "ddl-syncer"
-	LabelGCWorker       = "gcworker"
-	LabelAnalyze        = "analyze"
+	LabelSession   = "session"
+	LabelDomain    = "domain"
+	LabelDDLOwner  = "ddl-owner"
+	LabelDDL       = "ddl"
+	LabelDDLWorker = "ddl-worker"
+	LabelDistReorg = "dist-reorg"
+	LabelDDLSyncer = "ddl-syncer"
+	LabelGCWorker  = "gcworker"
+	LabelAnalyze   = "analyze"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"
