@@ -4,6 +4,7 @@
 # There are lot of ddl in the tests, setting this
 # to 360s to test whther BR is gracefully shutdown.
 lease = "360s"
+keyspace-name = "DEFAULT"
 [security]
 ssl-ca = "/tmp/backup_restore_test/certs/ca.pem"
 ssl-cert = "/tmp/backup_restore_test/certs/tidb.pem"

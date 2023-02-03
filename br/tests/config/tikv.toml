@@ -2,6 +2,8 @@
 [storage]
 reserve-space = "1KB"
 data-dir = "/tmp/backup_restore_test/tikv1/"
+api-version = 2
+enable-ttl = true
 
 [coprocessor]
 region-max-keys = 100
