@@ -17,6 +17,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
@@ -61,6 +62,7 @@ type featureUsage struct {
 	IndexMergeUsageCounter    *m.IndexMergeUsageCounter        `json:"indexMergeUsageCounter"`
 	ResourceControlUsage      *resourceControlUsage            `json:"resourceControl"`
 	TTLUsage                  *ttlUsageCounter                 `json:"ttlUsage"`
+	MVIndex                   int64                            `json:"MVIndex"`
 }
 
 type placementPolicyUsage struct {
@@ -119,6 +121,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.IndexMergeUsageCounter = getIndexMergeUsageInfo()
 
 	usage.TTLUsage = getTTLUsageInfo(ctx, sctx)
+
+	usage.MVIndex = getMVIndexUsageInfo(ctx, sctx)
 
 	return &usage, nil
 }
@@ -430,4 +434,25 @@ func getIndexMergeUsageInfo() *m.IndexMergeUsageCounter {
 	curr := m.GetIndexMergeCounter()
 	diff := curr.Sub(initialIndexMergeCounter)
 	return &diff
+}
+
+func getMVIndexUsageInfo(_ context.Context, sctx sessionctx.Context) int64 {
+	is, ok := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		// it should never happen
+		logutil.BgLogger().Error(fmt.Sprintf("GetDomainInfoSchema returns a invalid type: %T", is))
+		return 0
+	}
+	var count int64 = 0
+	for _, db := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(db.Name) {
+			for _, i := range tbl.Meta().Indices {
+				if i.MVIndex {
+					count++
+				}
+			}
+		}
+	}
+
+	return count
 }

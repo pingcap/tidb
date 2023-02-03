@@ -624,6 +624,24 @@ func TestIndexMergeUsage(t *testing.T) {
 	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
 }
 
+func TestMVIndexUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 int, c2 int, index idx1(c1), index idx2(c2))")
+	tk.MustExec("create table t2(a json, index i1((cast(a as signed array))))")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.MVIndex, int64(1))
+
+	tk.MustExec("alter table t2 add index i2((cast(a as unsigned array)))")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.MVIndex, int64(2))
+}
+
 func TestTTLTelemetry(t *testing.T) {
 	timeFormat := "2006-01-02 15:04:05"
 	dateFormat := "2006-01-02"
