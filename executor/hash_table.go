@@ -114,7 +114,8 @@ type hashRowContainer struct {
 	memTracker   *memory.Tracker
 
 	// chkBuf buffer the data reads from the disk if rowContainer is spilled.
-	chkBuf *chunk.Chunk
+	chkBuf                *chunk.Chunk
+	chkBufSizeForOneProbe int64
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
@@ -213,6 +214,15 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 	return matched, nil
 }
 
+// SignalCheckpointForJoin indicates the times of row probe that a signal detection will be triggered.
+const SignalCheckpointForJoin int = 1 << 14
+
+// RowSize is the size of Row.
+const RowSize = int64(unsafe.Sizeof(chunk.Row{}))
+
+// RowPtrSize is the size of RowPtr.
+const RowPtrSize = int64(unsafe.Sizeof(chunk.RowPtr{}))
+
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
@@ -225,7 +235,19 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	matched = matched[:0]
 	var matchedRow chunk.Row
 	matchedPtrs = matchedPtrs[:0]
-	for _, ptr := range innerPtrs {
+
+	// Some variables used for memTracker.
+	var (
+		matchedDataSize                  = int64(cap(matched))*RowSize + int64(cap(matchedPtrs))*RowPtrSize
+		lastChunkBufPointer *chunk.Chunk = nil
+		memDelta            int64        = 0
+	)
+	c.chkBuf = nil
+	c.memTracker.Consume(-c.chkBufSizeForOneProbe + int64(cap(innerPtrs))*RowPtrSize)
+	defer c.memTracker.Consume(-int64(cap(innerPtrs)) * RowPtrSize)
+	c.chkBufSizeForOneProbe = 0
+
+	for i, ptr := range innerPtrs {
 		matchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunk(ptr, c.chkBuf)
 		if err != nil {
 			return nil, nil, err
@@ -238,6 +260,21 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 		if !ok {
 			atomic.AddInt64(&c.stat.probeCollision, 1)
 			continue
+		}
+		if c.chkBuf != lastChunkBufPointer {
+			if lastChunkBufPointer != nil {
+				lastChunkSize := lastChunkBufPointer.MemoryUsage()
+				c.chkBufSizeForOneProbe += lastChunkSize
+				memDelta += lastChunkSize
+			}
+			lastChunkBufPointer = c.chkBuf
+		}
+		if i&SignalCheckpointForJoin == 0 {
+			// Trigger Consume for checking the OOM Action signal
+			memDelta += int64(cap(matched))*RowSize + int64(cap(matchedPtrs))*RowPtrSize - matchedDataSize
+			matchedDataSize = int64(cap(matched))*RowSize + int64(cap(matchedPtrs))*RowPtrSize
+			c.memTracker.Consume(memDelta + 1)
+			memDelta = 0
 		}
 		matched = append(matched, matchedRow)
 		if needPtr {
