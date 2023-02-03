@@ -1595,7 +1595,7 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 var tableResourceGroupsCols = []columnInfo{
 	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
 	//{name: "MODE", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
-	{name: "RU_FILLRATE", tp: mysql.TypeLonglong, size: 21},
+	{name: "RU_PER_SEC", tp: mysql.TypeLonglong, size: 21},
 	{name: "RU_TOKENS", tp: mysql.TypeLonglong, size: 21},
 	//{name: "CPU", tp: mysql.TypeLonglong, size: 21},
 	//{name: "READ_BANDWIDTH", tp: mysql.TypeLonglong, size: 21},
