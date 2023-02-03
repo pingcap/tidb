@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
@@ -50,7 +49,6 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 		stmtSummary: stmtSummary,
 		table:       table.Meta(),
 		columns:     columns,
-		extractor:   &plannercore.StatementsSummaryExtractor{},
 	}
 	defer func() {
 		require.NoError(t, retriever.close())
@@ -92,7 +90,6 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
 		stmtSummary: stmtSummary,
 		table:       table.Meta(),
 		columns:     columns,
-		extractor:   &plannercore.StatementsSummaryExtractor{},
 	}
 	defer func() {
 		require.NoError(t, retriever.close())
@@ -160,7 +157,6 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 		stmtSummary: stmtSummary,
 		table:       table.Meta(),
 		columns:     columns,
-		extractor:   &plannercore.StatementsSummaryExtractor{},
 	}
 	defer func() {
 		require.NoError(t, retriever.close())
