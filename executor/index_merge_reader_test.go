@@ -798,7 +798,7 @@ func TestIntersectionMemQuota(t *testing.T) {
 	require.Contains(t, err.Error(), "Out Of Memory Quota!")
 }
 
-func TestIndexMergeResultChPanic(t *testing.T) {
+func TestIndexMergePanic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -808,8 +808,40 @@ func TestIndexMergeResultChPanic(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1, 1), (100, 100, 100)")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly"))
-	}()
 	tk.MustExec("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c1 < 100 or c2 < 100")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly"))
+
+	packagePath := "github.com/pingcap/tidb/executor/"
+	panicFPPaths := []string{
+		packagePath + "testIndexMergePanicPartialIndexWorker",
+		packagePath + "testIndexMergePanicPartialTableWorker",
+
+		packagePath + "testIndexMergePanicProcessWorkerUnion",
+		packagePath + "testIndexMergePanicProcessWorkerIntersection",
+		packagePath + "testIndexMergePanicPartitionTableIntersectionWorker",
+
+		packagePath + "testIndexMergePanicTableScanWorker",
+	}
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3)) partition by hash(c1) partitions 10;")
+	insertStr := "insert into t1 values(0, 0, 0)"
+	for i := 1; i < 1000; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("split table t1 by (1), (5), (15), (50), (100), (300), (500)")
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	for _, fp := range panicFPPaths {
+		require.NoError(t, failpoint.Enable(fp, `panic("TestIndexMergePanic")`))
+		for i := 0; i < 1000; i++ {
+			sql := fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d", rand.Intn(1000), rand.Intn(1000))
+			res := tk.MustQuery("explain " + sql).Rows()
+			require.Contains(t, res[1][0], "IndexMerge")
+			err := tk.QueryToErr(sql)
+			require.Contains(t, err.Error(), "TestIndexMergePanic")
+		}
+		require.NoError(t, failpoint.Disable(fp))
+	}
 }
