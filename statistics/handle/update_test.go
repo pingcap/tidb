@@ -2212,19 +2212,30 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 
+	getStatsHealthy := func() int {
+		rows := tk.MustQuery("show stats_healthy where db_name = 'test' and table_name = 't'").Rows()
+		require.Len(t, rows, 1)
+		healthy, err := strconv.Atoi(rows[0][3].(string))
+		require.NoError(t, err)
+		return healthy
+	}
+
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 44)
 	require.True(t, h.HandleAutoAnalyze(is))
 
 	tk.MustExec("delete from t limit 12")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 61)
 	require.False(t, h.HandleAutoAnalyze(is))
 
 	tk.MustExec("delete from t limit 4")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 48)
 	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
 }
 
