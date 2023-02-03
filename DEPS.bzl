@@ -34,8 +34,8 @@ def go_deps():
         name = "co_honnef_go_tools",
         build_file_proto_mode = "disable_global",
         importpath = "honnef.co/go/tools",
-        sum = "h1:L3lQbXWMmkBfyGXTvipQVmLXSM5SsT/39qcf+0RBIlQ=",
-        version = "v0.4.0-0.dev.0.20221209223220-58c4d7e4b720",
+        sum = "h1:lyXVV1c8wUBJRKqI8JgIpT8TW1VDagfYYaxbKa/HoL8=",
+        version = "v0.4.0",
     )
     go_repository(
         name = "com_4d63_gocheckcompilerdirectives",
