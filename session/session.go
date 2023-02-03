@@ -3108,18 +3108,34 @@ func InitDDLJobTables(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		exists, err := t.CheckDDLTableExists()
-		if err != nil || exists {
+		if err != nil {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
 		}
+		if exists {
+			return initBackfillJobTables(store, t, dbID)
+		}
+
 		if err = createAndSplitTables(store, t, dbID, DDLJobTables); err != nil {
+			return err
+		}
+		if err = initBackfillJobTables(store, t, dbID); err != nil {
 			return err
 		}
 		return t.SetDDLTables()
 	})
+}
+
+// initBackfillJobTables is to create tidb_ddl_backfill and tidb_ddl_backfill_history.
+func initBackfillJobTables(store kv.Storage, t *meta.Meta, dbID int64) error {
+	tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
+	if err != nil || tblExist {
+		return errors.Trace(err)
+	}
+	return createAndSplitTables(store, t, dbID, BackfillTables)
 }
 
 func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []tableBasicInfo) error {
@@ -3180,25 +3196,6 @@ func InitMDLTable(store kv.Storage) error {
 		}
 
 		return t.SetMDLTables()
-	})
-}
-
-// InitBackfillTable is to create tidb_ddl_backfill and tidb_ddl_backfill_history, which is used for distreorg.
-func InitBackfillTable(store kv.Storage) error {
-	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		exists, err := t.CheckBackfillTableExists()
-		if err != nil || exists {
-			return errors.Trace(err)
-		}
-		dbID, err := t.CreateMySQLDatabaseIfNotExists()
-		if err != nil {
-			return err
-		}
-		if err = createAndSplitTables(store, t, dbID, BackfillTables); err != nil {
-			return err
-		}
-		return t.SetBackfillTables()
 	})
 }
 
@@ -3280,10 +3277,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	err = InitMDLTable(store)
-	if err != nil {
-		return nil, err
-	}
-	err = InitBackfillTable(store)
 	if err != nil {
 		return nil, err
 	}
