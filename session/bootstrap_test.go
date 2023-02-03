@@ -152,9 +152,11 @@ func TestBootstrapWithError(t *testing.T) {
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
-		err := InitDDLJobTables(store)
+		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
 		require.NoError(t, err)
 		err = InitMDLTable(store)
+		require.NoError(t, err)
+		err = InitDDLJobTables(store, meta.BackfillTableVersion)
 		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
@@ -215,8 +217,41 @@ func TestBootstrapWithError(t *testing.T) {
 	require.Equal(t, []byte("True"), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
+	mustExec(t, se, "SELECT * from mysql.tidb_ddl_backfill")
+	mustExec(t, se, "SELECT * from mysql.tidb_ddl_backfill_history")
+
 	// Check tidb_ttl_table_status table
 	mustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
+}
+
+func TestDDLTableCreateBackfillTable(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := createSessionAndSetID(t, store)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ver, err := m.CheckDDLTableVersion()
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
+
+	// downgrade `mDDLTableVersion`
+	m.SetDDLTables(meta.MDLTableVersion)
+	mustExec(t, se, "drop table mysql.tidb_ddl_backfill")
+	mustExec(t, se, "drop table mysql.tidb_ddl_backfill_history")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	// to upgrade session for create ddl related tables
+	dom.Close()
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+
+	se = createSessionAndSetID(t, store)
+	mustExec(t, se, "select * from mysql.tidb_ddl_backfill")
+	mustExec(t, se, "select * from mysql.tidb_ddl_backfill_history")
+	dom.Close()
 }
 
 // TestUpgrade tests upgrading
