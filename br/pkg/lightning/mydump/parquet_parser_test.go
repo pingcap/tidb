@@ -3,6 +3,7 @@ package mydump
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -16,16 +17,13 @@ import (
 	writer2 "github.com/xitongsys/parquet-go/writer"
 )
 
-func TestParquetParser(t *testing.T) {
+func prepareSimpleData(t *testing.T, dir string, fileName string) {
 	type Test struct {
 		S string `parquet:"name=sS, type=UTF8, encoding=PLAIN_DICTIONARY"`
 		A int32  `parquet:"name=a_A, type=INT32"`
 	}
 
-	dir := t.TempDir()
-	// prepare data
-	name := "test123.parquet"
-	testPath := filepath.Join(dir, name)
+	testPath := filepath.Join(dir, fileName)
 	pf, err := local.NewLocalFileWriter(testPath)
 	require.NoError(t, err)
 	test := &Test{}
@@ -40,6 +38,44 @@ func TestParquetParser(t *testing.T) {
 
 	require.NoError(t, writer.WriteStop())
 	require.NoError(t, pf.Close())
+}
+
+func verifySimpleData(t *testing.T, parser *ParquetParser) {
+	require.Equal(t, []string{"ss", "a_a"}, parser.Columns())
+
+	verifyRow := func(i int) {
+		require.Equal(t, int64(i+1), parser.lastRow.RowID)
+		require.Len(t, parser.lastRow.Row, 2)
+		require.Equal(t, types.NewCollationStringDatum(strconv.Itoa(i), "utf8mb4_bin"), parser.lastRow.Row[0])
+		require.Equal(t, types.NewIntDatum(int64(i)), parser.lastRow.Row[1])
+	}
+
+	// test read some rows
+	for i := 0; i < 10; i++ {
+		require.NoError(t, parser.ReadRow())
+		verifyRow(i)
+	}
+
+	// test set pos to pos < curpos + batchReadRowSize
+	require.NoError(t, parser.SetPos(15, 15))
+	require.NoError(t, parser.ReadRow())
+	verifyRow(15)
+
+	// test set pos to pos > curpos + batchReadRowSize
+	require.NoError(t, parser.SetPos(80, 80))
+	for i := 80; i < 100; i++ {
+		require.NoError(t, parser.ReadRow())
+		verifyRow(i)
+	}
+
+	require.ErrorIs(t, parser.ReadRow(), io.EOF)
+}
+
+func TestParquetParser(t *testing.T) {
+	dir := t.TempDir()
+	name := "test123.parquet"
+	// prepare data
+	prepareSimpleData(t, dir, name)
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
@@ -49,34 +85,7 @@ func TestParquetParser(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
-	require.Equal(t, []string{"ss", "a_a"}, reader.Columns())
-
-	verifyRow := func(i int) {
-		require.Equal(t, int64(i+1), reader.lastRow.RowID)
-		require.Len(t, reader.lastRow.Row, 2)
-		require.Equal(t, types.NewCollationStringDatum(strconv.Itoa(i), "utf8mb4_bin"), reader.lastRow.Row[0])
-		require.Equal(t, types.NewIntDatum(int64(i)), reader.lastRow.Row[1])
-	}
-
-	// test read some rows
-	for i := 0; i < 10; i++ {
-		require.NoError(t, reader.ReadRow())
-		verifyRow(i)
-	}
-
-	// test set pos to pos < curpos + batchReadRowSize
-	require.NoError(t, reader.SetPos(15, 15))
-	require.NoError(t, reader.ReadRow())
-	verifyRow(15)
-
-	// test set pos to pos > curpos + batchReadRowSize
-	require.NoError(t, reader.SetPos(80, 80))
-	for i := 80; i < 100; i++ {
-		require.NoError(t, reader.ReadRow())
-		verifyRow(i)
-	}
-
-	require.ErrorIs(t, reader.ReadRow(), io.EOF)
+	verifySimpleData(t, reader)
 }
 
 func TestParquetVariousTypes(t *testing.T) {
@@ -326,4 +335,42 @@ func TestNsecOutSideRange(t *testing.T) {
 	// For nano sec out of 999999999, time will automatically execute a
 	// carry operation. i.e. 1000000000 nsec => 1 sec
 	require.Equal(t, a.Add(1*time.Second), b)
+}
+
+func TestOpenParquetReaderWithThreshold(t *testing.T) {
+	dir := t.TempDir()
+	name := "test123.parquet"
+	// prepare data
+	prepareSimpleData(t, dir, name)
+
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	testPath := filepath.Join(dir, name)
+	fileInfo, err := os.Stat(testPath)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// doesn't preload all the data
+	pqtFile1, err := OpenParquetReader(ctx, store, name, fileInfo.Size(), 0)
+	require.NoError(t, err)
+
+	parser1, err := NewParquetParser(ctx, store, pqtFile1, name)
+	require.NoError(t, err)
+	defer parser1.Close()
+
+	verifySimpleData(t, parser1)
+
+	// preload all the data
+	pqtFile2, err := OpenParquetReader(ctx, store, name, fileInfo.Size(), -1)
+	require.NoError(t, err)
+
+	parser2, err := NewParquetParser(ctx, store, pqtFile2, name)
+	require.NoError(t, err)
+	defer parser2.Close()
+
+	verifySimpleData(t, parser2)
+
 }

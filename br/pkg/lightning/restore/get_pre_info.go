@@ -449,7 +449,7 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreRestoreInfoGetter interface.
 func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := openReader(ctx, dataFileMeta, p.srcStorage)
+	reader, err := openReader(ctx, dataFileMeta, p.srcStorage, openReaderScenarioPreviewData)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -587,7 +587,7 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := openReader(ctx, sampleFile, p.srcStorage)
+	reader, err := openReader(ctx, sampleFile, p.srcStorage, openReaderScenarioPreviewData)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}

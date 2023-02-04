@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -26,7 +27,7 @@ const (
 
 	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
 	// optimize the read performance
-	smallParquetFileThreshold = 256 * 1024 * 1024
+	defaultSmallParquetFileThreshold = 256 * units.MiB
 	// jan011970 is the date of unix epoch in julian day,
 	jan011970 = 2440588
 	secPerDay = 24 * 60 * 60
@@ -119,8 +120,12 @@ func OpenParquetReader(
 	store storage.ExternalStorage,
 	path string,
 	size int64,
+	smallParquetFileThreshold int64,
 ) (source.ParquetFile, error) {
-	if size <= smallParquetFileThreshold {
+	if smallParquetFileThreshold < 0 {
+		smallParquetFileThreshold = defaultSmallParquetFileThreshold
+	}
+	if size <= int64(smallParquetFileThreshold) {
 		fileBytes, err := store.ReadFile(ctx, path)
 		if err != nil {
 			return nil, err

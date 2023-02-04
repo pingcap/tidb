@@ -2215,7 +2215,7 @@ func newChunkRestore(
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
-	reader, err := openReader(ctx, chunk.FileMeta, store)
+	reader, err := openReader(ctx, chunk.FileMeta, store, openReaderScenarioRestoreData)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2821,11 +2821,25 @@ func (cr *chunkRestore) restore(
 	return errors.Trace(firstErr(encodeErr, deliverErr))
 }
 
-func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) (
+type openReaderScenario string
+
+const (
+	openReaderScenarioRestoreData openReaderScenario = "RESTORE_DATA"
+	openReaderScenarioPreviewData openReaderScenario = "PREVIEW_DATA"
+)
+
+func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store storage.ExternalStorage, scenario openReaderScenario) (
 	reader storage.ReadSeekCloser, err error) {
 	switch {
 	case fileMeta.Type == mydump.SourceTypeParquet:
-		reader, err = mydump.OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
+		smallFileThreshold := -1
+		switch scenario {
+		case openReaderScenarioPreviewData:
+			// For preview scenario, no need to download a large parquet file,
+			// becuase we only need to get some first pages of the parquet file.
+			smallFileThreshold = 16 * units.MiB
+		}
+		reader, err = mydump.OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize, int64(smallFileThreshold))
 	case fileMeta.Compression != mydump.CompressionNone:
 		compressType, err2 := mydump.ToStorageCompressType(fileMeta.Compression)
 		if err2 != nil {
