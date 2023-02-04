@@ -1584,15 +1584,12 @@ func (c *CommentOrAttributeOption) Restore(ctx *format.RestoreCtx) error {
 }
 
 type ResourceGroupNameOption struct {
-	Type  int
 	Value string
 }
 
 func (c *ResourceGroupNameOption) Restore(ctx *format.RestoreCtx) error {
-	if c.Type == UserResourceGroupName {
-		ctx.WriteKeyWord(" RESOURCE GROUP ")
-		ctx.WriteName(c.Value)
-	}
+	ctx.WriteKeyWord(" RESOURCE GROUP ")
+	ctx.WriteName(c.Value)
 	return nil
 }
 
