@@ -883,7 +883,7 @@ type PatternLikeExpr struct {
 	// Not is true, the expression is "not like".
 	Not bool
 
-	Escape byte
+	Escape ExprNode
 
 	PatChars []byte
 	PatTypes []byte
@@ -905,11 +905,16 @@ func (n *PatternLikeExpr) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while restore PatternLikeExpr.Pattern")
 	}
 
-	escape := string(n.Escape)
-	if escape != "\\" {
-		ctx.WriteKeyWord(" ESCAPE ")
-		ctx.WriteString(escape)
+	escape := "?"
+	if _, ok := n.Escape.(ParamMarkerExpr); !ok {
+		// it can not convert to `ParamMarkerExpr`, so it must be `ValueExpr`
+		if n.Escape.(ValueExpr).GetString() == "\\" {
+			return nil
+		}
+		escape = n.Escape.(ValueExpr).GetString()
 	}
+	ctx.WriteKeyWord(" ESCAPE ")
+	ctx.WriteString(escape)
 	return nil
 }
 
@@ -922,10 +927,16 @@ func (n *PatternLikeExpr) Format(w io.Writer) {
 		fmt.Fprint(w, " LIKE ")
 	}
 	n.Pattern.Format(w)
-	if n.Escape != '\\' {
-		fmt.Fprint(w, " ESCAPE ")
-		fmt.Fprintf(w, "'%c'", n.Escape)
+	escape := "?"
+	if _, ok := n.Escape.(ParamMarkerExpr); !ok {
+		// it can not convert to `ParamMarkerExpr`, so it must be `ValueExpr`
+		if n.Escape.(ValueExpr).GetString() == "\\" {
+			return
+		}
+		escape = n.Escape.(ValueExpr).GetString()
 	}
+	fmt.Fprint(w, " ESCAPE ")
+	fmt.Fprintf(w, "'%c'", escape[0])
 }
 
 // Accept implements Node Accept interface.
@@ -948,6 +959,13 @@ func (n *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Pattern = node.(ExprNode)
+	}
+	if n.Escape != nil {
+		node, ok := n.Escape.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Escape = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
