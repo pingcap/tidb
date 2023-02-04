@@ -2836,7 +2836,7 @@ func openReader(ctx context.Context, fileMeta mydump.SourceFileMeta, store stora
 		switch scenario {
 		case openReaderScenarioPreviewData:
 			// For preview scenario, no need to download a large parquet file,
-			// becuase we only need to get some first pages of the parquet file.
+			// because we only need to get some first pages of the parquet file.
 			smallFileThreshold = 16 * units.MiB
 		}
 		reader, err = mydump.OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize, int64(smallFileThreshold))
