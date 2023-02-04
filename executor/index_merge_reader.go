@@ -86,10 +86,10 @@ type IndexMergeReaderExecutor struct {
 
 	// All fields above are immutable.
 
-	tblWorkerWg    sync.WaitGroup
-	idxWorkerWg    sync.WaitGroup
-	processWokerWg sync.WaitGroup
-	finished       chan struct{}
+	tblWorkerWg     sync.WaitGroup
+	idxWorkerWg     sync.WaitGroup
+	processWorkerWg sync.WaitGroup
+	finished        chan struct{}
 
 	workerStarted bool
 	keyRanges     [][]kv.KeyRange
@@ -262,7 +262,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 		indexMerge: e,
 		stats:      e.stats,
 	}
-	e.processWokerWg.Add(1)
+	e.processWorkerWg.Add(1)
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergeProcessWorker").End()
 		util.WithRecovery(
@@ -275,7 +275,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 			},
 			idxMergeProcessWorker.handleLoopFetcherPanic(ctx, e.finished, e.resultCh),
 		)
-		e.processWokerWg.Done()
+		e.processWorkerWg.Done()
 	}()
 }
 
@@ -309,6 +309,17 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
+				failpoint.Inject("testIndexMergePanicPartialIndexWorker", nil)
+				failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
+					select {
+					case <-ctx.Done():
+						failpoint.Return()
+					case <-e.finished:
+						failpoint.Return()
+					case <-exitCh:
+						failpoint.Return()
+					}
+				})
 				worker := &partialIndexWorker{
 					stats:        e.stats,
 					idxID:        e.getPartitalPlanID(workID),
@@ -413,6 +424,17 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
+				failpoint.Inject("testIndexMergePanicPartialTableWorker", nil)
+				failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
+					select {
+					case <-ctx.Done():
+						failpoint.Return()
+					case <-e.finished:
+						failpoint.Return()
+					case <-exitCh:
+						failpoint.Return()
+					}
+				})
 				var err error
 				partialTableReader := &TableReaderExecutor{
 					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
@@ -567,7 +589,6 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 	handles = make([]kv.Handle, 0, w.batchSize)
 	var memUsage int64
 	defer w.memTracker.Consume(-memUsage)
-	failpoint.Inject("testIndexMergePanicPartialTableWorker", nil)
 	for len(handles) < w.batchSize {
 		chk.SetRequiredRows(w.batchSize-len(handles), w.maxChunkSize)
 		err = errors.Trace(w.tableReader.Next(ctx, chk))
@@ -749,9 +770,9 @@ func (e *IndexMergeReaderExecutor) Close() error {
 		return nil
 	}
 	close(e.finished)
-	e.processWokerWg.Wait()
 	e.tblWorkerWg.Wait()
 	e.idxWorkerWg.Wait()
+	e.processWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
 	// TODO: how to store e.feedbacks
@@ -1156,7 +1177,6 @@ func (w *partialIndexWorker) fetchHandles(
 func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannercore.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
-	failpoint.Inject("testIndexMergePanicPartialIndexWorker", nil)
 	var memUsage int64
 	defer w.memTracker.Consume(-memUsage)
 	for len(handles) < w.batchSize {
@@ -1224,6 +1244,17 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 		case <-w.finished:
 			return
 		}
+		// Make sure panic failpoint is after fetch task from workCh.
+		// Otherwise cannot send error to task.doneCh.
+		failpoint.Inject("testIndexMergePanicTableScanWorker", nil)
+		failpoint.Inject("mockSleepBeforeStartTableReader", func(_ failpoint.Value) {
+			select {
+			case <-ctx.Done():
+				failpoint.Return()
+			case <-w.finished:
+				failpoint.Return()
+			}
+		})
 		execStart := time.Now()
 		err := w.executeTask(ctx, *task)
 		if w.stats != nil {
@@ -1258,7 +1289,6 @@ func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Conte
 }
 
 func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *indexMergeTableTask) error {
-	failpoint.Inject("testIndexMergePanicTableScanWorker", nil)
 	tbl := w.indexMergeExec.table
 	if w.indexMergeExec.partitionTableMode {
 		tbl = task.partitionTable

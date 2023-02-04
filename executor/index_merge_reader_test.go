@@ -830,27 +830,39 @@ func TestIndexMergePanic(t *testing.T) {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
-	tk.MustExec("split table t1 by (1), (5), (15), (50), (100), (300), (500)")
 	tk.MustExec("analyze table t1;")
 	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+
+	minV := 200
+	maxV := 1000
 	for _, fp := range panicFPPaths {
-		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+		fmt.Println("handling failpoint: ", fp)
+		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
+			// When mockSleepBeforeStartTableReader is enabled, will not read real data. This is to avoid leaking goroutines in coprocessor.
+			// But should disable mockSleepBeforeStartTableReader for testIndexMergePanicTableScanWorker.
+			// Because finalTableScanWorker need task.doneCh to pass error, so need partialIndexWorker/partialTableWorker runs normally.
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
+		}
 		for i := 0; i < 1000; i++ {
+			var sql string
+			v1 := rand.Intn(maxV-minV) + minV
+			v2 := rand.Intn(maxV-minV) + minV
+
+			require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 			if !strings.Contains(fp, "Intersection") {
-				sql := "select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 1000 or c2 < 800;"
-				res := tk.MustQuery("explain " + sql).Rows()
-				require.Contains(t, res[1][0], "IndexMerge")
-				err := tk.QueryToErr(sql)
-				require.Contains(t, err.Error(), fp)
+				sql = fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d;", v1, v2)
 			} else {
-				sql := "select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < 1000 and c2 < 800"
-				res := tk.MustQuery("explain " + sql).Rows()
-				require.Contains(t, res[1][0], "IndexMerge")
-				err := tk.QueryToErr(sql)
-				require.Contains(t, err.Error(), fp)
+				sql = fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < %d and c2 < %d", v1, v2)
 			}
+			res := tk.MustQuery("explain " + sql).Rows()
+			require.Contains(t, res[1][0], "IndexMerge")
+			err := tk.QueryToErr(sql)
+			require.Contains(t, err.Error(), fp)
+
 			require.NoError(t, failpoint.Disable(fp))
-			break
+		}
+		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
 		}
 	}
 }
