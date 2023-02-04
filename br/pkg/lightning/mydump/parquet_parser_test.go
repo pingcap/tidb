@@ -372,5 +372,4 @@ func TestOpenParquetReaderWithThreshold(t *testing.T) {
 	defer parser2.Close()
 
 	verifySimpleData(t, parser2)
-
 }
