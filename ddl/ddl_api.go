@@ -4326,6 +4326,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	// 	return errors.Trace(err)
 	// }
 
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:    schema.ID,
 		TableID:     t.Meta().ID,
@@ -4334,7 +4335,13 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		TableName:   t.Meta().Name.L,
 		Type:        model.ActionDropColumn,
 		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []interface{}{colName, spec.IfExists},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+		Args: []interface{}{colName, spec.IfExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)

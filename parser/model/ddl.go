@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -511,6 +513,32 @@ type Job struct {
 
 	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
 	SeqNum uint64 `json:"seq_num"`
+
+	// NeedReorgIndexIDs is the index ID list that need reorg
+	NeedReorgIndexIDs string `json:"need_reorg_index_ids,omitempty"`
+
+	// CurrentReorgIndexIdx is the current reorging index ID
+	CurrentReorgIndexIdx int `json:"current_reorg_index_idx,omitempty"`
+}
+
+// GetNeedReorgIndexIDs is decode index IDs string to int64 array
+func (job *Job) GetNeedReorgIndexIDs() []int64 {
+	ret := []int64{}
+	for _, idStr := range strings.Split(job.NeedReorgIndexIDs, "|") {
+		if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
+			ret = append(ret, id)
+		}
+	}
+	return ret
+}
+
+// GetNeedReorgIndexIDs is encode index IDs int64 array to string
+func (job *Job) SetNeedReorgIndexIDs(ids []int64) {
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = strconv.FormatInt(id, 10)
+	}
+	job.NeedReorgIndexIDs = strings.Join(idStrs, "|")
 }
 
 // FinishTableJob is called when a job is finished.

@@ -2882,7 +2882,7 @@ func TestDropColumnWithAutoInc(t *testing.T) {
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t(a int auto_increment, b int, key(a, b))")
-	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table t drop column b")
 }
 
 func TestDropColumnWithMultiIndex(t *testing.T) {

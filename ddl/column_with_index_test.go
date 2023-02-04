@@ -31,3 +31,17 @@ func TestDropColumnWithCompositeIndex(t *testing.T) {
 	query := queryIndexOnTable("test", "t")
 	tk.MustQuery(query).Check(testkit.Rows("i_ab YES"))
 }
+
+func TestDropColumnWithMultiCompositeIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d int, index i_abc(a, b, c), index i_acd(a, c, d))")
+	tk.MustExec("insert into t values(1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3)")
+	tk.MustExec("alter table t drop column a")
+	query := queryIndexOnTable("test", "t")
+	tk.MustQuery(query).Check(testkit.Rows("i_abc YES", "i_acd YES"))
+	tk.MustQuery("select c, d from t where c > 2").Check(testkit.Rows("3 3"))
+	tk.MustQuery("select b, c from t where c > 2").Check(testkit.Rows("3 3"))
+}
