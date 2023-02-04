@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -40,6 +41,8 @@ import (
 const (
 	tempCompositeIndexPrefix = "_CIdx$_"
 )
+
+// Util functions
 
 func toJsonString(val interface{}) string {
 	r, err := json.Marshal(val)
@@ -172,33 +175,9 @@ func listIndexesWithColumn(colName string, indices []*model.IndexInfo) ([]*model
 	return singleIndexes, compositeIndexes
 }
 
-func checkDropColumnsNeedReorg(tblInfo *model.TableInfo, colNames []model.CIStr) bool {
-	cidxInfos := make(map[int64]*model.IndexInfo)
-	for _, colName := range colNames {
-		_, cidxList := listIndexesWithColumn(colName.L, tblInfo.Indices)
-		for _, cidx := range cidxList {
-			cidxInfos[cidx.ID] = cidx
-		}
-	}
-	if len(cidxInfos) == 0 {
-		return false
-	}
-	needReorgs := 0
-	for _, idxInfo := range cidxInfos {
-		idxColumns := 0
-		for _, col := range idxInfo.Columns {
-			if inColumnNames(col, colNames) {
-				continue
-			}
-			idxColumns++
-		}
-		if idxColumns > 0 {
-			needReorgs++
-		}
-	}
-	return needReorgs > 0
-}
+// drop column process functions
 
+// dropColumnWithoutCompositeIndex will run the drop column process and the column not covered by composite index
 func dropColumnWithoutCompositeIndex(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, colInfo *model.ColumnInfo, idxInfos []*model.IndexInfo, ifExists bool) (ver int64, err error) {
 	originalState := colInfo.State
 	switch colInfo.State {
@@ -267,6 +246,7 @@ func dropColumnWithoutCompositeIndex(d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	return ver, errors.Trace(err)
 }
 
+// dropColumnWithoutCompositeIndex will run the drop column process and the column is covered by composite index
 func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, colInfo *model.ColumnInfo, idxInfos []*model.IndexInfo, cidxInfos []*model.IndexInfo, ifExists bool) (ver int64, err error) {
 	colOriginalState := colInfo.State
 	if job.IsRollingback() {
@@ -286,6 +266,7 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 		return ver, nil
 	}
 
+	// Create new composite index and name it to temp index
 	if colOriginalState == model.StatePublic {
 		ctidxInfos, err := getOrCreateTempCompositeIndexes(tblInfo, []*model.ColumnInfo{colInfo}, cidxInfos)
 		if err != nil {
@@ -310,7 +291,7 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 			setIndicesState(ctidxInfos, model.StateDeleteOnly)
 			ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 			if err != nil {
-				return ver, err
+				return ver, errors.Trace(err)
 			}
 			job.SchemaState = model.StateCreateIndexDeleteOnly
 		case model.StateDeleteOnly:
@@ -318,7 +299,7 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 			setIndicesState(ctidxInfos, model.StateWriteOnly)
 			ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 			if err != nil {
-				return ver, err
+				return ver, errors.Trace(err)
 			}
 			job.SchemaState = model.StateCreateIndexWriteOnly
 		case model.StateWriteOnly:
@@ -326,7 +307,7 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 			setIndicesState(ctidxInfos, model.StateWriteReorganization)
 			ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 			if err != nil {
-				return ver, err
+				return ver, errors.Trace(err)
 			}
 			// Update need reorg index list
 			ctidxIDList := indexInfosToIDList(ctidxInfos)
@@ -342,35 +323,40 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 				return ver, errors.Trace(err)
 			}
 
-			// Loop for update need reorg list
 			for {
 				var (
 					done         bool
 					allDone      bool
 					reorgIdxInfo *model.IndexInfo
 				)
+				// Get current reorging index
 				reorgIdxInfo, allDone = getCurrentReorgIndex(job, ctidxInfos)
 				if allDone {
+					// All indexes are reorged
 					break
 				}
 
+				// Do reorg jobs
 				if job.MultiSchemaInfo != nil {
 					done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, reorgIdxInfo)
 				} else {
 					done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, reorgIdxInfo)
 				}
+
 				if !done {
+					// Current reorg not finish
 					return ver, err
 				} else {
+					// Current reorg finish
 					if err != nil {
 						return ver, err
 					}
-					// Update current job done and check if has next index need reorg
+					// Update current reorg job to done and check if has next index need reorg
 					allDone = updateReorgDone(job, reorgIdxInfo)
 					if allDone {
+						// All indexes are reorged
 						break
 					} else {
-						// Not all done just return version and return for next call
 						return ver, err
 					}
 				}
@@ -385,8 +371,8 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+			// fall-through then do the column drop process
 			fallThrough = true
-
 		default:
 			err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 		}
@@ -490,6 +476,8 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 	return ver, errors.Trace(err)
 }
 
+// getCurrentReorgIndex returns the current reorging index, if current reorging index not in
+// jobs reorg index array, it will treat it as all index is reorged.
 func getCurrentReorgIndex(job *model.Job, idxInfos []*model.IndexInfo) (*model.IndexInfo, bool) {
 	reorgIdxIDs := job.GetNeedReorgIndexIDs()
 	pos := job.CurrentReorgIndexIdx
@@ -504,9 +492,12 @@ func getCurrentReorgIndex(job *model.Job, idxInfos []*model.IndexInfo) (*model.I
 		}
 	}
 	// Not found the index info need reorg just return all done
+	// Actually should not hit here.
 	return nil, true
 }
 
+// updateReorgDone is update the need reorg index array position and check
+// if all indexes is reorged. If not move to next one and reset reorg related data.
 func updateReorgDone(job *model.Job, indexInfo *model.IndexInfo) bool {
 	reorgIdxIDs := job.GetNeedReorgIndexIDs()
 	// Check reorg done index is in job.NeedReorgIndexIDs
@@ -540,6 +531,39 @@ func updateReorgDone(job *model.Job, indexInfo *model.IndexInfo) bool {
 	return true
 }
 
+// rollback related functions
+
+// checkDropColumnsNeedReorg returns if the drop column job has composite index covered
+// this function is used for rolling back
+func checkDropColumnsNeedReorg(tblInfo *model.TableInfo, colNames []model.CIStr) bool {
+	cidxInfos := make(map[int64]*model.IndexInfo)
+	for _, colName := range colNames {
+		_, cidxList := listIndexesWithColumn(colName.L, tblInfo.Indices)
+		for _, cidx := range cidxList {
+			cidxInfos[cidx.ID] = cidx
+		}
+	}
+	if len(cidxInfos) == 0 {
+		return false
+	}
+	needReorgs := 0
+	for _, idxInfo := range cidxInfos {
+		idxColumns := 0
+		for _, col := range idxInfo.Columns {
+			if inColumnNames(col, colNames) {
+				continue
+			}
+			idxColumns++
+		}
+		if idxColumns > 0 {
+			needReorgs++
+		}
+	}
+	return needReorgs > 0
+}
+
+// convertDropColumnWithCompositeIdxJob2RollbackJob will set new created temp composite index to delete only
+// and then fallback to drop column with rolling back job state, and then go to the drop indexes process.
 func convertDropColumnWithCompositeIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, indexInfos []*model.IndexInfo, err error) (int64, error) {
 	job.State = model.JobStateRollingback
 	originalState := indexInfos[0].State
@@ -560,6 +584,7 @@ func convertDropColumnWithCompositeIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, j
 	return ver, errors.Trace(err)
 }
 
+// doDropIndexes will do the drop indexes process
 func doDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo) (ver int64, err error) {
 	// TODO: Do we need this check?
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
@@ -607,12 +632,9 @@ func doDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.Table
 		indexIDs := indexInfosToIDList(indexInfos)
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			/*
-				// At the beginning, this will not support LitMerge, so no need to check that.
-				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-					ingest.LitBackCtxMgr.Unregister(job.ID)
-				}
-			*/
+			if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+				ingest.LitBackCtxMgr.Unregister(job.ID)
+			}
 			job.Args[0] = indexIDs
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
