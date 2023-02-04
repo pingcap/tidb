@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1762,4 +1763,56 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column a char(10)")
+}
+
+func TestMDLTruncateTable(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skipf("test requires concurrent ddl")
+	}
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("begin")
+	tk.MustExec("select * from t for update")
+
+	var wg sync.WaitGroup
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	wg.Add(2)
+	var timetk2 time.Time
+	var timetk3 time.Time
+
+	one := false
+	f := func(job *model.Job) {
+		if !one {
+			one = true
+		} else {
+			return
+		}
+		go func() {
+			tk3.MustExec("truncate table test.t")
+			timetk3 = time.Now()
+			wg.Done()
+		}()
+	}
+
+	hook.OnJobUpdatedExported.Store(&f)
+	dom.DDL().SetHook(hook)
+
+	go func() {
+		tk2.MustExec("truncate table test.t")
+		timetk2 = time.Now()
+		wg.Done()
+	}()
+
+	time.Sleep(2 * time.Second)
+	timeMain := time.Now()
+	tk.MustExec("commit")
+	wg.Wait()
+	require.True(t, timetk2.After(timeMain))
+	require.True(t, timetk3.After(timeMain))
 }
