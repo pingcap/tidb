@@ -438,3 +438,28 @@ func TestMergeGlobalStatsWithUnAnalyzedPartition(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0"))
 }
+
+func TestDumpStatsDeltaBeforeAnalyze(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1,2), (3,4)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "0", rows[0][4]) // modify_count
+	require.Equal(t, "2", rows[0][5]) // row_count
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+	tk.MustQuery(fmt.Sprintf("select tot_col_size from mysql.stats_histograms where table_id = %v", tblID)).Check(testkit.Rows("2", "2"))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	// We expect that nothing changes comparing to the last check since stats delta is dumped before analyze.
+	rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "0", rows[0][4])
+	require.Equal(t, "2", rows[0][5])
+	tk.MustQuery(fmt.Sprintf("select tot_col_size from mysql.stats_histograms where table_id = %v", tblID)).Check(testkit.Rows("2", "2"))
+}

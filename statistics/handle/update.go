@@ -478,9 +478,8 @@ func (h *Handle) sweepList() {
 	h.colMap.Unlock()
 }
 
-// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
-// If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
-func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
+// dumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dump delta info that need dumping.
+func (h *Handle) dumpStatsDeltaToKV(needDump func(int64, variable.TableDelta, time.Time) bool) error {
 	h.sweepList()
 	h.globalMap.Lock()
 	deltaMap := h.globalMap.data
@@ -494,7 +493,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	}()
 	currentTime := time.Now()
 	for id, item := range deltaMap {
-		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
+		if !needDump(id, item, currentTime) {
 			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
@@ -517,6 +516,25 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 		}
 	}
 	return nil
+}
+
+// DumpSpecifiedDeltaToKV sweeps the whole list and updates the global map, then we dump delta info of the tables
+// that exist in `mustDumpTables`.
+func (h *Handle) DumpSpecifiedDeltaToKV(mustDumpTables map[int64]struct{}) error {
+	needDump := func(id int64, _ variable.TableDelta, _ time.Time) bool {
+		_, ok := mustDumpTables[id]
+		return ok
+	}
+	return h.dumpStatsDeltaToKV(needDump)
+}
+
+// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dump every table that held in map to KV.
+// If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
+func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
+	needDump := func(id int64, item variable.TableDelta, currentTime time.Time) bool {
+		return mode == DumpAll || needDumpStatsDelta(h, id, item, currentTime)
+	}
+	return h.dumpStatsDeltaToKV(needDump)
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.

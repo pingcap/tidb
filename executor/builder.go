@@ -2913,7 +2913,24 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 	}
 }
 
+func collectTableIDs(v *plannercore.Analyze) map[int64]struct{} {
+	tableIDs := make(map[int64]struct{}, len(v.ColTasks)+len(v.IdxTasks))
+	for _, task := range v.ColTasks {
+		tableIDs[task.TableID.GetStatisticsID()] = struct{}{}
+	}
+	for _, task := range v.IdxTasks {
+		tableIDs[task.TableID.GetStatisticsID()] = struct{}{}
+	}
+	return tableIDs
+}
+
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
+	// Before executing Analyze, we dump stats delta of the tables that are going to be analyzed. In this way, we can
+	// avoid the confusing cases like https://github.com/pingcap/tidb/issues/22934 when insertion and analyze are executed
+	// on the same TiDB.
+	if err := domain.GetDomain(b.ctx).StatsHandle().DumpSpecifiedDeltaToKV(collectTableIDs(v)); err != nil {
+		logutil.BgLogger().Error("dump stats delta failed", zap.Error(err))
+	}
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),

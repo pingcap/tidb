@@ -1060,7 +1060,7 @@ func TestQueryFeedbackForPartition(t *testing.T) {
 		{
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
-			hist: "column:1 ndv:2 totColSize:2\n" +
+			hist: "column:1 ndv:2 totColSize:0\n" +
 				"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n" +
 				"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0",
 			idxCols: 0,
