@@ -153,7 +153,8 @@ func (t *copTask) finishIndexPlan() {
 		return
 	}
 	t.indexPlanFinished = true
-	if t.tablePlan != nil {
+	// index merge case is specially handled for now.
+	if t.tablePlan != nil && t.indexPlan != nil {
 		ts := t.tablePlan.(*PhysicalTableScan)
 		originStats := ts.stats
 		ts.stats = t.indexPlan.statsInfo()
@@ -821,7 +822,8 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	if cop, ok := t.(*copTask); ok {
 		// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 		// because handles would be reordered before being sent to table scan.
-		if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
+		if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil || len(cop.idxMergePartPlans) > 0) &&
+			len(cop.rootTaskConds) == 0 {
 			// When limit is pushed down, we should remove its offset.
 			newCount := p.Offset + p.Count
 			childProfile := cop.plan().statsInfo()
@@ -942,6 +944,10 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 //
 //	there's no prefix index column.
 func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
+	// Index merge case is specially handled for now. So we directly return false here.
+	if indexPlan == nil {
+		return false
+	}
 	schema := indexPlan.Schema()
 	for _, col := range byItemCols {
 		pos := schema.ColumnIndex(col)
@@ -974,6 +980,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			pushedDownTopN = p.getPushedDownTopN(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
 		} else {
+			// It works for both normal index scan and index merge scan.
 			copTask.finishIndexPlan()
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
@@ -1006,36 +1013,16 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 	if !allSameOrder {
 		return nil, false
 	}
-	checkIndexMatchProp := func(idxCols []*expression.Column, idxColLens []int, constColsByCond []bool, colsProp *property.PhysicalProperty) bool {
-		// If the number of the by-items is bigger than the index columns. We cannot push down since it must not keep order.
-		if len(idxCols) < len(colsProp.SortItems) {
-			return false
-		}
-		idxPos := 0
-		for _, byItem := range colsProp.SortItems {
-			found := false
-			for ; idxPos < len(idxCols); idxPos++ {
-				if idxColLens[idxPos] == types.UnspecifiedLength && idxCols[idxPos].Equal(p.SCtx(), byItem.Col) {
-					found = true
-					idxPos++
-					break
-				}
-				if len(constColsByCond) == 0 || idxPos > len(constColsByCond) || !constColsByCond[idxPos] {
-					found = false
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-		}
-		return true
+	if len(copTsk.idxMergePartPlans) > 0 && copTsk.idxMergeIsIntersection {
+		return nil, false
 	}
 	var (
-		idxScan *PhysicalIndexScan
-		tblScan *PhysicalTableScan
-		tblInfo *model.TableInfo
-		err     error
+		idxScan           *PhysicalIndexScan
+		tblScan           *PhysicalTableScan
+		partialFinalScan  []PhysicalPlan
+		partialClonedScan []PhysicalPlan
+		tblInfo           *model.TableInfo
+		err               error
 	)
 	if copTsk.indexPlan != nil {
 		copTsk.indexPlan, err = copTsk.indexPlan.Clone()
@@ -1061,28 +1048,64 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		tblScan = finalTblScanPlan.(*PhysicalTableScan)
 		tblInfo = tblScan.Table
 	}
+	if len(copTsk.idxMergePartPlans) > 0 {
+		partialFinalScan = make([]PhysicalPlan, 0, len(copTsk.idxMergePartPlans))
+		for _, scan := range copTsk.idxMergePartPlans {
+			clonedScan, err := scan.Clone()
+			if err != nil {
+				return nil, false
+			}
+			partialClonedScan = append(partialClonedScan, clonedScan)
+			finalScan := clonedScan
+			for len(finalScan.Children()) > 0 {
+				finalScan = finalScan.Children()[0]
+			}
+			partialFinalScan = append(partialFinalScan, finalScan)
+		}
+	}
 
 	pi := tblInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil && len(copTsk.idxMergePartPlans) == 0 {
 		return nil, false
 	}
 
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
-
-		propMatched := checkIndexMatchProp(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
-		if !propMatched {
-			return nil, false
+		if len(copTsk.idxMergePartPlans) > 0 {
+			if !p.ctx.GetSessionVars().InRestrictedSQL {
+				logutil.BgLogger().Warn("1")
+			}
+			// Deal with index merge case.
+			propMatched := p.checkSubScans(colsProp, isDesc, partialFinalScan...)
+			if !propMatched {
+				// If there's one used index cannot match the prop.
+				return nil, false
+			}
+			newCopSubPlans := p.addPartialLimitForSubScans(isDesc, partialClonedScan)
+			copTsk.idxMergePartPlans = newCopSubPlans
+			clonedTblScan, err := copTsk.tablePlan.Clone()
+			if err != nil {
+				return nil, false
+			}
+			clonedTblScan.statsInfo().ScaleByExpectCnt(float64(p.Count+p.Offset) * float64(len(copTsk.idxMergePartPlans)))
+			copTsk.tablePlan = clonedTblScan
+			copTsk.indexPlanFinished = true
+		} else {
+			// The normal index scan cases.(single read and double read)
+			propMatched := p.checkOrderPropForSubIndexScan(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
+			if !propMatched {
+				return nil, false
+			}
+			idxScan.Desc = isDesc
+			childProfile := copTsk.plan().statsInfo()
+			newCount := p.Offset + p.Count
+			stats := deriveLimitStats(childProfile, float64(newCount))
+			pushedLimit := PhysicalLimit{
+				Count: newCount,
+			}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+			pushedLimit.SetSchema(copTsk.indexPlan.Schema())
+			copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
 		}
-		idxScan.Desc = isDesc
-		childProfile := copTsk.plan().statsInfo()
-		newCount := p.Offset + p.Count
-		stats := deriveLimitStats(childProfile, float64(newCount))
-		pushedLimit := PhysicalLimit{
-			Count: newCount,
-		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
-		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
-		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
 			return nil, false
@@ -1095,7 +1118,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			}
 		} else {
 			idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblScan.Columns, tblScan.Schema().Columns, tables.FindPrimaryIndex(tblScan.Table))
-			matched := checkIndexMatchProp(idxCols, idxColLens, nil, colsProp)
+			matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, nil, colsProp)
 			if !matched {
 				return nil, false
 			}
@@ -1119,10 +1142,89 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 	return attachPlan2Task(p, rootTask), true
 }
 
+func (p *PhysicalTopN) checkOrderPropForSubIndexScan(idxCols []*expression.Column, idxColLens []int, constColsByCond []bool, colsProp *property.PhysicalProperty) bool {
+	// If the number of the by-items is bigger than the index columns. We cannot push down since it must not keep order.
+	if len(idxCols) < len(colsProp.SortItems) {
+		return false
+	}
+	idxPos := 0
+	for _, byItem := range colsProp.SortItems {
+		found := false
+		for ; idxPos < len(idxCols); idxPos++ {
+			if idxColLens[idxPos] == types.UnspecifiedLength && idxCols[idxPos].Equal(p.SCtx(), byItem.Col) {
+				found = true
+				idxPos++
+				break
+			}
+			if len(constColsByCond) == 0 || idxPos > len(constColsByCond) || !constColsByCond[idxPos] {
+				found = false
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *PhysicalTopN) checkSubScans(colsProp *property.PhysicalProperty, isDesc bool, scans ...PhysicalPlan) bool {
+	for _, scan := range scans {
+		switch x := scan.(type) {
+		case *PhysicalIndexScan:
+			propMatched := p.checkOrderPropForSubIndexScan(x.IdxCols, x.IdxColLens, x.constColsByCond, colsProp)
+			if !propMatched {
+				return false
+			}
+			x.KeepOrder = true
+			x.Desc = isDesc
+		case *PhysicalTableScan:
+			if x.HandleCols == nil {
+				return false
+			}
+
+			if x.HandleCols.IsInt() {
+				pk := x.HandleCols.GetCol(0)
+				if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx(), pk) {
+					return false
+				}
+			} else {
+				idxCols, idxColLens := expression.IndexInfo2PrefixCols(x.Columns, x.Schema().Columns, tables.FindPrimaryIndex(x.Table))
+				matched := p.checkOrderPropForSubIndexScan(idxCols, idxColLens, nil, colsProp)
+				if !matched {
+					return false
+				}
+			}
+			x.KeepOrder = true
+			x.Desc = isDesc
+		default:
+			return false
+		}
+	}
+	// Return true when all sub index plan matched.
+	return true
+}
+
+func (p *PhysicalTopN) addPartialLimitForSubScans(isDesc bool, copSubPlans []PhysicalPlan) []PhysicalPlan {
+	limitAddedPlan := make([]PhysicalPlan, 0, len(copSubPlans))
+	for _, copSubPlan := range copSubPlans {
+		childProfile := copSubPlan.statsInfo()
+		newCount := p.Offset + p.Count
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedLimit := PhysicalLimit{
+			Count: newCount,
+		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		pushedLimit.SetSchema(copSubPlan.Schema())
+		pushedLimit.SetChildren(copSubPlan)
+		limitAddedPlan = append(limitAddedPlan, pushedLimit)
+	}
+	return limitAddedPlan
+}
+
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		if len(cop.rootTaskConds) == 0 && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
+		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
 			copTask := attachPlan2Task(p, cop)
 			return copTask
 		}
@@ -1750,7 +1852,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
 		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
 		// whether the following plan is double read with order reserved.
-		if cop.extraHandleCol != nil || len(cop.rootTaskConds) > 0 {
+		if cop.extraHandleCol != nil || len(cop.rootTaskConds) > 0 || len(cop.idxMergePartPlans) > 0 {
 			t = cop.convertToRootTask(p.ctx)
 			attachPlan2Task(p, t)
 		} else {
@@ -1997,7 +2099,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	final := p
 	if cop, ok := t.(*copTask); ok {
-		if len(cop.rootTaskConds) == 0 {
+		if len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0 {
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
 			if finalAgg != nil {

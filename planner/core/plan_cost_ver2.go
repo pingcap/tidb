@@ -242,7 +242,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 
 	// index-side
 	indexNetCost := netCostVer2(option, indexRows, indexRowSize, netFactor)
-	indexChildCost, err := p.indexPlan.getPlanCostVer2(property.CopDoubleReadTaskType, option)
+	indexChildCost, err := p.indexPlan.getPlanCostVer2(property.CopMultiReadTaskType, option)
 	if err != nil {
 		return zeroCostVer2, err
 	}
@@ -250,7 +250,7 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 
 	// table-side
 	tableNetCost := netCostVer2(option, tableRows, tableRowSize, netFactor)
-	tableChildCost, err := p.tablePlan.getPlanCostVer2(property.CopDoubleReadTaskType, option)
+	tableChildCost, err := p.tablePlan.getPlanCostVer2(property.CopMultiReadTaskType, option)
 	if err != nil {
 		return zeroCostVer2, err
 	}
