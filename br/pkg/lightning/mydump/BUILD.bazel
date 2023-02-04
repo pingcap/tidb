@@ -31,6 +31,7 @@ go_library(
         "//util/regexpr-router",
         "//util/slice",
         "//util/table-filter",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_spkg_bom//:bom",
         "@com_github_xitongsys_parquet_go//parquet",
