@@ -125,7 +125,7 @@ func OpenParquetReader(
 	if smallParquetFileThreshold < 0 {
 		smallParquetFileThreshold = defaultSmallParquetFileThreshold
 	}
-	if size <= int64(smallParquetFileThreshold) {
+	if size <= smallParquetFileThreshold {
 		fileBytes, err := store.ReadFile(ctx, path)
 		if err != nil {
 			return nil, err
