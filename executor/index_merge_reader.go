@@ -50,6 +50,14 @@ var (
 	_ Executor = &IndexMergeReaderExecutor{}
 )
 
+const (
+	partialIndexWorkerType        = "IndexMergePartialIndexWorker"
+	partialTableWorkerType        = "IndexMergePartialTableWorker"
+	processWorkerType             = "IndexMergeProcessWorker"
+	partTblIntersectionWorkerType = "IndexMergePartTblIntersectionWorker"
+	tableScanWorkerType           = "IndexMergeTableScanWorker"
+)
+
 // IndexMergeReaderExecutor accesses a table with multiple index/table scan.
 // There are three types of workers:
 // 1. partialTableWorker/partialIndexWorker, which are used to fetch the handles
@@ -273,7 +281,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 					idxMergeProcessWorker.fetchLoopUnion(ctx, fetch, workCh, e.resultCh, e.finished)
 				}
 			},
-			idxMergeProcessWorker.handleLoopFetcherPanic(ctx, e.finished, e.resultCh),
+			handlePanicForWorker(ctx, e.finished, e.resultCh, nil, processWorkerType),
 		)
 		e.processWorkerWg.Done()
 	}()
@@ -400,7 +408,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 				}
 			},
-			e.handleHandlesFetcherPanic(ctx, e.finished, fetchCh, "partialIndexWorker"),
+			handlePanicForWorker(ctx, e.finished, fetchCh, nil, "partialIndexWorker"),
 		)
 	}()
 
@@ -508,7 +516,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					}
 				}
 			},
-			e.handleHandlesFetcherPanic(ctx, e.finished, fetchCh, "partialTableWorker"),
+			handlePanicForWorker(ctx, e.finished, fetchCh, nil, "partialTableWorker"),
 		)
 	}()
 	return nil
@@ -735,13 +743,22 @@ func (e *IndexMergeReaderExecutor) getResultTask() (*indexMergeTableTask, error)
 	return e.resultCurr, nil
 }
 
-func (e *IndexMergeReaderExecutor) handleHandlesFetcherPanic(ctx context.Context, finished <-chan struct{}, ch chan<- *indexMergeTableTask, worker string) func(r interface{}) {
+func handlePanicForWorker(ctx context.Context, finished <-chan struct{}, ch chan<- *indexMergeTableTask, extraNotifyCh chan bool, worker string) func(r interface{}) {
 	return func(r interface{}) {
+		if worker == processWorkerType {
+			// There is only one processWorker, so it's safe to close here.
+			// No need to worry about "close on closed channel" error.
+			defer close(ch)
+		}
 		if r == nil {
 			return
 		}
 
-		err4Panic := errors.Errorf("IndexMergeReaderExecutor %s: %v", worker, r)
+		if extraNotifyCh != nil {
+			extraNotifyCh <- true
+		}
+
+		err4Panic := errors.Errorf("%s: %v", worker, r)
 		logutil.Logger(ctx).Error(err4Panic.Error())
 		doneCh := make(chan error, 1)
 		doneCh <- err4Panic
@@ -1011,7 +1028,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		wg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "IndexMergeIntersectionProcessWorker").End()
 			worker.doIntersectionPerPartition(ctx, workCh, resultCh, finished)
-		}, w.handleIntersectionProcessWorkerPanic(ctx, finished, resultCh, errCh))
+		}, handlePanicForWorker(ctx, finished, resultCh, errCh, partTblIntersectionWorkerType))
 		workers = append(workers, worker)
 	}
 loop:
@@ -1037,61 +1054,6 @@ loop:
 		close(processWorker.workerCh)
 	}
 	wg.Wait()
-}
-
-func (w *indexMergeProcessWorker) handleIntersectionProcessWorkerPanic(ctx context.Context, finished <-chan struct{}, resultCh chan<- *indexMergeTableTask, errCh chan bool) func(r interface{}) {
-	return func(r interface{}) {
-		if r == nil {
-			return
-		}
-		errCh <- true
-
-		err4Panic := errors.Errorf("IndexMergeReaderExecutor IndexMergeIntersectionProcessWorker: %v", r)
-		logutil.Logger(ctx).Error(err4Panic.Error())
-		doneCh := make(chan error, 1)
-		doneCh <- err4Panic
-		task := &indexMergeTableTask{
-			lookupTableTask: lookupTableTask{
-				doneCh: doneCh,
-			},
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-finished:
-			return
-		case resultCh <- task:
-			return
-		}
-	}
-}
-
-func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, finished <-chan struct{}, resultCh chan<- *indexMergeTableTask) func(r interface{}) {
-	return func(r interface{}) {
-		// There is only one indexMergeProcessWorker, so close(resultCh) is safe.
-		defer close(resultCh)
-		if r == nil {
-			return
-		}
-
-		err4Panic := errors.Errorf("IndexMergeReaderExecutor idxMergeProcessWorker: %v", r)
-		logutil.Logger(ctx).Error(err4Panic.Error())
-		doneCh := make(chan error, 1)
-		doneCh <- err4Panic
-		task := &indexMergeTableTask{
-			lookupTableTask: lookupTableTask{
-				doneCh: doneCh,
-			},
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-finished:
-			return
-		case resultCh <- task:
-			return
-		}
-	}
 }
 
 type partialIndexWorker struct {
