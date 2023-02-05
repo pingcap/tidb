@@ -264,9 +264,8 @@ func MakeTableRegions(
 // GetSkipRowCount calculates the number of `ReadRow()` result needs to be skipped
 func GetSkipRowCount(cfg *config.Config, srcType SourceType) int64 {
 	// TODO: first, we need to set a skip row from the config
-	var skipFirstNRows int64 = 0
-	switch srcType {
-	case SourceTypeCSV:
+	var skipFirstNRows int64
+	if srcType == SourceTypeCSV {
 		// second, skip the header row if this config is set,
 		// but no skip rows count is configured previously
 		if cfg.Mydumper.CSV.SkipHeaderRow {
@@ -446,7 +445,7 @@ func SplitLargeFile(
 			endOffset = dataFile.FileMeta.FileSize
 		}
 	}
-	var remainingSkipRows int64 = skipFirstNRows
+	var remainingSkipRows = skipFirstNRows
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
@@ -482,7 +481,7 @@ func SplitLargeFile(
 			subParser.Close()
 		}
 		isChunkNeeded := true
-		var rowsToSkip int64 = 0
+		var rowsToSkip int64
 		// iterate the overall parser to get how many lines to skip in this chunk
 		if remainingSkipRows > 0 {
 			iterPos, _ := parser.Pos()
