@@ -811,17 +811,6 @@ func TestIndexMergePanic(t *testing.T) {
 	tk.MustExec("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c1 < 100 or c2 < 100")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly"))
 
-	packagePath := "github.com/pingcap/tidb/executor/"
-	panicFPPaths := []string{
-		packagePath + "testIndexMergePanicPartialIndexWorker",
-		packagePath + "testIndexMergePanicPartialTableWorker",
-
-		packagePath + "testIndexMergePanicProcessWorkerUnion",
-		packagePath + "testIndexMergePanicProcessWorkerIntersection",
-		packagePath + "testIndexMergePanicPartitionTableIntersectionWorker",
-
-		packagePath + "testIndexMergePanicTableScanWorker",
-	}
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3)) partition by hash(c1) partitions 10;")
@@ -835,6 +824,32 @@ func TestIndexMergePanic(t *testing.T) {
 
 	minV := 200
 	maxV := 1000
+	runSQL := func(fp string) {
+		var sql string
+		v1 := rand.Intn(maxV-minV) + minV
+		v2 := rand.Intn(maxV-minV) + minV
+		if !strings.Contains(fp, "Intersection") {
+			sql = fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d;", v1, v2)
+		} else {
+			sql = fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < %d and c2 < %d", v1, v2)
+		}
+		res := tk.MustQuery("explain " + sql).Rows()
+		require.Contains(t, res[1][0], "IndexMerge")
+		err := tk.QueryToErr(sql)
+		require.Contains(t, err.Error(), fp)
+	}
+
+	packagePath := "github.com/pingcap/tidb/executor/"
+	panicFPPaths := []string{
+		packagePath + "testIndexMergePanicPartialIndexWorker",
+		packagePath + "testIndexMergePanicPartialTableWorker",
+
+		packagePath + "testIndexMergePanicProcessWorkerUnion",
+		packagePath + "testIndexMergePanicProcessWorkerIntersection",
+		packagePath + "testIndexMergePanicPartitionTableIntersectionWorker",
+
+		packagePath + "testIndexMergePanicTableScanWorker",
+	}
 	for _, fp := range panicFPPaths {
 		fmt.Println("handling failpoint: ", fp)
 		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
@@ -844,25 +859,25 @@ func TestIndexMergePanic(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
 		}
 		for i := 0; i < 1000; i++ {
-			var sql string
-			v1 := rand.Intn(maxV-minV) + minV
-			v2 := rand.Intn(maxV-minV) + minV
-
 			require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-			if !strings.Contains(fp, "Intersection") {
-				sql = fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d;", v1, v2)
-			} else {
-				sql = fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < %d and c2 < %d", v1, v2)
-			}
-			res := tk.MustQuery("explain " + sql).Rows()
-			require.Contains(t, res[1][0], "IndexMerge")
-			err := tk.QueryToErr(sql)
-			require.Contains(t, err.Error(), fp)
-
+			runSQL(fp)
 			require.NoError(t, failpoint.Disable(fp))
 		}
 		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
 		}
+	}
+
+	errFPPaths := []string{
+		packagePath + "testIndexMergeErrorPartialIndexWorker",
+		packagePath + "testIndexMergeErrorPartialTableWorker",
+	}
+	for _, fp := range errFPPaths {
+		fmt.Println("handling failpoint: ", fp)
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`return("%s")`, fp)))
+		for i := 0; i < 100; i++ {
+			runSQL(fp)
+		}
+		require.NoError(t, failpoint.Disable(fp))
 	}
 }

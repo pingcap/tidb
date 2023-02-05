@@ -604,6 +604,9 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, nil, err
 		}
 		if chk.NumRows() == 0 {
+			failpoint.Inject("testIndexMergeErrorPartialTableWorker", func(v failpoint.Value) {
+				failpoint.Return(handles, nil, errors.New(v.(string)))
+			})
 			return handles, retChk, nil
 		}
 		memDelta := chk.MemoryUsage()
@@ -1148,6 +1151,9 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, nil, err
 		}
 		if chk.NumRows() == 0 {
+			failpoint.Inject("testIndexMergeErrorPartialIndexWorker", func(v failpoint.Value) {
+				failpoint.Return(handles, nil, errors.New(v.(string)))
+			})
 			return handles, retChk, nil
 		}
 		memDelta := chk.MemoryUsage()
