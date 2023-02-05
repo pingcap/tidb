@@ -766,9 +766,9 @@ func TestIntersectionWorkerPanic(t *testing.T) {
 	require.Contains(t, res[1][0], "IndexMerge")
 
 	// Test panic in intersection.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionWorkerPanic", "panic"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionWorkerPanic", `panic("testIndexMergeIntersectionWorkerPanic")`))
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024")
-	require.Contains(t, err.Error(), "IndexMergeReaderExecutor")
+	require.Contains(t, err.Error(), "testIndexMergeIntersectionWorkerPanic")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionWorkerPanic"))
 }
 
