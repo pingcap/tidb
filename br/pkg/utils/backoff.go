@@ -227,14 +227,16 @@ func NewFlashBackBackoffer() Backoffer {
 }
 
 // specific retry error for flashback
+// it happened when region created without leader
+// region heartbeat sent may some delay (10s), during the prepare flashback, leader may not sent heartbeat yet.
 var retryableError = []string{
-	"receive Regions with no peer",
+	"receive regions with no peer",
 }
 
 // messageIsRetryable checks whether the message returning from TiKV client-go.
 func messageIsRetryable(msg string) bool {
 	msgLower := strings.ToLower(msg)
-	// UNSAFE! TODO: Add a error type for retryable connection error. It may need a refactor among tikv and tidb.
+	// UNSAFE! TODO: Add a error type for retryable connection error. It may need a refactor among tikv, client-go and tidb.
 	for _, errStr := range retryableError {
 		if strings.Contains(msgLower, errStr) {
 			return true
