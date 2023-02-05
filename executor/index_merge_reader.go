@@ -659,10 +659,6 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
 			var task *indexMergeTableTask
 			util.WithRecovery(
-<<<<<<< HEAD
-				func() { task = worker.pickAndExecTask(ctx1) },
-				worker.handlePickAndExecTaskPanic(ctx1, task),
-=======
 				// Note we use the address of `task` as the argument of both `pickAndExecTask` and `handleTableScanWorkerPanic`
 				// because `task` is expected to be assigned in `pickAndExecTask`, and this assignment should also be visible
 				// in `handleTableScanWorkerPanic` since it will get `doneCh` from `task`. Golang always pass argument by value,
@@ -670,7 +666,6 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 				// not visible in `handleTableScanWorkerPanic`
 				func() { worker.pickAndExecTask(ctx1, &task) },
 				worker.handleTableScanWorkerPanic(ctx1, e.finished, &task, tableScanWorkerType),
->>>>>>> bc2c1b229df (executor: fix IndexMerge handle panic logic (#41036))
 			)
 			cancel()
 			e.tblWorkerWg.Done()
@@ -1205,12 +1200,12 @@ type indexMergeTableScanWorker struct {
 	memTracker *memory.Tracker
 }
 
-func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *indexMergeTableTask) {
+func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **indexMergeTableTask) {
 	var ok bool
 	for {
 		waitStart := time.Now()
 		select {
-		case task, ok = <-w.workCh:
+		case *task, ok = <-w.workCh:
 			if !ok {
 				return
 			}
@@ -1229,21 +1224,17 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *
 			}
 		})
 		execStart := time.Now()
-		err := w.executeTask(ctx, task)
+		err := w.executeTask(ctx, *task)
 		if w.stats != nil {
 			atomic.AddInt64(&w.stats.WaitTime, int64(execStart.Sub(waitStart)))
 			atomic.AddInt64(&w.stats.FetchRow, int64(time.Since(execStart)))
 			atomic.AddInt64(&w.stats.TableTaskNum, 1)
 		}
-		task.doneCh <- err
+		(*task).doneCh <- err
 	}
 }
 
-<<<<<<< HEAD
-func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, task *indexMergeTableTask) func(r interface{}) {
-=======
 func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
->>>>>>> bc2c1b229df (executor: fix IndexMerge handle panic logic (#41036))
 	return func(r interface{}) {
 		if r == nil {
 			return
@@ -1251,9 +1242,6 @@ func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Conte
 
 		err4Panic := errors.Errorf("%s: %v", worker, r)
 		logutil.Logger(ctx).Error(err4Panic.Error())
-<<<<<<< HEAD
-		task.doneCh <- err4Panic
-=======
 		if *task != nil {
 			select {
 			case <-ctx.Done():
@@ -1264,7 +1252,6 @@ func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Conte
 				return
 			}
 		}
->>>>>>> bc2c1b229df (executor: fix IndexMerge handle panic logic (#41036))
 	}
 }
 
