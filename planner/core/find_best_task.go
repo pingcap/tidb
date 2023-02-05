@@ -1123,7 +1123,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType || !prop.IsSortItemEmpty() {
 		return invalidTask, nil
 	}
-	if prop.TaskTp != property.CopMultiReadTaskType && candidate.path.IndexMergeIsIntersection {
+	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IndexMergeIsIntersection {
 		return invalidTask, nil
 	}
 	path := candidate.path

@@ -820,23 +820,41 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	sunk := false
 	if cop, ok := t.(*copTask); ok {
-		// For double read which requires order being kept, the limit cannot be pushed down to the table side,
-		// because handles would be reordered before being sent to table scan.
-		if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil || len(cop.idxMergePartPlans) > 0) &&
-			len(cop.rootTaskConds) == 0 {
-			// When limit is pushed down, we should remove its offset.
-			newCount := p.Offset + p.Count
-			childProfile := cop.plan().statsInfo()
-			// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
-			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-			stats := deriveLimitStats(childProfile, float64(newCount))
-			pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
-			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
-			// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
-			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+		if len(cop.idxMergePartPlans) == 0 {
+			// For double read which requires order being kept, the limit cannot be pushed down to the table side,
+			// because handles would be reordered before being sent to table scan.
+			if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil || len(cop.rootTaskConds) == 0 {
+				// When limit is pushed down, we should remove its offset.
+				newCount := p.Offset + p.Count
+				childProfile := cop.plan().statsInfo()
+				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
+				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
+				stats := deriveLimitStats(childProfile, float64(newCount))
+				pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+				cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
+				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
+				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+			}
+			t = cop.convertToRootTask(p.ctx)
+			sunk = p.sinkIntoIndexLookUp(t)
+		} else if !cop.idxMergeIsIntersection {
+			// We only support push part of the order prop down to index merge case.
+			if !cop.keepOrder && !cop.indexPlanFinished && len(cop.rootTaskConds) == 0 {
+				newCount := p.Offset + p.Count
+				limitChildren := make([]PhysicalPlan, 0, len(cop.idxMergePartPlans))
+				for _, partialScan := range cop.idxMergePartPlans {
+					childProfile := partialScan.statsInfo()
+					stats := deriveLimitStats(childProfile, float64(newCount))
+					pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+					pushedDownLimit.SetChildren(partialScan)
+					pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+					limitChildren = append(limitChildren, pushedDownLimit)
+				}
+				cop.idxMergePartPlans = limitChildren
+			}
+			cop.indexPlanFinished = true
+			t = cop.convertToRootTask(p.ctx)
 		}
-		t = cop.convertToRootTask(p.ctx)
-		sunk = p.sinkIntoIndexLookUp(t)
 	} else if mpp, ok := t.(*mppTask); ok {
 		newCount := p.Offset + p.Count
 		childProfile := mpp.plan().statsInfo()
