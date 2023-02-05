@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -33,6 +34,11 @@ const (
 	resetTSRetryTimeExt       = 600
 	resetTSWaitIntervalExt    = 500 * time.Millisecond
 	resetTSMaxWaitIntervalExt = 300 * time.Second
+
+	// region heartbeat are 10 seconds by default, if some region has 3 heartbeat missing (20 seconds), it appear to be a network issue between PD and TiKV.
+	flashbackRetryTime       = 20
+	flashbackWaitInterval    = 1000 * time.Millisecond
+	flashbackMaxWaitInterval = 20 * time.Second
 )
 
 // RetryState is the mutable state needed for retrying.
@@ -202,5 +208,74 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 }
 
 func (bo *pdReqBackoffer) Attempt() int {
+	return bo.attempt
+}
+
+type flashbackBackoffer struct {
+	attempt      int
+	delayTime    time.Duration
+	maxDelayTime time.Duration
+}
+
+// NewBackoffer creates a new controller regulating a truncated exponential backoff.
+func NewFlashBackBackoffer() Backoffer {
+	return &flashbackBackoffer{
+		attempt:      flashbackRetryTime,
+		delayTime:    flashbackWaitInterval,
+		maxDelayTime: flashbackMaxWaitInterval,
+	}
+}
+
+// specific retry error for flashback
+var retryableError = []string{
+	"receive Regions with no peer",
+}
+
+// messageIsRetryable checks whether the message returning from TiKV client-go.
+func messageIsRetryable(msg string) bool {
+	msgLower := strings.ToLower(msg)
+	// UNSAFE! TODO: Add a error type for retryable connection error. It may need a refactor among tikv and tidb.
+	for _, errStr := range retryableError {
+		if strings.Contains(msgLower, errStr) {
+			return true
+		}
+	}
+	return false
+}
+
+func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
+	if messageIsRetryable(err.Error()) {
+		bo.delayTime = 2 * bo.delayTime
+		bo.attempt--
+	} else {
+		e := errors.Cause(err)
+		switch e { // nolint:errorlint
+		case berrors.ErrKVEpochNotMatch, berrors.ErrPDLeaderNotFound:
+			bo.delayTime = 2 * bo.delayTime
+			bo.attempt--
+		case berrors.ErrKVRangeIsEmpty, berrors.ErrKVRewriteRuleNotFound:
+			// Excepted error, finish the operation
+			bo.delayTime = 0
+			bo.attempt = 0
+		default:
+			switch status.Code(e) {
+			case codes.Unavailable, codes.Aborted:
+				bo.delayTime = 2 * bo.delayTime
+				bo.attempt--
+			default:
+				// Unexcepted error
+				bo.delayTime = 0
+				bo.attempt = 0
+				log.Warn("unexcepted error, stop to retry", zap.Error(err))
+			}
+		}
+	}
+	if bo.delayTime > bo.maxDelayTime {
+		return bo.maxDelayTime
+	}
+	return bo.delayTime
+}
+
+func (bo *flashbackBackoffer) Attempt() int {
 	return bo.attempt
 }
