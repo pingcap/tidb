@@ -190,12 +190,10 @@ func rollingbackDropColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (
 				if needNotifyAndStopReorgWorker(job) {
 					logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
 					d.notifyReorgCancel(job)
-					return onDropColumn(w, d, t, job)
 				}
-				return convertDropColumnWithCompositeIdxJob2RollbackJob(d, t, job, tblInfo, nil, ctidxInfos, dbterror.ErrCancelledDDLJob)
-			case model.StateNone, model.StateDeleteOnly, model.StateWriteOnly:
-				return convertDropColumnWithCompositeIdxJob2RollbackJob(d, t, job, tblInfo, nil, ctidxInfos, dbterror.ErrCancelledDDLJob)
+				return convertDropColumnWithCompositeIdxJob2RollbackJob(d, t, job, tblInfo, ctidxInfos, dbterror.ErrCancelledDDLJob)
 			}
+			return onDropColumn(w, d, t, job)
 		}
 	}
 

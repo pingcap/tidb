@@ -4307,7 +4307,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return errors.Trace(err)
 	}
 
-	isDropable, err := checkIsDroppableColumn(ctx, d.infoCache.GetLatest(), schema, t, spec)
+	isDropable, needReorg, err := checkIsDroppableColumn(ctx, d.infoCache.GetLatest(), schema, t, spec)
 	if err != nil {
 		return err
 	}
@@ -4341,7 +4341,8 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 			WarningsCount: make(map[errors.ErrorID]int64),
 			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
-		Args: []interface{}{colName, spec.IfExists},
+		CtxVars: []interface{}{needReorg},
+		Args:    []interface{}{colName, spec.IfExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -4378,7 +4379,7 @@ func ResolveDropColumnsAlgorithm(ctx sessionctx.Context, tblInfo *model.TableInf
 	return nil
 }
 
-func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, schema *model.DBInfo, t table.Table, spec *ast.AlterTableSpec) (isDrapable bool, err error) {
+func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, schema *model.DBInfo, t table.Table, spec *ast.AlterTableSpec) (isDrapable bool, needReorg bool, err error) {
 	tblInfo := t.Meta()
 	// Check whether dropped column has existed.
 	colName := spec.OldColumnName.Name
@@ -4387,35 +4388,36 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 		err = dbterror.ErrCantDropFieldOrKey.GenWithStackByArgs(colName)
 		if spec.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return false, nil
+			return false, false, nil
 		}
-		return false, err
+		return false, false, err
 	}
 
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
-		return false, errors.Trace(err)
+		return false, false, errors.Trace(err)
 	}
 	if err = checkDropColumnWithPartitionConstraint(t, colName); err != nil {
-		return false, errors.Trace(err)
+		return false, false, errors.Trace(err)
 	}
 	// Check the column with foreign key.
 	err = checkDropColumnWithForeignKeyConstraint(is, schema.Name.L, tblInfo, colName.L)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, false, errors.Trace(err)
 	}
 	// Check the column with TTL config
 	err = checkDropColumnWithTTLConfig(tblInfo, colName.L)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, false, errors.Trace(err)
 	}
 	// We don't support dropping column with PK handle covered now.
 	if col.IsPKHandleColumn(tblInfo) {
-		return false, dbterror.ErrUnsupportedPKHandle
+		return false, false, dbterror.ErrUnsupportedPKHandle
 	}
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
-		return false, dbterror.ErrCantDropColWithAutoInc
+		return false, false, dbterror.ErrCantDropColWithAutoInc
 	}
-	return true, nil
+	needReorg = checkDropColumnsNeedReorg(tblInfo, []model.CIStr{colName})
+	return true, needReorg, nil
 }
 
 // checkDropColumnWithPartitionConstraint is used to check the partition constraint of the drop column.

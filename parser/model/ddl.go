@@ -870,7 +870,7 @@ func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
 	case ActionAddIndex, ActionAddPrimaryKey:
 		return true
-	case ActionModifyColumn:
+	case ActionModifyColumn, ActionDropColumn:
 		if len(job.CtxVars) > 0 {
 			needReorg, ok := job.CtxVars[0].(bool)
 			return ok && needReorg
@@ -905,9 +905,17 @@ func (job *Job) IsRollbackable() bool {
 		}
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
-	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
+	case ActionDropSchema, ActionDropTable, ActionDropSequence,
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
+	case ActionDropColumn:
+		switch job.SchemaState {
+		case StateCreateIndexDeleteOnly, StateCreateIndexWriteOnly,
+			StateWriteReorganization, StatePublic:
+			return true
+		default:
+			return false
+		}
 	case ActionRebaseAutoID, ActionShardRowID,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
 		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,

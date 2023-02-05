@@ -371,7 +371,8 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			// fall-through then do the column drop process
+			// set job status to StatePublic and fall-through then do the column drop process
+			job.SchemaState = model.StatePublic
 			fallThrough = true
 		default:
 			err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
@@ -564,7 +565,7 @@ func checkDropColumnsNeedReorg(tblInfo *model.TableInfo, colNames []model.CIStr)
 
 // convertDropColumnWithCompositeIdxJob2RollbackJob will set new created temp composite index to delete only
 // and then fallback to drop column with rolling back job state, and then go to the drop indexes process.
-func convertDropColumnWithCompositeIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, indexInfos []*model.IndexInfo, err error) (int64, error) {
+func convertDropColumnWithCompositeIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, err error) (int64, error) {
 	job.State = model.JobStateRollingback
 	originalState := indexInfos[0].State
 	setIndicesState(indexInfos, model.StateDeleteOnly)
@@ -575,9 +576,6 @@ func convertDropColumnWithCompositeIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, j
 	}
 
 	if kv.ErrKeyExists.Equal(err) {
-		if indexInfo != nil {
-			return ver, kv.ErrKeyExists.GenWithStackByArgs("", trimTempCompositeIdxPrefix(indexInfo.Name.O))
-		}
 		return ver, kv.ErrKeyExists.GenWithStackByArgs("", trimTempCompositeIdxPrefix(indexInfos[0].Name.O))
 	}
 
@@ -599,6 +597,7 @@ func doDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.Table
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
 		setIndicesState(indexInfos, model.StateDeleteOnly)
@@ -606,6 +605,7 @@ func doDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.Table
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		setIndicesState(indexInfos, model.StateDeleteReorganization)
@@ -613,6 +613,7 @@ func doDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.Table
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		setIndicesState(indexInfos, model.StateNone)
@@ -635,7 +636,7 @@ func doDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.Table
 			if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 				ingest.LitBackCtxMgr.Unregister(job.ID)
 			}
-			job.Args[0] = indexIDs
+			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
@@ -645,6 +646,5 @@ func doDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.Table
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfos[0].State))
 	}
-	job.SchemaState = indexInfos[0].State
 	return ver, errors.Trace(err)
 }
