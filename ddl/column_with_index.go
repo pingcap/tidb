@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -245,6 +245,33 @@ func dropColumnWithoutCompositeIndex(d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	job.SchemaState = colInfo.State
 	return ver, errors.Trace(err)
 }
+
+/*
+ * Drop column with composite index job status:
+ *
+ * Job Start                    RollbackDone (Job Done) -> DeleteRange (for temp composite indexes)
+ *   |                             ^
+ *   v                             |
+ * CreateIndexDeleteOnly --*    DeleteReorganization
+ *   |                     |       ^
+ *   v                     |       |
+ * CreateIndexWriteOnly ---+--> DeleteOnly
+ *   |                     |
+ *   v                     |
+ * WriteReorganization ----*
+ *   |
+ *   v
+ * WriteOnly (Cannot Rollback)
+ *   |
+ *   v
+ * DeleteOnly (Cannot Rollback)
+ *   |
+ *   v
+ * DeleteReorganization (Cannot Rollback)
+ *   |
+ *   v
+ * None (Job Done) -> DeleteRange (for related indexes)
+ */
 
 // dropColumnWithoutCompositeIndex will run the drop column process and the column is covered by composite index
 func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, colInfo *model.ColumnInfo, idxInfos []*model.IndexInfo, cidxInfos []*model.IndexInfo, ifExists bool) (ver int64, err error) {
