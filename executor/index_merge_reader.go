@@ -50,11 +50,10 @@ var (
 )
 
 const (
-	partialIndexWorkerType        = "IndexMergePartialIndexWorker"
-	partialTableWorkerType        = "IndexMergePartialTableWorker"
-	processWorkerType             = "IndexMergeProcessWorker"
-	partTblIntersectionWorkerType = "IndexMergePartTblIntersectionWorker"
-	tableScanWorkerType           = "IndexMergeTableScanWorker"
+	partialIndexWorkerType = "IndexMergePartialIndexWorker"
+	partialTableWorkerType = "IndexMergePartialTableWorker"
+	processWorkerType      = "IndexMergeProcessWorker"
+	tableScanWorkerType    = "IndexMergeTableScanWorker"
 )
 
 // IndexMergeReaderExecutor accesses a table with multiple index/table scan.
@@ -260,7 +259,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 			func() {
 				idxMergeProcessWorker.fetchLoop(ctx, fetch, workCh, e.resultCh, e.finished)
 			},
-			handleWorkerPanic(ctx, e.finished, e.resultCh, nil, processWorkerType),
+			handleWorkerPanic(ctx, e.finished, e.resultCh, processWorkerType),
 		)
 		e.processWorkerWg.Done()
 	}()
@@ -381,7 +380,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 				}
 			},
-			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialIndexWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, "partialIndexWorker"),
 		)
 	}()
 
@@ -488,7 +487,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					}
 				}
 			},
-			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialTableWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, "partialTableWorker"),
 		)
 	}()
 	return nil
@@ -720,7 +719,7 @@ func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
 	return e.resultCurr, nil
 }
 
-func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- *indexMergeTableTask, worker string) func(r interface{}) {
+func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- *lookupTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if worker == processWorkerType {
 			// There is only one processWorker, so it's safe to close here.
@@ -735,10 +734,8 @@ func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- 
 		logutil.Logger(ctx).Error(err4Panic.Error())
 		doneCh := make(chan error, 1)
 		doneCh <- err4Panic
-		task := &indexMergeTableTask{
-			lookupTableTask: lookupTableTask{
-				doneCh: doneCh,
-			},
+		task := &lookupTableTask{
+			doneCh: doneCh,
 		}
 		select {
 		case <-ctx.Done():
@@ -850,14 +847,12 @@ type partialIndexWorker struct {
 	memTracker   *memory.Tracker
 }
 
-func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
+func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *lookupTableTask, err error) {
 	logutil.BgLogger().Error("IndexMergeReaderExecutor.syncErr", zap.Error(err))
 	doneCh := make(chan error, 1)
 	doneCh <- err
-	task := &indexMergeTableTask{
-		lookupTableTask: lookupTableTask{
-			doneCh: doneCh,
-		},
+	task := &lookupTableTask{
+		doneCh: doneCh,
 	}
 
 	// ctx.Done and finished is to avoid write channel is stuck.
@@ -974,12 +969,12 @@ type indexMergeTableScanWorker struct {
 	memTracker *memory.Tracker
 }
 
-func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *lookupTableTask) {
+func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **lookupTableTask) {
 	var ok bool
 	for {
 		waitStart := time.Now()
 		select {
-		case task, ok = <-w.workCh:
+		case *task, ok = <-w.workCh:
 			if !ok {
 				return
 			}
@@ -998,13 +993,13 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *
 			}
 		})
 		execStart := time.Now()
-		err := w.executeTask(ctx, task)
+		err := w.executeTask(ctx, *task)
 		if w.stats != nil {
 			atomic.AddInt64(&w.stats.WaitTime, int64(execStart.Sub(waitStart)))
 			atomic.AddInt64(&w.stats.FetchRow, int64(time.Since(execStart)))
 			atomic.AddInt64(&w.stats.TableTaskNum, 1)
 		}
-		task.doneCh <- err
+		(*task).doneCh <- err
 	}
 }
 
