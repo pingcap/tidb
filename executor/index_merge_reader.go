@@ -281,7 +281,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 					idxMergeProcessWorker.fetchLoopUnion(ctx, fetch, workCh, e.resultCh, e.finished)
 				}
 			},
-			handlePanicForWorker(ctx, e.finished, e.resultCh, nil, processWorkerType),
+			handleWorkerPanic(ctx, e.finished, e.resultCh, nil, processWorkerType),
 		)
 		e.processWorkerWg.Done()
 	}()
@@ -408,7 +408,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 				}
 			},
-			handlePanicForWorker(ctx, e.finished, fetchCh, nil, "partialIndexWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialIndexWorker"),
 		)
 	}()
 
@@ -516,7 +516,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					}
 				}
 			},
-			handlePanicForWorker(ctx, e.finished, fetchCh, nil, "partialTableWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialTableWorker"),
 		)
 	}()
 	return nil
@@ -656,13 +656,13 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
 			var task *indexMergeTableTask
 			util.WithRecovery(
-				// Note we use the address of `task` as the argument of both `pickAndExecTask` and `handlePickAndExecTaskPanic`
+				// Note we use the address of `task` as the argument of both `pickAndExecTask` and `handleTableScanWorkerPanic`
 				// because `task` is expected to be assigned in `pickAndExecTask`, and this assignment should also be visible
-				// in `handlePickAndExecTaskPanic` since it will get `doneCh` from `task`. Golang always pass argument by value,
+				// in `handleTableScanWorkerPanic` since it will get `doneCh` from `task`. Golang always pass argument by value,
 				// so if we don't use the address of `task` as the argument, the assignment to `task` in `pickAndExecTask` is
-				// not visible in `handlePickAndExecTaskPanic`
+				// not visible in `handleTableScanWorkerPanic`
 				func() { worker.pickAndExecTask(ctx1, &task) },
-				worker.handlePickAndExecTaskPanic(ctx1, e.finished, &task, tableScanWorkerType),
+				worker.handleTableScanWorkerPanic(ctx1, e.finished, &task, tableScanWorkerType),
 			)
 			cancel()
 			e.tblWorkerWg.Done()
@@ -743,7 +743,7 @@ func (e *IndexMergeReaderExecutor) getResultTask() (*indexMergeTableTask, error)
 	return e.resultCurr, nil
 }
 
-func handlePanicForWorker(ctx context.Context, finished <-chan struct{}, ch chan<- *indexMergeTableTask, extraNotifyCh chan bool, worker string) func(r interface{}) {
+func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- *indexMergeTableTask, extraNotifyCh chan bool, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if worker == processWorkerType {
 			// There is only one processWorker, so it's safe to close here.
@@ -1028,7 +1028,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 		wg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "IndexMergeIntersectionProcessWorker").End()
 			worker.doIntersectionPerPartition(ctx, workCh, resultCh, finished)
-		}, handlePanicForWorker(ctx, finished, resultCh, errCh, partTblIntersectionWorkerType))
+		}, handleWorkerPanic(ctx, finished, resultCh, errCh, partTblIntersectionWorkerType))
 		workers = append(workers, worker)
 	}
 loop:
@@ -1229,7 +1229,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 	}
 }
 
-func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
+func (w *indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
 			return
