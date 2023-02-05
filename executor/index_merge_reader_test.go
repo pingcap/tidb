@@ -536,9 +536,9 @@ func (test *testSerialSuite2) TestIndexMergePanic(c *C) {
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"), IsNil)
 		}
 		for i := 0; i < 1000; i++ {
-			c.Assert(failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+			c.Assert(failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)), IsNil)
 			runSQL(fp)
-			c.Assert(failpoint.Disable(fp))
+			c.Assert(failpoint.Disable(fp), IsNil)
 		}
 		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
 			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"), IsNil)
