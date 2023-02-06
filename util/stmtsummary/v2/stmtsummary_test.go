@@ -45,7 +45,7 @@ func TestStmtWindow(t *testing.T) {
 func TestStmtSummary(t *testing.T) {
 	ss := NewStmtSummary4Test(3)
 	ss.storage = &waitableMockStmtStorage{mockStmtStorage: ss.storage.(*mockStmtStorage)}
-	w := ss.window.Load().(*stmtWindow)
+	w := ss.window
 	ss.Add(GenerateStmtExecInfo4Test("digest1"))
 	ss.Add(GenerateStmtExecInfo4Test("digest2"))
 	ss.Add(GenerateStmtExecInfo4Test("digest3"))
@@ -63,7 +63,7 @@ func TestStmtSummary(t *testing.T) {
 	timeNow = time.Now
 	ss.Add(GenerateStmtExecInfo4Test("digest7"))
 	ss.storage.(*waitableMockStmtStorage).Wait()
-	w = ss.window.Load().(*stmtWindow)
+	w = ss.window
 	require.Equal(t, 2, w.lru.Size())
 	require.Equal(t, 0, w.evicted.count())
 

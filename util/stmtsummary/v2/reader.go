@@ -94,7 +94,7 @@ func (r *MemReader) Rows() [][]types.Datum {
 		return nil
 	}
 	end := timeNow().Unix()
-	w := r.s.window.Load().(*stmtWindow)
+	w := r.s.window
 	if !r.checker.isTimeValid(w.begin.Unix(), end) {
 		return nil
 	}

@@ -74,12 +74,11 @@ type StmtSummary struct {
 	optMaxSQLLength        *atomic2.Uint32
 	optRefreshInterval     *atomic2.Uint32
 
-	window     atomic.Value // *window
-	rotateLock sync.Mutex
-	storage    stmtStorage
-	cancel     context.CancelFunc
-	closeWg    sync.WaitGroup
-	closed     atomic.Bool
+	window  *stmtWindow
+	storage stmtStorage
+	cancel  context.CancelFunc
+	closeWg sync.WaitGroup
+	closed  atomic.Bool
 }
 
 // NewStmtSummary creates a new StmtSummary from Config.
@@ -96,6 +95,7 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
+		window:                 newStmtWindow(timeNow(), uint(defaultMaxStmtCount)),
 		storage: newStmtLogStorage(&log.Config{
 			File: log.FileLogConfig{
 				Filename:   cfg.Filename,
@@ -105,41 +105,22 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 			},
 		}),
 	}
-	w := newStmtWindow(timeNow(), uint(s.optMaxStmtCount.Load()))
-	s.window.Store(w)
-	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
 	s.closeWg.Add(1)
-	go func() {
-		defer s.closeWg.Done()
-		tick := time.NewTicker(defaultRotateCheckInterval * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-tick.C:
-				// This is an internal periodic call to ensure that data is
-				// persisted even if no requests come in.
-				s.Add(nil)
-			}
-		}
-	}()
+	go s.rotateLoop()
 	return s, nil
 }
 
 // NewStmtSummary4Test creates a new StmtSummary for testing purposes.
 func NewStmtSummary4Test(maxStmtCount uint) *StmtSummary {
-	s := &StmtSummary{
+	return &StmtSummary{
 		optEnabled:             atomic2.NewBool(defaultEnabled),
 		optEnableInternalQuery: atomic2.NewBool(defaultEnableInternalQuery),
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(60 * 60 * 24 * 365), // 1 year
+		window:                 newStmtWindow(timeNow(), maxStmtCount),
 		storage:                &mockStmtStorage{},
 	}
-	s.window.Store(newStmtWindow(timeNow(), maxStmtCount))
-	return s
 }
 
 // Enabled returns whether the StmtSummary is enabled.
@@ -187,10 +168,9 @@ func (s *StmtSummary) SetMaxStmtCount(v uint32) error {
 		v = 1
 	}
 	s.optMaxStmtCount.Store(v)
-	w := s.window.Load().(*stmtWindow)
-	w.Lock()
-	_ = w.lru.SetCapacity(uint(v))
-	w.Unlock()
+	s.window.Lock()
+	_ = s.window.lru.SetCapacity(uint(v))
+	s.window.Unlock()
 
 	return nil
 }
@@ -233,31 +213,6 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 	if s.closed.Load() {
 		return
 	}
-	now := timeNow()
-	// The current window has expired and needs to be refreshed and persisted.
-	if now.After(s.window.Load().(*stmtWindow).begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
-		// Lock to avoid repeated persistence of the same window.
-		s.rotateLock.Lock()
-		// Double check to avoid repeated persistence of the same window.
-		if now.After(s.window.Load().(*stmtWindow).begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
-			cur := s.window.Swap(newStmtWindow(now, uint(s.MaxStmtCount()))).(*stmtWindow)
-			// Waiting for possible running `stmtWindow.add()`
-			cur.Lock()
-			size := cur.lru.Size()
-			cur.Unlock()
-			if size > 0 {
-				// Persist window asynchronously.
-				go s.storage.persist(cur, now)
-			}
-		}
-		s.rotateLock.Unlock()
-	}
-	if info == nil {
-		// If info == nil, this is an internal periodic call to ensure that
-		// data is persisted even if no requests come in. So here we don't
-		// need to do anything.
-		return
-	}
 	if !s.Enabled() {
 		// StmtSummary is not enabled.
 		return
@@ -268,21 +223,20 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		return
 	}
 	// Finally, add info to the current statistics window.
-	s.window.Load().(*stmtWindow).add(info)
+	s.window.add(info)
 }
 
 // Evicted returns the number of statements evicted for the current
 // time window. The returned type is one row consisting of three
 // columns: [BEGIN_TIME, END_TIME, EVICTED_COUNT].
 func (s *StmtSummary) Evicted() []types.Datum {
-	w := s.window.Load().(*stmtWindow)
-	w.Lock()
-	count := int64(w.evicted.count())
-	w.Unlock()
+	s.window.Lock()
+	count := int64(s.window.evicted.count())
+	s.window.Unlock()
 	if count == 0 {
 		return nil
 	}
-	begin := types.NewTime(types.FromGoTime(w.begin), mysql.TypeTimestamp, 0)
+	begin := types.NewTime(types.FromGoTime(s.window.begin), mysql.TypeTimestamp, 0)
 	end := types.NewTime(types.FromGoTime(timeNow()), mysql.TypeTimestamp, 0)
 	return types.MakeDatums(begin, end, count)
 }
@@ -290,22 +244,21 @@ func (s *StmtSummary) Evicted() []types.Datum {
 // Clear clears all data in the current window, and the data that
 // has been persisted will not be cleared.
 func (s *StmtSummary) Clear() {
-	s.window.Load().(*stmtWindow).clear()
+	s.window.clear()
 }
 
 // ClearInternal clears all internal queries of the current window,
 // and the data that has been persisted will not be cleared.
 func (s *StmtSummary) ClearInternal() {
-	w := s.window.Load().(*stmtWindow)
-	w.Lock()
-	defer w.Unlock()
-	for _, k := range w.lru.Keys() {
-		v, ok := w.lru.Get(k)
+	s.window.Lock()
+	defer s.window.Unlock()
+	for _, k := range s.window.lru.Keys() {
+		v, ok := s.window.lru.Get(k)
 		if !ok {
 			continue
 		}
 		if v.(*lockedStmtRecord).IsInternal {
-			w.lru.Delete(k)
+			s.window.lru.Delete(k)
 		}
 	}
 }
@@ -324,10 +277,9 @@ func (s *StmtSummary) Close() {
 // returned. Since the historical data has been persisted, we only
 // refer to the statistics data of the current window in memory.
 func (s *StmtSummary) GetMoreThanCntBindableStmt(cnt int64) []*stmtsummary.BindableStmt {
-	w := s.window.Load().(*stmtWindow)
-	w.Lock()
-	values := w.lru.Values()
-	w.Unlock()
+	s.window.Lock()
+	values := s.window.lru.Values()
+	s.window.Unlock()
 	stmts := make([]*stmtsummary.BindableStmt, 0, len(values))
 	for _, value := range values {
 		record := value.(*lockedStmtRecord)
@@ -367,6 +319,32 @@ func (s *StmtSummary) GetMoreThanCntBindableStmt(cnt int64) []*stmtsummary.Binda
 		}()
 	}
 	return stmts
+}
+
+func (s *StmtSummary) rotateLoop() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	defer s.closeWg.Done()
+	tick := time.NewTicker(defaultRotateCheckInterval * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			now := timeNow()
+			s.window.Lock()
+			// The current window has expired and needs to be refreshed and persisted.
+			if now.After(s.window.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
+				size := s.window.lru.Size()
+				if size > 0 {
+					// Persist window asynchronously.
+					go s.storage.persist(s.window, now)
+				}
+			}
+			s.window.Unlock()
+		}
+	}
 }
 
 // stmtWindow represents a single statistical window, which has a begin
