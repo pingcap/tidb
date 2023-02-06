@@ -25,6 +25,7 @@ import (
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 var (
@@ -253,7 +254,8 @@ func RotateSubWindow() {
 
 	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
 	if err != nil {
-		logutil.BgLogger().Info("Error exists when getting the SQL Metric.")
+		logutil.BgLogger().Info("Error exists when getting the SQL Metric.",
+			zap.Error(err))
 	}
 
 	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
