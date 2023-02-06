@@ -594,7 +594,7 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 	tk.MustExec("create placement policy z " +
 		"FOLLOWERS=1 " +
-		"SURVIVAL_PREFERENCES=\"[zone, region]\"")
+		"SURVIVAL_PREFERENCES=\"[region, zone]\"")
 	tk.MustExec("create placement policy y " +
 		"FOLLOWERS=3 " +
 		"CONSTRAINTS=\"[+region=bj]\" ")
@@ -627,7 +627,7 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	policyZ := testGetPolicyByName(t, tk.Session(), "z", true)
 	require.Equal(t, "z", policyZ.Name.L)
 	require.Equal(t, true, policyZ.ID != 0)
-	require.Equal(t, "[zone, region]", policyZ.SurvivalPreferences)
+	require.Equal(t, "[region, zone]", policyZ.SurvivalPreferences)
 
 	tbl := external.GetTableByName(t, tk, "test", "tt")
 	require.NotNil(t, tbl)

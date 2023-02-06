@@ -413,6 +413,26 @@ If a table is imported when `tidb_placement_mode='IGNORE'`, and the placement po
 
 The default value for `tidb_placement_mode` is `STRICT`. The option is an enum, and in future we may add support for a `WARN` mode.
 
+
+#### survival preference
+
+Some important data may need to store multiple copies across availability zones, so as to have high disaster recovery survivability, such as region-level survivability, `SURVIVAL_PREFERENCES` can provide survivability preference settings.
+
+The following example sets a constraint that the data try to satisfy the Survival Preferences setting:
+
+``` sql
+CREATE PLACEMENT POLICY multiregion
+    follower=4
+    PRIMARY_REGION="region1"
+    SURVIVAL_PREFERENCES="[region, zone]";
+```
+
+For tables with this policy set, the data will first meet the survival goal of cross-region data isolation, and then ensure the survival goal of cross-zone data isolation.
+
+> **Note:**
+>
+> `SURVIVAL_PREFERENCES` is equivalent to `LOCATION_LABELS` in PD. For more information, please refer to [Replica scheduling by topology label](https://docs.pingcap.com/tidb/dev/schedule-replicas-by-topology-labels#schedule-replicas-by-topology-labels).
+
 #### Ambiguous and edge cases
 
 The following two policies are not identical:
@@ -491,6 +511,7 @@ In this case the default rules will apply to placement, and the output from `SHO
 - `FOLLOWER_CONSTRAINTS`
 - `LEARNER_CONSTRAINTS`
 - `PLACEMENT POLICY`
+- `SURVIVAL_PREFERENCE`
 
 For a more complex rule using partitions, consider the following example:
 

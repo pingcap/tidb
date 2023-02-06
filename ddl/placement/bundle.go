@@ -124,20 +124,27 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			rules = append(rules, rule)
 		}
 	}
+	labels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
+	if err != nil {
+		return nil, err
+	}
+	for _, rule := range rules {
+		rule.LocationLabels = labels
+	}
+	return &Bundle{Rules: rules}, nil
+}
 
-	survivalPreferenceStr := options.SurvivalPreferences
+// newLocationLabelsFromSurvivalPreferences will set the survival preference for all rules.
+func newLocationLabelsFromSurvivalPreferences(survivalPreferenceStr string) ([]string, error) {
 	if len(survivalPreferenceStr) > 0 {
 		labels := []string{}
 		err := yaml.UnmarshalStrict([]byte(survivalPreferenceStr), &labels)
 		if err != nil {
 			return nil, ErrInvalidSurvivalPreferenceFormat
 		}
-		for _, rule := range rules {
-			rule.LocationLabels = labels
-		}
+		return labels, nil
 	}
-
-	return &Bundle{Rules: rules}, nil
+	return nil, nil
 }
 
 // NewBundleFromSugarOptions will transform syntax sugar options into the bundle.
@@ -168,27 +175,16 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 
 	var rules []*Rule
 
-	survivalPreferenceStr := options.SurvivalPreferences
-	var locationLabels []string
-	if len(survivalPreferenceStr) > 0 {
-		labels := []string{}
-		err := yaml.UnmarshalStrict([]byte(survivalPreferenceStr), &labels)
-		if err != nil {
-			return nil, ErrInvalidConstraintsFormat
-		}
-
-		locationLabels = labels
-
+	locationLabels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
+	if err != nil {
+		return nil, err
 	}
 
 	// in case empty primaryRegion and regions, just return an empty bundle
-	// FIXME: @nolouch
 	if primaryRegion == "" && len(regions) == 0 {
 		rules = append(rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
-		if len(survivalPreferenceStr) > 0 && len(locationLabels) > 0 {
-			for _, rule := range rules {
-				rule.LocationLabels = locationLabels
-			}
+		for _, rule := range rules {
+			rule.LocationLabels = locationLabels
 		}
 		return &Bundle{Rules: rules}, nil
 	}
@@ -227,10 +223,9 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		}
 	}
 
-	if len(survivalPreferenceStr) > 0 && len(locationLabels) > 0 {
-		for _, rule := range rules {
-			rule.LocationLabels = locationLabels
-		}
+	// set location labels
+	for _, rule := range rules {
+		rule.LocationLabels = locationLabels
 	}
 
 	return &Bundle{Rules: rules}, nil
