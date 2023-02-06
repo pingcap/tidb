@@ -21,11 +21,9 @@ package session
 import (
 	"context"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	osuser "os/user"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -442,7 +441,19 @@ const (
 	);`
 	// CreateMDLView is a view about metadata locks.
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
-	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
+		SELECT job_id,
+			db_name,
+			table_name,
+			query,
+			session_id,
+			txnstart,
+			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
+		FROM information_schema.ddl_jobs,
+			information_schema.cluster_tidb_trx,
+			information_schema.cluster_processlist
+		WHERE (ddl_jobs.state != 'synced' and ddl_jobs.state != 'cancelled')
+			AND Find_in_set(ddl_jobs.table_id, cluster_tidb_trx.related_table_ids)
+			AND cluster_tidb_trx.session_id = cluster_processlist.id
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -780,11 +791,13 @@ const (
 	version110 = 110
 	// version111 adds the table tidb_ttl_task and tidb_ttl_job_history
 	version111 = 111
+	// version112 modifies the view tidb_mdl_view
+	version112 = 112
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version111
+var currentBootstrapVersion int64 = version112
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -903,6 +916,7 @@ var (
 		upgradeToVer109,
 		upgradeToVer110,
 		upgradeToVer111,
+		upgradeToVer112,
 	}
 )
 
@@ -2263,6 +2277,13 @@ func upgradeToVer111(s Session, ver int64) {
 	doReentrantDDL(s, CreateTTLJobHistory)
 }
 
+func upgradeToVer112(s Session, ver int64) {
+	if ver >= version112 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2407,12 +2428,6 @@ func doBootstrapSQLFile(s Session) {
 	}
 }
 
-// inTestSuite checks if we are bootstrapping in the context of tests.
-// There are some historical differences in behavior between tests and non-tests.
-func inTestSuite() bool {
-	return flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
-}
-
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 func doDMLWorks(s Session) {
@@ -2457,11 +2472,11 @@ func doDMLWorks(s Session) {
 				vVal = variable.On
 			}
 		case variable.TiDBMemOOMAction:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.OOMActionLog
 			}
 		case variable.TiDBEnableAutoAnalyze:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.Off
 			}
 		// For the following sysvars, we change the default
@@ -2521,8 +2536,7 @@ func mustExecute(s Session, sql string, args ...interface{}) {
 	_, err := s.ExecuteInternal(ctx, sql, args...)
 	defer cancel()
 	if err != nil {
-		debug.PrintStack()
-		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
+		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 

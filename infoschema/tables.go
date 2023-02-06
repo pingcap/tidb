@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -824,6 +825,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -1591,11 +1593,10 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 }
 
 var tableResourceGroupsCols = []columnInfo{
-	{name: "GROUP_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "GROUP_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
-	{name: "RRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
-	{name: "WRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
-	// {name: "BURSTABLE", tp: mysql.TypeVarchar, size: 10},
+	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
+	{name: "RU_PER_SEC", tp: mysql.TypeLonglong, size: 21},
+	{name: "RU_TOKENS", tp: mysql.TypeLonglong, size: 21},
+	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.

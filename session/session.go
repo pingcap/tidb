@@ -25,7 +25,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	stderrs "errors"
-	"flag"
 	"fmt"
 	"math"
 	"math/rand"
@@ -90,6 +89,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
@@ -1564,6 +1564,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
 		p = explain.TargetPlan
 	}
+
 	pi := util.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
@@ -1585,6 +1586,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ProtectedTSList:       &s.sessionVars.ProtectedTSList,
+		ResourceGroupName:     s.sessionVars.ResourceGroupName,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -2193,6 +2195,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		s.txn.changeToInvalid()
 	} else {
 		recordSet, err = runStmt(ctx, s, stmt)
+	}
+
+	// Observe the resource group query total counter if the resource control is enabled and the
+	// current session is attached with a resource group.
+	resourceGroupName := s.GetSessionVars().ResourceGroupName
+	if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
+		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
 	}
 
 	if err != nil {
@@ -3083,39 +3092,27 @@ func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	}
 }
 
-// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg, tidb_ddl_history, tidb_ddl_backfill and tidb_ddl_backfill_history.
-func InitDDLJobTables(store kv.Storage) error {
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history, or tidb_ddl_backfill and tidb_ddl_backfill_history.
+func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
+	targetTables := DDLJobTables
+	if targetVer == meta.BackfillTableVersion {
+		targetTables = BackfillTables
+	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		exists, err := t.CheckDDLTableExists()
-		if err != nil {
+		tableVer, err := t.CheckDDLTableVersion()
+		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
 		}
-		if exists {
-			return initBackfillJobTables(store, t, dbID)
-		}
-
-		if err = createAndSplitTables(store, t, dbID, DDLJobTables); err != nil {
+		if err = createAndSplitTables(store, t, dbID, targetTables); err != nil {
 			return err
 		}
-		if err = initBackfillJobTables(store, t, dbID); err != nil {
-			return err
-		}
-		return t.SetDDLTables()
+		return t.SetDDLTables(targetVer)
 	})
-}
-
-// initBackfillJobTables is to create tidb_ddl_backfill and tidb_ddl_backfill_history.
-func initBackfillJobTables(store kv.Storage, t *meta.Meta, dbID int64) error {
-	tblExist, err := t.CheckTableExists(dbID, BackfillTables[0].id)
-	if err != nil || tblExist {
-		return errors.Trace(err)
-	}
-	return createAndSplitTables(store, t, dbID, BackfillTables)
 }
 
 func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []tableBasicInfo) error {
@@ -3149,8 +3146,8 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		exists, err := t.CheckMDLTableExists()
-		if err != nil || exists {
+		ver, err := t.CheckDDLTableVersion()
+		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
@@ -3175,7 +3172,7 @@ func InitMDLTable(store kv.Storage) error {
 			return errors.Trace(err)
 		}
 
-		return t.SetMDLTables()
+		return t.SetDDLTables(meta.MDLTableVersion)
 	})
 }
 
@@ -3252,11 +3249,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
-	err := InitDDLJobTables(store)
+	err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
 	if err != nil {
 		return nil, err
 	}
 	err = InitMDLTable(store)
+	if err != nil {
+		return nil, err
+	}
+	err = InitDDLJobTables(store, meta.BackfillTableVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -3319,7 +3320,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
+	if config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler {
 		// Invalid client-go tiflash_compute store cache if necessary.
 		err = dom.WatchTiFlashComputeNodeChange()
 		if err != nil {
@@ -4197,7 +4198,7 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+	if intest.InTest {
 		panic("unexpected no source type context, if you see this error, " +
 			"the `RequestSourceTypeKey` is missing in your context")
 	} else {
