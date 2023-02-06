@@ -248,7 +248,7 @@ func (t *mockScanTask) selectSQL(i int) string {
 	if i == 0 {
 		op = ">="
 	}
-	return fmt.Sprintf("SELECT LOW_PRIORITY `_tidb_rowid` FROM `test`.`t1` WHERE `_tidb_rowid` %s %d AND `time` < '1970-01-01 08:00:00' ORDER BY `_tidb_rowid` ASC LIMIT 3", op, i*100)
+	return fmt.Sprintf("SELECT LOW_PRIORITY `_tidb_rowid` FROM `test`.`t1` WHERE `_tidb_rowid` %s %d AND `time` < FROM_UNIXTIME(0) ORDER BY `_tidb_rowid` ASC LIMIT 3", op, i*100)
 }
 
 func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlScanTaskExecResult {
