@@ -2951,7 +2951,9 @@ func TestSandBoxMode(t *testing.T) {
 	}
 }
 
-func TestIssue40979(t *testing.T) {
+// See: https://github.com/pingcap/tidb/issues/40979
+// Reusing memory of `chunk.Chunk` may cause some systems variable's memory value to be modified unexpectedly.
+func TestChunkReuseCorruptSysVarString(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
 	db, err := sql.Open("mysql", ts.getDSN())
