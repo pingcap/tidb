@@ -823,7 +823,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		if len(cop.idxMergePartPlans) == 0 {
 			// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 			// because handles would be reordered before being sent to table scan.
-			if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil || len(cop.rootTaskConds) == 0 {
+			if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
 				// When limit is pushed down, we should remove its offset.
 				newCount := p.Offset + p.Count
 				childProfile := cop.plan().statsInfo()
