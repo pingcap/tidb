@@ -180,7 +180,6 @@ func rollingbackDropColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-
 	if job.State != model.JobStateNone && len(cidxInfos) > 0 && colInfo.State == model.StatePublic {
 		// In creating temp composite indexes
 		ctidxInfos := getTempCompositeIndexes(tblInfo, cidxInfos)

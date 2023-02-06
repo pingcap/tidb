@@ -355,6 +355,7 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 					done         bool
 					allDone      bool
 					reorgIdxInfo *model.IndexInfo
+					originArgs   []interface{}
 				)
 				// Get current reorging index
 				reorgIdxInfo, allDone = getCurrentReorgIndex(job, ctidxInfos)
@@ -362,6 +363,7 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 					// All indexes are reorged
 					break
 				}
+				originArgs = job.Args
 
 				// Do reorg jobs
 				if job.MultiSchemaInfo != nil {
@@ -372,6 +374,14 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 
 				if !done {
 					// Current reorg not finish
+					if err != nil {
+						if kv.ErrKeyExists.Equal(err) {
+							err = kv.ErrKeyExists.GenWithStackByArgs("", trimTempCompositeIdxPrefix(reorgIdxInfo.Name.O))
+						}
+						// If reorg job got error the origin process will change job.Args for create index job support.
+						// So change the job.Args back to origin is required
+						job.Args = originArgs
+					}
 					return ver, err
 				} else {
 					// Current reorg finish

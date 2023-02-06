@@ -247,9 +247,15 @@ testpkg: failpoint-enable
 ifeq ("$(pkg)", "")
 	@echo "Require pkg parameter"
 else
+ifeq ("$(case)", "")
 	@echo "Running unit test for github.com/pingcap/tidb/$(pkg)"
 	@export log_level=fatal; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -tags 'intest' -v -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -tags 'intest' -v -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -test.run "TestDropColumnWithUniqCompositeIndex" || { $(FAILPOINT_DISABLE); exit 1; }
+else
+	@echo "Running test case $(case) for github.com/pingcap/tidb/$(pkg)"
+	@export log_level=fatal; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -tags 'intest' -v -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -test.run "$(case)" || { $(FAILPOINT_DISABLE); exit 1; }
+endif
 endif
 	@$(FAILPOINT_DISABLE)
 

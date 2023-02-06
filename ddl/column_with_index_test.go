@@ -52,6 +52,21 @@ func TestDropColumnWithMultiCompositeIndex(t *testing.T) {
 	tk.MustQuery("select b, c from t where c > 2").Check(testkit.Rows("3 3"))
 }
 
+func TestDropColumnWithUniqCompositeIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, c int, unique index i_ab(a, b))")
+	tk.MustExec("insert into t1 values(1, 1, 1), (2, 1, 2), (3, 1, 3)")
+	tk.MustGetErrCode("alter table t1 drop column a", errno.ErrDupEntry)
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int, b int, c int, unique index i_ab(a, b))")
+	tk.MustExec("insert into t2 values(1, 1, 1), (2, 1, 2), (3, 1, 3)")
+	tk.MustExec("alter table t2 drop column b")
+}
+
 var cancelTestCases = []testCancelJob{
 	{"alter table t_cidx drop column a", true, model.StateCreateIndexDeleteOnly, false, true, nil},
 	{"alter table t_cidx drop column a", true, model.StateCreateIndexWriteOnly, false, true, nil},
