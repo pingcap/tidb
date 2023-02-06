@@ -54,7 +54,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -89,6 +88,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	tlsutil "github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -1290,10 +1290,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		connIdleDurationHistogramNotInTxn.Observe(t.Sub(cc.lastActive).Seconds())
 	}
 
-	span := opentracing.StartSpan("server.dispatch")
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
-		ctx = opentracing.ContextWithSpan(ctx, span)
+		var r tracing.Region
+		r, ctx = tracing.StartRegionEx(ctx, "server.dispatch")
+		defer r.End()
 	}
 
 	var cancelFunc context.CancelFunc
@@ -1340,7 +1341,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		}
 
 		cc.server.releaseToken(token)
-		span.Finish()
 		cc.lastActive = time.Now()
 	}()
 
