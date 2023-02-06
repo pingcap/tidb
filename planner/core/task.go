@@ -1032,6 +1032,10 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		return true
 	}
 	var (
+		selOnIdxScan *PhysicalSelection
+		selOnTblScan *PhysicalSelection
+		selSelectivity float64
+
 		idxScan *PhysicalIndexScan
 		tblScan *PhysicalTableScan
 		tblInfo *model.TableInfo
@@ -1044,6 +1048,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 		finalIdxScanPlan := copTsk.indexPlan
 		for len(finalIdxScanPlan.Children()) > 0 && finalIdxScanPlan.Children()[0] != nil {
+			selOnIdxScan, _ = finalIdxScanPlan.(*PhysicalSelection)
 			finalIdxScanPlan = finalIdxScanPlan.Children()[0]
 		}
 		idxScan = finalIdxScanPlan.(*PhysicalIndexScan)
@@ -1056,10 +1061,18 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 		finalTblScanPlan := copTsk.tablePlan
 		for len(finalTblScanPlan.Children()) > 0 {
+			selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
 			finalTblScanPlan = finalTblScanPlan.Children()[0]
 		}
 		tblScan = finalTblScanPlan.(*PhysicalTableScan)
 		tblInfo = tblScan.Table
+	}
+
+	if selOnIdxScan != nil && idxScan.statsInfo().RowCount > 0 {
+		selSelectivity = selOnIdxScan.statsInfo().RowCount / idxScan.statsInfo().RowCount
+	}
+	if idxScan == nil && selOnTblScan != nil && tblScan.statsInfo().RowCount > 0 {
+		selSelectivity = selOnTblScan.statsInfo().RowCount / tblScan.statsInfo().RowCount
 	}
 
 	pi := tblInfo.GetPartitionInfo()
@@ -1083,6 +1096,13 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+
+		child := pushedLimit.Children()[0]
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		if selSelectivity > 0 && selSelectivity < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivity
+			idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
+		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
 			return nil, false
@@ -1111,6 +1131,13 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copTsk.tablePlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+
+		child := pushedLimit.Children()[0]
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		if selSelectivity > 0 && selSelectivity < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivity
+			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
+		}
 	} else {
 		return nil, false
 	}
