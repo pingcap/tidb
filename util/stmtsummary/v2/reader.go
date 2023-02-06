@@ -526,7 +526,8 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 		}
 		file, err := openStmtFile(path)
 		if err != nil {
-			return err
+			logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", path))
+			return nil
 		}
 		if len(timeRanges) == 0 {
 			files = append(files, file)
