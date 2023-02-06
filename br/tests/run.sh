@@ -48,7 +48,6 @@ sleep 2
 for casename in $SELECTED_TEST_NAME; do
     script=tests/$casename/run.sh
     echo "*===== Running test $script... =====*"
-    RUN_TIFLASH=false
     INTEGRATION_TEST=1 \
     TEST_DIR="$TEST_DIR" \
     TEST_NAME="$casename" \
