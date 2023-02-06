@@ -16,6 +16,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -48,7 +49,6 @@ import (
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 )
 
 type clusterResourceCheckItem struct {
@@ -733,11 +733,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                10 * time.Second,
-				Timeout:             3 * time.Second,
-				PermitWithoutStream: false,
-			}),
+			config.DefaultGrpcKeepaliveParams,
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
@@ -785,53 +781,63 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 
 	// check etcd KV of CDC >= v6.2
 	cdcPrefix := "/tidb/cdc/"
-	capturePath := []byte("/__cdc_meta__/capture/")
+	changefeedPath := []byte("/changefeed/info/")
+
 	nameSet := make(map[string][]string, 1)
-	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	for _, kv := range resp.Kvs {
-		// example: /tidb/cdc/<clusterID>/__cdc_meta__/capture/<captureID>
+		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
 		k := kv.Key[len(cdcPrefix):]
-		clusterID, captureID, found := bytes.Cut(k, capturePath)
-		if found {
-			nameSet[string(clusterID)] = append(nameSet[string(clusterID)], string(captureID))
+		clusterAndNamespace, changefeedID, found := bytes.Cut(k, changefeedPath)
+		if !found {
+			continue
 		}
+		if !isActiveCDCChangefeed(kv.Value) {
+			continue
+		}
+
+		nameSet[string(clusterAndNamespace)] = append(nameSet[string(clusterAndNamespace)], string(changefeedID))
 	}
 	if len(nameSet) == 0 {
 		// check etcd KV of CDC <= v6.1
-		cdcPrefixV61 := "/tidb/cdc/capture/"
-		resp, err = ci.etcdCli.Get(ctx, cdcPrefixV61, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+		cdcPrefixV61 := "/tidb/cdc/changefeed/info/"
+		resp, err = ci.etcdCli.Get(ctx, cdcPrefixV61, clientv3.WithPrefix())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		for _, kv := range resp.Kvs {
-			// example: /tidb/cdc/capture/<captureID>
+			// example: /tidb/cdc/changefeed/info/<changefeedID>
 			k := kv.Key[len(cdcPrefixV61):]
 			if len(k) == 0 {
 				continue
 			}
+			if !isActiveCDCChangefeed(kv.Value) {
+				continue
+			}
+
 			nameSet["<nil>"] = append(nameSet["<nil>"], string(k))
 		}
 	}
 
 	if len(nameSet) > 0 {
-		var captureMsgBuf strings.Builder
-		captureMsgBuf.WriteString("found CDC capture(s): ")
+		var changefeedMsgBuf strings.Builder
+		changefeedMsgBuf.WriteString("found CDC changefeed(s): ")
 		isFirst := true
 		for clusterID, captureIDs := range nameSet {
 			if !isFirst {
-				captureMsgBuf.WriteString(", ")
+				changefeedMsgBuf.WriteString(", ")
 			}
 			isFirst = false
-			captureMsgBuf.WriteString("clusterID: ")
-			captureMsgBuf.WriteString(clusterID)
-			captureMsgBuf.WriteString(" captureID(s): ")
-			captureMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
+			changefeedMsgBuf.WriteString("cluster/namespace: ")
+			changefeedMsgBuf.WriteString(clusterID)
+			changefeedMsgBuf.WriteString(" changefeed(s): ")
+			changefeedMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
 		}
-		captureMsgBuf.WriteString(",")
-		errorMsg = append(errorMsg, captureMsgBuf.String())
+		changefeedMsgBuf.WriteString(",")
+		errorMsg = append(errorMsg, changefeedMsgBuf.String())
 	}
 
 	if len(errorMsg) > 0 {
@@ -844,6 +850,28 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	}
 
 	return theResult, nil
+}
+
+type onlyState struct {
+	State string `json:"state"`
+}
+
+func isActiveCDCChangefeed(jsonBytes []byte) bool {
+	s := onlyState{}
+	err := json.Unmarshal(jsonBytes, &s)
+	if err != nil {
+		// maybe a compatible issue, skip this key
+		log.L().Error("unmarshal etcd value failed when check CDC changefeed, will skip this key",
+			zap.ByteString("value", jsonBytes),
+			zap.Error(err))
+		return false
+	}
+	switch s.State {
+	case "normal", "stopped", "error":
+		return true
+	default:
+		return false
+	}
 }
 
 type schemaCheckItem struct {

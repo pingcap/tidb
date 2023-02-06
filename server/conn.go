@@ -668,12 +668,12 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 
 	switch resp.AuthPlugin {
 	case mysql.AuthCachingSha2Password:
-		resp.Auth, err = cc.authSha(ctx)
+		resp.Auth, err = cc.authSha(ctx, resp)
 		if err != nil {
 			return err
 		}
 	case mysql.AuthTiDBSM3Password:
-		resp.Auth, err = cc.authSM3(ctx)
+		resp.Auth, err = cc.authSM3(ctx, resp)
 		if err != nil {
 			return err
 		}
@@ -727,13 +727,20 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 }
 
 // authSha implements the caching_sha2_password specific part of the protocol.
-func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
+func (cc *clientConn) authSha(ctx context.Context, resp handshakeResponse41) ([]byte, error) {
 	const (
 		shaCommand       = 1
 		requestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
 		fastAuthOk       = 3
 		fastAuthFail     = 4
 	)
+
+	// If no password is specified, we don't send the FastAuthFail to do the full authentication
+	// as that doesn't make sense without a password and confuses the client.
+	// https://github.com/pingcap/tidb/issues/40831
+	if len(resp.Auth) == 0 {
+		return []byte{}, nil
+	}
 
 	// Currently we always send a "FastAuthFail" as the cached part of the protocol isn't implemented yet.
 	// This triggers the client to send the full response.
@@ -757,8 +764,16 @@ func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
 }
 
 // authSM3 implements the tidb_sm3_password specific part of the protocol.
-func (cc *clientConn) authSM3(ctx context.Context) ([]byte, error) {
-	err := cc.writePacket([]byte{0, 0, 0, 0, 1, 4})
+// tidb_sm3_password is very similar to caching_sha2_password.
+func (cc *clientConn) authSM3(ctx context.Context, resp handshakeResponse41) ([]byte, error) {
+	// If no password is specified, we don't send the FastAuthFail to do the full authentication
+	// as that doesn't make sense without a password and confuses the client.
+	// https://github.com/pingcap/tidb/issues/40831
+	if len(resp.Auth) == 0 {
+		return []byte{}, nil
+	}
+
+	err := cc.writePacket([]byte{0, 0, 0, 0, 1, 4}) // fastAuthFail
 	if err != nil {
 		logutil.Logger(ctx).Error("authSM3 packet write failed", zap.Error(err))
 		return nil, err
