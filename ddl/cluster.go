@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -53,6 +52,8 @@ import (
 var pdScheduleKey = []string{
 	"merge-schedule-limit",
 }
+
+var FlashbackGetMinSafeTimeTimeout = time.Minute // 1min
 
 const (
 	flashbackMaxBackoff = 1800000         // 1800s
@@ -99,6 +100,16 @@ func recoverPDSchedule(pdScheduleParam map[string]interface{}) error {
 	return infosync.SetPDScheduleConfig(context.Background(), pdScheduleParam)
 }
 
+func getMinSafeTS(s kv.Storage) time.Time {
+	minSafeTS := s.GetMinSafeTS(kv.GlobalTxnScope)
+	// Inject mocked SafeTS for test.
+	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
+		injectTS := val.(int)
+		minSafeTS = uint64(injectTS)
+	})
+	return oracle.GetTimeFromTS(minSafeTS)
+}
+
 // ValidateFlashbackTS validates that flashBackTS in range [gcSafePoint, currentTS).
 func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBackTS uint64) error {
 	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
@@ -111,12 +122,21 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 		}
 		currentTS = currentVer.Ver
 	}
-	if oracle.GetTimeFromTS(flashBackTS).After(oracle.GetTimeFromTS(currentTS)) {
+	oracleFlashbackTS := oracle.GetTimeFromTS(flashBackTS)
+	if oracleFlashbackTS.After(oracle.GetTimeFromTS(currentTS)) {
 		return errors.Errorf("cannot set flashback timestamp to future time")
 	}
-	if oracle.GetTimeFromTS(flashBackTS).After(expression.GetMinSafeTime(sctx)) {
-		return errors.Errorf("cannot set flashback timestamp to too close to present time")
+
+	start := time.Now()
+	minSafeTime := getMinSafeTS(sctx.GetStore())
+	for oracleFlashbackTS.After(minSafeTime) {
+		if time.Since(start) >= FlashbackGetMinSafeTimeTimeout {
+			return errors.Errorf("cannot set flashback timestamp after min-resolved-ts(%s)", minSafeTime)
+		}
+		time.Sleep(time.Second)
+		minSafeTime = getMinSafeTS(sctx.GetStore())
 	}
+
 	gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
 	if err != nil {
 		return err

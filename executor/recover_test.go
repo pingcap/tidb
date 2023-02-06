@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -307,9 +308,7 @@ func TestRecoverClusterMeetError(t *testing.T) {
 
 	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	// Get GC safe point error.
@@ -346,14 +345,19 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	errorMsg = fmt.Sprintf("[ddl:-1]Detected TiDB upgrade during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).String())
 	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS)), errorMsg)
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 }
 
 func TestFlashbackWithSafeTs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
+	originTimeout := ddl.FlashbackGetMinSafeTimeTimeout
+	ddl.FlashbackGetMinSafeTimeTimeout = 0
+	defer func() {
+		ddl.FlashbackGetMinSafeTimeTimeout = originTimeout
+	}()
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
 
@@ -380,9 +384,8 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 			compareWithSafeTS: 0,
 		},
 		{
-			name: "10 seconds ago to now, safeTS 5 secs ago",
-			// Add flashbackTs.Add(-500*time.Millisecond) to avoid flashback time range overlapped.
-			sql:               fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs.Add(-500*time.Millisecond)),
+			name:              "10 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs),
 			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)),
 			compareWithSafeTS: -1,
 		},
@@ -395,19 +398,51 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	}
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		if testcase.compareWithSafeTS == 1 {
 			tk.MustContainErrMsg(testcase.sql,
-				"cannot set flashback timestamp to too close to present time")
+				"cannot set flashback timestamp after min-resolved-ts")
 		} else {
 			tk.MustExec(testcase.sql)
 		}
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+}
+
+func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point.
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	time.Sleep(time.Second)
+	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	flashbackTs := oracle.GetTimeFromTS(ts)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", oracle.GoTimeToTS(flashbackTs.Add(-10*time.Minute)))))
+
+	go func() {
+		time.Sleep(2 * time.Second)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", oracle.GoTimeToTS(flashbackTs.Add(10*time.Minute)))))
+	}()
+
+	start := time.Now()
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
+	duration := time.Since(start)
+	require.Greater(t, duration, 2*time.Second)
+	require.Less(t, duration, 5*time.Second)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
 }
 
