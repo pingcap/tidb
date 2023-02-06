@@ -53,7 +53,7 @@ Amazon Elastic Block Store ([Amazon EBS](https://docs.aws.amazon.com/AWSEC2/late
 
 TiDB is a distributed database providing horizontal scalability, strong consistency, and high availability. It is designed to work in the cloud to make deployment, provisioning, operations, and maintenance flexible. 
 
-Current TiDB Backup Restore solution provides high-performance backup and restore speeds for large-scale TiDB Clusters, however, the impact to  the cluster being backed up is notable for many customers and hard to reduce based on current implementation.  By leveraging the  Amazon EBS snapshot feature, we can provide a block-level based backup and recovery solution with transaction consistency and minimize the impact to the target TiDB cluster..
+Current TiDB Backup Restore solution provides high-performance backup and restore speeds for large-scale TiDB Clusters, however, the impact to the cluster being backed up is notable for many customers and hard to reduce based on current implementation. By leveraging the Amazon EBS snapshot feature, we can provide a block-level based backup and recovery solution with transaction consistency and minimize the impact to the target TiDB cluster..
 
 
 ## Goal
@@ -103,12 +103,12 @@ The Backup & Restore Controller detects the CRD. Then, creates a new POD to load
 1. The backup started by a backup CRD where the customer submitted.
 2. TiDB Operator creates/starts the Backup Worker (Job in the above figure) based on the CRD.
 3. The Backup Worker gets the global resolved_ts of the TiDB cluster through PD and saves it into metadata.
-4. The Backup Worker queries the topology information of the TiDB cluster and the corresponding EBS volume info of all TiKV nodes  and saves them in metadata. The Backup Worker configures the PD to prohibit operations such as replica, merge, and GC etc, and waits for the completion of the ongoing replica scheduling.
+4. The Backup Worker queries the topology information of the TiDB cluster and the corresponding EBS volume info of all TiKV nodes and saves them in metadata. The Backup Worker configures the PD to prohibit operations such as replica, merge, and GC etc, and waits for the completion of the ongoing replica scheduling.
 5. The Backup Worker initiates an EBS snapshot to all nodes, and records the snapshot information in metadata.
 6. The Backup Worker reconfigures the PD to get it back to its original state where we start backup.
 7. The Backup Worker queries the status of the snapshot in each node, and waits until all snapshot states changed from pending to completed. The Backup Worker is automatically destroyed according to the configured CRD policy.
 
-Notice:  If the user wants to delete the backup (snapshots and metadata), the user can simply remove the backup CR from TiDB Operator.
+Notice: If the user wants to delete the backup (snapshots and metadata), the user can simply remove the backup CR from TiDB Operator.
 
 
 ### **Restore Worker**
@@ -124,7 +124,7 @@ Notice:  If the user wants to delete the backup (snapshots and metadata), the us
 3. The Backup Worker retrieves the global resolved_ts and topology diagram of the TiDB cluster from S3 backup metadata.
 4. The Restore Worker checks the topology of the restored TiDB Cluster, (especially the number of TiKVs, volume). If it matches the topology in the metadata, the Restore Worker restores and mounts the snapshot to the restored TiDB Cluster from S3, otherwise it reports an error and exits.
 5. The Restore Worker configures the PD to prohibit operations the same as Backup Worker do. 
-6. The Restore Worker uses the global resolved_ts to invoke BR Recover component for  handling the data of the TiKV node into a consistent state.
+6. The Restore Worker uses the global resolved_ts to invoke BR Recover component for handling the data of the TiKV node into a consistent state.
 7. The Restore Worker reconfigures the PD to get it back to its original state where we start backup. The TiDB cluster is online, and then The Restore Worker is automatically destroyed according to the CRD policy. The Restoration is finished.
 
 
@@ -145,7 +145,7 @@ Step 1 assume time &lt; 5 minute (included fault tolerance, e.g. retry)
 
 Step 2 TiKV already maintains the resolved_ts component.
 
-Step 3 snapshot depends on the customer's EBS volume type and data change. Excluding full snapshot at first time, one day data change with gp3 type may takes ~ 10 minutes in our test.  
+Step 3 snapshot depends on the customer's EBS volume type and data change. Excluding full snapshot at first time, one day data change with gp3 type may takes ~ 10 minutes in our test.
 
 
 ### Restore
@@ -162,7 +162,7 @@ Step 1, assume takes &lt; 30 minutes
 
 Step 2, assume takes &lt; 10 minutes, since the snapshot taken parallelly, the unalign raft log among peers in a Region is few.
 
-Step 3, assume takes &lt; 30 minutes,  Resolved data by removing all key-values that have versions larger than resolved_ts. And also resolved data through the raft layer,  not to delete from disk directly.
+Step 3, assume takes &lt; 30 minutes, Resolved data by removing all key-values that have versions larger than resolved_ts. And also resolved data through the raft layer, not to delete from disk directly.
 
 Note: For EBS volume fully initialized, there are extra steps suggested by [AWS](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-initialize.html). 
 
@@ -199,7 +199,7 @@ TiDB->TiKV->OS->EBS
    </td>
    <td>TiDB
    </td>
-   <td>Refer to the transaction driver of TiDB,  which has ACID properties. 
+   <td>Refer to the transaction driver of TiDB, which has ACID properties. 
    </td>
   </tr>
   <tr>
@@ -284,7 +284,7 @@ For each Raft Group, we process the meta and data of the Region through BR Regio
 
 
 
-1. In the restore phase,  put TiKV in the recovery mode, and TiKV reports all peer lists to BR.
+1. In the restore phase, put TiKV in the recovery mode, and TiKV reports all peer lists to BR.
 2. For each raft group, find the peer with most reliable log in the Region, and force it to be the leader. For other peers to be silent, start the raft state machine. leader selection refer to [BR Restore](#br-restore)
 3. Wait for all peers in the Region until applied index == last index, and then set the correct raft status to exit data RegionRecover recovery.
 * Region data
@@ -694,7 +694,7 @@ br restore full --type=aws-ebs --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&
 3. Based on TiKV-StatefulSet to create the Pods / PVs / PVCs for extracting each store_id and the corresponding volume information, including volume ID, configuration type and the path to mount to the container, pay attention to the specific provisioner type here, and the volume_id will be distinguished. If the volume uses [AWS-EBS-CSI-driver](https://pingcap.feishu.cn/wiki/wikcnBbTz00zcig0FlErkCMJCKf#) whose Type is CSI and Driver is [ebs.csi.aws.com](http://ebs.csi.aws.com/), it will be extracted from Source.VolumeHandle after mapping.
 4. Create a Job through Backup Manager, pass in the above meta information structure, configure storage such as S3, process permissions such as iam + serviceaccount or secret, and finally call BR to execute the call [EC2-CreateSnapshot](https://docs.aws.amazon.com/sdk-for-go/api/service/ec2/#EC2.CreateSnapshot) to create a snapshot, and complete the PD scheduler and GC at the same time. management to ensure volume snapshots are performed at safe points.
 5. The actual volume snapshot progress is updated by the ticker to report the backup progress until the backup is completed.
-6.  Wait for the BR execution to complete, report the update backup completion status, and exit the job.
+6. Wait for the BR execution to complete, report the update backup completion status, and exit the job.
 
 **Restore design**
 
@@ -807,7 +807,7 @@ In recover mode, data consistency recovery is mainly completed.
 
 
 ### BR - PD
-1. enable  snapshot recovery marker in pd
+1. enable snapshot recovery marker in pd
 
 ```bash
 curl "172.16.5.31:3279/pd/api/v1/admin/snapshot-recovering" -XPOST
@@ -928,7 +928,7 @@ During the BR ResolvedData phase, delete data interface:
         uint64 resolved_key_count = 3; // reserved for summary of restore 
         // cursor of delete key.commit_ts, reserved for progress of restore
         // progress is (current_commit_ts - resolved_ts) / (backup_ts - resolved_ts) x 100%
-        uint64 current_commit_ts = 4;   
+        uint64 current_commit_ts = 4;
     }
 
     // execute delete data from kv db
@@ -948,7 +948,7 @@ backup full --type=aws-ebs --pd "172.16.2.1:2379" -s "s3:/bucket/backup_folder" 
 volume prepare phase
 
 ```bash
-br restore full  --type=aws-ebs --prepare --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&sk=xx..." --output=topology.json
+br restore full --type=aws-ebs --prepare --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&sk=xx..." --output=topology.json
 ```
 
 recovery phase
@@ -973,7 +973,7 @@ br restore full --type=aws-ebs --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&
 2. Failed to stop PD scheduler, try again. If multiple retries fail within some minutes, the entire backup fails, and then stops snapshot and removes metadata. At the same time, delete snapshot already taken.
 3. Snapshot takes too long or failure
 
-      In the version, we just simply fail the entire backup. Meanwhile, the snapshot taken shall be deleted since the backup shall be a failure.
+    In the version, we just simply fail the entire backup. Meanwhile, the snapshot taken shall be deleted since the backup shall be a failure.
 
 4. If the PD cannot be connected, retry is required, and the retry logic can refer to the existing logic of BR.
 
