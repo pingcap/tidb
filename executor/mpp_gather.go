@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -63,6 +64,8 @@ type MPPGather struct {
 	mppReqs []*kv.MPPDispatchRequest
 
 	respIter distsql.SelectResult
+
+	memTracker *memory.Tracker
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
@@ -93,10 +96,14 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
 			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.ExchangeSender)))
+			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
+			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
+			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
+		)
 		req := &kv.MPPDispatchRequest{
 			Data:       pbData,
 			Meta:       mppTask.Meta,
@@ -142,7 +149,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
 		}
 	})
-	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, e.startTS, e.mppQueryID)
+	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id, e.startTS, e.mppQueryID, e.memTracker)
 	if err != nil {
 		return errors.Trace(err)
 	}
