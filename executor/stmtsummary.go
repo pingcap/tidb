@@ -310,6 +310,7 @@ func (r *rowsReader) pull() error {
 	if r.puller == nil {
 		return nil
 	}
+	// there are remaining rows
 	if r.rows != nil {
 		return nil
 	}
@@ -318,7 +319,7 @@ func (r *rowsReader) pull() error {
 	if err != nil {
 		return err
 	}
-
+	// pulled new rows from the puller
 	if len(rows) != 0 {
 		r.rows = rows
 		return nil
