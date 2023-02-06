@@ -101,6 +101,45 @@ func TestPlacementPolicy(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestResourceGroup(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	// test the independent policy ID allocation.
+	m := meta.NewMeta(txn)
+
+	checkResourceGroup := func(ru uint64) {
+		rg, err := m.GetResourceGroup(1)
+		require.NoError(t, err)
+		require.Equal(t, rg.RURate, ru)
+	}
+
+	rg := &model.ResourceGroupInfo{
+		ID:   1,
+		Name: model.NewCIStr("aa"),
+		ResourceGroupSettings: &model.ResourceGroupSettings{
+			RURate: 100,
+		},
+	}
+	require.NoError(t, m.CreateResourceGroup(rg))
+	checkResourceGroup(100)
+
+	rg.RURate = 200
+	require.NoError(t, m.UpdateResourceGroup(rg))
+	checkResourceGroup(200)
+
+	m.DropResourceGroup(1)
+	_, err = m.GetResourceGroup(1)
+	require.Error(t, err)
+}
+
 func TestBackupAndRestoreAutoIDs(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
