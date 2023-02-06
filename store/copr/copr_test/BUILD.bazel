@@ -9,6 +9,7 @@ go_test(
     deps = [
         "//config",
         "//kv",
+        "//store/copr",
         "//store/mockstore",
         "//testkit/testmain",
         "//testkit/testsetup",

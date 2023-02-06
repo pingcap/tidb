@@ -92,6 +92,7 @@ go_library(
         "//sessiontxn",
         "//statistics",
         "//statistics/handle",
+        "//store/copr",
         "//store/driver/backoff",
         "//store/helper",
         "//table",

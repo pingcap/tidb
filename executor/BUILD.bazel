@@ -380,6 +380,7 @@ go_test(
         "//sessiontxn/staleread",
         "//statistics",
         "//statistics/handle",
+        "//store/copr",
         "//store/driver/error",
         "//store/helper",
         "//store/mockstore",
