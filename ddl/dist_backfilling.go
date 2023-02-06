@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/gpool/spmc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -258,7 +259,7 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, con
 			// TODO: add test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {
 				logutil.BgLogger().Info("no backfill job, handle backfill task finished")
-				return nil, err
+				return nil, gpool.ErrProducerClosed
 			}
 			if kv.ErrWriteConflict.Equal(err) {
 				logutil.BgLogger().Info("GetAndMarkBackfillJobsForOneEle failed", zap.Error(err))
