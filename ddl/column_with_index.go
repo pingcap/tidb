@@ -568,6 +568,7 @@ func updateReorgDone(job *model.Job, indexInfo *model.IndexInfo) bool {
 			WarningsCount: make(map[errors.ErrorID]int64),
 			Location:      job.ReorgMeta.Location,
 			ReorgTp:       job.ReorgMeta.ReorgTp,
+			IsDistReorg:   job.ReorgMeta.IsDistReorg,
 		}
 		// Reset reorg meta and snapshot version
 		job.ReorgMeta = newReorgMeta
