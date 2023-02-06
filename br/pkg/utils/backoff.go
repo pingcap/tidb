@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -226,36 +225,11 @@ func NewFlashBackBackoffer() Backoffer {
 	}
 }
 
-// specific retry error for flashback
-// it happened when region created without leader
-// region heartbeat sent may some delay (10s), during the prepare flashback, leader may not sent heartbeat yet.
-var retryableError = []string{
-	"receive regions with no peer",
-}
-
-// messageIsRetryable checks whether the message returning from TiKV client-go.
-func messageIsRetryable(msg string) bool {
-	msgLower := strings.ToLower(msg)
-	// UNSAFE! TODO: Add a error type for retryable connection error. It may need a refactor among tikv, client-go and tidb.
-	for _, errStr := range retryableError {
-		if strings.Contains(msgLower, errStr) {
-			return true
-		}
-	}
-	return false
-}
-
+// retry 3 times when prepare flashback failure.
 func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
-	if messageIsRetryable(err.Error()) {
-		bo.delayTime = 2 * bo.delayTime
-		bo.attempt--
-		log.Warn("region may not ready to serve, retry it...", zap.Error(err))
-	} else {
-		// Unexcepted error
-		bo.delayTime = 0
-		bo.attempt = 0
-		log.Warn("unexcepted error, stop to retry", zap.Error(err))
-	}
+	bo.delayTime = 2 * bo.delayTime
+	bo.attempt--
+	log.Warn("region may not ready to serve, retry it...", zap.Error(err))
 
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
