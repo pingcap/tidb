@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
+	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus"
@@ -203,6 +204,18 @@ func main() {
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
+	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
+		clusterID, err := config.GetAutoScalerClusterID()
+		terror.MustNil(err)
+
+		err = tiflashcompute.InitGlobalTopoFetcher(
+			config.GetGlobalConfig().TiFlashComputeAutoScalerType,
+			config.GetGlobalConfig().TiFlashComputeAutoScalerAddr,
+			clusterID,
+			config.GetGlobalConfig().IsTiFlashComputeFixedPool)
+		terror.MustNil(err)
+	}
+
 	// Enable failpoints in tikv/client-go if the test API is enabled.
 	// It appears in the main function to be set before any use of client-go to prevent data race.
 	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
@@ -219,9 +232,13 @@ func main() {
 
 	keyspaceName := config.GetGlobalKeyspaceName()
 
-	resourcemanager.GlobalResourceManager.Start()
+	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
+	err = driver.TrySetupGlobalResourceController(context.Background(), dom.ServerID(), storage)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to setup global resource controller", zap.Error(err))
+	}
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
@@ -233,7 +250,7 @@ func main() {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
 		cpuprofile.StopCPUProfiler()
-		resourcemanager.GlobalResourceManager.Stop()
+		resourcemanager.InstanceResourceManager.Stop()
 		close(exited)
 	})
 	topsql.SetupTopSQL()

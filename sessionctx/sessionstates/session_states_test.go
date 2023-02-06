@@ -1253,6 +1253,16 @@ func TestShowStateFail(t *testing.T) {
 			},
 		},
 		{
+			// enable sandbox mode
+			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
+				tk.Session().EnableSandBoxMode()
+			},
+			showErr: errno.ErrCannotMigrateSession,
+			cleanFunc: func(tk *testkit.TestKit) {
+				tk.Session().DisableSandBoxMode()
+			},
+		},
+		{
 			// after COM_STMT_SEND_LONG_DATA
 			setFunc: func(tk *testkit.TestKit, conn server.MockConn) {
 				cmd := append([]byte{mysql.ComStmtPrepare}, []byte("select ?")...)

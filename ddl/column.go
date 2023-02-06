@@ -552,6 +552,10 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if tblInfo.Partition != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
+	}
 
 	changingCol := modifyInfo.changingCol
 	if changingCol == nil {
@@ -1122,8 +1126,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
 		logutil.BgLogger().Info("[ddl] update column and indexes",
 			zap.Int64("job ID", reorgInfo.Job.ID),
-			zap.ByteString("element type", reorgInfo.currElement.TypeKey),
-			zap.Int64("element ID", reorgInfo.currElement.ID),
+			zap.Stringer("element", reorgInfo.currElement),
 			zap.String("start key", hex.EncodeToString(reorgInfo.StartKey)),
 			zap.String("end key", hex.EncodeToString(reorgInfo.EndKey)))
 		if err != nil {
@@ -1153,7 +1156,7 @@ type updateColumnWorker struct {
 	jobContext *JobContext
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		logutil.BgLogger().Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.String("reorgInfo", reorgInfo.String()))
@@ -1169,7 +1172,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, t table.PhysicalTable, de
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
-		backfillCtx:   newBackfillCtx(reorgInfo.d, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
+		backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
 		oldColInfo:    oldCol,
 		newColInfo:    newCol,
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
@@ -1187,7 +1190,7 @@ func (*updateColumnWorker) String() string {
 	return typeUpdateColumnWorker.String()
 }
 
-func (*updateColumnWorker) GetTask() (*BackfillJob, error) {
+func (*updateColumnWorker) GetTasks() ([]*BackfillJob, error) {
 	panic("[ddl] update column worker GetTask function doesn't implement")
 }
 

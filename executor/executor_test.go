@@ -204,6 +204,15 @@ func TestPlanReplayerCapture(t *testing.T) {
 func TestPlanReplayerContinuesCapture(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@global.tidb_enable_historical_stats='OFF'")
+	_, err := tk.Exec("set @@global.tidb_enable_plan_replayer_continues_capture='ON'")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continues_capture")
+
+	tk.MustExec("set @@global.tidb_enable_historical_stats='ON'")
+	tk.MustExec("set @@global.tidb_enable_plan_replayer_continues_capture='ON'")
+
 	prHandle := dom.GetPlanReplayerHandle()
 	tk.MustExec("delete from mysql.plan_replayer_status;")
 	tk.MustExec("use test")
@@ -234,13 +243,16 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
 		"Alter routine Functions,Procedures To alter or drop stored functions/procedures",
+		"Config Server Admin To use SHOW CONFIG and SET CONFIG statements",
 		"Create Databases,Tables,Indexes To create new databases and tables",
 		"Create routine Databases To use CREATE FUNCTION/PROCEDURE",
+		"Create role Server Admin To create new roles",
 		"Create temporary tables Databases To use CREATE TEMPORARY TABLE",
 		"Create view Tables To create new views",
 		"Create user Server Admin To create new users",
 		"Delete Tables To delete existing rows",
 		"Drop Databases,Tables To drop databases, tables, and views",
+		"Drop role Server Admin To drop roles",
 		"Event Server Admin To create, alter, drop and execute events",
 		"Execute Functions,Procedures To execute stored routines",
 		"File File access on server To read and write files on the server",
@@ -277,6 +289,7 @@ func TestShow(t *testing.T) {
 		"RESTRICTED_USER_ADMIN Server Admin ",
 		"RESTRICTED_CONNECTION_ADMIN Server Admin ",
 		"RESTRICTED_REPLICA_WRITER_ADMIN Server Admin ",
+		"RESOURCE_GROUP_ADMIN Server Admin ",
 	))
 	require.Len(t, tk.MustQuery("show table status").Rows(), 1)
 }
@@ -2101,6 +2114,8 @@ func TestIncorrectLimitArg(t *testing.T) {
 
 	tk.MustGetErrMsg(`execute stmt1 using @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
 	tk.MustGetErrMsg(`execute stmt2 using @b, @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
+	tk.MustGetErrMsg(`execute stmt2 using @a, @b;`, `[planner:1210]Incorrect arguments to LIMIT`)
+	tk.MustGetErrMsg(`execute stmt2 using @a, @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
 }
 
 func TestExecutorLimit(t *testing.T) {
@@ -5553,6 +5568,8 @@ func TestAdmin(t *testing.T) {
 	}))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
@@ -5677,7 +5694,7 @@ func TestAdmin(t *testing.T) {
 		// check that the result set has no duplication
 		defer wg.Done()
 		for i := 0; i < 10; i++ {
-			result := tk.MustQuery(`admin show ddl job queries 20`)
+			result := tk2.MustQuery(`admin show ddl job queries 20`)
 			rows := result.Rows()
 			rowIDs := make(map[string]struct{})
 			for _, row := range rows {
@@ -5708,7 +5725,7 @@ func TestAdmin(t *testing.T) {
 		// check that the result set has no duplication
 		defer wg2.Done()
 		for i := 0; i < 10; i++ {
-			result := tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
+			result := tk2.MustQuery(`admin show ddl job queries limit 3 offset 2`)
 			rows := result.Rows()
 			rowIDs := make(map[string]struct{})
 			for _, row := range rows {

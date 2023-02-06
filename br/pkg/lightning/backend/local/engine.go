@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -122,6 +123,8 @@ type Engine struct {
 
 	config    backend.LocalEngineConfig
 	tableInfo *checkpoints.TidbTableInfo
+
+	dupDetectOpt dupDetectOpt
 
 	// total size of SST files waiting to be ingested
 	pendingFileSize atomic.Int64
@@ -981,7 +984,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
-	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger)
+	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger, e.dupDetectOpt)
 }
 
 func (e *Engine) getFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
@@ -1043,6 +1046,8 @@ type Writer struct {
 	batchSize  int64
 
 	lastMetaSeq int32
+
+	tikvCodec tikv.Codec
 }
 
 func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
@@ -1123,6 +1128,10 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 
 	if w.engine.closed.Load() {
 		return errorEngineClosed
+	}
+
+	for i := range kvs {
+		kvs[i].Key = w.tikvCodec.EncodeKey(kvs[i].Key)
 	}
 
 	w.Lock()

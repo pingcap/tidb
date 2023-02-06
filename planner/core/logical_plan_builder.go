@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -50,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -67,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 const (
@@ -118,10 +115,10 @@ const (
 	HintIgnoreIndex = "ignore_index"
 	// HintForceIndex make optimizer to use this index even if it thinks a table scan is more efficient.
 	HintForceIndex = "force_index"
-	// HintKeepOrder is hint enforce using some indexes and keep the index's order.
-	HintKeepOrder = "keep_order"
-	// HintNoKeepOrder is hint enforce using some indexes and not keep the index's order.
-	HintNoKeepOrder = "no_keep_order"
+	// HintOrderIndex is hint enforce using some indexes and keep the index's order.
+	HintOrderIndex = "order_index"
+	// HintNoOrderIndex is hint enforce using some indexes and not keep the index's order.
+	HintNoOrderIndex = "no_order_index"
 	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
 	HintAggToCop = "agg_to_cop"
 	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
@@ -692,13 +689,6 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.preferStoreType = 0
 			return
 		}
-		if config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ds.ctx) {
-			// TiFlash is in disaggregated mode, need to make sure tiflash_compute node is available.
-			errMsg := "No available tiflash_compute node"
-			warning := ErrInternal.GenWithStack(errMsg)
-			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			return
-		}
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				ds.preferStoreType |= preferTiFlash
@@ -714,15 +704,6 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
-}
-
-func isTiFlashComputeNodeAvailable(ctx sessionctx.Context) bool {
-	bo := backoff.NewBackofferWithVars(context.Background(), 5000, nil)
-	stores, err := ctx.GetStore().(tikv.Storage).GetRegionCache().GetTiFlashComputeStores(bo.TiKVBackoffer())
-	if err != nil || len(stores) == 0 {
-		return false
-	}
-	return true
 }
 
 func resetNotNullFlag(schema *expression.Schema, start, end int) {
@@ -2017,7 +1998,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 			return 0, false, true
 		}
 		if mustInt64orUint64 {
-			if expected := checkParamTypeInt64orUint64(v); !expected {
+			if expected, _ := CheckParamTypeInt64orUint64(v); !expected {
 				return 0, false, false
 			}
 		}
@@ -2054,19 +2035,19 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 	return 0, false, false
 }
 
-// check param type for plan cache limit, only allow int64 and uint64 now
+// CheckParamTypeInt64orUint64 check param type for plan cache limit, only allow int64 and uint64 now
 // eg: set @a = 1;
-func checkParamTypeInt64orUint64(param *driver.ParamMarkerExpr) bool {
+func CheckParamTypeInt64orUint64(param *driver.ParamMarkerExpr) (bool, uint64) {
 	val := param.GetValue()
 	switch v := val.(type) {
 	case int64:
 		if v >= 0 {
-			return true
+			return true, uint64(v)
 		}
 	case uint64:
-		return true
+		return true, v
 	}
-	return false
+	return false, 0
 }
 
 func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count uint64,
@@ -3636,7 +3617,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
-			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintKeepOrder, HintNoKeepOrder, HintIndexMerge, HintLeading:
+			TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				b.pushHintWithoutTableWarning(hint)
 				continue
@@ -3672,7 +3653,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			aggHints.preferAggType |= preferStreamAgg
 		case HintAggToCop:
 			aggHints.preferAggToCop = true
-		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintKeepOrder, HintNoKeepOrder:
+		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
 				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
@@ -3685,10 +3666,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 				hintType = ast.HintIgnore
 			case HintForceIndex:
 				hintType = ast.HintForce
-			case HintKeepOrder:
-				hintType = ast.HintKeepOrder
-			case HintNoKeepOrder:
-				hintType = ast.HintNoKeepOrder
+			case HintOrderIndex:
+				hintType = ast.HintOrderIndex
+			case HintNoOrderIndex:
+				hintType = ast.HintNoOrderIndex
 			}
 			indexHintList = append(indexHintList, indexHintInfo{
 				dbName:     dbName,
