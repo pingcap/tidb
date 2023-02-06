@@ -53,7 +53,7 @@ var pdScheduleKey = []string{
 	"merge-schedule-limit",
 }
 
-// FlashbackGetMinSafeTimeTimeout, only for test, don't change it.
+// FlashbackGetMinSafeTimeTimeout only for test, don't change it.
 var FlashbackGetMinSafeTimeTimeout = time.Minute // 1min
 
 const (
