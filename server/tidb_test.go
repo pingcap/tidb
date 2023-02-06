@@ -2950,3 +2950,40 @@ func TestSandBoxMode(t *testing.T) {
 		require.NoError(t, err)
 	}
 }
+
+// See: https://github.com/pingcap/tidb/issues/40979
+// Reusing memory of `chunk.Chunk` may cause some systems variable's memory value to be modified unexpectedly.
+func TestChunkReuseCorruptSysVarString(t *testing.T) {
+	ts := createTidbTestSuite(t)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
+
+	rs, err := conn.QueryContext(context.Background(), "show tables in test")
+	ts.Rows(t, rs)
+
+	_, err = conn.ExecContext(context.Background(), "set @@time_zone=(select 'Asia/Shanghai')")
+	require.NoError(t, err)
+
+	rs, err = conn.QueryContext(context.Background(), "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='aaaa'")
+	ts.Rows(t, rs)
+
+	rs, err = conn.QueryContext(context.Background(), "select @@time_zone")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rs.Close())
+	}()
+
+	rows := ts.Rows(t, rs)
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "Asia/Shanghai", rows[0])
+}
