@@ -680,8 +680,6 @@ func getBatchTasks(t table.PhysicalTable, reorgInfo *reorgInfo, kvRanges []kv.Ke
 	}
 	// Build reorg tasks.
 	job := reorgInfo.Job
-	//nolint:forcetypeassert
-	phyTbl := t.(table.PhysicalTable)
 	jobCtx := reorgInfo.d.jobContext(reorgInfo.Job.ID)
 	for i, keyRange := range kvRanges {
 		startKey := keyRange.StartKey
@@ -929,11 +927,11 @@ func (b *backfillScheduler) adjustWorkerSize() error {
 			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
 			worker = idxWorker
 		case typeReorgPartitionWorker:
-			partWorker, err := newReorgPartitionWorker(sessCtx, b.tbl, b.decodeColMap, reorgInfo, jc)
+			partWorker, err := newReorgPartitionWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			if err != nil {
 				return err
 			}
-			runner = newBackfillWorker(jc.ddlJobCtx, i, partWorker)
+			runner = newBackfillWorker(jc.ddlJobCtx, partWorker)
 			worker = partWorker
 		default:
 			return errors.New("unknown backfill type")

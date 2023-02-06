@@ -2562,7 +2562,7 @@ type reorgPartitionWorker struct {
 	jobContext *JobContext
 }
 
-func newReorgPartitionWorker(sessCtx sessionctx.Context, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
+func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
 	reorgedTbl, err := tables.GetReorganizedPartitionedTable(t)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2589,7 +2589,7 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, t table.PhysicalTable, 
 		maxOffset = mathutil.Max[int](maxOffset, col.Offset)
 	}
 	return &reorgPartitionWorker{
-		backfillCtx:       newBackfillCtx(reorgInfo.d, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
+		backfillCtx:       newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
 		metricCounter:     metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("reorg_partition_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 		rowDecoder:        decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap),
 		rowMap:            make(map[int64]types.Datum, len(decodeColMap)),
@@ -2598,6 +2598,10 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, t table.PhysicalTable, 
 		maxOffset:         maxOffset,
 		reorgedTbl:        reorgedTbl,
 	}, nil
+}
+
+func (partitionWorker *reorgPartitionWorker) GetTasks() ([]*BackfillJob, error) {
+	panic("[ddl] reorg partition worker GetTask function doesn't implement")
 }
 
 func (w *reorgPartitionWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
