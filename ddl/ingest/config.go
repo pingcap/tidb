@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	tidbconf "github.com/pingcap/tidb/config"
+	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
+	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -30,10 +30,16 @@ import (
 // ImporterRangeConcurrencyForTest is only used for test.
 var ImporterRangeConcurrencyForTest *atomic.Int32
 
-func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config.Config, error) {
-	tidbCfg := tidbconf.GetGlobalConfig()
-	cfg := config.NewConfig()
-	cfg.TikvImporter.Backend = config.BackendLocal
+// Config is the configuration for the lightning local backend used in DDL.
+type Config struct {
+	Lightning    *lightning.Config
+	KeyspaceName string
+}
+
+func genConfig(memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	cfg := lightning.NewConfig()
+	cfg.TikvImporter.Backend = lightning.BackendLocal
 	// Each backend will build a single dir in lightning dir.
 	cfg.TikvImporter.SortedKVDir = filepath.Join(LitSortPath, encodeBackendTag(jobID))
 	if ImporterRangeConcurrencyForTest != nil {
@@ -47,9 +53,9 @@ func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config
 	adjustImportMemory(memRoot, cfg)
 	cfg.Checkpoint.Enable = true
 	if unique {
-		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgErr
+		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgErr
 	} else {
-		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
+		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgNone
 	}
 	cfg.TiDB.PdAddr = tidbCfg.Path
 	cfg.TiDB.Host = "127.0.0.1"
@@ -59,7 +65,12 @@ func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config
 	cfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
 	cfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
 
-	return cfg, err
+	c := &Config{
+		Lightning:    cfg,
+		KeyspaceName: tidb.GetGlobalKeyspaceName(),
+	}
+
+	return c, err
 }
 
 var (
@@ -83,7 +94,7 @@ func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineC
 }
 
 // adjustImportMemory adjusts the lightning memory parameters according to the memory root's max limitation.
-func adjustImportMemory(memRoot MemRoot, cfg *config.Config) {
+func adjustImportMemory(memRoot MemRoot, cfg *lightning.Config) {
 	var scale int64
 	// Try aggressive resource usage successful.
 	if tryAggressiveMemory(memRoot, cfg) {
@@ -104,8 +115,8 @@ func adjustImportMemory(memRoot MemRoot, cfg *config.Config) {
 		return
 	}
 
-	cfg.TikvImporter.LocalWriterMemCacheSize /= config.ByteSize(scale)
-	cfg.TikvImporter.EngineMemCacheSize /= config.ByteSize(scale)
+	cfg.TikvImporter.LocalWriterMemCacheSize /= lightning.ByteSize(scale)
+	cfg.TikvImporter.EngineMemCacheSize /= lightning.ByteSize(scale)
 	// TODO: adjust range concurrency number to control total concurrency in the future.
 	logutil.BgLogger().Info(LitInfoChgMemSetting,
 		zap.Int64("local writer memory cache size", int64(cfg.TikvImporter.LocalWriterMemCacheSize)),
@@ -114,7 +125,7 @@ func adjustImportMemory(memRoot MemRoot, cfg *config.Config) {
 }
 
 // tryAggressiveMemory lightning memory parameters according memory root's max limitation.
-func tryAggressiveMemory(memRoot MemRoot, cfg *config.Config) bool {
+func tryAggressiveMemory(memRoot MemRoot, cfg *lightning.Config) bool {
 	var defaultMemSize int64
 	defaultMemSize = int64(int(cfg.TikvImporter.LocalWriterMemCacheSize) * cfg.TikvImporter.RangeConcurrency)
 	defaultMemSize += int64(cfg.TikvImporter.EngineMemCacheSize)

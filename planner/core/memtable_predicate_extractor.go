@@ -210,6 +210,7 @@ func (helper extractHelper) extractCol(
 	for _, expr := range predicates {
 		fn, ok := expr.(*expression.ScalarFunction)
 		if !ok {
+			remained = append(remained, expr)
 			continue
 		}
 		var colName string

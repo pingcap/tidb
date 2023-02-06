@@ -6,6 +6,8 @@ go_test(
         "flashback_test.go",
         "main_test.go",
     ],
+    flaky = True,
+    race = "on",
     deps = [
         "//ddl/util",
         "//errno",

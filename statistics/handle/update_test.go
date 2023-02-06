@@ -1151,13 +1151,15 @@ func TestOutOfOrderUpdate(t *testing.T) {
 
 	testKit.MustExec("delete from t")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("1"))
+	// If count < -Delta, then update count to 0.
+	// Check https://github.com/pingcap/tidb/pull/38301#discussion_r1094050951 for details.
+	testKit.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableInfo.ID)).Check(testkit.Rows("0"))
 
 	// Now another tidb has updated the delta info.
 	testKit.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 3 where table_id = %d", tableInfo.ID))
 
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("0"))
+	testKit.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableInfo.ID)).Check(testkit.Rows("3"))
 }
 
 func TestUpdateStatsByLocalFeedback(t *testing.T) {
@@ -2210,19 +2212,30 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 
+	getStatsHealthy := func() int {
+		rows := tk.MustQuery("show stats_healthy where db_name = 'test' and table_name = 't'").Rows()
+		require.Len(t, rows, 1)
+		healthy, err := strconv.Atoi(rows[0][3].(string))
+		require.NoError(t, err)
+		return healthy
+	}
+
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 44)
 	require.True(t, h.HandleAutoAnalyze(is))
 
 	tk.MustExec("delete from t limit 12")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 61)
 	require.False(t, h.HandleAutoAnalyze(is))
 
 	tk.MustExec("delete from t limit 4")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 48)
 	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
 }
 
@@ -2619,4 +2632,55 @@ func TestStatsLockForDelta(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	stats1 = h.GetTableStats(tableInfo1)
 	require.Equal(t, int64(30), stats1.Count)
+}
+
+func TestFillMissingStatsMeta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+
+	tk.MustQuery("select * from mysql.stats_meta").Check(testkit.Rows())
+
+	is := dom.InfoSchema()
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl1ID := tbl1.Meta().ID
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl2Info := tbl2.Meta()
+	tbl2ID := tbl2Info.ID
+	require.Len(t, tbl2Info.Partition.Definitions, 2)
+	p0ID := tbl2Info.Partition.Definitions[0].ID
+	p1ID := tbl2Info.Partition.Definitions[1].ID
+	h := dom.StatsHandle()
+
+	checkStatsMeta := func(id int64, expectedModifyCount, expectedCount string) int64 {
+		rows := tk.MustQuery(fmt.Sprintf("select version, modify_count, count from mysql.stats_meta where table_id = %v", id)).Rows()
+		require.Len(t, rows, 1)
+		ver, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		require.Equal(t, expectedModifyCount, rows[0][1])
+		require.Equal(t, expectedCount, rows[0][2])
+		return ver
+	}
+
+	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	ver1 := checkStatsMeta(tbl1ID, "2", "2")
+	tk.MustExec("delete from t1 where a = 1")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	ver2 := checkStatsMeta(tbl1ID, "3", "1")
+	require.Greater(t, ver2, ver1)
+
+	tk.MustExec("insert into t2 values (1, 2), (3, 4)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	checkStatsMeta(p0ID, "2", "2")
+	globalVer1 := checkStatsMeta(tbl2ID, "2", "2")
+	tk.MustExec("insert into t2 values (11, 12)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	checkStatsMeta(p1ID, "1", "1")
+	globalVer2 := checkStatsMeta(tbl2ID, "3", "3")
+	require.Greater(t, globalVer2, globalVer1)
 }
