@@ -620,8 +620,12 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().NoError(err)
 	err = brCli.PutTask(ctx, *taskInfo)
 	s.Require().NoError(err)
-	checkEtcdPut := func(key string) {
-		_, err := cli.Put(ctx, key, "")
+	checkEtcdPut := func(key string, vals ...string) {
+		val := ""
+		if len(vals) == 1 {
+			val = vals[0]
+		}
+		_, err := cli.Put(ctx, key, val)
 		s.Require().NoError(err)
 	}
 	// TiCDC >= v6.2
@@ -629,8 +633,14 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/meta-version")
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/ticdc-delete-etcd-key-count")
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/owner/22318498f4dd6639")
-	checkEtcdPut("/tidb/cdc/default/default/changefeed/info/test")
-	checkEtcdPut("/tidb/cdc/default/default/changefeed/info/test-1")
+	checkEtcdPut(
+		"/tidb/cdc/default/default/changefeed/info/test",
+		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"normal","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+	)
+	checkEtcdPut(
+		"/tidb/cdc/default/default/changefeed/info/test-1",
+		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"failed","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+	)
 	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test")
 	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test-1")
 	checkEtcdPut("/tidb/cdc/default/default/task/position/3ecd5c98-0148-4086-adfd-17641995e71f/test-1")
@@ -640,7 +650,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().NoError(err)
 	s.Require().False(result.Passed)
 	s.Require().Equal("found PiTR log streaming task(s): [br_name],\n"+
-		"found CDC capture(s): clusterID: default captureID(s): [3ecd5c98-0148-4086-adfd-17641995e71f],\n"+
+		"found CDC changefeed(s): cluster/namespace: default/default changefeed(s): [test],\n"+
 		"local backend is not compatible with them. Please switch to tidb backend then try again.",
 		result.Message)
 
@@ -649,7 +659,10 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 
 	// TiCDC <= v6.1
 	checkEtcdPut("/tidb/cdc/capture/f14cb04d-5ba1-410e-a59b-ccd796920e9d")
-	checkEtcdPut("/tidb/cdc/changefeed/info/test")
+	checkEtcdPut(
+		"/tidb/cdc/changefeed/info/test",
+		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"stopped","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+	)
 	checkEtcdPut("/tidb/cdc/job/test")
 	checkEtcdPut("/tidb/cdc/owner/223184ad80a88b0b")
 	checkEtcdPut("/tidb/cdc/task/position/f14cb04d-5ba1-410e-a59b-ccd796920e9d/test")
@@ -658,7 +671,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	s.Require().NoError(err)
 	s.Require().False(result.Passed)
 	s.Require().Equal("found PiTR log streaming task(s): [br_name],\n"+
-		"found CDC capture(s): clusterID: <nil> captureID(s): [f14cb04d-5ba1-410e-a59b-ccd796920e9d],\n"+
+		"found CDC changefeed(s): cluster/namespace: <nil> changefeed(s): [test],\n"+
 		"local backend is not compatible with them. Please switch to tidb backend then try again.",
 		result.Message)
 
