@@ -21,11 +21,13 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/resourcemanager/pooltask"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/gpool"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -47,13 +49,14 @@ type Pool[T any, U any, C any, CT any, TF pooltask.Context[CT]] struct {
 	workers      *loopQueue[T, U, C, CT, TF]
 	options      *Options
 	gpool.BasePool
-	taskManager   pooltask.TaskManager[T, U, C, CT, TF]
-	waitingTask   atomicutil.Uint32
-	capacity      atomic.Int32
-	running       atomic.Int32
-	state         atomic.Int32
-	waiting       atomic.Int32 // waiting is the number of goroutines that are waiting for the pool to be available.
-	heartbeatDone atomic.Bool
+	taskManager        pooltask.TaskManager[T, U, C, CT, TF]
+	waitingTask        atomicutil.Uint32
+	capacity           atomic.Int32
+	running            atomic.Int32
+	state              atomic.Int32
+	waiting            atomic.Int32 // waiting is the number of goroutines that are waiting for the pool to be available.
+	heartbeatDone      atomic.Bool
+	concurrencyMetrics prometheus.Gauge
 }
 
 // NewSPMCPool create a single producer, multiple consumer goroutine pool.
@@ -63,12 +66,13 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 		opts.ExpiryDuration = gpool.DefaultCleanIntervalTime
 	}
 	result := &Pool[T, U, C, CT, TF]{
-		BasePool:    gpool.NewBasePool(),
-		taskCh:      make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
-		stopCh:      make(chan struct{}),
-		lock:        gpool.NewSpinLock(),
-		taskManager: pooltask.NewTaskManager[T, U, C, CT, TF](size),
-		options:     opts,
+		BasePool:           gpool.NewBasePool(),
+		taskCh:             make(chan *pooltask.TaskBox[T, U, C, CT, TF], 128),
+		stopCh:             make(chan struct{}),
+		lock:               gpool.NewSpinLock(),
+		taskManager:        pooltask.NewTaskManager[T, U, C, CT, TF](size),
+		concurrencyMetrics: metrics.PoolConcurrencyCounter.WithLabelValues(name),
+		options:            opts,
 	}
 	result.SetName(name)
 	result.state.Store(int32(gpool.OPENED))
@@ -141,6 +145,7 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	}
 	p.SetLastTuneTs(time.Now())
 	p.capacity.Store(int32(size))
+	p.concurrencyMetrics.Set(float64(size))
 	if size > capacity {
 		for i := 0; i < size-capacity; i++ {
 			if tid, boostTask := p.taskManager.Overclock(size); boostTask != nil {
