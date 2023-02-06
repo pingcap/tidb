@@ -1574,6 +1574,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
 		p = explain.TargetPlan
 	}
+
 	pi := util.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
@@ -1595,6 +1596,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ProtectedTSList:       &s.sessionVars.ProtectedTSList,
+		ResourceGroupName:     s.sessionVars.ResourceGroupName,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -2213,6 +2215,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		s.txn.changeToInvalid()
 	} else {
 		recordSet, err = runStmt(ctx, s, stmt)
+	}
+
+	// Observe the resource group query total counter if the resource control is enabled and the
+	// current session is attached with a resource group.
+	resourceGroupName := s.GetSessionVars().ResourceGroupName
+	if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
+		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
 	}
 
 	if err != nil {
