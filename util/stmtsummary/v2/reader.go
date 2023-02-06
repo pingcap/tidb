@@ -157,7 +157,9 @@ func (r *MemReader) getTimeLocation() *time.Location {
 
 // HistoryReader is used to read data that has been persisted to files.
 type HistoryReader struct {
-	ctx          context.Context
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	columns      []*model.ColumnInfo
 	instanceAddr string
 	timeLocation *time.Location
@@ -165,7 +167,6 @@ type HistoryReader struct {
 	columnFactories []columnFactory
 	checker         *stmtChecker
 	files           *stmtFiles
-	cancel          context.CancelFunc
 	taskList        chan stmtParseTask
 	wg              sync.WaitGroup
 }
@@ -181,8 +182,16 @@ func NewHistoryReader(ctx context.Context,
 	hasProcessPriv bool,
 	digests set.StringSet,
 	timeRanges []*StmtTimeRange) (*HistoryReader, error) {
+	files, err := newStmtFiles(ctx, timeRanges)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
 	r := &HistoryReader{
-		ctx:             ctx,
+		ctx:    ctx,
+		cancel: cancel,
+
 		columns:         columns,
 		instanceAddr:    instanceAddr,
 		timeLocation:    timeLocation,
@@ -193,16 +202,15 @@ func NewHistoryReader(ctx context.Context,
 			digests:        digests,
 			timeRanges:     timeRanges,
 		},
+		files:    files,
+		taskList: make(chan stmtParseTask, 1),
 	}
-	var err error
-	r.files, err = newStmtFiles(ctx, timeRanges)
-	if err != nil {
-		return nil, err
-	}
-	r.ctx, r.cancel = context.WithCancel(ctx)
-	r.taskList = make(chan stmtParseTask, 1)
+
 	r.wg.Add(1)
-	go r.fetchAndSendRows()
+	go func() {
+		defer r.wg.Done()
+		r.fetchAndSendRows()
+	}()
 	return r, nil
 }
 
@@ -251,7 +259,6 @@ func (r *HistoryReader) Close() error {
 }
 
 func (r *HistoryReader) fetchAndSendRows() {
-	defer r.wg.Done()
 	defer close(r.taskList)
 	ctx := r.ctx
 	file := r.files.next()
@@ -449,31 +456,35 @@ func openStmtFile(path string) (*stmtFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &stmtFile{file: file}
-	f.begin, err = f.parseBeginTsAndReseek()
+	begin, err := parseBeginTsAndReseek(file)
 	if err != nil {
-		_ = f.close()
 		if err != io.EOF {
+			_ = file.Close()
 			return nil, err
 		}
 	}
-	f.end, err = f.parseEndTs()
+	end, err := parseEndTs(file)
 	if err != nil {
-		_ = f.close()
+		_ = file.Close()
 		return nil, err
 	}
-	return f, nil
+
+	return &stmtFile{
+		file:  file,
+		begin: begin,
+		end:   end,
+	}, nil
 }
 
-func (f *stmtFile) parseBeginTsAndReseek() (int64, error) {
-	if _, err := f.file.Seek(0, io.SeekStart); err != nil {
+func parseBeginTsAndReseek(file *os.File) (int64, error) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
-	firstLine, err := readLine(bufio.NewReader(f.file))
+	firstLine, err := readLine(bufio.NewReader(file))
 	if err != nil {
 		return 0, err
 	}
-	if _, err := f.file.Seek(0, io.SeekStart); err != nil {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
 	if len(firstLine) == 0 {
@@ -486,15 +497,23 @@ func (f *stmtFile) parseBeginTsAndReseek() (int64, error) {
 	return record.Begin, nil
 }
 
-func (f *stmtFile) parseEndTs() (int64, error) {
+func parseEndTs(file *os.File) (int64, error) {
+	// tidb-statements.log
 	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
+	// .log
 	ext := filepath.Ext(filename)
+	// tidb-statements
 	prefix := filename[:len(filename)-len(ext)]
 
-	filename = filepath.Base(f.file.Name())
-	ext = filepath.Ext(f.file.Name())
+	// tidb-statements-2022-12-27T16-21-20.245.log
+	filename = filepath.Base(file.Name())
+	// .log
+	ext = filepath.Ext(file.Name())
+	// tidb-statements-2022-12-27T16-21-20.245
 	filename = filename[:len(filename)-len(ext)]
+
 	if strings.HasPrefix(filename, prefix+"-") {
+		// 2022-12-27T16-21-20.245
 		timeStr := strings.TrimPrefix(filename, prefix+"-")
 		end, err := time.ParseInLocation(logFileTimeFormat, timeStr, time.Local)
 		if err != nil {
@@ -519,7 +538,6 @@ type stmtFiles struct {
 
 func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles, error) {
 	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
-	dir := filepath.Dir(filename)
 	ext := filepath.Ext(filename)
 	prefix := filename[:len(filename)-len(ext)]
 	var files []*stmtFile
@@ -550,6 +568,8 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 		}
 		return nil
 	}
+
+	dir := filepath.Dir(filename)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -579,9 +599,7 @@ func (f *stmtFiles) next() *os.File {
 
 func (f *stmtFiles) close() {
 	for _, f := range f.files {
-		if err := f.file.Close(); err != nil {
-			logutil.BgLogger().Error("failed to close statements file", zap.Error(err))
-		}
+		_ = f.close()
 	}
 }
 

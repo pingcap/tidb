@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -68,6 +69,9 @@ type Config struct {
 // It controls data rotation and persistence internally, and provides
 // reading interface through MemReader and HistoryReader.
 type StmtSummary struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	optEnabled             *atomic2.Bool
 	optEnableInternalQuery *atomic2.Bool
 	optMaxStmtCount        *atomic2.Uint32
@@ -76,7 +80,6 @@ type StmtSummary struct {
 
 	window  *stmtWindow
 	storage stmtStorage
-	cancel  context.CancelFunc
 	closeWg sync.WaitGroup
 	closed  atomic.Bool
 }
@@ -86,7 +89,12 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 	if cfg.Filename == "" {
 		return nil, errors.New("stmtsummary: empty filename")
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &StmtSummary{
+		ctx:    ctx,
+		cancel: cancel,
+
 		// These options can be changed dynamically at runtime.
 		// The default values here are just placeholders, and the real values in
 		// sessionctx/variables/tidb_vars.go will overwrite them after TiDB starts.
@@ -105,8 +113,13 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 			},
 		}),
 	}
+
 	s.closeWg.Add(1)
-	go s.rotateLoop()
+	go func() {
+		defer s.closeWg.Done()
+		s.rotateLoop()
+	}()
+
 	return s, nil
 }
 
@@ -253,10 +266,7 @@ func (s *StmtSummary) ClearInternal() {
 	s.window.Lock()
 	defer s.window.Unlock()
 	for _, k := range s.window.lru.Keys() {
-		v, ok := s.window.lru.Get(k)
-		if !ok {
-			continue
-		}
+		v, _ := s.window.lru.Get(k)
 		if v.(*lockedStmtRecord).IsInternal {
 			s.window.lru.Delete(k)
 		}
@@ -298,14 +308,10 @@ func (s *StmtSummary) GetMoreThanCntBindableStmt(cnt int64) []*stmtsummary.Binda
 						PlanHint:  record.PlanHint,
 						Charset:   record.Charset,
 						Collation: record.Collation,
+						Users:     make(map[string]struct{}),
 					}
-					if len(record.AuthUsers) > 0 {
-						// deep copy
-						stmt.Users = make(map[string]struct{}, len(record.AuthUsers))
-						for user := range record.AuthUsers {
-							stmt.Users[user] = struct{}{}
-						}
-					}
+					maps.Copy(stmt.Users, record.AuthUsers)
+
 					// If it is SQL command prepare / execute, the ssElement.sampleSQL
 					// is `execute ...`, we should get the original select query.
 					// If it is binary protocol prepare / execute, ssbd.normalizedSQL
@@ -322,11 +328,12 @@ func (s *StmtSummary) GetMoreThanCntBindableStmt(cnt int64) []*stmtsummary.Binda
 }
 
 func (s *StmtSummary) rotateLoop() {
-	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
-	defer s.closeWg.Done()
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+
 	tick := time.NewTicker(defaultRotateCheckInterval * time.Second)
 	defer tick.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -341,7 +348,11 @@ func (s *StmtSummary) rotateLoop() {
 				size := w.lru.Size()
 				if size > 0 {
 					// Persist window asynchronously.
-					go s.storage.persist(w, now)
+					s.closeWg.Add(1)
+					go func() {
+						defer s.closeWg.Done()
+						s.storage.persist(w, now)
+					}()
 				}
 			}
 			w.Unlock()
@@ -383,6 +394,7 @@ func (w *stmtWindow) add(info *stmtsummary.StmtExecInfo) {
 		planDigest: info.PlanDigest,
 	}
 	k.Hash() // Calculate hash value in advance, to reduce the time holding the window lock.
+
 	w.Lock()
 	var record *lockedStmtRecord
 	if v, ok := w.lru.Get(k); ok {
@@ -392,6 +404,7 @@ func (w *stmtWindow) add(info *stmtsummary.StmtExecInfo) {
 		w.lru.Put(k, record)
 	}
 	w.Unlock()
+
 	record.Lock()
 	record.Add(info)
 	record.Unlock()
