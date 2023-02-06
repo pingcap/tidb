@@ -238,13 +238,13 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 
 	// Some variables used for memTracker.
 	var (
-		matchedDataSize                  = int64(cap(matched))*RowSize + int64(cap(matchedPtrs))*RowPtrSize
+		matchedDataSize                  = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
 		lastChunkBufPointer *chunk.Chunk = nil
 		memDelta            int64        = 0
 	)
 	c.chkBuf = nil
-	c.memTracker.Consume(-c.chkBufSizeForOneProbe + int64(cap(innerPtrs))*RowPtrSize)
-	defer c.memTracker.Consume(-int64(cap(innerPtrs)) * RowPtrSize)
+	c.memTracker.Consume(-c.chkBufSizeForOneProbe + int64(cap(innerPtrs))*rowPtrSize)
+	defer c.memTracker.Consume(-int64(cap(innerPtrs)) * rowPtrSize)
 	c.chkBufSizeForOneProbe = 0
 
 	for i, ptr := range innerPtrs {
@@ -267,10 +267,10 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 				memDelta += lastChunkSize
 		}
 		lastChunkBufPointer = c.chkBuf
-		if i&SignalCheckpointForJoin == 0 {
+		if i&signalCheckpointForJoin == 0 {
 			// Trigger Consume for checking the OOM Action signal
-			memDelta += int64(cap(matched))*RowSize + int64(cap(matchedPtrs))*RowPtrSize - matchedDataSize
-			matchedDataSize = int64(cap(matched))*RowSize + int64(cap(matchedPtrs))*RowPtrSize
+			memDelta += int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize - matchedDataSize
+			matchedDataSize = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
 			c.memTracker.Consume(memDelta + 1)
 			memDelta = 0
 		}
