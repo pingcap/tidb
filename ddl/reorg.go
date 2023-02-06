@@ -828,7 +828,6 @@ func CleanupDDLReorgHandles(job *model.Job, w *worker, t *meta.Meta) {
 		// ignore error, cleanup is not that critical
 		logutil.BgLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
 	}
-	return
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
