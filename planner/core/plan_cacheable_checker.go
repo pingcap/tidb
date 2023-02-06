@@ -55,8 +55,7 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 }
 
 // cacheableChecker checks whether a query's plan can be cached, querys that:
-//  1. have ExistsSubqueryExpr, or
-//  2. have VariableExpr
+//  1. have VariableExpr
 //
 // will not be cached currently.
 // NOTE: we can add more rules in the future.
@@ -109,10 +108,16 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+
+	case *ast.VariableExpr:
 		checker.cacheable = false
-		checker.reason = "query has sub-queries is un-cacheable"
+		checker.reason = "query has user-defined variables is un-cacheable"
 		return in, true
+	// todo: these comment is used to add switch in the later pr
+	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+		//checker.cacheable = false
+		checker.reason = "query has sub-queries is un-cacheable"
+		return in, false
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
