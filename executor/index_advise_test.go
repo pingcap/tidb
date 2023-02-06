@@ -68,7 +68,6 @@ func TestIndexAdvise(t *testing.T) {
 
 func TestIndexJoinProjPattern(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t1(
@@ -125,7 +124,6 @@ and b.txn_accno = a.new_accno;`
 	tk.Session().GetSessionVars().EnableIndexJoinInnerSideMultiPattern = true
 	tk.MustExec(sql)
 	tk.MustQuery("select yn_frz from t2").Check(testkit.Rows("1"))
-
 }
 
 func TestIndexJoinSelPattern(t *testing.T) {
