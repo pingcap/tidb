@@ -15,6 +15,8 @@
 package server
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 )
@@ -23,22 +25,30 @@ const maxColumnNameSize = 256
 
 // ColumnInfo contains information of a column
 type ColumnInfo struct {
-	Schema             string
-	Table              string
-	OrgTable           string
-	Name               string
-	OrgName            string
-	ColumnLength       uint32
-	Charset            uint16
-	Flag               uint16
-	Decimal            uint8
-	Type               uint8
-	DefaultValueLength uint64
-	DefaultValue       []byte
+	Schema       string
+	Table        string
+	OrgTable     string
+	Name         string
+	OrgName      string
+	ColumnLength uint32
+	Charset      uint16
+	Flag         uint16
+	Decimal      uint8
+	Type         uint8
+	DefaultValue any
 }
 
 // Dump dumps ColumnInfo to bytes.
 func (column *ColumnInfo) Dump(buffer []byte, d *resultEncoder) []byte {
+	return column.dump(buffer, d, false)
+}
+
+// DumpWithDefault dumps ColumnInfo to bytes, including column defaults. This is used for ComFieldList responses.
+func (column *ColumnInfo) DumpWithDefault(buffer []byte, d *resultEncoder) []byte {
+	return column.dump(buffer, d, true)
+}
+
+func (column *ColumnInfo) dump(buffer []byte, d *resultEncoder, withDefault bool) []byte {
 	if d == nil {
 		d = newResultEncoder(charset.CharsetUTF8MB4)
 	}
@@ -64,9 +74,14 @@ func (column *ColumnInfo) Dump(buffer []byte, d *resultEncoder) []byte {
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
 
-	if column.DefaultValue != nil {
-		buffer = dumpUint64(buffer, uint64(len(column.DefaultValue)))
-		buffer = append(buffer, column.DefaultValue...)
+	if withDefault {
+		switch column.DefaultValue {
+		case "CURRENT_TIMESTAMP", "CURRENT_DATE", nil:
+			buffer = append(buffer, 251) // NULL
+		default:
+			defaultValStr := fmt.Sprintf("%v", column.DefaultValue)
+			buffer = dumpLengthEncodedString(buffer, []byte(defaultValStr))
+		}
 	}
 
 	return buffer
