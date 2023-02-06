@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//kv",
         "//sessionctx/variable",
-        "//store/copr",
         "//store/driver/error",
         "//store/driver/txn",
         "//store/gcworker",
@@ -44,7 +43,6 @@ go_test(
         "//domain",
         "//kv",
         "//session",
-        "//store/copr",
         "//store/mockstore",
         "//store/mockstore/unistore",
         "//testkit/testsetup",

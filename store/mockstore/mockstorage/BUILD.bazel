@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
-        "//store/copr",
         "//store/driver/txn",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_tikv_client_go_v2//config",

@@ -29,7 +29,6 @@ go_test(
         "//session",
         "//sessionctx/variable",
         "//statistics/handle",
-        "//store/copr",
         "//store/mockstore",
         "//tablecodec",
         "//testkit",

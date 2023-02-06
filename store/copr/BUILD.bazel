@@ -31,7 +31,11 @@ go_library(
         "//util/mathutil",
         "//util/memory",
         "//util/paging",
+<<<<<<< HEAD
         "//util/tracing",
+=======
+        "//util/tiflashcompute",
+>>>>>>> master
         "//util/trxevents",
         "@com_github_dgraph_io_ristretto//:ristretto",
         "@com_github_gogo_protobuf//proto",
@@ -44,6 +48,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stathat_consistent//:consistent",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//metrics",
@@ -77,6 +82,7 @@ go_test(
         "//kv",
         "//store/driver/backoff",
         "//testkit/testsetup",
+        "//util/logutil",
         "//util/paging",
         "//util/trxevents",
         "@com_github_pingcap_errors//:errors",
@@ -89,5 +95,6 @@ go_test(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
     ],
 )

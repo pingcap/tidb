@@ -19,7 +19,6 @@ go_test(
         "//parser/terror",
         "//planner/core",
         "//sessionctx/variable",
-        "//store/copr",
         "//store/driver/backoff",
         "//store/helper",
         "//table",
