@@ -261,14 +261,12 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			atomic.AddInt64(&c.stat.probeCollision, 1)
 			continue
 		}
-		if c.chkBuf != lastChunkBufPointer {
-			if lastChunkBufPointer != nil {
+		if c.chkBuf != lastChunkBufPointer && lastChunkBufPointer != nil {
 				lastChunkSize := lastChunkBufPointer.MemoryUsage()
 				c.chkBufSizeForOneProbe += lastChunkSize
 				memDelta += lastChunkSize
-			}
-			lastChunkBufPointer = c.chkBuf
 		}
+		lastChunkBufPointer = c.chkBuf
 		if i&SignalCheckpointForJoin == 0 {
 			// Trigger Consume for checking the OOM Action signal
 			memDelta += int64(cap(matched))*RowSize + int64(cap(matchedPtrs))*RowPtrSize - matchedDataSize
