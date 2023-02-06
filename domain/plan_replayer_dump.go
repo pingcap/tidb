@@ -108,12 +108,14 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 			tne.err = err
 			return in, true
 		}
-		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
-		if tp.DBName == "" {
-			tp.DBName = tne.curDB.L
-		}
-		if _, ok := tne.names[tp]; !ok {
-			tne.names[tp] = struct{}{}
+		if t.TableInfo != nil {
+			tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
+			if tp.DBName == "" {
+				tp.DBName = tne.curDB.L
+			}
+			if _, ok := tne.names[tp]; !ok {
+				tne.names[tp] = struct{}{}
+			}
 		}
 	} else if s, ok := in.(*ast.SelectStmt); ok {
 		if s.With != nil && len(s.With.CTEs) > 0 {
