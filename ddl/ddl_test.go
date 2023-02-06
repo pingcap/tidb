@@ -58,6 +58,11 @@ var JobNeedGCForTest = jobNeedGC
 // NewSession is only used for test.
 var NewSession = newSession
 
+// GetDDLCtx returns ddlCtx for test.
+func GetDDLCtx(d DDL) *ddlCtx {
+	return d.(*ddl).ddlCtx
+}
+
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
 	return getRangeEndKey(NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
