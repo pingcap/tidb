@@ -3775,14 +3775,6 @@ def go_deps():
         version = "v0.0.0-20181202132449-6a9ea43bcacd",
     )
     go_repository(
-        name = "com_github_silentred_gid",
-        build_file_proto_mode = "disable",
-        importpath = "github.com/silentred/gid",
-        sum = "h1:JdsH8McqPUeY8IN4C0gxENnJG2zysvh+/xDJWhPvGVQ=",
-        version = "v1.0.0",
-    )
-
-    go_repository(
         name = "com_github_sirupsen_logrus",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/sirupsen/logrus",
@@ -4103,13 +4095,6 @@ def go_deps():
         sum = "h1:phZCcypL/vtx6cGxObJgWZ5wexZF5SXFPLOM+ru0e/M=",
         version = "v0.1.0",
     )
-    go_repository(
-        name = "com_github_tinylib_msgp",
-        build_file_proto_mode = "disable",
-        importpath = "github.com/tinylib/msgp",
-        sum = "h1:2gXmtWueD2HefZHQe1QOy9HVzmFrLOVvsXwXBQ0ayy0=",
-        version = "v1.1.5",
-    )
 
     go_repository(
         name = "com_github_tklauser_go_sysconf",
@@ -4145,13 +4130,6 @@ def go_deps():
         importpath = "github.com/tommy-muehle/go-mnd/v2",
         sum = "h1:NowYhSdyE/1zwK9QCLeRb6USWdoif80Ie+v+yU8u1Zw=",
         version = "v2.5.1",
-    )
-    go_repository(
-        name = "com_github_ttacon_chalk",
-        build_file_proto_mode = "disable",
-        importpath = "github.com/ttacon/chalk",
-        sum = "h1:OXcKh35JaYsGMRzpvFkLv/MEyPuL49CThT1pZ8aSml4=",
-        version = "v0.0.0-20160626202418-22c06c80ed31",
     )
 
     go_repository(
