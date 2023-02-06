@@ -319,7 +319,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 	rangesLen := ranges.Len()
 	// something went wrong, disable hints to avoid out of range index.
-	if hints != nil && len(hints) != rangesLen {
+	if len(hints) != rangesLen {
 		hints = nil
 	}
 
