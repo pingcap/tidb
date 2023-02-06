@@ -196,7 +196,25 @@ func GetSSTMetaFromFile(
 	file *backuppb.File,
 	region *metapb.Region,
 	regionRule *import_sstpb.RewriteRule,
-) import_sstpb.SSTMeta {
+	rewriteMode RewriteMode,
+) (meta *import_sstpb.SSTMeta, err error) {
+	r := *region
+	// If the rewrite mode is for keyspace, then the region bound should be decoded.
+	if rewriteMode == RewriteModeKeyspace {
+		if len(region.GetStartKey()) > 0 {
+			_, r.StartKey, err = codec.DecodeBytes(region.GetStartKey(), nil)
+			if err != nil {
+				return
+			}
+		}
+		if len(region.GetEndKey()) > 0 {
+			_, r.EndKey, err = codec.DecodeBytes(region.GetEndKey(), nil)
+			if err != nil {
+				return
+			}
+		}
+	}
+
 	// Get the column family of the file by the file name.
 	var cfName string
 	if strings.Contains(file.GetName(), defaultCFName) {
@@ -208,8 +226,8 @@ func GetSSTMetaFromFile(
 	// Here we rewrites the keys to compare with the keys of the region.
 	rangeStart := regionRule.GetNewKeyPrefix()
 	//  rangeStart = max(rangeStart, region.StartKey)
-	if bytes.Compare(rangeStart, region.GetStartKey()) < 0 {
-		rangeStart = region.GetStartKey()
+	if bytes.Compare(rangeStart, r.GetStartKey()) < 0 {
+		rangeStart = r.GetStartKey()
 	}
 
 	// Append 10 * 0xff to make sure rangeEnd cover all file key
@@ -219,8 +237,8 @@ func GetSSTMetaFromFile(
 	suffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	rangeEnd := append(append([]byte{}, regionRule.GetNewKeyPrefix()...), suffix...)
 	// rangeEnd = min(rangeEnd, region.EndKey)
-	if len(region.GetEndKey()) > 0 && bytes.Compare(rangeEnd, region.GetEndKey()) > 0 {
-		rangeEnd = region.GetEndKey()
+	if len(r.GetEndKey()) > 0 && bytes.Compare(rangeEnd, r.GetEndKey()) > 0 {
+		rangeEnd = r.GetEndKey()
 	}
 
 	if bytes.Compare(rangeStart, rangeEnd) > 0 {
@@ -235,7 +253,7 @@ func GetSSTMetaFromFile(
 		logutil.Key("startKey", rangeStart),
 		logutil.Key("endKey", rangeEnd))
 
-	return import_sstpb.SSTMeta{
+	return &import_sstpb.SSTMeta{
 		Uuid:   id,
 		CfName: cfName,
 		Range: &import_sstpb.Range{
@@ -246,7 +264,7 @@ func GetSSTMetaFromFile(
 		RegionId:    region.GetId(),
 		RegionEpoch: region.GetRegionEpoch(),
 		CipherIv:    file.GetCipherIv(),
-	}
+	}, nil
 }
 
 // makeDBPool makes a session pool with specficated size by sessionFactory.

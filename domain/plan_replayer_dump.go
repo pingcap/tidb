@@ -282,7 +282,14 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 
 	// For capture task, we dump stats in storage only if EnableHistoricalStatsForCapture is disabled.
 	// For manual plan replayer dump command, we directly dump stats in storage
-	if !variable.EnableHistoricalStatsForCapture.Load() || !task.IsCapture {
+	if task.IsCapture {
+		if !task.IsContinuesCapture && variable.EnableHistoricalStatsForCapture.Load() {
+			// Dump stats
+			if err = dumpStats(zw, pairs, do); err != nil {
+				return err
+			}
+		}
+	} else {
 		// Dump stats
 		if err = dumpStats(zw, pairs, do); err != nil {
 			return err
