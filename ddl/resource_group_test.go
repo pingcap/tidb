@@ -122,6 +122,10 @@ func TestResourceGroupBasic(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
 	tk.MustGetErrCode("create resource group x ru_per_sec=1000 ru_per_sec=200", mysql.ErrParse)
+	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 ru_per_sec=200, ru_per_sec=300", "Dupliated options specified")
+	tk.MustGetErrCode("create resource group x burstable, burstable", mysql.ErrParse)
+	tk.MustContainErrMsg("create resource group x burstable, burstable", "Dupliated options specified")
+
 	groups, err := infosync.GetAllResourceGroups(context.TODO())
 	require.Equal(t, 0, len(groups))
 	require.NoError(t, err)

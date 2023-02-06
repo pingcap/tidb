@@ -1596,28 +1596,32 @@ ResourceGroupOptionList:
 	{
 		$$ = []*ast.ResourceGroupOption{$1.(*ast.ResourceGroupOption)}
 	}
-|	DirectResourceGroupOption "BURSTABLE"
+|	ResourceGroupOptionList DirectResourceGroupOption
 	{
-		$$ = append([]*ast.ResourceGroupOption{$1.(*ast.ResourceGroupOption)}, &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true})
+		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+            return 1
+		}
 	}
-|	DirectResourceGroupOption ',' "BURSTABLE"
+|	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
-		$$ = append([]*ast.ResourceGroupOption{$1.(*ast.ResourceGroupOption)}, &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true})
+		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp {
+        	yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+            return 1
+        }
 	}
-|	"BURSTABLE" DirectResourceGroupOption
-    {
-    	$$ = append([]*ast.ResourceGroupOption{$2.(*ast.ResourceGroupOption)}, &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true})
-    }
-|	"BURSTABLE" ',' DirectResourceGroupOption
-    {
-    	$$ = append([]*ast.ResourceGroupOption{$3.(*ast.ResourceGroupOption)}, &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true})
-    }
 
 DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
 	}
+|	"BURSTABLE"
+    {
+    	$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+    }
 
 PlacementOptionList:
 	DirectPlacementOption
