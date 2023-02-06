@@ -1124,6 +1124,10 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// least
 	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
 	require.NoError(t, err)
@@ -1132,6 +1136,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	
 	// is true
 	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), int32Column)
 	require.NoError(t, err)
