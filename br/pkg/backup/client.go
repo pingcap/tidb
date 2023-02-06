@@ -848,6 +848,9 @@ func (bc *Client) BackupRange(
 			}
 		}
 	}
+	if len(replicaReadLabel) > 0 && len(targetStores) == 0 {
+		return errors.Errorf("no store matches replica read label: %v", replicaReadLabel)
+	}
 
 	logutil.CL(ctx).Info("backup push down started")
 	// either the `incomplete` is origin range itself,

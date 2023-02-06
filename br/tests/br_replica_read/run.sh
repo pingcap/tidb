@@ -21,7 +21,16 @@ PROGRESS_FILE="$TEST_DIR/progress_unit_file"
 rm -rf $PROGRESS_FILE
 
 VOTER_COUNT=$((TIKV_COUNT-1))
+if [ "$VOTER_COUNT" -lt "1" ];then
+  echo "Bypass test because there is no enough tikv"
+  exit 0
+fi
 
+# set random store to read only
+random_store_id=$(run_pd_ctl --pd $PD_ADDR store | jq 'first(.stores[]|select(.store.labels|(.!= null and any(.key == "engine" and .value=="tiflash"))| not)|.store.id)')
+run_pd_ctl --pd $PD_ADDR store label $random_store_id '$mode' 'read_only'
+
+# set placement rule to add a learner replica for each region in the read only store
 cat tests/br_replica_read/placement_rule_with_learner_template.json | jq  ".[].rules[0].count = $VOTER_COUNT" > $TEST_DIR/placement_rule_with_learner.json
 run_pd_ctl --pd $PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/placement_rule_with_learner.json
 
@@ -46,19 +55,8 @@ run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
 # backup db
 echo "backup start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/progress-call-back=return(\"$PROGRESS_FILE\")"
-run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --backup-replica-read learner
+run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label '$mode:read_only'
 export GO_FAILPOINTS=""
-
-# check if we use the region unit
-if [[ "$(wc -l <$PROGRESS_FILE)" == "1" ]] && [[ $(grep -c "region" $PROGRESS_FILE) == "1" ]];
-then
-  echo "use the correct progress unit"
-else
-  echo "use the wrong progress unit, expect region"
-  cat $PROGRESS_FILE
-  exit 1
-fi
-rm -rf $PROGRESS_FILE
 
 run_sql "DROP DATABASE $DB;"
 
@@ -84,3 +82,4 @@ run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE
 run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE DATABASE'
 
 run_sql "DROP DATABASE $DB;"
+run_pd_ctl --pd $PD_ADDR store label $random_store_id '$mode' ''
