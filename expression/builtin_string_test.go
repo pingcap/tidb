@@ -151,6 +151,9 @@ func TestASCII(t *testing.T) {
 		{"你好", "", 228},
 		{"世界", "gbk", 202},
 		{"世界", "", 228},
+		{"abc", "gb18030", 97},
+		{"你好", "gb18030", 196},
+		{"世界", "gb18030", 202},
 	}
 
 	for _, c := range tbl {
@@ -1279,6 +1282,7 @@ func TestHexFunc(t *testing.T) {
 		{0x12, false, false, "12"},
 		{nil, true, false, ""},
 		{errors.New("must err"), false, true, ""},
+		{"🀁", false, false, "F09F8081"},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
@@ -1306,6 +1310,7 @@ func TestHexFunc(t *testing.T) {
 		{"你好", "gbk", "C4E3BAC3", 0},
 		{"一忒(๑•ㅂ•)و✧", "", "E4B880E5BF9228E0B991E280A2E38582E280A229D988E29CA7", 0},
 		{"一忒(๑•ㅂ•)و✧", "gbk", "", errno.ErrInvalidCharacterString},
+		{"🀁", "gb18030", "9438E131", 0},
 	}
 	for _, c := range strCases {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)

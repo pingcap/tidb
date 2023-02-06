@@ -76,6 +76,7 @@ var CharsetIDs = map[string]uint8{
 	"geostd8":  92,
 	"cp932":    95,
 	"eucjpms":  97,
+	"gb18030":  GB18030DefaultCollationID,
 }
 
 // Collations maps MySQL collation ID to its name.
@@ -299,6 +300,8 @@ var Collations = map[uint8]string{
 	245: "utf8mb4_croatian_ci",
 	246: "utf8mb4_unicode_520_ci",
 	247: "utf8mb4_vietnamese_ci",
+	248: "gb18030_chinese_ci",
+	249: "gb18030_bin",
 	255: "utf8mb4_0900_ai_ci",
 }
 
@@ -523,6 +526,8 @@ var CollationNames = map[string]uint8{
 	"utf8mb4_croatian_ci":      245,
 	"utf8mb4_unicode_520_ci":   246,
 	"utf8mb4_vietnamese_ci":    247,
+	"gb18030_chinese_ci":       248,
+	"gb18030_bin":              249,
 	"utf8mb4_0900_ai_ci":       255,
 }
 
@@ -539,6 +544,7 @@ const (
 	UTF8DefaultCollationID    = 83
 	UTF8MB4DefaultCollationID = 46
 	BinaryDefaultCollationID  = 63
+	GB18030DefaultCollationID = 248
 	UTF8DefaultCollation      = "utf8_bin"
 	UTF8MB4DefaultCollation   = "utf8mb4_bin"
 	DefaultCollationName      = UTF8MB4DefaultCollation

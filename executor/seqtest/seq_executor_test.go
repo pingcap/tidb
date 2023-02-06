@@ -1189,6 +1189,8 @@ func TestShowForNewCollations(t *testing.T) {
 	expectRows := testkit.Rows(
 		"ascii_bin ascii 65 Yes Yes 1",
 		"binary binary 63 Yes Yes 1",
+		"gb18030_bin gb18030 249  Yes 1",
+		"gb18030_chinese_ci gb18030 248 Yes Yes 1",
 		"gbk_bin gbk 87  Yes 1",
 		"gbk_chinese_ci gbk 28 Yes Yes 1",
 		"latin1_bin latin1 47 Yes Yes 1",
