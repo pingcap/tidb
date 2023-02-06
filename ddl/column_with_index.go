@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/dbterror"
 )
@@ -581,33 +582,32 @@ func updateReorgDone(job *model.Job, indexInfo *model.IndexInfo) bool {
 
 // rollback related functions
 
-// checkDropColumnsNeedReorg returns if the drop column job has composite index covered
-// this function is used for rolling back
-func checkDropColumnsNeedReorg(tblInfo *model.TableInfo, colNames []model.CIStr) bool {
-	cidxInfos := make(map[int64]*model.IndexInfo)
-	for _, colName := range colNames {
-		_, cidxList := listIndexesWithColumn(colName.L, tblInfo.Indices)
-		for _, cidx := range cidxList {
-			cidxInfos[cidx.ID] = cidx
+func getColumnByNameFromTable(tblInfo *model.TableInfo, colName model.CIStr) *model.ColumnInfo {
+	for _, colInfo := range tblInfo.Columns {
+		if colInfo.Name.L == colName.L {
+			return colInfo
 		}
 	}
+	return nil
+}
+
+// checkDropColumnsNeedReorg returns if the drop column job has composite index covered and index doesn't contains auto increment field.
+func checkDropColumnsNeedReorg(tblInfo *model.TableInfo, colName model.CIStr) (bool, error) {
+	_, cidxInfos := listIndexesWithColumn(colName.L, tblInfo.Indices)
 	if len(cidxInfos) == 0 {
-		return false
+		return false, nil
 	}
-	needReorgs := 0
+
 	for _, idxInfo := range cidxInfos {
-		idxColumns := 0
-		for _, col := range idxInfo.Columns {
-			if inColumnNames(col, colNames) {
-				continue
+		for _, icol := range idxInfo.Columns {
+			col := getColumnByNameFromTable(tblInfo, icol.Name)
+			// Not allow index contains auto increment column.
+			if col != nil && mysql.HasAutoIncrementFlag(col.GetFlag()) {
+				return false, dbterror.ErrCantDropColWithAutoInc
 			}
-			idxColumns++
-		}
-		if idxColumns > 0 {
-			needReorgs++
 		}
 	}
-	return needReorgs > 0
+	return true, nil
 }
 
 // convertDropColumnWithCompositeIdxJob2RollbackJob will set new created temp composite index to delete only

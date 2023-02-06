@@ -67,6 +67,25 @@ func TestDropColumnWithUniqCompositeIndex(t *testing.T) {
 	tk.MustExec("alter table t2 drop column b")
 }
 
+func TestDropColumnWithAutoIncrementColumnCoveredCompositeIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int auto_increment, b int, c int, index i_ab(a, b))")
+	tk.MustGetErrCode("alter table t1 drop column b", errno.ErrUnsupportedDDLOperation)
+}
+
+func TestDropColumnWithExpressionIndexCovered(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("create index idx1 ON t1 ((a - b));")
+	tk.MustGetErrCode("alter table t1 drop column a", errno.ErrDependentByFunctionalIndex)
+}
+
 var cancelTestCases = []testCancelJob{
 	{"alter table t_cidx drop column a", true, model.StateCreateIndexDeleteOnly, false, true, nil},
 	{"alter table t_cidx drop column a", true, model.StateCreateIndexWriteOnly, false, true, nil},
