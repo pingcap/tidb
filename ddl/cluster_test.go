@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/meta"
@@ -84,7 +85,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	defer resetGC()
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
@@ -136,7 +137,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 	defer resetGC()
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteOnly {
@@ -175,7 +176,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	defer resetGC()
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {

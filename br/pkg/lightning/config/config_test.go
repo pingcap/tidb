@@ -19,6 +19,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -561,6 +562,126 @@ func TestDurationUnmarshal(t *testing.T) {
 	require.Regexp(t, "time: unknown unit .?x.? in duration .?13x20s.?", err.Error())
 }
 
+func TestMaxErrorUnmarshal(t *testing.T) {
+	type testCase struct {
+		TOMLStr        string
+		ExpectedValues map[string]int64
+		ExpectErrStr   string
+		CaseName       string
+	}
+	for _, tc := range []*testCase{
+		{
+			TOMLStr: `max-error = 123`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     123,
+				"conflict": math.MaxInt64,
+			},
+			CaseName: "Normal_Int",
+		},
+		{
+			TOMLStr: `max-error = -123`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     0,
+				"conflict": math.MaxInt64,
+			},
+			CaseName: "Abnormal_Negative_Int",
+		},
+		{
+			TOMLStr:      `max-error = "abcde"`,
+			ExpectErrStr: "invalid max-error 'abcde', should be an integer or a map of string:int64",
+			CaseName:     "Abnormal_String",
+		},
+		{
+			TOMLStr: `[max-error]
+syntax = 1
+charset = 2
+type = 3
+conflict = 4
+`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     3,
+				"conflict": 4,
+			},
+			CaseName: "Normal_Map_All_Set",
+		},
+		{
+			TOMLStr: `[max-error]
+conflict = 1000
+`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     0,
+				"conflict": 1000,
+			},
+			CaseName: "Normal_Map_Partial_Set",
+		},
+		{
+			TOMLStr: `max-error = { conflict = 1000, type = 123 }`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     123,
+				"conflict": 1000,
+			},
+			CaseName: "Normal_OneLineMap_Partial_Set",
+		},
+		{
+			TOMLStr: `[max-error]
+conflict = 1000
+not_exist = 123
+`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     0,
+				"conflict": 1000,
+			},
+			CaseName: "Normal_Map_Partial_Set_Invalid_Key",
+		},
+		{
+			TOMLStr: `[max-error]
+conflict = 1000
+type = -123
+`,
+			ExpectedValues: map[string]int64{
+				"syntax":   0,
+				"charset":  math.MaxInt64,
+				"type":     0,
+				"conflict": 1000,
+			},
+			CaseName: "Normal_Map_Partial_Set_Invalid_Value",
+		},
+		{
+			TOMLStr: `[max-error]
+conflict = 1000
+type = abc
+`,
+			ExpectErrStr: `toml: line 3 (last key "max-error.type"): expected value but found "abc" instead`,
+			CaseName:     "Normal_Map_Partial_Set_Invalid_ValueType",
+		},
+	} {
+		targetLightningCfg := new(config.Lightning)
+		err := toml.Unmarshal([]byte(tc.TOMLStr), targetLightningCfg)
+		if len(tc.ExpectErrStr) > 0 {
+			require.Errorf(t, err, "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectErrStr, err.Error(), "test case: %s", tc.CaseName)
+		} else {
+			require.NoErrorf(t, err, "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectedValues["syntax"], targetLightningCfg.MaxError.Syntax.Load(), "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectedValues["charset"], targetLightningCfg.MaxError.Charset.Load(), "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectedValues["type"], targetLightningCfg.MaxError.Type.Load(), "test case: %s", tc.CaseName)
+			require.Equalf(t, tc.ExpectedValues["conflict"], targetLightningCfg.MaxError.Conflict.Load(), "test case: %s", tc.CaseName)
+		}
+	}
+}
+
 func TestDurationMarshalJSON(t *testing.T) {
 	duration := config.Duration{}
 	err := duration.UnmarshalText([]byte("13m20s"))
@@ -643,7 +764,7 @@ func TestLoadConfig(t *testing.T) {
 	err = taskCfg.Adjust(context.Background())
 	require.NoError(t, err)
 	equivalentDSN := taskCfg.Checkpoint.MySQLParam.ToDriverConfig().FormatDSN()
-	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
+	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?readTimeout=30s&writeTimeout=30s&maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
 	require.Equal(t, expectedDSN, equivalentDSN)
 
 	result := taskCfg.String()

@@ -48,15 +48,13 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 	tests = append(tests, TestCase{
 		name: "normal case: ru case 1",
 		input: &model.ResourceGroupSettings{
-			RRURate: 2000,
-			WRURate: 20000,
+			RURate: 2000,
 		},
 		output: &rmpb.ResourceGroup{
 			Name: groupName,
 			Mode: rmpb.GroupMode_RUMode,
 			RUSettings: &rmpb.GroupRequestUnitSettings{
-				RRU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 2000}},
-				WRU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 20000}},
+				RU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 2000}},
 			},
 		},
 	})
@@ -64,29 +62,13 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 	tests = append(tests, TestCase{
 		name: "normal case: ru case 2",
 		input: &model.ResourceGroupSettings{
-			RRURate: 5000,
+			RURate: 5000,
 		},
 		output: &rmpb.ResourceGroup{
 			Name: groupName,
 			Mode: rmpb.GroupMode_RUMode,
 			RUSettings: &rmpb.GroupRequestUnitSettings{
-				RRU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 5000}},
-				WRU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 0}},
-			},
-		},
-	})
-
-	tests = append(tests, TestCase{
-		name: "normal case: ru case 3",
-		input: &model.ResourceGroupSettings{
-			WRURate: 15000,
-		},
-		output: &rmpb.ResourceGroup{
-			Name: groupName,
-			Mode: rmpb.GroupMode_RUMode,
-			RUSettings: &rmpb.GroupRequestUnitSettings{
-				RRU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 0}},
-				WRU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 15000}},
+				RU: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 5000}},
 			},
 		},
 	})
@@ -101,7 +83,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 		output: &rmpb.ResourceGroup{
 			Name: groupName,
 			Mode: rmpb.GroupMode_RawMode,
-			ResourceSettings: &rmpb.GroupResourceSettings{
+			RawResourceSettings: &rmpb.GroupRawResourceSettings{
 				Cpu:     &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 8000}},
 				IoRead:  &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 3000000000}},
 				IoWrite: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 1500000000}},
@@ -119,7 +101,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 		output: &rmpb.ResourceGroup{
 			Name: groupName,
 			Mode: rmpb.GroupMode_RawMode,
-			ResourceSettings: &rmpb.GroupResourceSettings{
+			RawResourceSettings: &rmpb.GroupRawResourceSettings{
 				Cpu:     &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 8000}},
 				IoRead:  &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 3145728000}},
 				IoWrite: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 3145728000}},
@@ -163,7 +145,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 			CPULimiter:       "8",
 			IOReadBandwidth:  "3000Mi",
 			IOWriteBandwidth: "3000Mi",
-			RRURate:          1000,
+			RURate:           1000,
 		},
 		err: ErrInvalidResourceGroupDuplicatedMode,
 	})
@@ -175,7 +157,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 			CPULimiter:       "8",
 			IOReadBandwidth:  "3000Mi",
 			IOWriteBandwidth: "3000Mi",
-			RRURate:          1000,
+			RURate:           1000,
 		},
 		err: ErrTooLongResourceGroupName,
 	})
