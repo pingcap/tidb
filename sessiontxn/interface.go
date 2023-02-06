@@ -183,8 +183,10 @@ type TxnManager interface {
 	EnterNewTxn(ctx context.Context, req *EnterNewTxnRequest) error
 	// OnTxnEnd is the hook that should be called after transaction commit or rollback
 	OnTxnEnd()
-	// OnStmtStart is the hook that should be called when a new statement started
+	// OnStmtStart is the hook that should be called when a new statement started.
 	OnStmtStart(ctx context.Context, node ast.StmtNode) error
+	// OnStmtEnd is the hook that should be called when a new statement ended.
+	OnStmtEnd(ctx context.Context) error
 	// OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
 	// a pessimistic select-for-update statements.
 	OnHandlePessimisticStmtStart(ctx context.Context) error
@@ -205,6 +207,9 @@ type TxnManager interface {
 	ActivateTxn() (kv.Transaction, error)
 	// GetCurrentStmt returns the current statement node
 	GetCurrentStmt() ast.StmtNode
+	// LazyTxn returns the lazily initialized txn wrapper. Note this is a temporary interface and the
+	// `LazyTxn` would possibly be disassembled and merged into `txnManager` in the future.
+	LazyTxn() *LazyTxn
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:

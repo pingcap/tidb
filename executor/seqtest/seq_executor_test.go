@@ -44,6 +44,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -1358,7 +1359,7 @@ func TestAutoRandIDRetry(t *testing.T) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	session.ResetMockAutoRandIDRetryCount(5)
+	sessiontxn.ResetMockAutoRandIDRetryCount(5)
 	fpName := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
 	tk.MustExec("commit")
@@ -1367,7 +1368,7 @@ func TestAutoRandIDRetry(t *testing.T) {
 	maskedHandles := extractMaskedOrderedHandles()
 	require.Equal(t, []int64{1, 2, 3, 4, 5}, maskedHandles)
 
-	session.ResetMockAutoRandIDRetryCount(11)
+	sessiontxn.ResetMockAutoRandIDRetryCount(11)
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values ()")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))

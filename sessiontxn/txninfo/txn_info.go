@@ -172,6 +172,8 @@ type TxnInfo struct {
 	CurrentDB string
 	// The related table IDs.
 	RelatedTableIDs map[int64]struct{}
+	// Whether the transaction is a valid one, like the txn.Valid() result.
+	Activated bool
 }
 
 var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{

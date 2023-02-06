@@ -15,7 +15,7 @@ go_test(
         "//expression",
         "//kv",
         "//parser",
-        "//session/txninfo",
+        "//sessiontxn/txninfo",
         "//testkit",
         "//tests/realtikvtest",
         "//util",

@@ -238,7 +238,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		}
 
 		// Handle the stmt commit/rollback.
-		if se.txn.Valid() {
+		if se.txn().Valid() {
 			if meetsErr != nil {
 				se.StmtRollback(ctx, false)
 			} else {
@@ -247,7 +247,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		}
 	}
 	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
-	if se.txn.pending() {
+	if se.txn().Pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
 		//
@@ -256,7 +256,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		// select 1
 		//
 		// Reset txn state to invalid to dispose the pending start ts.
-		se.txn.changeToInvalid()
+		se.txn().ChangeToInvalid()
 	}
 	if err != nil {
 		return err
@@ -271,8 +271,8 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars)
-		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
-			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
+		} else if se.txn().Valid() && se.txn().IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
+			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn().StartTS()))
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars)
 		}

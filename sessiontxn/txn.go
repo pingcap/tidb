@@ -1,5 +1,5 @@
-// Copyright 2018 PingCAP, Inc.
-
+// Copyright 2023 PingCAP, Inc.
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session
+package sessiontxn
 
 import (
 	"bytes"
@@ -29,10 +29,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/txninfo"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
@@ -42,6 +41,32 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
+
+var hasMockAutoIncIDRetry = int64(0)
+
+func enableMockAutoIncIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIncIDRetry, 1)
+}
+
+func mockAutoIncIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIncIDRetry) == 1
+}
+
+var mockAutoRandIDRetryCount = int64(0)
+
+func needMockAutoRandIDRetry() bool {
+	return atomic.LoadInt64(&mockAutoRandIDRetryCount) > 0
+}
+
+func decreaseMockAutoRandIDRetryCount() {
+	atomic.AddInt64(&mockAutoRandIDRetryCount, -1)
+}
+
+// ResetMockAutoRandIDRetryCount set the number of occurrences of
+// `kv.ErrTxnRetryable` when calling TxnState.Commit().
+func ResetMockAutoRandIDRetryCount(failTimes int64) {
+	atomic.StoreInt64(&mockAutoRandIDRetryCount, failTimes)
+}
 
 // LazyTxn wraps kv.Transaction to provide a new kv.Transaction.
 // 1. It holds all statement related modification in the buffer before flush to the txn,
@@ -53,12 +78,12 @@ type LazyTxn struct {
 	// Pending: kv.Transaction == nil && txnFuture != nil
 	// Valid:	kv.Transaction != nil && txnFuture == nil
 	kv.Transaction
-	txnFuture *txnFuture
+	txnFuture *TxnFuture
 
 	initCnt       int
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
-	writeSLI      sli.TxnWriteThroughputSLI
+	WriteSLI      sli.TxnWriteThroughputSLI
 
 	enterAggressiveLockingOnValid bool
 
@@ -85,7 +110,8 @@ func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	txn.Transaction.CacheTableInfo(id, info)
 }
 
-func (txn *LazyTxn) init() {
+// Init creates the internal TxnInfo object.
+func (txn *LazyTxn) Init() {
 	txn.mutations = make(map[int64]*binlog.TableMutation)
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
@@ -164,6 +190,7 @@ func (txn *LazyTxn) resetTxnInfo(
 	entriesCount uint64,
 	currentSQLDigest string,
 	allSQLDigests []string,
+	activated bool,
 ) {
 	if !txn.mu.LastStateChangeTime.IsZero() {
 		lastState := txn.mu.State
@@ -182,6 +209,7 @@ func (txn *LazyTxn) resetTxnInfo(
 
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
 	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
+	txn.mu.TxnInfo.Activated = activated
 }
 
 // Size implements the MemBuffer interface.
@@ -213,11 +241,13 @@ func (txn *LazyTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
 }
 
-func (txn *LazyTxn) pending() bool {
+// Pending returns if the transaction state is pending.
+func (txn *LazyTxn) Pending() bool {
 	return txn.Transaction == nil && txn.txnFuture != nil
 }
 
-func (txn *LazyTxn) validOrPending() bool {
+// ValidOrPending returns if the transaction state is in valid or pending.
+func (txn *LazyTxn) ValidOrPending() bool {
 	return txn.txnFuture != nil || txn.Valid()
 }
 
@@ -239,7 +269,7 @@ func (txn *LazyTxn) String() string {
 func (txn *LazyTxn) GoString() string {
 	var s strings.Builder
 	s.WriteString("Txn{")
-	if txn.pending() {
+	if txn.Pending() {
 		s.WriteString("state=pending")
 	} else if txn.Valid() {
 		s.WriteString("state=valid")
@@ -267,12 +297,14 @@ func (txn *LazyTxn) GetOption(opt int) interface{} {
 	return txn.Transaction.GetOption(opt)
 }
 
-func (txn *LazyTxn) changeToPending(future *txnFuture) {
+// ChangeToPending changes the transaction state to pending.
+func (txn *LazyTxn) ChangeToPending(future *TxnFuture) {
 	txn.Transaction = nil
 	txn.txnFuture = future
 }
 
-func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
+// ChangePendingToValid changes the transaction state to valie from pending.
+func (txn *LazyTxn) ChangePendingToValid(ctx context.Context) error {
 	if txn.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -305,12 +337,14 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 		txninfo.TxnIdle,
 		uint64(txn.Transaction.Len()),
 		txn.mu.TxnInfo.CurrentSQLDigest,
-		txn.mu.TxnInfo.AllSQLDigests)
+		txn.mu.TxnInfo.AllSQLDigests,
+		true)
 
 	return nil
 }
 
-func (txn *LazyTxn) changeToInvalid() {
+// ChangeToInvalid changes the transaction state to invalid.
+func (txn *LazyTxn) ChangeToInvalid() {
 	if txn.stagingHandle != kv.InvalidStagingHandle {
 		txn.Transaction.GetMemBuffer().Cleanup(txn.stagingHandle)
 	}
@@ -334,7 +368,9 @@ func (txn *LazyTxn) changeToInvalid() {
 	}
 }
 
-func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
+// OnStmtStart is used to record TxnInfo information when the statement is started. By now it's a bit duplicated
+// with the TxnManager.OnStmtStart hook.
+func (txn *LazyTxn) OnStmtStart(currentSQLDigest string) {
 	if len(currentSQLDigest) == 0 {
 		return
 	}
@@ -350,37 +386,64 @@ func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
 	}
 }
 
-func (txn *LazyTxn) onStmtEnd() {
+// OnStmtEnd is used to record TxnInfo information when the statement is finished.
+func (txn *LazyTxn) OnStmtEnd() {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	txn.mu.TxnInfo.CurrentSQLDigest = ""
 	txn.updateState(txninfo.TxnIdle)
 }
 
-var hasMockAutoIncIDRetry = int64(0)
+// StmtCommit commits the current execution statement.
+func (txn *LazyTxn) StmtCommit(ctx context.Context, sctx sessionctx.Context) error {
+	defer func() {
+		txn.cleanup()
+	}()
 
-func enableMockAutoIncIDRetry() {
-	atomic.StoreInt64(&hasMockAutoIncIDRetry, 1)
+	txnManager := GetTxnManager(sctx)
+	err := txnManager.OnStmtCommit(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtCommit", zap.Error(err))
+	}
+
+	txn.flushStmtBuf()
+
+	// Need to flush binlog.
+	for tableID, delta := range txn.mutations {
+		mutation := getBinlogMutation(sctx, tableID)
+		mergeToMutation(mutation, delta)
+	}
+	return nil
 }
 
-func mockAutoIncIDRetry() bool {
-	return atomic.LoadInt64(&hasMockAutoIncIDRetry) == 1
+// StmtRollback rolls back the current execution statement.
+func (txn *LazyTxn) StmtRollback(ctx context.Context, sctx sessionctx.Context, isForcePessimisticRetry bool) error {
+	txnManager := GetTxnManager(sctx)
+	err := txnManager.OnStmtRollback(ctx, isForcePessimisticRetry)
+	if err != nil {
+		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtRollback", zap.Error(err))
+	}
+	txn.cleanup()
+	return nil
 }
 
-var mockAutoRandIDRetryCount = int64(0)
-
-func needMockAutoRandIDRetry() bool {
-	return atomic.LoadInt64(&mockAutoRandIDRetryCount) > 0
+// StmtGetMutation returns the binlog mutation in current statement.
+func (txn *LazyTxn) StmtGetMutation(tableID int64) *binlog.TableMutation {
+	if _, ok := txn.mutations[tableID]; !ok {
+		txn.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
+	}
+	return txn.mutations[tableID]
 }
 
-func decreaseMockAutoRandIDRetryCount() {
-	atomic.AddInt64(&mockAutoRandIDRetryCount, -1)
-}
-
-// ResetMockAutoRandIDRetryCount set the number of occurrences of
-// `kv.ErrTxnRetryable` when calling TxnState.Commit().
-func ResetMockAutoRandIDRetryCount(failTimes int64) {
-	atomic.StoreInt64(&mockAutoRandIDRetryCount, failTimes)
+// HasDirtyContent checks whether the transaction is dirty.
+func (txn *LazyTxn) HasDirtyContent(tableID int64) bool {
+	if txn.Transaction == nil {
+		return false
+	}
+	seekKey := tablecodec.EncodeTablePrefix(tableID)
+	it, err := txn.GetMemBuffer().Iter(seekKey, nil)
+	terror.Log(err)
+	return it.Valid() && bytes.HasPrefix(it.Key(), seekKey)
 }
 
 // Commit overrides the Transaction interface.
@@ -477,7 +540,7 @@ func (txn *LazyTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn fu
 func (txn *LazyTxn) StartAggressiveLocking() error {
 	if txn.Valid() {
 		return txn.Transaction.StartAggressiveLocking()
-	} else if txn.pending() {
+	} else if txn.Pending() {
 		txn.enterAggressiveLockingOnValid = true
 	} else {
 		err := errors.New("trying to start aggressive locking on a transaction in invalid state")
@@ -491,7 +554,7 @@ func (txn *LazyTxn) StartAggressiveLocking() error {
 func (txn *LazyTxn) RetryAggressiveLocking(ctx context.Context) error {
 	if txn.Valid() {
 		return txn.Transaction.RetryAggressiveLocking(ctx)
-	} else if !txn.pending() {
+	} else if !txn.Pending() {
 		err := errors.New("trying to retry aggressive locking on a transaction in invalid state")
 		logutil.BgLogger().Error("unexpected error when retrying aggressive locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
 		return err
@@ -503,7 +566,7 @@ func (txn *LazyTxn) RetryAggressiveLocking(ctx context.Context) error {
 func (txn *LazyTxn) CancelAggressiveLocking(ctx context.Context) error {
 	if txn.Valid() {
 		return txn.Transaction.CancelAggressiveLocking(ctx)
-	} else if txn.pending() {
+	} else if txn.Pending() {
 		if txn.enterAggressiveLockingOnValid {
 			txn.enterAggressiveLockingOnValid = false
 		} else {
@@ -523,7 +586,7 @@ func (txn *LazyTxn) CancelAggressiveLocking(ctx context.Context) error {
 func (txn *LazyTxn) DoneAggressiveLocking(ctx context.Context) error {
 	if txn.Valid() {
 		return txn.Transaction.DoneAggressiveLocking(ctx)
-	} else if txn.pending() {
+	} else if txn.Pending() {
 		if txn.enterAggressiveLockingOnValid {
 			txn.enterAggressiveLockingOnValid = false
 		} else {
@@ -543,7 +606,7 @@ func (txn *LazyTxn) DoneAggressiveLocking(ctx context.Context) error {
 func (txn *LazyTxn) IsInAggressiveLockingMode() bool {
 	if txn.Valid() {
 		return txn.Transaction.IsInAggressiveLockingMode()
-	} else if txn.pending() {
+	} else if txn.Pending() {
 		return txn.enterAggressiveLockingOnValid
 	} else {
 		return false
@@ -552,7 +615,7 @@ func (txn *LazyTxn) IsInAggressiveLockingMode() bool {
 
 func (txn *LazyTxn) reset() {
 	txn.cleanup()
-	txn.changeToInvalid()
+	txn.ChangeToInvalid()
 }
 
 func (txn *LazyTxn) cleanup() {
@@ -571,7 +634,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	keys := make([]kv.Key, 0, txn.countHint())
 	buf := txn.Transaction.GetMemBuffer()
 	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
-		if !keyNeedToLock(k, v, flags) {
+		if !KeyNeedToLock(k, v, flags) {
 			return
 		}
 		keys = append(keys, k)
@@ -582,10 +645,10 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 
 // Wait converts pending txn to valid
 func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
-	if !txn.validOrPending() {
+	if !txn.ValidOrPending() {
 		return txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
-	if txn.pending() {
+	if txn.Pending() {
 		defer func(begin time.Time) {
 			sctx.GetSessionVars().DurationWaitTS = time.Since(begin)
 		}(time.Now())
@@ -593,7 +656,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := txn.changePendingToValid(ctx); err != nil {
+		if err := txn.ChangePendingToValid(ctx); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			txn.cleanup()
@@ -605,7 +668,59 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 	return txn, nil
 }
 
-func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
+// TxnInfo returns information about current transaction.
+func (txn *LazyTxn) TxnInfo(sctx sessionctx.Context) *txninfo.TxnInfo {
+	txn.mu.RLock()
+	// Copy on read to get a snapshot, this API shouldn't be frequently called.
+	txnInfo := txn.mu.TxnInfo
+	txn.mu.RUnlock()
+
+	processInfo := sctx.ShowProcess()
+	txnInfo.ConnectionID = processInfo.ID
+	txnInfo.Username = processInfo.User
+	txnInfo.CurrentDB = processInfo.DB
+	txnInfo.RelatedTableIDs = make(map[int64]struct{})
+	sctx.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
+		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		return true
+	})
+	return &txnInfo
+}
+
+// PrepareTSFuture replaces the transaction future using the input one.
+func (txn *LazyTxn) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string, store kv.Storage) error {
+	if txn.Valid() {
+		return errors.New("cannot prepare ts future when txn is valid")
+	}
+
+	failpoint.Inject("assertTSONotRequest", func() {
+		if _, ok := future.(ConstantFuture); !ok {
+			panic("tso shouldn't be requested")
+		}
+	})
+
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
+		future = TxnFailFuture{}
+	})
+
+	txn.ChangeToPending(&TxnFuture{
+		Future:   future,
+		Store:    store,
+		TxnScope: scope,
+	})
+	return nil
+}
+
+// GetPreparedFuture returns transaction future already prepared.
+func (txn *LazyTxn) GetPreparedFuture() sessionctx.TxnFuture {
+	if !txn.ValidOrPending() {
+		return nil
+	}
+	return txn
+}
+
+// KeyNeedToLock checks whether the current key should be pessimistically locked.
+func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.
@@ -659,82 +774,31 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 	m1.Sequence = append(m1.Sequence, m2.Sequence...)
 }
 
-type txnFailFuture struct{}
+// TxnFailFuture is used to simulate future wait failure.
+type TxnFailFuture struct{}
 
-func (txnFailFuture) Wait() (uint64, error) {
+// Wait implements the future wait interface.
+func (TxnFailFuture) Wait() (uint64, error) {
 	return 0, errors.New("mock get timestamp fail")
 }
 
-// txnFuture is a promise, which promises to return a txn in future.
-type txnFuture struct {
-	future   oracle.Future
-	store    kv.Storage
-	txnScope string
+// TxnFuture is a promise, which promises to return a txn in future.
+type TxnFuture struct {
+	Future   oracle.Future
+	Store    kv.Storage
+	TxnScope string
 }
 
-func (tf *txnFuture) wait() (kv.Transaction, error) {
-	startTS, err := tf.future.Wait()
+func (tf *TxnFuture) wait() (kv.Transaction, error) {
+	startTS, err := tf.Future.Wait()
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
+		return tf.Store.Begin(tikv.WithTxnScope(tf.TxnScope), tikv.WithStartTS(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
-}
-
-// HasDirtyContent checks whether there's dirty update on the given table.
-// Put this function here is to avoid cycle import.
-func (s *session) HasDirtyContent(tid int64) bool {
-	if s.txn.Transaction == nil {
-		return false
-	}
-	seekKey := tablecodec.EncodeTablePrefix(tid)
-	it, err := s.txn.GetMemBuffer().Iter(seekKey, nil)
-	terror.Log(err)
-	return it.Valid() && bytes.HasPrefix(it.Key(), seekKey)
-}
-
-// StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit(ctx context.Context) {
-	defer func() {
-		s.txn.cleanup()
-	}()
-
-	txnManager := sessiontxn.GetTxnManager(s)
-	err := txnManager.OnStmtCommit(ctx)
-	if err != nil {
-		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtCommit", zap.Error(err))
-	}
-
-	st := &s.txn
-	st.flushStmtBuf()
-
-	// Need to flush binlog.
-	for tableID, delta := range st.mutations {
-		mutation := getBinlogMutation(s, tableID)
-		mergeToMutation(mutation, delta)
-	}
-}
-
-// StmtRollback implements the sessionctx.Context interface.
-func (s *session) StmtRollback(ctx context.Context, isForPessimisticRetry bool) {
-	txnManager := sessiontxn.GetTxnManager(s)
-	err := txnManager.OnStmtRollback(ctx, isForPessimisticRetry)
-	if err != nil {
-		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtRollback", zap.Error(err))
-	}
-	s.txn.cleanup()
-}
-
-// StmtGetMutation implements the sessionctx.Context interface.
-func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
-	st := &s.txn
-	if _, ok := st.mutations[tableID]; !ok {
-		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
-	}
-	return st.mutations[tableID]
+	return tf.Store.Begin(tikv.WithTxnScope(tf.TxnScope))
 }

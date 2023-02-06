@@ -67,13 +67,13 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/txninfo"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
@@ -241,7 +241,6 @@ func (h *StmtHistory) Count() int {
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
-	txn         LazyTxn
 
 	mu struct {
 		sync.RWMutex
@@ -575,45 +574,46 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 
 // TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
 func (s *session) TxnInfo() *txninfo.TxnInfo {
-	s.txn.mu.RLock()
-	// Copy on read to get a snapshot, this API shouldn't be frequently called.
-	txnInfo := s.txn.mu.TxnInfo
-	s.txn.mu.RUnlock()
+	return s.txn().TxnInfo(s)
+}
 
-	if txnInfo.StartTS == 0 {
-		return nil
-	}
+// StmtCommit commits the current execution statement.
+func (s *session) StmtCommit(ctx context.Context) {
+	_ = s.txn().StmtCommit(ctx, s)
+}
 
-	processInfo := s.ShowProcess()
-	txnInfo.ConnectionID = processInfo.ID
-	txnInfo.Username = processInfo.User
-	txnInfo.CurrentDB = processInfo.DB
-	txnInfo.RelatedTableIDs = make(map[int64]struct{})
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
-		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
-		return true
-	})
+// StmtRollback rolls back the current execution statement.
+func (s *session) StmtRollback(ctx context.Context, isForcePessimisticRetry bool) {
+	_ = s.txn().StmtRollback(ctx, s, isForcePessimisticRetry)
+}
 
-	return &txnInfo
+// StmtGetMutation returns the binlog mutation in current statement.
+func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
+	return s.txn().StmtGetMutation(tableID)
+}
+
+// HasDirtyContent checks whether the transaction is dirty.
+func (s *session) HasDirtyContent(tableID int64) bool {
+	return s.txn().HasDirtyContent(tableID)
 }
 
 func (s *session) doCommit(ctx context.Context) error {
-	if !s.txn.Valid() {
+	if !s.txn().Valid() {
 		return nil
 	}
 
 	// to avoid session set overlap the txn set.
 	if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
-		s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
+		s.txn().SetDiskFullOpt(s.GetDiskFullOpt())
 	}
 
 	defer func() {
-		s.txn.changeToInvalid()
+		s.txn().ChangeToInvalid()
 		s.sessionVars.SetInTxn(false)
 		s.ClearDiskFullOpt()
 	}()
 	// check if the transaction is read-only
-	if s.txn.IsReadOnly() {
+	if s.txn().IsReadOnly() {
 		return nil
 	}
 	// check if the cluster is read-only
@@ -655,7 +655,7 @@ func (s *session) doCommit(ctx context.Context) error {
 				},
 				Client: s.sessionVars.BinlogClient,
 			}
-			s.txn.SetOption(kv.BinlogInfo, info)
+			s.txn().SetOption(kv.BinlogInfo, info)
 		}
 	}
 
@@ -677,31 +677,31 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.GetSessionVars().TxnCtx != nil {
 		needCheckSchema = !s.GetSessionVars().TxnCtx.EnableMDL
 	}
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
-	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
-	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
-	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-	s.txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
+	s.txn().SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
+	s.txn().SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	s.txn().SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
+	s.txn().SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
+	s.txn().SetOption(kv.Enable1PC, sessVars.Enable1PC)
+	s.txn().SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	s.txn().SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
+		s.txn().SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
 	}
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
-	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
+	if val := s.txn().GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
 		// because the property is naturally holds:
 		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
-		s.txn.SetOption(kv.GuaranteeLinearizability,
+		s.txn().SetOption(kv.GuaranteeLinearizability,
 			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
 	}
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
-		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+		s.txn().SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
-	s.txn.SetOption(kv.TxnSource, sessVars.CDCWriteSource)
+	s.txn().SetOption(kv.TxnSource, sessVars.CDCWriteSource)
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
 		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
@@ -711,10 +711,10 @@ func (s *session) doCommit(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		s.txn.SetOption(kv.CommitTSUpperBoundCheck, c.commitTSCheck)
+		s.txn().SetOption(kv.CommitTSUpperBoundCheck, c.commitTSCheck)
 	}
 
-	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), s.txn())
 	if err != nil {
 		err = s.handleAssertionFailure(ctx, err)
 	}
@@ -869,7 +869,7 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 		tblPrefix := tablecodec.EncodeTablePrefix(tblID)
 		endKey := tablecodec.EncodeTablePrefix(tblID + 1)
 
-		txnMemBuffer := s.txn.GetMemBuffer()
+		txnMemBuffer := s.txn().GetMemBuffer()
 		iter, err := txnMemBuffer.Iter(tblPrefix, endKey)
 		if err != nil {
 			return err
@@ -944,17 +944,17 @@ func errIsNoisy(err error) bool {
 func (s *session) doCommitWithRetry(ctx context.Context) error {
 	defer func() {
 		s.GetSessionVars().SetTxnIsolationLevelOneShotStateForNextTxn()
-		s.txn.changeToInvalid()
+		s.txn().ChangeToInvalid()
 		s.cleanRetryInfo()
 		sessiontxn.GetTxnManager(s).OnTxnEnd()
 	}()
-	if !s.txn.Valid() {
+	if !s.txn().Valid() {
 		// If the transaction is invalid, maybe it has already been rolled back by the client.
 		return nil
 	}
 	var err error
-	txnSize := s.txn.Size()
-	isPessimistic := s.txn.IsPessimistic()
+	txnSize := s.txn().Size()
+	isPessimistic := s.txn().IsPessimistic()
 	r, ctx := tracing.StartRegionEx(ctx, "session.doCommitWithRetry")
 	defer r.End()
 
@@ -977,7 +977,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.GetSQLLabel()),
 				zap.Error(err),
-				zap.String("txn", s.txn.GoString()))
+				zap.String("txn", s.txn().GoString()))
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -1001,7 +1001,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	if err != nil {
 		if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("commit failed",
-				zap.String("finished txn", s.txn.GoString()),
+				zap.String("finished txn", s.txn().GoString()),
 				zap.Error(err))
 		}
 		return err
@@ -1104,13 +1104,13 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.RollbackTxn")
 	defer r.End()
 
-	if s.txn.Valid() {
-		terror.Log(s.txn.Rollback())
+	if s.txn().Valid() {
+		terror.Log(s.txn().Rollback())
 	}
 	if ctx.Value(inCloseSession{}) == nil {
 		s.cleanRetryInfo()
 	}
-	s.txn.changeToInvalid()
+	s.txn().ChangeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	s.sessionVars.SetInTxn(false)
@@ -1135,9 +1135,9 @@ func (s *session) String() string {
 		"status":     sessVars.Status,
 		"strictMode": sessVars.StrictSQLMode,
 	}
-	if s.txn.Valid() {
+	if s.txn().Valid() {
 		// if txn is committed or rolled back, txn is nil.
-		data["txn"] = s.txn.String()
+		data["txn"] = s.txn().String()
 	}
 	if sessVars.SnapshotTS != 0 {
 		data["snapshotTS"] = sessVars.SnapshotTS
@@ -1204,7 +1204,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		if err != nil {
 			s.RollbackTxn(ctx)
 		}
-		s.txn.changeToInvalid()
+		s.txn().ChangeToInvalid()
 	}()
 
 	connID := s.sessionVars.ConnectionID
@@ -1252,12 +1252,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i))
 			}
-			_, digest := s.sessionVars.StmtCtx.SQLDigest()
-			s.txn.onStmtStart(digest.String())
 			if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx, st.GetStmtNode()); err == nil {
 				_, err = st.Exec(ctx)
 			}
-			s.txn.onStmtEnd()
+			_ = sessiontxn.GetTxnManager(s).OnStmtEnd(ctx)
 			if err != nil {
 				s.StmtRollback(ctx, false)
 				break
@@ -1298,9 +1296,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		logutil.Logger(ctx).Warn("sql",
 			zap.String("label", label),
 			zap.Error(err),
-			zap.String("txn", s.txn.GoString()))
+			zap.String("txn", s.txn().GoString()))
 		kv.BackOff(retryCnt)
-		s.txn.changeToInvalid()
+		s.txn().ChangeToInvalid()
 		s.sessionVars.SetInTxn(false)
 	}
 	return err
@@ -2135,10 +2133,12 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
 	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
-	s.txn.onStmtStart(digest.String())
-	defer s.txn.onStmtEnd()
 
-	if err := s.onTxnManagerStmtStartOrRetry(ctx, stmtNode); err != nil {
+	err := s.onTxnManagerStmtStartOrRetry(ctx, stmtNode)
+	defer func() {
+		_ = sessiontxn.GetTxnManager(s).OnStmtEnd(ctx)
+	}()
+	if err != nil {
 		return nil, err
 	}
 
@@ -2190,7 +2190,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
 		recordSet, err = stmt.PointGet(ctx)
-		s.txn.changeToInvalid()
+		s.txn().ChangeToInvalid()
 	} else {
 		recordSet, err = runStmt(ctx, s, stmt)
 	}
@@ -2501,11 +2501,11 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if !active {
-		return &s.txn, nil
+		return s.txn(), nil
 	}
 	_, err := sessiontxn.GetTxnManager(s).ActivateTxn()
 	s.SetMemoryFootprintChangeHook()
-	return &s.txn, err
+	return s.txn(), err
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -3515,7 +3515,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
-	s.txn.init()
+	s.txn().Init()
 
 	sessionBindHandle := bindinfo.NewSessionBindHandle()
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
@@ -3562,7 +3562,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-	s.txn.init()
+	s.txn().Init()
 	return s, nil
 }
 
@@ -3662,7 +3662,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	s.currentCtx = ctx
-	if s.txn.validOrPending() {
+	if s.txn().ValidOrPending() {
 		return nil
 	}
 
@@ -3685,7 +3685,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 
 // PrepareTSFuture uses to try to get ts future.
 func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error {
-	if s.txn.Valid() {
+	if s.txn().Valid() {
 		return errors.New("cannot prepare ts future when txn is valid")
 	}
 
@@ -3696,13 +3696,13 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	})
 
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
-		future = txnFailFuture{}
+		future = sessiontxn.TxnFailFuture{}
 	})
 
-	s.txn.changeToPending(&txnFuture{
-		future:   future,
-		store:    s.store,
-		txnScope: scope,
+	s.txn().ChangeToPending(&sessiontxn.TxnFuture{
+		Future:   future,
+		Store:    s.store,
+		TxnScope: scope,
 	})
 	return nil
 }
@@ -3710,10 +3710,10 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 // GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
 // It returns nil otherwise.
 func (s *session) GetPreparedTxnFuture() sessionctx.TxnFuture {
-	if !s.txn.validOrPending() {
+	if !s.txn().ValidOrPending() {
 		return nil
 	}
-	return &s.txn
+	return s.txn()
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
@@ -3924,7 +3924,7 @@ func (s *session) SetPort(port string) {
 
 // GetTxnWriteThroughputSLI implements the Context interface.
 func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
-	return &s.txn.writeSLI
+	return &s.txn().WriteSLI
 }
 
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
@@ -4087,15 +4087,13 @@ func (s *session) SetMemoryFootprintChangeHook() {
 		}
 		s.sessionVars.MemDBFootprint.ReplaceBytesUsed(int64(mem))
 	}
-	s.txn.SetMemoryFootprintChangeHook(hook)
+	s.txn().SetMemoryFootprintChangeHook(hook)
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
 func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	// Transaction status is hard to encode, so we do not support it.
-	s.txn.mu.Lock()
-	valid := s.txn.Valid()
-	s.txn.mu.Unlock()
+	valid := s.txn().TxnInfo(sctx).Activated
 	if valid {
 		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has an active transaction")
 	}
@@ -4206,6 +4204,10 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 			zap.Bool("internal", s.isInternal()),
 			zap.String("sql", stmtNode.Text()))
 	}
+}
+
+func (s *session) txn() *sessiontxn.LazyTxn {
+	return sessiontxn.GetTxnManager(s).LazyTxn()
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.

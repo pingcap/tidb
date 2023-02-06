@@ -66,7 +66,7 @@ type wrapTxn struct {
 	tsFuture oracle.Future
 }
 
-func (txn *wrapTxn) validOrPending() bool {
+func (txn *wrapTxn) ValidOrPending() bool {
 	return txn.tsFuture != nil || txn.Transaction.Valid()
 }
 
@@ -76,7 +76,7 @@ func (txn *wrapTxn) pending() bool {
 
 // Wait creates a new kvTransaction
 func (txn *wrapTxn) Wait(_ context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
-	if !txn.validOrPending() {
+	if !txn.ValidOrPending() {
 		return txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
 	if txn.pending() {
@@ -397,7 +397,7 @@ func (c *Context) PrepareTSFuture(_ context.Context, future oracle.Future, _ str
 // GetPreparedTxnFuture returns the TxnFuture if it is prepared.
 // It returns nil otherwise.
 func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
-	if !c.txn.validOrPending() {
+	if !c.txn.ValidOrPending() {
 		return nil
 	}
 	return &c.txn

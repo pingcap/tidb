@@ -6,7 +6,7 @@ go_library(
         "summary.go",
         "txn_info.go",
     ],
-    importpath = "github.com/pingcap/tidb/session/txninfo",
+    importpath = "github.com/pingcap/tidb/sessiontxn/txninfo",
     visibility = ["//visibility:public"],
     deps = [
         "//metrics",

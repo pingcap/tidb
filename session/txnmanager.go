@@ -46,6 +46,7 @@ func getTxnManager(sctx sessionctx.Context) sessiontxn.TxnManager {
 // txnManager implements sessiontxn.TxnManager
 type txnManager struct {
 	sctx sessionctx.Context
+	txn  sessiontxn.LazyTxn
 
 	stmtNode    ast.StmtNode
 	ctxProvider sessiontxn.TxnContextProvider
@@ -167,12 +168,20 @@ func (m *txnManager) GetCurrentStmt() ast.StmtNode {
 
 // OnStmtStart is the hook that should be called when a new statement started
 func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	normalized, _ := m.sctx.GetSessionVars().StmtCtx.SQLDigest()
+	m.txn.OnStmtStart(normalized)
 	m.stmtNode = node
 
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
+}
+
+// OnStmtEnd is the hook that should be called when a new statement ended.
+func (m *txnManager) OnStmtEnd(ctx context.Context) error {
+	m.txn.OnStmtEnd()
+	return nil
 }
 
 // OnHandlePessimisticStmtStart is the hook that should be called when starts handling a pessimistic DML or
@@ -292,4 +301,8 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	default:
 		return nil, errors.Errorf("Invalid txn mode '%s'", txnMode)
 	}
+}
+
+func (m *txnManager) LazyTxn() *sessiontxn.LazyTxn {
+	return &m.txn
 }

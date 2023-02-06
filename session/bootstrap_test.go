@@ -149,7 +149,7 @@ func TestBootstrapWithError(t *testing.T) {
 			sessionVars: variable.NewSessionVars(nil),
 		}
 		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
-		se.txn.init()
+		se.txn().Init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
 		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)

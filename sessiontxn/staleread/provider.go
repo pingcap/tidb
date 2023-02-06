@@ -158,7 +158,7 @@ func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() erro
 	return nil
 }
 
-// OnStmtStart is the hook that should be called when a new statement starte
+// OnStmtStart is the hook that should be called when a new statement started.
 func (p *StalenessTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
 	return nil
