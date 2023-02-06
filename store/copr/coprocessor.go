@@ -402,6 +402,11 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			}
 			i = nextI
 			if req.Paging.Enable {
+				if req.LimitSize != 0 && req.LimitSize < pagingSize {
+					// disable paging for small limit.
+					task.paging = false
+					task.pagingSize = 0
+				}
 				pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
 			}
 		}
