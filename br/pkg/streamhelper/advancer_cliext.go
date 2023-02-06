@@ -16,6 +16,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -115,6 +116,7 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 	handleResponse := func(resp clientv3.WatchResponse) bool {
 		events, err := t.eventFromWatch(ctx, resp)
 		if err != nil {
+			log.Warn("[log backup advancer] Meet error during receiving the task event.", logutil.ShortError(err))
 			ch <- errorEvent(err)
 			return false
 		}
@@ -124,6 +126,8 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		return true
 	}
 	collectRemaining := func() {
+		log.Info("[log backup advancer] Start collecting remaining events in the channel.", zap.Int("remained", len(c)))
+		defer log.Info("[log backup advancer] Finish collecting remaining events in the channel.")
 		for {
 			select {
 			case resp, ok := <-c:
