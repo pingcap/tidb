@@ -345,7 +345,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 
 	var builder taskBuilder
-	if req.StoreBatchSize > 0 {
+	if req.StoreBatchSize > 0 && hints != nil {
 		builder = newBatchTaskBuilder(bo, req, cache)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
@@ -1115,7 +1115,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		Tasks:      task.ToPBBatchTasks(),
 	}
 
-	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq, false)
+	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(worker.req.ReplicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel:    isolationLevelToPB(worker.req.IsolationLevel),
@@ -1496,10 +1496,10 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 	return nil
 }
 
-func (worker *copIteratorWorker) buildCacheKey(task *copTask, copReq *coprocessor.Request, force bool) (cacheKey []byte, cacheValue *coprCacheValue) {
+func (worker *copIteratorWorker) buildCacheKey(task *copTask, copReq *coprocessor.Request) (cacheKey []byte, cacheValue *coprCacheValue) {
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore requests with many ranges directly to avoid slowly building the cache key.
-	if force || task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
+	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
 		cKey, err := coprCacheBuildKey(copReq)
 		if err == nil {
 			cacheKey = cKey

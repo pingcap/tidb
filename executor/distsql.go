@@ -76,7 +76,9 @@ type lookupTableTask struct {
 	idxRows *chunk.Chunk
 	cursor  int
 
-	doneCh chan error
+	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
+	buildDone time.Time
+	doneCh    chan error
 
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.
@@ -790,13 +792,21 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
 		return e.resultCurr, nil
 	}
+	start := time.Now()
 	task, ok := <-e.resultCh
 	if !ok {
 		return nil, nil
 	}
+	indexFetchedInstant := time.Now()
 	if err := <-task.doneCh; err != nil {
 		return nil, err
 	}
+	e.stats.NextWaitIndexScan += indexFetchedInstant.Sub(start)
+	if task.buildDone.After(indexFetchedInstant) {
+		e.stats.NextWaitTableLookUpBuild += task.buildDone.Sub(indexFetchedInstant)
+		indexFetchedInstant = task.buildDone
+	}
+	e.stats.NextWaitTableLookUpResp += time.Since(indexFetchedInstant)
 
 	// Release the memory usage of last task before we handle a new task.
 	if e.resultCurr != nil {
@@ -1119,6 +1129,10 @@ type IndexLookUpRunTimeStats struct {
 	TableRowScan        int64
 	TableTaskNum        int64
 	Concurrency         int
+	// record the next wait details.
+	NextWaitIndexScan        time.Duration
+	NextWaitTableLookUpBuild time.Duration
+	NextWaitTableLookUpResp  time.Duration
 }
 
 func (e *IndexLookUpRunTimeStats) String() string {
@@ -1142,6 +1156,15 @@ func (e *IndexLookUpRunTimeStats) String() string {
 		}
 		buf.WriteString(fmt.Sprintf(" table_task: {total_time: %v, num: %d, concurrency: %d}", execdetails.FormatDuration(time.Duration(tableScan)), tableTaskNum, concurrency))
 	}
+	if e.NextWaitIndexScan > 0 || e.NextWaitTableLookUpBuild > 0 || e.NextWaitTableLookUpResp > 0 {
+		if buf.Len() > 0 {
+			buf.WriteByte(',')
+			fmt.Fprintf(&buf, " next: {wait_index: %s, wait_table_lookup_build: %s, wait_table_lookup_resp: %s}",
+				execdetails.FormatDuration(e.NextWaitIndexScan),
+				execdetails.FormatDuration(e.NextWaitTableLookUpBuild),
+				execdetails.FormatDuration(e.NextWaitTableLookUpResp))
+		}
+	}
 	return buf.String()
 }
 
@@ -1162,6 +1185,9 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	e.TaskWait += tmp.TaskWait
 	e.TableRowScan += tmp.TableRowScan
 	e.TableTaskNum += tmp.TableTaskNum
+	e.NextWaitIndexScan += tmp.NextWaitIndexScan
+	e.NextWaitTableLookUpBuild += tmp.NextWaitTableLookUpBuild
+	e.NextWaitTableLookUpResp += tmp.NextWaitTableLookUpResp
 }
 
 // Tp implements the RuntimeStats interface.
@@ -1300,6 +1326,7 @@ func getDatumRow(r *chunk.Row, fields []*types.FieldType) []types.Datum {
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
 	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
+	task.buildDone = time.Now()
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err
