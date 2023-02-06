@@ -17,12 +17,9 @@
 set -eu
 DB="$TEST_NAME"
 
-PROGRESS_FILE="$TEST_DIR/progress_unit_file"
-rm -rf $PROGRESS_FILE
-
 VOTER_COUNT=$((TIKV_COUNT-1))
 if [ "$VOTER_COUNT" -lt "1" ];then
-  echo "Bypass test because there is no enough tikv"
+  echo "Skip test because there is no enough tikv"
   exit 0
 fi
 
@@ -52,11 +49,14 @@ run_sql "CREATE TABLE $DB.usertable2 ( \
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 
 run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
+# backup db with wrong replica read label option
+echo "backup start with wrong replica read label option ..."
+run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label '$mode:no_such_label'
+grep "no store matches replica read label" $LOG
+
 # backup db
 echo "backup start..."
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/progress-call-back=return(\"$PROGRESS_FILE\")"
 run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label '$mode:read_only'
-export GO_FAILPOINTS=""
 
 run_sql "DROP DATABASE $DB;"
 
