@@ -309,6 +309,7 @@ func TestAdminRecoverIndex(t *testing.T) {
 	r = tk.MustQuery("admin recover index admin_test i1")
 	r.Check(testkit.Rows("0 5"))
 	tk.MustExec("admin check table admin_test")
+	ctx = mock.NewContext()
 	ctx.Store = store
 	is = domain.InfoSchema()
 	dbName = model.NewCIStr("test")
@@ -322,15 +323,22 @@ func TestAdminRecoverIndex(t *testing.T) {
 	sc = ctx.GetSessionVars().StmtCtx
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), kv.IntHandle(1))
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), kv.IntHandle(1))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(i1)")
+	r.Check(testkit.Rows("4"))
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 	r = tk.MustQuery("admin recover index admin_test i1")
 	r.Check(testkit.Rows("1 5"))
 	tk.MustExec("admin check table admin_test")
+
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), unique key i1(c1, c2));")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20);")
+	tk.MustExec("admin recover index admin_test i1;")
 }
 
 func TestAdminCleanupMVIndex(t *testing.T) {

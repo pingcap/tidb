@@ -495,6 +495,10 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 		}
 		return columns
 	}
+	if tblInfo.PKIsHandle {
+		columns = append(columns, tblInfo.Columns[tblInfo.GetPkColInfo().Offset])
+		return columns
+	}
 	handleOffset := len(columns)
 	handleColsInfo := &model.ColumnInfo{
 		ID:     model.ExtraHandleID,
@@ -526,6 +530,9 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 			if tblInfo.Columns[iCol.Offset].IsGenerated() {
 				containsGenedCol = true
 				return tblInfo.Columns
+			}
+			if tblInfo.PKIsHandle && tblInfo.GetPkColInfo().Offset == iCol.Offset {
+				continue
 			}
 			columns = append(columns, tblInfo.Columns[iCol.Offset])
 		}
