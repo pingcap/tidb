@@ -100,7 +100,7 @@ func recoverPDSchedule(pdScheduleParam map[string]interface{}) error {
 	return infosync.SetPDScheduleConfig(context.Background(), pdScheduleParam)
 }
 
-func getMinSafeTS(s kv.Storage) time.Time {
+func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
 	minSafeTS := s.GetMinSafeTS(kv.GlobalTxnScope)
 	// Inject mocked SafeTS for test.
 	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
@@ -128,13 +128,13 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	}
 
 	start := time.Now()
-	minSafeTime := getMinSafeTS(sctx.GetStore())
+	minSafeTime := getStoreGlobalMinSafeTS(sctx.GetStore())
 	for oracleFlashbackTS.After(minSafeTime) {
 		if time.Since(start) >= FlashbackGetMinSafeTimeTimeout {
 			return errors.Errorf("cannot set flashback timestamp after min-resolved-ts(%s)", minSafeTime)
 		}
 		time.Sleep(time.Second)
-		minSafeTime = getMinSafeTS(sctx.GetStore())
+		minSafeTime = getStoreGlobalMinSafeTS(sctx.GetStore())
 	}
 
 	gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
