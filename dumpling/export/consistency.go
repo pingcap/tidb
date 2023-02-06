@@ -50,9 +50,10 @@ func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB
 		if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
 			return nil, errors.New("snapshot consistency is not supported for this server")
 		}
-		return &ConsistencyNone{}, nil
+		_, ok := conf.SessionParams["tidb_snapshot"]
+		return &ConsistencyNone{canRetry: ok}, nil
 	case ConsistencyTypeNone:
-		return &ConsistencyNone{}, nil
+		return &ConsistencyNone{canRetry: true}, nil
 	default:
 		return nil, errors.Errorf("invalid consistency option %s", conf.Consistency)
 	}
@@ -66,7 +67,9 @@ type ConsistencyController interface {
 }
 
 // ConsistencyNone dumps without adding locks, which cannot guarantee consistency
-type ConsistencyNone struct{}
+type ConsistencyNone struct {
+	canRetry bool
+}
 
 // Setup implements ConsistencyController.Setup
 func (*ConsistencyNone) Setup(_ *tcontext.Context) error {
@@ -79,7 +82,10 @@ func (*ConsistencyNone) TearDown(_ context.Context) error {
 }
 
 // PingContext implements ConsistencyController.PingContext
-func (*ConsistencyNone) PingContext(_ context.Context) error {
+func (c *ConsistencyNone) PingContext(_ context.Context) error {
+	if !c.canRetry {
+		return errors.New("connection's snapshot is not set up successfully, can't retry")
+	}
 	return nil
 }
 

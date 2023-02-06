@@ -65,6 +65,7 @@ type Dumper struct {
 	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
+	specifiedSnapshot             bool
 
 	speedRecorder *SpeedRecorder
 }
@@ -1468,6 +1469,7 @@ func tidbGetSnapshot(d *Dumper) error {
 	consistency := conf.Consistency
 	pool, tctx := d.dbHandle, d.tctx
 	snapshotConsistency := consistency == "snapshot"
+	d.specifiedSnapshot = conf.Snapshot != ""
 	if conf.Snapshot == "" && (doPdGC || snapshotConsistency) {
 		conn, err := pool.Conn(tctx)
 		if err != nil {
@@ -1576,7 +1578,7 @@ func setSessionParam(d *Dumper) error {
 			conf.ServerInfo.HasTiKV, err = CheckTiDBWithTiKV(pool)
 			if err != nil {
 				d.L().Info("cannot check whether TiDB has TiKV, will apply tidb_snapshot by default. This won't affect dump process", log.ShortError(err))
-				ignorableSnapshot = true
+				ignorableSnapshot = !d.specifiedSnapshot // if snapshot is specified by users, we can't ignore set snapshot error
 			}
 			if conf.ServerInfo.HasTiKV {
 				sessionParam["tidb_snapshot"] = snapshot
