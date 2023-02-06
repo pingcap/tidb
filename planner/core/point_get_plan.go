@@ -1773,6 +1773,19 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 				return &pi.Definitions[pos], i, int(pos), false
 			}
 		}
+	case model.PartitionTypeKey:
+		// The key partition table supports FastPlan when it contains only one partition column
+		if len(pi.Columns) == 1 {
+			for i, pair := range pairs {
+				if pi.Columns[0].L == pair.colName {
+					pos, err := partitionExpr.LocateKeyPartition(ctx, pi, []types.Datum{pair.value}, int64(pi.Num))
+					if err != nil {
+						return nil, 0, 0, false
+					}
+					return &pi.Definitions[pos], i, int(pos), false
+				}
+			}
+		}
 	case model.PartitionTypeRange:
 		// left range columns partition for future development
 		if len(pi.Columns) == 0 {
@@ -1846,6 +1859,13 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
+	case model.PartitionTypeKey:
+		if len(partitionExpr.ForKeyPruning.Cols) == 1 {
+			colInfo := findColNameByColID(tbl.Columns, partitionExpr.ForKeyPruning.Cols[0])
+			partitionName = colInfo.Name
+		} else {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
 	case model.PartitionTypeRange:
 		// left range columns partition for future development
 		if col, ok := partitionExpr.Expr.(*expression.Column); ok && len(pi.Columns) == 0 {
@@ -1906,12 +1926,12 @@ func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.Part
 	return partitionExpr
 }
 
-func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *ast.ColumnName {
+func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *ast.ColumnName {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
-	if pi.Type != model.PartitionTypeHash {
+	if pi.Type != model.PartitionTypeHash && pi.Type != model.PartitionTypeKey {
 		return nil
 	}
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
@@ -1923,6 +1943,13 @@ func getHashPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *a
 	partitionExpr, err := table.(partitionTable).PartitionExpr()
 	if err != nil {
 		return nil
+	}
+	if pi.Type == model.PartitionTypeKey {
+		if len(pi.Columns) != 1 {
+			return nil
+		}
+		// used to judge wthether the key partition contains only one field
+		return &ast.ColumnName{}
 	}
 	expr := partitionExpr.OrigExpr
 	col, ok := expr.(*ast.ColumnNameExpr)

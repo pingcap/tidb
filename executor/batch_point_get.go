@@ -541,6 +541,12 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 	case model.PartitionTypeHash:
 		partIdx := mathutil.Abs(intVal % int64(pi.Num))
 		return pi.Definitions[partIdx].ID, nil
+	case model.PartitionTypeKey:
+		if len(pi.Columns) > 1 {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
+		partIdx := mathutil.Abs(intVal % int64(pi.Num))
+		return pi.Definitions[partIdx].ID, nil
 	case model.PartitionTypeRange:
 		// we've check the type assertions in func TryFastPlan
 		col, ok := partitionExpr.Expr.(*expression.Column)

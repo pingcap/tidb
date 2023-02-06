@@ -32,6 +32,8 @@ func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		return s.pruneHashPartition(ctx, tbl, partitionNames, conds, columns, names)
+	case model.PartitionTypeKey:
+		return s.pruneKeyPartition(ctx, tbl, partitionNames, conds, columns, names)
 	case model.PartitionTypeRange:
 		rangeOr, err := s.pruneRangePartition(ctx, pi, tbl, conds, columns, names)
 		if err != nil {

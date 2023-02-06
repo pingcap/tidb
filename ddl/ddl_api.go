@@ -2151,7 +2151,7 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
 		err = checkPartitionByRange(ctx, tbInfo)
-	case model.PartitionTypeHash:
+	case model.PartitionTypeHash, model.PartitionTypeKey:
 		err = checkPartitionByHash(ctx, tbInfo)
 	case model.PartitionTypeList:
 		err = checkPartitionByList(ctx, tbInfo)

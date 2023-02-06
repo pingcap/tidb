@@ -128,6 +128,8 @@ func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		return generateRangePartitionExpr(ctx, pi, columns, names)
 	case model.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, pi, columns, names)
+	case model.PartitionTypeKey:
+		return generateKeyPartitionExpr(ctx, pi, columns, names)
 	case model.PartitionTypeList:
 		return generateListPartitionExpr(ctx, tblInfo, columns, names)
 	}
@@ -142,6 +144,8 @@ type PartitionExpr struct {
 	OrigExpr ast.ExprNode
 	// Expr is the hash partition expression.
 	Expr expression.Expression
+	// Used in the key partition
+	*ForKeyPruning
 	// Used in the range pruning process.
 	*ForRangePruning
 	// Used in the range column pruning process.
@@ -151,6 +155,32 @@ type PartitionExpr struct {
 	// InValues: x in (1,2); x in (3,4); x in (5,6), used for list partition.
 	InValues []expression.Expression
 	*ForListPruning
+}
+
+// TODO: supports linear hashing
+func (pe *PartitionExpr) LocateKeyPartition(ctx sessionctx.Context,
+	pi *model.PartitionInfo, r []types.Datum, pNum int64) (int, error) {
+	nr := int64(0)
+	for _, col := range pe.ForKeyPruning.Cols {
+		var data types.Datum
+		switch r[col.Index].Kind() {
+		case types.KindInt64, types.KindUint64:
+			data = r[col.Index]
+		default:
+			var err error
+			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLong))
+			if err != nil {
+				return 0, err
+			}
+		}
+		ret := data.GetInt64()
+		nr += ret
+	}
+	nr = nr % pNum
+	if nr < 0 {
+		nr = -nr
+	}
+	return int(nr), nil
 }
 
 func initEvalBufferType(t *partitionedTable) {
@@ -215,6 +245,37 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx sessionctx.Context, exprStr 
 	return expression.RewriteSimpleExprWithNames(ctx, exprNode, schema, names)
 }
 
+// ForKeyPruning is used for key partition pruning.
+type ForKeyPruning struct {
+	Cols []*expression.Column
+}
+
+/*
+func (f *ForKeyPruning) GetKeyPartitionIdx(ctx sessionctx.Context, partitionExpr *PartitionExpr,
+	r []types.Datum) (int, error) {
+	nr := int64(1)
+	for _, col := range partitionExpr.ForKeyPruning.cols {
+		var data types.Datum
+		switch r[col.Index].Kind() {
+		case types.KindInt64, types.KindUint64:
+			data = r[col.Index]
+		default:
+			var err error
+			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLong))
+			if err != nil {
+				return 0, err
+			}
+		}
+		ret := data.GetInt64()
+		nr ^= ret
+	}
+	nr = nr % int64(t.meta.Partition.Num)
+	if nr < 0 {
+		nr = -nr
+	}
+	return int(nr), nil
+}
+*/
 // ForListPruning is used for list partition pruning.
 type ForListPruning struct {
 	// LocateExpr uses to locate list partition by row.
@@ -487,6 +548,19 @@ func rangePartitionExprStrings(pi *model.PartitionInfo) []string {
 		s = []string{pi.Expr}
 	}
 	return s
+}
+
+func generateKeyPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
+	ret := &PartitionExpr{}
+	_, partColumns, offset, err := extractPartitionExprColumns(ctx, pi, columns, names)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret.ColumnOffset = offset
+	ret.ForKeyPruning.Cols = partColumns
+
+	return ret, nil
 }
 
 func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
@@ -992,6 +1066,8 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 		}
 	case model.PartitionTypeHash:
 		idx, err = t.locateHashPartition(ctx, pi, r)
+	case model.PartitionTypeKey:
+		idx, err = t.locateKeyPartition(ctx, pi, r)
 	case model.PartitionTypeList:
 		idx, err = t.locateListPartition(ctx, pi, r)
 	}
@@ -1141,6 +1217,11 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 		ret = -ret
 	}
 	return int(ret), nil
+}
+
+// TODO: supports linear hashing
+func (t *partitionedTable) locateKeyPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	return t.partitionExpr.LocateKeyPartition(ctx, pi, r, int64(t.meta.Partition.Num))
 }
 
 // GetPartition returns a Table, which is actually a partition.
