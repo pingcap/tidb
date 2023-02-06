@@ -252,9 +252,6 @@ func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
 	} else {
 		e := errors.Cause(err)
 		switch e { // nolint:errorlint
-		case berrors.ErrKVEpochNotMatch, berrors.ErrPDLeaderNotFound:
-			bo.delayTime = 2 * bo.delayTime
-			bo.attempt--
 		case berrors.ErrKVRangeIsEmpty, berrors.ErrKVRewriteRuleNotFound:
 			// Excepted error, finish the operation
 			bo.delayTime = 0
