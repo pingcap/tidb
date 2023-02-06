@@ -781,7 +781,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 
 	// check etcd KV of CDC >= v6.2
 	cdcPrefix := "/tidb/cdc/"
-	capturePath := []byte("/changefeed/info/")
+	changefeedPath := []byte("/changefeed/info/")
 
 	nameSet := make(map[string][]string, 1)
 	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix())
@@ -791,7 +791,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	for _, kv := range resp.Kvs {
 		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
 		k := kv.Key[len(cdcPrefix):]
-		clusterAndNamespace, changefeedID, found := bytes.Cut(k, capturePath)
+		clusterAndNamespace, changefeedID, found := bytes.Cut(k, changefeedPath)
 		if !found {
 			continue
 		}
@@ -823,21 +823,21 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	}
 
 	if len(nameSet) > 0 {
-		var captureMsgBuf strings.Builder
-		captureMsgBuf.WriteString("found CDC changefeed(s): ")
+		var changefeedMsgBuf strings.Builder
+		changefeedMsgBuf.WriteString("found CDC changefeed(s): ")
 		isFirst := true
 		for clusterID, captureIDs := range nameSet {
 			if !isFirst {
-				captureMsgBuf.WriteString(", ")
+				changefeedMsgBuf.WriteString(", ")
 			}
 			isFirst = false
-			captureMsgBuf.WriteString("cluster/namespace: ")
-			captureMsgBuf.WriteString(clusterID)
-			captureMsgBuf.WriteString(" changefeed(s): ")
-			captureMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
+			changefeedMsgBuf.WriteString("cluster/namespace: ")
+			changefeedMsgBuf.WriteString(clusterID)
+			changefeedMsgBuf.WriteString(" changefeed(s): ")
+			changefeedMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
 		}
-		captureMsgBuf.WriteString(",")
-		errorMsg = append(errorMsg, captureMsgBuf.String())
+		changefeedMsgBuf.WriteString(",")
+		errorMsg = append(errorMsg, changefeedMsgBuf.String())
 	}
 
 	if len(errorMsg) > 0 {
