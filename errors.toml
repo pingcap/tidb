@@ -526,6 +526,11 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundDuplicateKey"]
+error = '''
+found duplicate key '%s', value '%s'
+'''
+
 ["Lightning:Restore:ErrInvalidMetaStatus"]
 error = '''
 invalid meta status: '%s'
@@ -1223,7 +1228,7 @@ Cannot drop column '%-.192s': needed in TTL config
 
 ["ddl:8150"]
 error = '''
-Cannot set TTL_ENABLE on a table without TTL config
+Cannot set %s on a table without TTL config
 '''
 
 ["ddl:8151"]
@@ -1234,6 +1239,11 @@ Set TTL for temporary table is not allowed
 ["ddl:8152"]
 error = '''
 Set TTL for a table referenced by foreign key is not allowed
+'''
+
+["ddl:8153"]
+error = '''
+Unsupported clustered primary key type FLOAT/DOUBLE for TTL
 '''
 
 ["ddl:8200"]
@@ -1859,6 +1869,16 @@ Placement policy '%-.192s' already exists
 ["meta:8239"]
 error = '''
 Unknown placement policy '%-.192s'
+'''
+
+["meta:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["meta:8249"]
+error = '''
+Unknown resource group '%-.192s'
 '''
 
 ["planner:1044"]
@@ -2506,6 +2526,21 @@ error = '''
 Unknown placement policy '%-.192s'
 '''
 
+["schema:8248"]
+error = '''
+Resource group '%-.192s' already exists
+'''
+
+["schema:8249"]
+error = '''
+Unknown resource group '%-.192s'
+'''
+
+["schema:8250"]
+error = '''
+Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
+'''
+
 ["session:8002"]
 error = '''
 [%d] can not retry select for update statement
@@ -2678,7 +2713,7 @@ TTL manager has timed out, pessimistic locks may expire, please commit or rollba
 
 ["tikv:9001"]
 error = '''
-PD server timeout
+PD server timeout: %s
 '''
 
 ["tikv:9002"]

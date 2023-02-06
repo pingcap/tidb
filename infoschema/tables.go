@@ -22,10 +22,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -47,9 +51,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 const (
@@ -190,6 +198,8 @@ const (
 	TableMemoryUsage = "MEMORY_USAGE"
 	// TableMemoryUsageOpsHistory is the memory control operators history.
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
+	// TableResourceGroups is the metadata of resource groups.
+	TableResourceGroups = "RESOURCE_GROUPS"
 )
 
 const (
@@ -296,6 +306,7 @@ var tableIDMap = map[string]int64{
 	TableMemoryUsageOpsHistory:           autoid.InformationSchemaDBID + 85,
 	ClusterTableMemoryUsage:              autoid.InformationSchemaDBID + 86,
 	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
+	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -890,6 +901,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogResultRows, tp: mysql.TypeLonglong, size: 22},
+	{name: variable.SlowLogWarnings, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
@@ -1577,6 +1589,14 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 256},
 }
 
+var tableResourceGroupsCols = []columnInfo{
+	{name: "GROUP_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "GROUP_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "RRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
+	{name: "WRU_PER_SECOND", tp: mysql.TypeLonglong, size: 64},
+	// {name: "BURSTABLE", tp: mysql.TypeVarchar, size: 10},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2039,6 +2059,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableUserAttributes:                     tableUserAttributesCols,
 	TableMemoryUsage:                        tableMemoryUsageCols,
 	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
+	TableResourceGroups:                     tableResourceGroupsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2225,4 +2246,143 @@ func (vt *VirtualTable) GetPhysicalID() int64 {
 // Type implements table.Table Type interface.
 func (vt *VirtualTable) Type() table.Type {
 	return table.VirtualTable
+}
+
+// GetTiFlashServerInfo returns all TiFlash server infos
+func GetTiFlashServerInfo(sctx sessionctx.Context) ([]ServerInfo, error) {
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		return nil, table.ErrUnsupportedOp
+	}
+	serversInfo, err := GetStoreServerInfo(sctx)
+	if err != nil {
+		return nil, err
+	}
+	serversInfo = FilterClusterServerInfo(serversInfo, set.NewStringSet(kv.TiFlash.Name()), set.NewStringSet())
+	return serversInfo, nil
+}
+
+// FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
+func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessionctx.Context, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
+	type result struct {
+		idx  int
+		rows [][]types.Datum
+		err  error
+	}
+	wg := sync.WaitGroup{}
+	ch := make(chan result, len(serversInfo))
+	infoTp := serverInfoType
+	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
+	for i, srv := range serversInfo {
+		address := srv.Address
+		remote := address
+		if srv.ServerType == "tidb" {
+			remote = srv.StatusAddr
+		}
+		wg.Add(1)
+		go func(index int, remote, address, serverTP string) {
+			util.WithRecovery(func() {
+				defer wg.Done()
+				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
+				if err != nil {
+					ch <- result{idx: index, err: err}
+					return
+				}
+				partRows := serverInfoItemToRows(items, serverTP, address)
+				ch <- result{idx: index, rows: partRows}
+			}, nil)
+		}(i, remote, address, srv.ServerType)
+	}
+	wg.Wait()
+	close(ch)
+	// Keep the original order to make the result more stable
+	var results []result //nolint: prealloc
+	for result := range ch {
+		if result.err != nil {
+			if recordWarningInStmtCtx {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			} else {
+				log.Warn(result.err.Error())
+			}
+			continue
+		}
+		results = append(results, result)
+	}
+	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
+	for _, result := range results {
+		finalRows = append(finalRows, result.rows...)
+	}
+	return finalRows, nil
+}
+
+func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {
+	rows := make([][]types.Datum, 0, len(items))
+	for _, v := range items {
+		for _, item := range v.Pairs {
+			row := types.MakeDatums(
+				tp,
+				addr,
+				v.Tp,
+				v.Name,
+				item.Key,
+				item.Value,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
+	opt := grpc.WithInsecure()
+	security := config.GetGlobalConfig().Security
+	if len(security.ClusterSSLCA) != 0 {
+		clusterSecurity := security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	}
+	conn, err := grpc.Dial(address, opt)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			log.Error("close grpc connection error", zap.Error(err))
+		}
+	}()
+
+	cli := diagnosticspb.NewDiagnosticsClient(conn)
+	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
+	defer cancel()
+	r, err := cli.ServerInfo(ctx, &diagnosticspb.ServerInfoRequest{Tp: tp})
+	if err != nil {
+		return nil, err
+	}
+	return r.Items, nil
+}
+
+// FilterClusterServerInfo filters serversInfo by nodeTypes and addresses
+func FilterClusterServerInfo(serversInfo []ServerInfo, nodeTypes, addresses set.StringSet) []ServerInfo {
+	if len(nodeTypes) == 0 && len(addresses) == 0 {
+		return serversInfo
+	}
+
+	filterServers := make([]ServerInfo, 0, len(serversInfo))
+	for _, srv := range serversInfo {
+		// Skip some node type which has been filtered in WHERE clause
+		// e.g: SELECT * FROM cluster_config WHERE type='tikv'
+		if len(nodeTypes) > 0 && !nodeTypes.Exist(srv.ServerType) {
+			continue
+		}
+		// Skip some node address which has been filtered in WHERE clause
+		// e.g: SELECT * FROM cluster_config WHERE address='192.16.8.12:2379'
+		if len(addresses) > 0 && !addresses.Exist(srv.Address) {
+			continue
+		}
+		filterServers = append(filterServers, srv)
+	}
+	return filterServers
 }

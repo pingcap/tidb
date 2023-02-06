@@ -1288,3 +1288,18 @@ func TestStatsLoadLimit(t *testing.T) {
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit, true)
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
 }
+
+func TestGetGlobalKeyspaceName(t *testing.T) {
+	conf := NewConfig()
+	require.Empty(t, conf.KeyspaceName)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.KeyspaceName = "test"
+	})
+
+	require.Equal(t, "test", GetGlobalKeyspaceName())
+
+	UpdateGlobal(func(conf *Config) {
+		conf.KeyspaceName = ""
+	})
+}

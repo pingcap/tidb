@@ -135,21 +135,22 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-	case *ast.Limit:
-		if node.Count != nil {
-			if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-				checker.cacheable = false
-				checker.reason = "query has 'limit ?' is un-cacheable"
-				return in, true
-			}
-		}
-		if node.Offset != nil {
-			if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-				checker.cacheable = false
-				checker.reason = "query has 'limit ?, 10' is un-cacheable"
-				return in, true
-			}
-		}
+	// todo: these comment is used to add switch in the later pr
+	//case *ast.Limit:
+	//	if node.Count != nil {
+	//		if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
+	//			checker.cacheable = false
+	//			checker.reason = "query has 'limit ?' is un-cacheable"
+	//			return in, true
+	//		}
+	//	}
+	//	if node.Offset != nil {
+	//		if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
+	//			checker.cacheable = false
+	//			checker.reason = "query has 'limit ?, 10' is un-cacheable"
+	//			return in, true
+	//		}
+	//	}
 	case *ast.FrameBound:
 		if _, ok := node.Expr.(*driver.ParamMarkerExpr); ok {
 			checker.cacheable = false
@@ -252,31 +253,30 @@ type nonPreparedPlanCacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join,
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.ColumnName, *driver.ValueExpr, *ast.PatternInExpr:
+		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.BinaryOperationExpr:
 		if _, found := expression.NonPreparedPlanCacheableOp[node.Op.String()]; !found {
 			checker.cacheable = false
-			return in, true
 		}
-	case *ast.FuncCallExpr:
-		checker.cacheable = false
-		return in, true
+		return in, !checker.cacheable
 	case *ast.TableName:
 		if checker.schema != nil {
 			if isPartitionTable(checker.schema, node) {
 				checker.cacheable = false
-				return in, true
 			}
 			if hasGeneratedCol(checker.schema, node) {
 				checker.cacheable = false
-				return in, true
 			}
 			if isTempTable(checker.schema, node) {
 				checker.cacheable = false
-				return in, true
 			}
 		}
+		return in, !checker.cacheable
 	}
-	return in, false
+	checker.cacheable = false // unexpected cases
+	return in, !checker.cacheable
 }
 
 // Leave implements Visitor interface.

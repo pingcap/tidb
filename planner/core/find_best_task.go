@@ -1136,6 +1136,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.idxMergeIsIntersection = path.IndexMergeIsIntersection
+	cop.idxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
 	if remainingFilters != nil {
 		cop.rootTaskConds = remainingFilters
 	}
@@ -1434,6 +1435,14 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		return invalidTask, nil
 	}
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
+	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
+		return invalidTask, nil
+	}
+	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
 		return invalidTask, nil
 	}
 	path := candidate.path
@@ -1975,6 +1984,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
+		return invalidTask, nil
+	}
+	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
+	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
+		return invalidTask, nil
+	}
 	ts, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
 	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
@@ -2001,8 +2018,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		if ts.KeepOrder {
 			return invalidTask, nil
 		}
-		if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
+		if prop.MPPPartitionTp != property.AnyType || (ts.isPartition && !canMppConvertToRootForDisaggregatedTiFlash) {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
+			// But in disaggregated tiflash mode, we can only use mpp, so we add ExchangeSender and ExchangeReceiver above TableScan for static pruning partition table.
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
 			return invalidTask, nil
 		}
