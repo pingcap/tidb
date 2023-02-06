@@ -4359,6 +4359,14 @@ func TestIssue40066(t *testing.T) {
 	tk.MustExec("insert into t_varchar(column1) values ('87.12');")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1264 Out of range value for column 'column2' at row 1"))
 	tk.MustQuery("select * from t_varchar;").Check(testkit.Rows("87.12 0"))
+
+	tk.MustExec(`create table t_union(column1 float, column2 int unsigned generated always as(column1-100), column3 float unsigned generated always as(column1-100));`)
+	tk.MustExec("set @@sql_mode = DEFAULT;")
+	tk.MustGetErrMsg("insert into t_union(column1) values (12.95);", "[types:1264]Out of range value for column 'column2' at row 1")
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t_union(column1) values (12.95);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1264 Out of range value for column 'column2' at row 1", "Warning 1264 Out of range value for column 'column3' at row 1"))
+	tk.MustQuery("select * from t_union;").Check(testkit.Rows("12.95 0 0"))
 }
 
 func TestMutipleReplaceAndInsertInOneSession(t *testing.T) {
