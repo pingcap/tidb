@@ -469,6 +469,11 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	tk.MustExec(`CREATE TABLE t (id int primary key, a int);`)
 	tk.MustExec(`INSERT INTO t VALUES (1, 1);`)
 
+	// Make shorten the conversion time from ReorgTypeLitMerge to BackfillStateReadyToMerge.
+	interval := ddl.CheckBackfillJobFinishInterval
+	ddl.CheckBackfillJobFinishInterval = 50 * time.Millisecond
+	defer func() { ddl.CheckBackfillJobFinishInterval = interval }()
+
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
