@@ -519,7 +519,7 @@ func TestAlterUserStmt(t *testing.T) {
 	tk.MustExec("GRANT SYSTEM_USER ON *.* to semuser3") // user is both restricted + has SYSTEM_USER (or super)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
-	tk.MustExec("CREATE RESOURCE GROUP rg1 rru_per_sec=1000 wru_per_sec=2000")
+	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec=1000")
 	tk.MustExec(`ALTER USER 'semuser1' RESOURCE GROUP rg1`)
 	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "semuser1"`).Check(testkit.Rows("{\"resource_group\": \"rg1\"}"))
 
@@ -1137,11 +1137,11 @@ func TestCreateDropUser(t *testing.T) {
 	tk.MustExec(`DROP USER tcd3`)
 
 	tk.MustExec(`CREATE USER usr1`)
-	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{\"resource_group\": \"default\"}"))
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{}"))
 	tk.MustExec(`DROP USER usr1`)
 
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
-	tk.MustExec("CREATE RESOURCE GROUP rg1 rru_per_sec=1000 wru_per_sec=2000")
+	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec=1000")
 	tk.MustExec(`CREATE USER usr1 RESOURCE GROUP rg1`)
 	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{\"resource_group\": \"rg1\"}"))
 	tk.MustExec(`DROP USER usr1`)
@@ -2594,7 +2594,7 @@ func TestResourceGroupAdminDynamicPriv(t *testing.T) {
 		Username: "resource_group_user",
 		Hostname: "localhost",
 	}, nil, nil)
-	err := tk2.ExecToErr("CREATE RESOURCE GROUP test RRU_PER_SEC = 666")
+	err := tk2.ExecToErr("CREATE RESOURCE GROUP test RU_PER_SEC = 666")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation")
 
 	// grant the RESOURCE_GROUP_ADMIN dynamic privilege to the user.
@@ -2603,14 +2603,14 @@ func TestResourceGroupAdminDynamicPriv(t *testing.T) {
 		`GRANT USAGE ON *.* TO 'resource_group_user'@'%'`,
 		`GRANT RESOURCE_GROUP_ADMIN ON *.* TO 'resource_group_user'@'%'`))
 
-	tk2.MustExec("CREATE RESOURCE GROUP test RRU_PER_SEC = 666")
-	tk2.MustExec("CREATE RESOURCE GROUP test2 WRU_PER_SEC = 999")
+	tk2.MustExec("CREATE RESOURCE GROUP test RU_PER_SEC = 666")
+	tk2.MustExec("CREATE RESOURCE GROUP test2 RU_PER_SEC = 999")
 
-	tk2.MustExec("ALTER RESOURCE GROUP test2 WRU_PER_SEC = 1000")
+	tk2.MustExec("ALTER RESOURCE GROUP test2 RU_PER_SEC = 1000")
 	tk2.MustExec("DROP RESOURCE GROUP test2")
 
 	tk1.MustExec("REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_user")
-	err = tk2.ExecToErr("ALTER RESOURCE GROUP test RRU_PER_SEC = 667")
+	err = tk2.ExecToErr("ALTER RESOURCE GROUP test RU_PER_SEC = 667")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation")
 	err = tk2.ExecToErr("DROP RESOURCE GROUP test")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation")
@@ -3195,7 +3195,7 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.Equal(t, "default", tk.Session().GetSessionVars().ResourceGroupName)
 
 	// Non-default resource group.
-	rootTk.MustExec("CREATE RESOURCE GROUP rg1 WRU_PER_SEC = 999")
+	rootTk.MustExec("CREATE RESOURCE GROUP rg1 RU_PER_SEC = 999")
 	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' RESOURCE GROUP rg1`)
 	err = tk.Session().Auth(user, tokenBytes, nil)
 	require.NoError(t, err)
