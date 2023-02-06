@@ -73,6 +73,8 @@ func TestAlterTableAttributes(t *testing.T) {
 	// without equal
 	tk.MustExec(`alter table alter_t attributes " merge_option=allow ";`)
 	tk.MustExec(`alter table alter_t attributes " merge_option=allow , key=value ";`)
+
+	tk.MustExec("drop table alter_t")
 }
 
 func TestAlterTablePartitionAttributes(t *testing.T) {
@@ -134,6 +136,8 @@ PARTITION BY RANGE (c) (
 	require.Len(t, rows4, 1)
 	require.NotEqual(t, rows3[0][3], rows4[0][3])
 	require.NotEqual(t, rows[0][3], rows4[0][3])
+
+	tk.MustExec("drop table alter_p")
 }
 
 func TestTruncateTable(t *testing.T) {
