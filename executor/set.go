@@ -284,7 +284,16 @@ func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignme
 	if err != nil || nativeVal.IsNull() {
 		return "", err
 	}
-	return nativeVal.ToString()
+
+	value, err = nativeVal.ToString()
+	if err != nil {
+		return "", err
+	}
+
+	// We need to clone the string because the value is constructed by `hack.String` in Datum which reuses the under layer `[]byte`
+	// instead of allocating some new spaces. The `[]byte` in Datum will be reused in `chunk.Chunk` by different statements in session.
+	// If we do not clone the value, the system variable will have a risk to be modified by other statements.
+	return strings.Clone(value), nil
 }
 
 func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uint64) error {
