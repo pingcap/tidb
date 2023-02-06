@@ -1090,9 +1090,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
 		if len(copTsk.idxMergePartPlans) > 0 {
-			if !p.ctx.GetSessionVars().InRestrictedSQL {
-				logutil.BgLogger().Warn("1")
-			}
 			// Deal with index merge case.
 			propMatched := p.checkSubScans(colsProp, isDesc, partialFinalScan...)
 			if !propMatched {
@@ -1867,9 +1864,12 @@ func computePartialCursorOffset(name string) int {
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
-		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
-		// whether the following plan is double read with order reserved.
+		// We should not push agg down across 
+		//  1. double read, since the data of second read is ordered by handle instead of index. The `extraHandleCol` is added 
+		//     if the double read needs to keep order. So we just use it to decided
+		//     whether the following plan is double read with order reserved.
+		//  2. the case that there's filters should be calcualted on TiDB side.
+		//  3. the case of index merge
 		if cop.extraHandleCol != nil || len(cop.rootTaskConds) > 0 || len(cop.idxMergePartPlans) > 0 {
 			t = cop.convertToRootTask(p.ctx)
 			attachPlan2Task(p, t)

@@ -915,9 +915,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
-			if !ds.ctx.GetSessionVars().InRestrictedSQL {
-				logutil.BgLogger().Warn("1")
-			}
 			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate, opt)
 			if err != nil {
 				return nil, 0, err
