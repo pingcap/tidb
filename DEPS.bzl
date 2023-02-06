@@ -530,8 +530,8 @@ def go_deps():
         name = "com_github_cloudfoundry_gosigar",
         build_file_proto_mode = "disable",
         importpath = "github.com/cloudfoundry/gosigar",
-        sum = "h1:T3MoGdugg1vdHn8Az7wDn7cZ4+QCjZph+eXf2CjSjo4=",
-        version = "v1.3.4",
+	sum = "h1:gIc08FbB3QPb+nAQhINIK/qhf5REKkY0FTGgRGXkcVc=",
+        version = "v1.3.6",
     )
 
     go_repository(
