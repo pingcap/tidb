@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -94,6 +96,9 @@ func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (Ta
 
 func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResponse) ([]TaskEvent, error) {
 	result := make([]TaskEvent, 0, len(resp.Events))
+	if err := resp.Err(); err != nil {
+		return nil, err
+	}
 	for _, event := range resp.Events {
 		te, err := t.toTaskEvent(ctx, event)
 		if err != nil {
@@ -118,9 +123,7 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		}
 		return true
 	}
-
-	go func() {
-		defer close(ch)
+	collectRemaining := func() {
 		for {
 			select {
 			case resp, ok := <-c:
@@ -130,21 +133,32 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 				if !handleResponse(resp) {
 					return
 				}
-			case <-ctx.Done():
-				// drain the remain event from channel.
-				for {
-					select {
-					case resp, ok := <-c:
-						if !ok {
-							return
-						}
-						if !handleResponse(resp) {
-							return
-						}
-					default:
-						return
-					}
+			default:
+				return
+			}
+		}
+	}
+
+	go func() {
+		defer close(ch)
+		for {
+			select {
+			case resp, ok := <-c:
+				failpoint.Inject("advancer_close_channel", func() {
+					// We cannot really close the channel, just simulating it.
+					ok = false
+				})
+				if !ok {
+					ch <- errorEvent(io.EOF)
+					return
 				}
+				if !handleResponse(resp) {
+					return
+				}
+			case <-ctx.Done():
+				collectRemaining()
+				ch <- errorEvent(ctx.Err())
+				return
 			}
 		}
 	}()
