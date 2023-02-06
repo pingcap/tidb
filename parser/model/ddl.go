@@ -237,6 +237,7 @@ type DDLReorgMeta struct {
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
 	ReorgTp       ReorgType                        `json:"reorg_tp"`
+	IsDistReorg   bool                             `json:"is_dist_reorg"`
 }
 
 // ReorgType indicates which process is used for the data reorganization.
@@ -426,7 +427,9 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 type JobMeta struct {
 	SchemaID int64 `json:"schema_id"`
 	TableID  int64 `json:"table_id"`
-	// Query string of the ddl job.
+	// Type is the DDL job's type.
+	Type ActionType `json:"job_type"`
+	// Query is the DDL job's SQL string.
 	Query string `json:"query"`
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
@@ -434,10 +437,10 @@ type JobMeta struct {
 
 // BackfillMeta is meta info of the backfill job.
 type BackfillMeta struct {
-	PhysicalTableID int64  `json:"physical_table_id"`
-	IsUnique        bool   `json:"is_unique"`
-	EndInclude      bool   `json:"end_include"`
-	ErrMsg          string `json:"err_msg"`
+	PhysicalTableID int64         `json:"physical_table_id"`
+	IsUnique        bool          `json:"is_unique"`
+	EndInclude      bool          `json:"end_include"`
+	Error           *terror.Error `json:"err"`
 
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`

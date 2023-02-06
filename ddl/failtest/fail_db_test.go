@@ -333,6 +333,10 @@ func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 }
 
 func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
+	if variable.DDLEnableDistributeReorg.Load() {
+		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
+	}
+
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists test_db")
 	tk.MustExec("use test_db")
