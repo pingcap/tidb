@@ -297,10 +297,6 @@ build_for_br_integration_test:
 		-coverpkg=github.com/pingcap/tidb/br/... \
 		-o $(LIGHTNING_CTL_BIN).test \
 		github.com/pingcap/tidb/br/cmd/tidb-lightning-ctl && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/locker br/tests/br_key_locked/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/oauth br/tests/br_gcs/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen br/tests/lightning_checkpoint_parquet/*.go \
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
