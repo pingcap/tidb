@@ -408,7 +408,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 				}
 			},
-			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialIndexWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, nil, partialIndexWorkerType),
 		)
 	}()
 
@@ -516,7 +516,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					}
 				}
 			},
-			handleWorkerPanic(ctx, e.finished, fetchCh, nil, "partialTableWorker"),
+			handleWorkerPanic(ctx, e.finished, fetchCh, nil, partialTableWorkerType),
 		)
 	}()
 	return nil
