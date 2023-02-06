@@ -1420,10 +1420,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
 			path.Forced = true
-			if hint.HintType == ast.HintKeepOrder {
+			if hint.HintType == ast.HintOrderIndex {
 				path.ForceKeepOrder = true
 			}
-			if hint.HintType == ast.HintNoKeepOrder {
+			if hint.HintType == ast.HintNoOrderIndex {
 				path.ForceNoKeepOrder = true
 			}
 			available = append(available, path)
