@@ -839,7 +839,7 @@ func (bc *Client) BackupRange(
 		return errors.Trace(err)
 	}
 	var targetStores []*metapb.Store
-	var targetStoreIds map[uint64]struct{}
+	targetStoreIds := make(map[uint64]struct{})
 	for _, store := range allStores {
 		for _, label := range store.Labels {
 			if val, ok := replicaReadLabel[label.Key]; ok && val == label.Value {

@@ -142,7 +142,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
-	flags.String(flagBackupReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
+	flags.String(flagReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -749,7 +749,7 @@ func parseCompressionType(s string) (backuppb.CompressionType, error) {
 }
 
 func parseReplicaReadLabelFlag(flags *pflag.FlagSet) (map[string]string, error) {
-	replicaReadLabelStr, err := flags.GetString(flagBackupReplicaReadLabel)
+	replicaReadLabelStr, err := flags.GetString(flagReplicaReadLabel)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
