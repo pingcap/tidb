@@ -200,6 +200,7 @@ go_library(
         "//util/tls",
         "//util/topsql",
         "//util/topsql/state",
+        "//util/tracing",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_gogo_protobuf//proto",
         "@com_github_ngaut_pools//:pools",

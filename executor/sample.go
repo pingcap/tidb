@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/tikv"
 	"golang.org/x/exp/slices"
 )
@@ -47,10 +47,7 @@ type TableSampleExecutor struct {
 
 // Open initializes necessary variables for using this executor.
 func (e *TableSampleExecutor) Open(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("TableSampleExecutor.Open", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	defer tracing.StartRegion(ctx, "TableSampleExecutor.Open").End()
 	return nil
 }
 

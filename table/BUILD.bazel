@@ -29,7 +29,7 @@ go_library(
         "//util/logutil",
         "//util/sqlexec",
         "//util/timeutil",
-        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "//util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],

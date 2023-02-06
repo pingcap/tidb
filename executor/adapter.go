@@ -25,7 +25,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -65,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -283,12 +283,12 @@ func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
 func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("ExecStmt.PointGet", opentracing.ChildOf(span.Context()))
-		span1.LogKV("sql", a.OriginText())
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
+	r, ctx := tracing.StartRegionEx(ctx, "ExecStmt.PointGet")
+	defer r.End()
+	if r.Span != nil {
+		r.Span.LogKV("sql", a.OriginText())
 	}
+
 	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
 		// stale read should not reach here
@@ -921,11 +921,8 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
 	sctx := a.Ctx
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "executor.handleNoDelayExecutor")
+	defer r.End()
 
 	var err error
 	defer func() {

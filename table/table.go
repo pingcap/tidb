@@ -22,7 +22,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/tracing"
 )
 
 // Type is used to distinguish between different tables that store data in different ways.
@@ -200,10 +200,8 @@ type Table interface {
 
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
 func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("table.AllocAutoIncrementValue", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "table.AllocAutoIncrementValue")
+	defer r.End()
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
 	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
