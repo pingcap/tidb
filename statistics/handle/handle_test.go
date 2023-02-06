@@ -553,10 +553,10 @@ func TestReloadExtStatsLockRelease(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
 	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	tk.MustExec("analyze table t")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr", `return("")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/injectExtStatsLoadErr", `return("")`))
 	err := tk.ExecToErr("admin reload stats_extended")
 	require.Equal(t, "gofail extendedStatsFromStorage error", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/injectExtStatsLoadErr"))
 	// Check the lock is released by `admin reload stats_extended` if error happens.
 	tk.MustExec("analyze table t")
 }
@@ -1096,7 +1096,7 @@ partition by range (a) (
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
-	checkHealthy(60, 50, 66)
+	checkHealthy(33, 0, 50)
 }
 
 func TestGlobalStatsData(t *testing.T) {

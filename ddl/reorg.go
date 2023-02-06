@@ -206,7 +206,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
-		rc = w.newReorgCtx(reorgInfo)
+		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.StartKey, reorgInfo.currElement, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
@@ -358,7 +358,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (dc *ddlCtx) isReorgRunnable(jobID int64) error {
+func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	if isChanClosed(dc.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
@@ -369,6 +369,10 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64) error {
 		return dbterror.ErrCancelledDDLJob
 	}
 
+	// If isDistReorg is true, we needn't check if it is owner.
+	if isDistReorg {
+		return nil
+	}
 	if !dc.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
 		logutil.BgLogger().Info("[ddl] DDL is not the DDL owner", zap.String("ID", dc.uuid))

@@ -3406,13 +3406,16 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		b.err = err
 		return nil
 	}
+
 	gather := &MPPGather{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
 		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.ctx), LocalQueryID: getMPPQueryID(b.ctx), ServerID: domain.GetDomain(b.ctx).ServerID()},
+		memTracker:   memory.NewTracker(v.ID(), -1),
 	}
+	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return gather
 }
 

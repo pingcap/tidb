@@ -654,6 +654,7 @@ import (
 	bitXor                "BIT_XOR"
 	bound                 "BOUND"
 	briefType             "BRIEF"
+	burstable             "BURSTABLE"
 	cast                  "CAST"
 	copyKwd               "COPY"
 	constraints           "CONSTRAINTS"
@@ -733,8 +734,7 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
-	rruRate               "RRU_PER_SEC"
-	wruRate               "WRU_PER_SEC"
+	ruRate                "RU_PER_SEC"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 
@@ -1608,13 +1608,9 @@ ResourceGroupOptionList:
 	}
 
 DirectResourceGroupOption:
-	"RRU_PER_SEC" EqOpt LengthNum
+	"RU_PER_SEC" EqOpt LengthNum
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRRURate, UintValue: $3.(uint64)}
-	}
-|	"WRU_PER_SEC" EqOpt LengthNum
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceWRURate, UintValue: $3.(uint64)}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
 	}
 |	"CPU" EqOpt stringLit
 	{
@@ -1627,6 +1623,10 @@ DirectResourceGroupOption:
 |	"IO_WRITE_BANDWIDTH" EqOpt stringLit
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteBandwidth, StrValue: $3}
+	}
+|	"BURSTABLE"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
 	}
 
 PlacementOptionList:
@@ -6631,8 +6631,8 @@ NotKeywordToken:
 |	"TIDB_JSON"
 |	"IO_READ_BANDWIDTH"
 |	"IO_WRITE_BANDWIDTH"
-|	"RRU_PER_SEC"
-|	"WRU_PER_SEC"
+|	"RU_PER_SEC"
+|	"BURSTABLE"
 
 /************************************************************************************
  *
@@ -13041,7 +13041,7 @@ ResourceGroupNameOption:
 	}
 |	"RESOURCE" "GROUP" ResourceGroupName
 	{
-		$$ = &ast.ResourceGroupNameOption{Type: ast.UserResourceGroupName, Value: $3}
+		$$ = &ast.ResourceGroupNameOption{Value: $3}
 	}
 
 PasswordOrLockOptions:

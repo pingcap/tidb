@@ -203,7 +203,7 @@ func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*WriterContex
 
 func (ei *engineInfo) closeWriters() error {
 	var firstErr error
-	for wid := range ei.writerCache.Keys() {
+	for _, wid := range ei.writerCache.Keys() {
 		if w, ok := ei.writerCache.Load(wid); ok {
 			_, err := w.Close(ei.ctx)
 			if err != nil {

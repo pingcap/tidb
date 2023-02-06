@@ -98,20 +98,26 @@ func NewMockDomain() *Domain {
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store                   kv.Storage
-	infoCache               *infoschema.InfoCache
-	privHandle              *privileges.Handle
-	bindHandle              atomic.Pointer[bindinfo.BindHandle]
-	statsHandle             unsafe.Pointer
-	statsLease              time.Duration
-	ddl                     ddl.DDL
-	info                    *infosync.InfoSyncer
-	globalCfgSyncer         *globalconfigsync.GlobalConfigSyncer
-	m                       sync.Mutex
-	SchemaValidator         SchemaValidator
-	sysSessionPool          *sessionPool
-	exit                    chan struct{}
-	etcdClient              *clientv3.Client
+	store           kv.Storage
+	infoCache       *infoschema.InfoCache
+	privHandle      *privileges.Handle
+	bindHandle      atomic.Pointer[bindinfo.BindHandle]
+	statsHandle     unsafe.Pointer
+	statsLease      time.Duration
+	ddl             ddl.DDL
+	info            *infosync.InfoSyncer
+	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
+	m               sync.Mutex
+	SchemaValidator SchemaValidator
+	sysSessionPool  *sessionPool
+	exit            chan struct{}
+	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
+	etcdClient *clientv3.Client
+	// `unprefixedEtcdCli` will never set the etcd namespace prefix by keyspace.
+	// It is only used in storeMinStartTS and RemoveMinStartTS now.
+	// It must be used when the etcd path isn't needed to separate by keyspace.
+	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
+	unprefixedEtcdCli       *clientv3.Client
 	sysVarCache             sysVarCache // replaces GlobalVariableCache
 	slowQuery               *topNSlowQueries
 	expensiveQueryHandle    *expensivequery.Handle
@@ -127,7 +133,7 @@ type Domain struct {
 	expiredTimeStamp4PC   types.Time
 	logBackupAdvancer     *daemon.OwnerDaemon
 	historicalStatsWorker *HistoricalStatsWorker
-	ttlJobManager         *ttlworker.JobManager
+	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -882,6 +888,10 @@ func (do *Domain) Close() {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
 
+	if do.unprefixedEtcdCli != nil {
+		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
+	}
+
 	do.slowQuery.Close()
 	if do.cancel != nil {
 		do.cancel()
@@ -928,6 +938,27 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
+func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
+	cfg := config.GetGlobalConfig()
+	etcdLogCfg := zap.NewProductionConfig()
+	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	cli, err := clientv3.New(clientv3.Config{
+		LogConfig:        &etcdLogCfg,
+		Endpoints:        addrs,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithBackoffMaxDelay(time.Second * 3),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
+			}),
+		},
+		TLS: ebd.TLSConfig(),
+	})
+	return cli, err
+}
+
 // Init initializes a domain.
 func (do *Domain) Init(
 	ddlLease time.Duration,
@@ -943,25 +974,7 @@ func (do *Domain) Init(
 			return err
 		}
 		if addrs != nil {
-			cfg := config.GetGlobalConfig()
-			// silence etcd warn log, when domain closed, it won't randomly print warn log
-			// see details at the issue https://github.com/pingcap/tidb/issues/15479
-			etcdLogCfg := zap.NewProductionConfig()
-			etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
-			cli, err := clientv3.New(clientv3.Config{
-				LogConfig:        &etcdLogCfg,
-				Endpoints:        addrs,
-				AutoSyncInterval: 30 * time.Second,
-				DialTimeout:      5 * time.Second,
-				DialOptions: []grpc.DialOption{
-					grpc.WithBackoffMaxDelay(time.Second * 3),
-					grpc.WithKeepaliveParams(keepalive.ClientParameters{
-						Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
-						Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
-					}),
-				},
-				TLS: ebd.TLSConfig(),
-			})
+			cli, err := newEtcdCli(addrs, ebd)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -969,6 +982,12 @@ func (do *Domain) Init(
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
 
 			do.etcdClient = cli
+
+			unprefixedEtcdCli, err := newEtcdCli(addrs, ebd)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			do.unprefixedEtcdCli = unprefixedEtcdCli
 		}
 	}
 
@@ -1030,7 +1049,7 @@ func (do *Domain) Init(
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, do.unprefixedEtcdCli, skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
@@ -2495,7 +2514,7 @@ func (do *Domain) StartTTLJobManager() {
 		}()
 
 		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient)
-		do.ttlJobManager = ttlJobManager
+		do.ttlJobManager.Store(ttlJobManager)
 		ttlJobManager.Start()
 
 		<-do.exit
@@ -2510,7 +2529,7 @@ func (do *Domain) StartTTLJobManager() {
 
 // TTLJobManager returns the ttl job manager on this domain
 func (do *Domain) TTLJobManager() *ttlworker.JobManager {
-	return do.ttlJobManager
+	return do.ttlJobManager.Load()
 }
 
 func init() {
