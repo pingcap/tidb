@@ -343,32 +343,64 @@ type MaxError struct {
 	// In TiDB backend, this also includes all possible SQL errors raised from INSERT,
 	// such as unique key conflict when `on-duplicate` is set to `error`.
 	// When tolerated, the row causing the error will be skipped, and adds 1 to the counter.
+	// The default value is zero, which means that such errors are not tolerated.
 	Type atomic.Int64 `toml:"type" json:"type"`
 
 	// Conflict is the maximum number of unique key conflicts in local backend accepted.
 	// When tolerated, every pair of conflict adds 1 to the counter.
 	// Those pairs will NOT be deleted from the target. Conflict resolution is performed separately.
-	// TODO Currently this is hard-coded to infinity.
-	Conflict atomic.Int64 `toml:"conflict" json:"-"`
+	// The default value is max int64, which means conflict errors will be recorded as much as possible.
+	// Sometime the actual number of conflict record logged will be greater than the value configured here,
+	// because conflict error data are recorded batch by batch.
+	// If the limit is reached in a single batch, the entire batch of records will be persisted before an error is reported.
+	Conflict atomic.Int64 `toml:"conflict" json:"conflict"`
 }
 
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
+	defaultValMap := map[string]int64{
+		"syntax":   0,
+		"charset":  math.MaxInt64,
+		"type":     0,
+		"conflict": math.MaxInt64,
+	}
+	// set default value first
+	cfg.Syntax.Store(defaultValMap["syntax"])
+	cfg.Charset.Store(defaultValMap["charset"])
+	cfg.Type.Store(defaultValMap["type"])
+	cfg.Conflict.Store(defaultValMap["conflict"])
 	switch val := v.(type) {
 	case int64:
 		// ignore val that is smaller than 0
-		if val < 0 {
-			val = 0
+		if val >= 0 {
+			// only set type error
+			cfg.Type.Store(val)
 		}
-		cfg.Syntax.Store(0)
-		cfg.Charset.Store(math.MaxInt64)
-		cfg.Type.Store(val)
-		cfg.Conflict.Store(math.MaxInt64)
 		return nil
 	case map[string]interface{}:
-		// TODO support stuff like `max-error = { charset = 1000, type = 1000 }` if proved useful.
+		// support stuff like `max-error = { charset = 1000, type = 1000 }`.
+		getVal := func(k string, v interface{}) int64 {
+			defaultVal, ok := defaultValMap[k]
+			if !ok {
+				return 0
+			}
+			iVal, ok := v.(int64)
+			if !ok || iVal < 0 {
+				return defaultVal
+			}
+			return iVal
+		}
+		for k, v := range val {
+			switch k {
+			case "type":
+				cfg.Type.Store(getVal(k, v))
+			case "conflict":
+				cfg.Conflict.Store(getVal(k, v))
+			}
+		}
+		return nil
 	default:
+		return errors.Errorf("invalid max-error '%v', should be an integer or a map of string:int64", v)
 	}
-	return errors.Errorf("invalid max-error '%v', should be an integer", v)
 }
 
 // DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
@@ -455,6 +487,9 @@ type CSVConfig struct {
 	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	// hide these options for lightning configuration file, they can only be used by LOAD DATA
+	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
+	StartingBy string `toml:"-" json:"-"`
 }
 
 type MydumperRuntime struct {
@@ -802,8 +837,16 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 		unusedGlobalKeyStrs[key.String()] = struct{}{}
 	}
 
+iterateUnusedKeys:
 	for _, key := range unusedConfigKeys {
 		keyStr := key.String()
+		switch keyStr {
+		// these keys are not counted as decoded by toml decoder, but actually they are decoded,
+		// because the corresponding unmarshal logic handles these key's decoding in a custom way
+		case "lightning.max-error.type",
+			"lightning.max-error.conflict":
+			continue iterateUnusedKeys
+		}
 		if _, found := unusedGlobalKeyStrs[keyStr]; found {
 			bothUnused = append(bothUnused, keyStr)
 		} else {

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -49,6 +50,7 @@ const (
 	flagIgnoreStats      = "ignore-stats"
 	flagUseBackupMetaV2  = "use-backupmeta-v2"
 	flagUseCheckpoint    = "use-checkpoint"
+	flagKeyspaceName     = "keyspace-name"
 
 	flagGCTTL = "gcttl"
 
@@ -124,6 +126,8 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagUseBackupMetaV2, false,
 		"use backup meta v2 to store meta info")
+
+	flags.String(flagKeyspaceName, "", "keyspace name for backup")
 	// This flag will change the structure of backupmeta.
 	// we must make sure the old three version of br can parse the v2 meta to keep compatibility.
 	// so this flag should set to false for three version by default.
@@ -203,6 +207,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.IgnoreStats, err = flags.GetBool(flagIgnoreStats)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.KeyspaceName, err = flags.GetString(flagKeyspaceName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -322,6 +330,9 @@ func isFullBackup(cmdName string) bool {
 // RunBackup starts a backup task inside the current goroutine.
 func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig) error {
 	cfg.Adjust()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
 
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -485,6 +496,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Add keyspace prefix to BackupRequest
+	for i := range ranges {
+		start, end := ranges[i].StartKey, ranges[i].EndKey
+		ranges[i].StartKey, ranges[i].EndKey = mgr.GetStorage().GetCodec().EncodeRange(start, end)
+	}
 
 	// Metafile size should be less than 64MB.
 	metawriter := metautil.NewMetaWriter(client.GetStorage(),
@@ -498,6 +514,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.ClusterVersion = clusterVersion
 		m.BrVersion = brVersion
 		m.NewCollationsEnabled = newCollationEnable
+		m.ApiVersion = mgr.GetStorage().GetCodec().GetAPIVersion()
 	})
 
 	log.Info("get placement policies", zap.Int("count", len(policies)))

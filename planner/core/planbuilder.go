@@ -26,7 +26,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -1421,10 +1420,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
 			path.Forced = true
-			if hint.HintType == ast.HintKeepOrder {
+			if hint.HintType == ast.HintOrderIndex {
 				path.ForceKeepOrder = true
 			}
-			if hint.HintType == ast.HintNoKeepOrder {
+			if hint.HintType == ast.HintNoOrderIndex {
 				path.ForceNoKeepOrder = true
 			}
 			available = append(available, path)
@@ -1453,8 +1452,6 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
-	var outputComputeNodeErrMsg bool
-	noTiFlashComputeNode := config.GetGlobalConfig().DisaggregatedTiFlash && !isTiFlashComputeNodeAvailable(ctx)
 	for i := len(paths) - 1; i >= 0; i-- {
 		// availableEngineStr is for warning message.
 		if _, ok := availableEngine[paths[i].StoreType]; !ok {
@@ -1464,20 +1461,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 			}
 			availableEngineStr += paths[i].StoreType.Name()
 		}
-		_, exists := isolationReadEngines[paths[i].StoreType]
-		// Prune this path if:
-		// 1. path.StoreType doesn't exists in isolationReadEngines or
-		// 2. TiFlash is disaggregated and the number of tiflash_compute node is zero.
-		shouldPruneTiFlashCompute := noTiFlashComputeNode && exists && paths[i].StoreType == kv.TiFlash
-		failpoint.Inject("testDisaggregatedTiFlashQuery", func(val failpoint.Value) {
-			// Ignore check if tiflash_compute node number.
-			// After we support disaggregated tiflash in test framework, can delete this failpoint.
-			shouldPruneTiFlashCompute = val.(bool)
-		})
-		if shouldPruneTiFlashCompute {
-			outputComputeNodeErrMsg = true
-		}
-		if (!exists && paths[i].StoreType != kv.TiDB) || shouldPruneTiFlashCompute {
+		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
@@ -1486,11 +1470,7 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if len(paths) == 0 {
 		helpMsg := ""
 		if engineVals == "tiflash" {
-			if outputComputeNodeErrMsg {
-				helpMsg = ". Please check tiflash_compute node is available"
-			} else {
-				helpMsg = ". Please check tiflash replica or ensure the query is readonly"
-			}
+			helpMsg = ". Please check tiflash replica or ensure the query is readonly"
 		}
 		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
@@ -2320,10 +2300,14 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // in tblInfo.Indices, index.Columns[i].Offset is set according to tblInfo.Columns. Since we decode row samples according to colsInfo rather than tbl.Columns
 // in the execution phase of ANALYZE, we need to modify index.Columns[i].Offset according to colInfos.
 // TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
-func getModifiedIndexesInfoForAnalyze(tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
+func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
+			continue
+		}
+		if originIdx.MVIndex {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -2401,7 +2385,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			execColsInfo = colsInfo
 		}
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+		indexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
@@ -2631,6 +2615,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				commonHandleInfo = idx
 				continue
 			}
+			if idx.MVIndex {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				continue
+			}
 			for i, id := range physicalIDs {
 				if id == tbl.TableInfo.ID {
 					id = -1
@@ -2724,6 +2712,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
+		if idx.MVIndex {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+			continue
+		}
 		for i, id := range physicalIDs {
 			if id == tblInfo.ID {
 				id = -1
@@ -2766,6 +2758,11 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
+			if idx.MVIndex {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
+				continue
+			}
+
 			for i, id := range physicalIDs {
 				if id == tblInfo.ID {
 					id = -1

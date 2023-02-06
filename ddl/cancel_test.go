@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
@@ -264,7 +265,7 @@ func TestCancel(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillSlow"))
 	}()
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
 	cancel := atomicutil.NewBool(false)
 	cancelResult := atomicutil.NewBool(false)
@@ -282,12 +283,12 @@ func TestCancel(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook.Clone())
 
-	restHook := func(h *ddl.TestDDLCallback) {
+	restHook := func(h *callback.TestDDLCallback) {
 		h.OnJobRunBeforeExported = nil
 		h.OnJobUpdatedExported.Store(nil)
 		dom.DDL().SetHook(h.Clone())
 	}
-	registHook := func(h *ddl.TestDDLCallback, onJobRunBefore bool) {
+	registHook := func(h *callback.TestDDLCallback, onJobRunBefore bool) {
 		if onJobRunBefore {
 			h.OnJobRunBeforeExported = hookFunc
 		} else {
