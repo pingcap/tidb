@@ -125,7 +125,25 @@ func (m *JobManager) jobLoop() error {
 	updateScanTaskStateTicker := time.Tick(jobManagerLoopTickerInterval)
 	infoSchemaCacheUpdateTicker := time.Tick(m.infoSchemaCache.GetInterval())
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
+<<<<<<< HEAD
 	resizeWorkersTicker := time.Tick(resizeWorkersInterval)
+=======
+	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
+	gcTicker := time.Tick(ttlGCInterval)
+
+	scheduleJobTicker := time.Tick(jobManagerLoopTickerInterval)
+	jobCheckTicker := time.Tick(jobManagerLoopTickerInterval)
+	updateJobHeartBeatTicker := time.Tick(jobManagerLoopTickerInterval)
+
+	scheduleTaskTicker := time.Tick(getTaskManagerLoopTickerInterval())
+	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
+	taskCheckTicker := time.Tick(time.Second * 5)
+	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
+
+	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
+	scanTaskNotificationWatcher := m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
+	m.taskManager.resizeWorkersWithSysVar()
+>>>>>>> e245a931af9 (ttl: fix ttl job manager will panic if the status cache doesn't contain table (#41069))
 	for {
 		m.reportMetrics()
 		now := se.Now()
@@ -508,6 +526,7 @@ func (m *JobManager) couldTrySchedule(table *cache.TableStatus, now time.Time) b
 // It could be nil, nil, if the table query doesn't return error but the job has been locked by other instances.
 func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time) (*ttlJob, error) {
 	var expireTime time.Time
+	var jobID string
 
 	err := se.RunInTxn(ctx, func() error {
 		sql, args := cache.SelectFromTTLTableStatusWithID(table.ID)
@@ -544,7 +563,24 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return err
 		}
 
+<<<<<<< HEAD
 		sql, args = setTableStatusOwnerSQL(table.ID, now, expireTime, m.id)
+=======
+		jobID = uuid.New().String()
+		jobExist := false
+		if len(tableStatus.CurrentJobID) > 0 {
+			// don't create new job if there is already one running
+			// so the running tasks don't need to be cancelled
+			jobID = tableStatus.CurrentJobID
+			expireTime = tableStatus.CurrentJobTTLExpire
+			jobExist = true
+		}
+		failpoint.Inject("set-job-uuid", func(val failpoint.Value) {
+			jobID = val.(string)
+		})
+
+		sql, args = setTableStatusOwnerSQL(jobID, table.ID, now, expireTime, m.id)
+>>>>>>> e245a931af9 (ttl: fix ttl job manager will panic if the status cache doesn't contain table (#41069))
 		_, err = se.ExecuteSQL(ctx, sql, args...)
 		return errors.Wrapf(err, "execute sql: %s", sql)
 	})
@@ -561,6 +597,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	return m.createNewJob(expireTime, now, table)
 }
 
@@ -587,6 +624,20 @@ func (m *JobManager) createNewJob(expireTime time.Time, now time.Time, table *ca
 		})
 	}
 
+=======
+
+	job := m.createNewJob(jobID, expireTime, now, table)
+
+	// job is created, notify every scan managers to fetch new tasks
+	err = m.notificationCli.Notify(m.ctx, scanTaskNotificationType, job.id)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to trigger scan tasks", zap.Error(err))
+	}
+	return job, nil
+}
+
+func (m *JobManager) createNewJob(id string, expireTime time.Time, now time.Time, table *cache.PhysicalTable) *ttlJob {
+>>>>>>> e245a931af9 (ttl: fix ttl job manager will panic if the status cache doesn't contain table (#41069))
 	return &ttlJob{
 		id:      id,
 		ownerID: m.id,
