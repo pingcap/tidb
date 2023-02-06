@@ -525,3 +525,40 @@ func TestIssue40679(t *testing.T) {
 	tk.MustExec("execute st using @a1")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '1.1' may be converted to INT"))
 }
+
+func TestPlanCacheWithSubquery(t *testing.T) {
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	// scalar sub-query
+	tk.MustExec("prepare stmt from 'select * from t t1 where t1.a > (select max(a) from t t2 where t2.b<t1.b and t2.b<?)'")
+	tk.MustExec("set @a=1")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// exist sub-query
+	tk.MustExec("prepare stmt from 'select * from t t1 where exists (select 1 from t t2 where t2.b<t1.b and t2.b<?)'")
+	tk.MustExec("set @a=1")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// in sub-query
+	tk.MustExec("prepare stmt from 'select * from t t1 where t1.a in (select a from t t2 where t2.b < ?)'")
+	tk.MustExec("set @a=1")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// decorrelated sub-query
+	tk.MustExec("prepare stmt from 'select * from t t1 where t1.a > (select 1 from t t2 where t2.b<?)'")
+	tk.MustExec("set @a=1")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
