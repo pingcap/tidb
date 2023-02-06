@@ -2600,7 +2600,7 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 	}, nil
 }
 
-func (partitionWorker *reorgPartitionWorker) GetTasks() ([]*BackfillJob, error) {
+func (w *reorgPartitionWorker) GetTasks() ([]*BackfillJob, error) {
 	panic("[ddl] reorg partition worker GetTask function doesn't implement")
 }
 
