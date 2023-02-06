@@ -113,10 +113,12 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.cacheable = false
 		checker.reason = "query has user-defined variables is un-cacheable"
 		return in, true
-	// todo: these comment is used to add switch in the later pr
 	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
-		//checker.cacheable = false
-		checker.reason = "query has sub-queries is un-cacheable"
+		if !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+			checker.cacheable = false
+			checker.reason = "query has sub-queries is un-cacheable"
+			return in, true
+		}
 		return in, false
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {

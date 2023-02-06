@@ -806,6 +806,9 @@ const (
 
 	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
 	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
+
+	// TiDBEnablePlanCacheForSubquery controls whether prepare statement with subquery can be cached
+	TiDBEnablePlanCacheForSubquery = "tidb_enable_plan_cache_for_subquery"
 )
 
 // TiDB vars that have only global scope
@@ -1179,6 +1182,7 @@ const (
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
+	DefTiDBEnablePlanCacheForSubquery                      = true
 )
 
 // Process global variables.

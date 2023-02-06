@@ -1260,6 +1260,9 @@ type SessionVars struct {
 	// EnablePlanCacheForParamLimit controls whether the prepare statement with parameterized limit can be cached
 	EnablePlanCacheForParamLimit bool
 
+	// EnablePlanCacheForSubquery controls whether the prepare statement with sub query can be cached
+	EnablePlanCacheForSubquery bool
+
 	// EnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	EnableNonPreparedPlanCache bool
 
