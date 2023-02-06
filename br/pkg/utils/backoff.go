@@ -35,10 +35,10 @@ const (
 	resetTSWaitIntervalExt    = 500 * time.Millisecond
 	resetTSMaxWaitIntervalExt = 300 * time.Second
 
-	// region heartbeat are 10 seconds by default, if some region has 3 heartbeat missing (20 seconds), it appear to be a network issue between PD and TiKV.
-	flashbackRetryTime       = 20
-	flashbackWaitInterval    = 1000 * time.Millisecond
-	flashbackMaxWaitInterval = 20 * time.Second
+	// region heartbeat are 10 seconds by default, if some region has 2 heartbeat missing (15 seconds), it appear to be a network issue between PD and TiKV.
+	flashbackRetryTime       = 3
+	flashbackWaitInterval    = 3000 * time.Millisecond
+	flashbackMaxWaitInterval = 15 * time.Second
 )
 
 // RetryState is the mutable state needed for retrying.
@@ -249,26 +249,14 @@ func (bo *flashbackBackoffer) NextBackoff(err error) time.Duration {
 	if messageIsRetryable(err.Error()) {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
+		log.Warn("region may not ready to serve, retry it...", zap.Error(err))
 	} else {
-		e := errors.Cause(err)
-		switch e { // nolint:errorlint
-		case berrors.ErrKVRangeIsEmpty, berrors.ErrKVRewriteRuleNotFound:
-			// Excepted error, finish the operation
-			bo.delayTime = 0
-			bo.attempt = 0
-		default:
-			switch status.Code(e) {
-			case codes.Unavailable, codes.Aborted:
-				bo.delayTime = 2 * bo.delayTime
-				bo.attempt--
-			default:
-				// Unexcepted error
-				bo.delayTime = 0
-				bo.attempt = 0
-				log.Warn("unexcepted error, stop to retry", zap.Error(err))
-			}
-		}
+		// Unexcepted error
+		bo.delayTime = 0
+		bo.attempt = 0
+		log.Warn("unexcepted error, stop to retry", zap.Error(err))
 	}
+
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}
