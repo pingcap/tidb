@@ -762,6 +762,12 @@ func (p *LogicalJoin) extractIndexJoinInnerChildPattern(innerChild LogicalPlan) 
 		if !p.ctx.GetSessionVars().EnableIndexJoinInnerSideMultiPattern {
 			return nil
 		}
+		// For now, we only allow proj with all Column expression can be the inner side of index join
+		for _, expr := range child.Exprs {
+			if _, ok := expr.(*expression.Column); !ok {
+				return nil
+			}
+		}
 		wrapper.proj = child
 		ds, isDataSource := wrapper.proj.Children()[0].(*DataSource)
 		if !isDataSource {
@@ -1086,18 +1092,18 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 }
 
 func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrapper, child PhysicalPlan) PhysicalPlan {
-	if p.ctx.GetSessionVars().EnableIndexJoinInnerSideMultiPattern {
-		if wrapper.us != nil {
-			return p.constructInnerUnionScan(wrapper.us, child)
-		} else if wrapper.proj != nil {
-			return p.constructInnerProj(wrapper.proj, child)
-		} else if wrapper.sel != nil {
-			return p.constructInnerSel(wrapper.sel, child)
-		}
-	} else {
+	if !p.ctx.GetSessionVars().EnableIndexJoinInnerSideMultiPattern {
 		if wrapper.us != nil {
 			return p.constructInnerUnionScan(wrapper.us, child)
 		}
+		return child
+	}
+	if wrapper.us != nil {
+		return p.constructInnerUnionScan(wrapper.us, child)
+	} else if wrapper.proj != nil {
+		return p.constructInnerProj(wrapper.proj, child)
+	} else if wrapper.sel != nil {
+		return p.constructInnerSel(wrapper.sel, child)
 	}
 	return child
 }
