@@ -67,6 +67,35 @@ func TestUnsupportedStmtForPrepare(t *testing.T) {
 	tk.MustGetErrCode(`prepare stmt4 from "prepare stmt3 from 'create table t1(a int, b int)'"`, mysql.ErrUnsupportedPs)
 }
 
+func TestEscapeSupportForPrepareStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1 (a varchar(10), key(a));`)
+	tk.MustExec(`insert into t1 values ('a'), ('a\\b');`)
+	tk.MustExec("prepare stmt1 from 'select * from t1 where a like \\'a\\\\%\\' escape ?';")
+	tk.MustExec("set @e='#';")
+	result := tk.MustQuery("execute stmt1 using @e;")
+	result.Check(testkit.Rows("a\\b"))
+	tk.MustExec("deallocate prepare stmt1;")
+	tk.MustExec("prepare stmt1 from 'select * from t1 where a like \\'a\\\\%\\' escape ?';")
+	tk.MustExec("set @e='\\\\';")
+	result = tk.MustQuery("execute stmt1 using @e;")
+	result.Check(testkit.Rows())
+	tk.MustExec("deallocate prepare stmt1;")
+	tk.MustExec("prepare stmt1 from 'select * from t1 where a not like \\'a\\\\%\\' escape ?';")
+	tk.MustExec("set @e='#';")
+	result = tk.MustQuery("execute stmt1 using @e;")
+	result.Check(testkit.Rows("a"))
+	tk.MustExec("deallocate prepare stmt1;")
+	tk.MustExec("prepare stmt1 from 'select * from t1 where a not like \\'a\\\\%\\' escape ?';")
+	tk.MustExec("set @e='\\\\';")
+	result = tk.MustQuery("execute stmt1 using @e;")
+	result.Check(testkit.Rows("a", "a\\b"))
+	tk.MustExec("deallocate prepare stmt1;")
+}
+
 func TestIgnorePlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

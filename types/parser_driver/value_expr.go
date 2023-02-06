@@ -255,8 +255,8 @@ func newParamMarkerExpr(offset int) ast.ParamMarkerExpr {
 }
 
 // Format the ExprNode into a Writer.
-func (*ParamMarkerExpr) Format(_ io.Writer) {
-	panic("Not implemented")
+func (*ParamMarkerExpr) Format(w io.Writer) {
+	fmt.Fprint(w, "?")
 }
 
 // Accept implements Node Accept interface.

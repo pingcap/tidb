@@ -1377,6 +1377,8 @@ import (
 	StatsOptionsOpt                        "Stats options"
 	DryRunOptions                          "Dry run options"
 	OptionalShardColumn                    "Optional shard column"
+	LikeEscapeOpt                          "like escape option clause"
+	EscapeExpr                             "escape value or param marker cases"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1445,7 +1447,6 @@ import (
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	LikeEscapeOpt                   "like escape option"
 	LinesTerminated                 "Lines terminated by"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
@@ -5819,18 +5820,20 @@ PredicateExpr:
 	}
 |	BitExpr LikeOrNotOp SimpleExpr LikeEscapeOpt
 	{
-		escape := $4
-		if len(escape) > 1 {
-			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
-			return 1
-		} else if len(escape) == 0 {
-			escape = "\\"
+		escapeexpr := $4
+		if _, ok := escapeexpr.(ast.ParamMarkerExpr); !ok {
+			// it can not convert to `ParamMarkerExpr`, so it must be `ValueExpr`
+			escape := escapeexpr.(ast.ValueExpr).GetString()
+			if len(escape) > 1 {
+				yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
+				return 1
+			}
 		}
 		$$ = &ast.PatternLikeExpr{
 			Expr:    $1,
 			Pattern: $3,
 			Not:     !$2.(bool),
-			Escape:  escape[0],
+			Escape:  $4.(ast.ValueExpr),
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -5850,11 +5853,26 @@ RegexpSym:
 LikeEscapeOpt:
 	%prec empty
 	{
-		$$ = "\\"
+		expr := ast.NewValueExpr("\\", parser.charset, parser.collation)
+		$$ = expr
 	}
-|	"ESCAPE" stringLit
+|	"ESCAPE" EscapeExpr
 	{
 		$$ = $2
+	}
+
+EscapeExpr:
+	stringLit
+	{
+		if len($1) == 0 {
+			$1 = "\\"
+		}
+		expr := ast.NewValueExpr($1, parser.charset, parser.collation)
+		$$ = expr
+	}
+|	paramMarker
+	{
+		$$ = ast.NewParamMarkerExpr(yyS[yypt].offset)
 	}
 
 Field:
@@ -11248,9 +11266,10 @@ ShowLikeOrWhereOpt:
 	}
 |	"LIKE" SimpleExpr
 	{
+		expr := ast.NewValueExpr("\\", parser.charset, parser.collation)
 		$$ = &ast.PatternLikeExpr{
 			Pattern: $2,
-			Escape:  '\\',
+			Escape:  expr,
 		}
 	}
 |	"WHERE" Expression
