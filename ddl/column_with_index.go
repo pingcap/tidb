@@ -343,6 +343,11 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 			// Initialize SnapshotVer to 0 for later reorganization check.
 			job.SnapshotVer = 0
 			job.SchemaState = model.StateWriteReorganization
+			if job.MultiSchemaInfo == nil {
+				if err := initDistReorg(job.ReorgMeta, d.store, schemaID, tblInfo); err != nil {
+					return ver, errors.Trace(err)
+				}
+			}
 		case model.StateWriteReorganization:
 			// reorganization -> public
 			tbl, err := getTable(d.store, schemaID, tblInfo)
@@ -369,7 +374,11 @@ func dropColumnWithCompositeIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model
 				if job.MultiSchemaInfo != nil {
 					done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, reorgIdxInfo)
 				} else {
-					done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, reorgIdxInfo)
+					if job.ReorgMeta.IsDistReorg {
+						done, ver, err = doReorgWorkForCreateIndexWithDistReorg(w, d, t, job, tbl, reorgIdxInfo)
+					} else {
+						done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, reorgIdxInfo)
+					}
 				}
 
 				if !done {
