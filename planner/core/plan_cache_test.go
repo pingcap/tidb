@@ -82,6 +82,46 @@ func TestInitLRUWithSystemVar(t *testing.T) {
 	require.NotNil(t, lru)
 }
 
+func TestIssue40679(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a));")
+	tk.MustExec("prepare st from 'select * from t use index(a) where a < ?'")
+	tk.MustExec("set @a1=1.1")
+	tk.MustExec("execute st using @a1")
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	require.True(t, strings.Contains(rows[1][0].(string), "RangeScan")) // RangeScan not FullScan
+
+	tk.MustExec("execute st using @a1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: test.t.a or 1.1 may be rewritten"))
+}
+
+func TestIssue41032(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE PK_SIGNED_10087 (
+	 COL1 mediumint(8) unsigned NOT NULL,
+	 COL2 varchar(20) DEFAULT NULL,
+	 COL4 datetime DEFAULT NULL,
+	 COL3 bigint(20) DEFAULT NULL,
+	 COL5 float DEFAULT NULL,
+	 PRIMARY KEY (COL1) )`)
+	tk.MustExec(`insert into PK_SIGNED_10087 values(0, "痥腜蟿鮤枓欜喧檕澙姭袐裄钭僇剕焍哓閲疁櫘", "0017-11-14 05:40:55", -4504684261333179273, 7.97449e37)`)
+	tk.MustExec(`prepare stmt from 'SELECT/*+ HASH_JOIN(t1, t2) */ t2.* FROM PK_SIGNED_10087 t1 JOIN PK_SIGNED_10087 t2 ON t1.col1 = t2.col1 WHERE t2.col1 >= ? AND t1.col1 >= ?;'`)
+	tk.MustExec(`set @a=0, @b=0`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("0 痥腜蟿鮤枓欜喧檕澙姭袐裄钭僇剕焍哓閲疁櫘 0017-11-14 05:40:55 -4504684261333179273 79744900000000000000000000000000000000"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: test.pk_signed_10087.col1 or 0 may be rewritten"))
+	tk.MustExec(`set @a=8950167, @b=16305982`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
 func TestIssue40296(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

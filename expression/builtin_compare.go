@@ -1565,31 +1565,23 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
-	arg0IsString := arg0Type.EvalType() == types.ETString
-	arg1IsString := arg1Type.EvalType() == types.ETString
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
+	signedFlag0, signedFlag1 := mysql.HasUnsignedFlag(args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(args[1].GetType().GetFlag())
+
+	// handle over-optimization for plan cache
 	if MaybeOverOptimized4PlanCache(ctx, args) {
-		// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
-		// here and skip this refine operation in all other cases for safety.
-		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
-			var reason error
-			if arg1IsString {
-				reason = errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg1.String())
-			} else { // arg0IsString
-				reason = errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String())
-			}
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
-			RemoveMutableConst(ctx, args)
-		} else {
-			return args
+		if arg0IsInt && arg1IsInt && signedFlag0 == signedFlag1 {
+			return args // no need to refine them
 		}
-	} else if !ctx.GetSessionVars().StmtCtx.UseCache {
-		// We should remove the mutable constant for correctness, because its value may be changed.
-		RemoveMutableConst(ctx, args)
+		// label this plan as over-optimized if refine some args for safety.
+		reason := errors.Errorf("skip plan-cache: %v or %v may be rewritten", args[0].String(), args[1].String())
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+		RemoveMutableConst(ctx, args) // skip plan cache and just remove all parameters
 	}
+
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
