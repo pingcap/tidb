@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,18 +131,25 @@ type ImportClientFactory interface {
 }
 
 type importClientFactoryImpl struct {
-	conns          *common.GRPCConns
-	splitCli       split.SplitClient
-	tls            *common.TLS
-	tcpConcurrency int
+	conns           *common.GRPCConns
+	splitCli        split.SplitClient
+	tls             *common.TLS
+	tcpConcurrency  int
+	compressionType config.CompressionType
 }
 
-func newImportClientFactoryImpl(splitCli split.SplitClient, tls *common.TLS, tcpConcurrency int) *importClientFactoryImpl {
+func newImportClientFactoryImpl(
+	splitCli split.SplitClient,
+	tls *common.TLS,
+	tcpConcurrency int,
+	compressionType config.CompressionType,
+) *importClientFactoryImpl {
 	return &importClientFactoryImpl{
-		conns:          common.NewGRPCConns(),
-		splitCli:       splitCli,
-		tls:            tls,
-		tcpConcurrency: tcpConcurrency,
+		conns:           common.NewGRPCConns(),
+		splitCli:        splitCli,
+		tls:             tls,
+		tcpConcurrency:  tcpConcurrency,
+		compressionType: compressionType,
 	}
 }
 
@@ -150,9 +158,11 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
+	var opts []grpc.DialOption
 	if f.tls.TLSConfig() != nil {
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig())))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 
@@ -163,10 +173,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	if addr == "" {
 		addr = store.GetAddress()
 	}
-	conn, err := grpc.DialContext(
-		ctx,
-		addr,
-		opt,
+	opts = append(opts,
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
@@ -174,6 +181,21 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 			PermitWithoutStream: true,
 		}),
 	)
+	if f.compressionType != config.CompressionTypeNone {
+		opts = append(opts, grpc.WithDefaultCallOptions(grpc.UseCompressor(f.compressionType.String())))
+	}
+
+	failpoint.Inject("LoggingImportBytes", func() {
+		opts = append(opts, grpc.WithContextDialer(func(ctx context.Context, target string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", target)
+			if err != nil {
+				return nil, err
+			}
+			return &loggingConn{Conn: conn}, nil
+		}))
+	})
+
+	conn, err := grpc.DialContext(ctx, addr, opts...)
 	cancel()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -198,6 +220,15 @@ func (f *importClientFactoryImpl) Create(ctx context.Context, storeID uint64) (s
 
 func (f *importClientFactoryImpl) Close() {
 	f.conns.Close()
+}
+
+type loggingConn struct {
+	net.Conn
+}
+
+func (c loggingConn) Write(b []byte) (int, error) {
+	log.L().Debug("import write", zap.Int("bytes", len(b)))
+	return c.Conn.Write(b)
 }
 
 // Range record start and end key for localStoreDir.DB
@@ -479,7 +510,7 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, rangeConcurrency)
+	importClientFactory := newImportClientFactoryImpl(splitCli, tls, rangeConcurrency, cfg.TikvImporter.CompressKVPairs)
 	duplicateDetection := cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone
 	keyAdapter := KeyAdapter(noopKeyAdapter{})
 	if duplicateDetection {
