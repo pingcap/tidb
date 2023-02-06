@@ -708,6 +708,7 @@ import (
 	subDate               "SUBDATE"
 	sum                   "SUM"
 	substring             "SUBSTRING"
+	survivalPreferences	  "SURVIVAL_PREFERENCES"
 	target                "TARGET"
 	tidbJson              "TIDB_JSON"
 	timestampAdd          "TIMESTAMPADD"
@@ -1690,6 +1691,10 @@ DirectPlacementOption:
 |	"LEARNER_CONSTRAINTS" EqOpt stringLit
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerConstraints, StrValue: $3}
+	}
+|	"SURVIVAL_PREFERENCES" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionSurvivalPreferences, StrValue: $3}
 	}
 
 PlacementPolicyOption:

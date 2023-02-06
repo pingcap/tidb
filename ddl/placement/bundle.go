@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"golang.org/x/exp/slices"
+	"gopkg.in/yaml.v2"
 )
 
 // Refer to https://github.com/tikv/pd/issues/2701 .
@@ -124,6 +125,18 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 		}
 	}
 
+	survivalPreferenceStr := options.SurvivalPreferences
+	if len(survivalPreferenceStr) > 0 {
+		labels := []string{}
+		err := yaml.UnmarshalStrict([]byte(survivalPreferenceStr), &labels)
+		if err != nil {
+			return nil, ErrInvalidSurvivalPreferenceFormat
+		}
+		for _, rule := range rules {
+			rule.LocationLabels = labels
+		}
+	}
+
 	return &Bundle{Rules: rules}, nil
 }
 
@@ -155,9 +168,28 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 
 	var rules []*Rule
 
+	survivalPreferenceStr := options.SurvivalPreferences
+	var locationLabels []string
+	if len(survivalPreferenceStr) > 0 {
+		labels := []string{}
+		err := yaml.UnmarshalStrict([]byte(survivalPreferenceStr), &labels)
+		if err != nil {
+			return nil, ErrInvalidConstraintsFormat
+		}
+
+		locationLabels = labels
+
+	}
+
 	// in case empty primaryRegion and regions, just return an empty bundle
+	// FIXME: @nolouch
 	if primaryRegion == "" && len(regions) == 0 {
 		rules = append(rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
+		if len(survivalPreferenceStr) > 0 && len(locationLabels) > 0 {
+			for _, rule := range rules {
+				rule.LocationLabels = locationLabels
+			}
+		}
 		return &Bundle{Rules: rules}, nil
 	}
 
@@ -192,6 +224,12 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 			rules = append(rules, NewRule(Voter, cnt, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
 		} else {
 			rules = append(rules, NewRule(Voter, cnt, NewConstraintsDirect()))
+		}
+	}
+
+	if len(survivalPreferenceStr) > 0 && len(locationLabels) > 0 {
+		for _, rule := range rules {
+			rule.LocationLabels = locationLabels
 		}
 	}
 
@@ -300,6 +338,8 @@ func (b *Bundle) Tidy() error {
 				Key:    EngineLabelKey,
 				Values: []string{EngineLabelTiFlash},
 			}},
+			// FIXME: @nolouch
+			LocationLabels: b.Rules[0].LocationLabels,
 		})
 	}
 	b.Rules = newRules
