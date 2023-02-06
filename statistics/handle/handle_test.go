@@ -344,6 +344,7 @@ func TestDurationToTS(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit2 := testkit.NewTestKit(t, store)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -353,7 +354,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
+	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
 	require.NoError(t, err)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
@@ -552,10 +553,10 @@ func TestReloadExtStatsLockRelease(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
 	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	tk.MustExec("analyze table t")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr", `return("")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/injectExtStatsLoadErr", `return("")`))
 	err := tk.ExecToErr("admin reload stats_extended")
 	require.Equal(t, "gofail extendedStatsFromStorage error", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/injectExtStatsLoadErr"))
 	// Check the lock is released by `admin reload stats_extended` if error happens.
 	tk.MustExec("analyze table t")
 }
@@ -621,16 +622,16 @@ func TestLoadStats(t *testing.T) {
 	require.True(t, idx.IsFullLoad())
 
 	// Following test tests whether the LoadNeededHistograms would panic.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail", `return(true)`))
 	err = h.LoadNeededHistograms()
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic", "panic"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic", "panic"))
 	err = h.LoadNeededHistograms()
 	require.Error(t, err)
 	require.Regexp(t, ".*getStatsReader panic.*", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic"))
 	err = h.LoadNeededHistograms()
 	require.NoError(t, err)
 }
@@ -1095,7 +1096,7 @@ partition by range (a) (
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
-	checkHealthy(60, 50, 66)
+	checkHealthy(33, 0, 50)
 }
 
 func TestGlobalStatsData(t *testing.T) {

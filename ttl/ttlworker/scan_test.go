@@ -36,7 +36,7 @@ type mockScanWorker struct {
 	sessPoll *mockSessionPool
 }
 
-func newMockScanWorker(t *testing.T) *mockScanWorker {
+func NewMockScanWorker(t *testing.T) *mockScanWorker {
 	w := &mockScanWorker{
 		t:        t,
 		delCh:    make(chan *ttlDeleteTask),
@@ -46,7 +46,7 @@ func newMockScanWorker(t *testing.T) *mockScanWorker {
 
 	w.ttlScanWorker = newScanWorker(w.delCh, w.notifyCh, w.sessPoll)
 	require.Equal(t, workerStatusCreated, w.Status())
-	require.False(t, w.Idle())
+	require.False(t, w.CouldSchedule())
 	result := w.PollTaskResult()
 	require.Nil(t, result)
 	return w
@@ -54,7 +54,7 @@ func newMockScanWorker(t *testing.T) *mockScanWorker {
 
 func (w *mockScanWorker) checkWorkerStatus(status workerStatus, idle bool, curTask *ttlScanTask) {
 	require.Equal(w.t, status, w.status)
-	require.Equal(w.t, idle, w.Idle())
+	require.Equal(w.t, idle, w.CouldSchedule())
 	require.Same(w.t, curTask, w.CurrentTask())
 }
 
@@ -98,7 +98,7 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 		require.NotNil(w.t, del)
 		require.NotNil(w.t, del.statistics)
 		require.Same(w.t, w.curTask.tbl, del.tbl)
-		require.Equal(w.t, w.curTask.expire, del.expire)
+		require.Equal(w.t, w.curTask.ExpireTime, del.expire)
 		require.NotEqual(w.t, 0, len(del.rows))
 		return del
 	case <-time.After(10 * time.Second):
@@ -129,14 +129,16 @@ func TestScanWorkerSchedule(t *testing.T) {
 	defer variable.TTLScanBatchSize.Store(origLimit)
 
 	tbl := newMockTTLTbl(t, "t1")
-	w := newMockScanWorker(t)
+	w := NewMockScanWorker(t)
 	w.setOneRowResult(tbl, 7)
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
-		ctx:        context.Background(),
-		tbl:        tbl,
-		expire:     time.UnixMilli(0),
+		ctx: context.Background(),
+		tbl: tbl,
+		TTLTask: &cache.TTLTask{
+			ExpireTime: time.UnixMilli(0),
+		},
 		statistics: &ttlStatistics{},
 	}
 
@@ -176,14 +178,16 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 	defer variable.TTLScanBatchSize.Store(origLimit)
 
 	tbl := newMockTTLTbl(t, "t1")
-	w := newMockScanWorker(t)
+	w := NewMockScanWorker(t)
 	w.clearInfoSchema()
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
-		ctx:        context.Background(),
-		tbl:        tbl,
-		expire:     time.UnixMilli(0),
+		ctx: context.Background(),
+		tbl: tbl,
+		TTLTask: &cache.TTLTask{
+			ExpireTime: time.UnixMilli(0),
+		},
 		statistics: &ttlStatistics{},
 	}
 
@@ -221,11 +225,11 @@ func newMockScanTask(t *testing.T, sqlCnt int) *mockScanTask {
 	task := &mockScanTask{
 		t: t,
 		ttlScanTask: &ttlScanTask{
-			ctx:    context.Background(),
-			tbl:    tbl,
-			expire: time.UnixMilli(0),
-			scanRange: cache.ScanRange{
-				Start: []types.Datum{types.NewIntDatum(0)},
+			ctx: context.Background(),
+			tbl: tbl,
+			TTLTask: &cache.TTLTask{
+				ExpireTime:     time.UnixMilli(0),
+				ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
 			},
 			statistics: &ttlStatistics{},
 		},
@@ -307,7 +311,7 @@ loop:
 		require.NotNil(t.t, del.statistics)
 		require.Same(t.t, t.statistics, del.statistics)
 		require.Same(t.t, t.tbl, del.tbl)
-		require.Equal(t.t, t.expire, del.expire)
+		require.Equal(t.t, t.ExpireTime, del.expire)
 		if i < len(t.sqlRetry)-1 {
 			require.Equal(t.t, 3, len(del.rows))
 			require.Equal(t.t, 1, len(del.rows[2]))
