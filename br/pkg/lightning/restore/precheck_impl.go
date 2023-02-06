@@ -16,6 +16,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -780,49 +781,59 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 
 	// check etcd KV of CDC >= v6.2
 	cdcPrefix := "/tidb/cdc/"
-	capturePath := []byte("/__cdc_meta__/capture/")
+	capturePath := []byte("/changefeed/info/")
+
 	nameSet := make(map[string][]string, 1)
-	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	resp, err := ci.etcdCli.Get(ctx, cdcPrefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	for _, kv := range resp.Kvs {
-		// example: /tidb/cdc/<clusterID>/__cdc_meta__/capture/<captureID>
+		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
 		k := kv.Key[len(cdcPrefix):]
-		clusterID, captureID, found := bytes.Cut(k, capturePath)
-		if found {
-			nameSet[string(clusterID)] = append(nameSet[string(clusterID)], string(captureID))
+		clusterAndNamespace, changefeedID, found := bytes.Cut(k, capturePath)
+		if !found {
+			continue
 		}
+		if !isActiveCDCChangefeed(kv.Value) {
+			continue
+		}
+
+		nameSet[string(clusterAndNamespace)] = append(nameSet[string(clusterAndNamespace)], string(changefeedID))
 	}
 	if len(nameSet) == 0 {
 		// check etcd KV of CDC <= v6.1
-		cdcPrefixV61 := "/tidb/cdc/capture/"
-		resp, err = ci.etcdCli.Get(ctx, cdcPrefixV61, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+		cdcPrefixV61 := "/tidb/cdc/changefeed/info/"
+		resp, err = ci.etcdCli.Get(ctx, cdcPrefixV61, clientv3.WithPrefix())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		for _, kv := range resp.Kvs {
-			// example: /tidb/cdc/capture/<captureID>
+			// example: /tidb/cdc/changefeed/info/<changefeedID>
 			k := kv.Key[len(cdcPrefixV61):]
 			if len(k) == 0 {
 				continue
 			}
+			if !isActiveCDCChangefeed(kv.Value) {
+				continue
+			}
+
 			nameSet["<nil>"] = append(nameSet["<nil>"], string(k))
 		}
 	}
 
 	if len(nameSet) > 0 {
 		var captureMsgBuf strings.Builder
-		captureMsgBuf.WriteString("found CDC capture(s): ")
+		captureMsgBuf.WriteString("found CDC changefeed(s): ")
 		isFirst := true
 		for clusterID, captureIDs := range nameSet {
 			if !isFirst {
 				captureMsgBuf.WriteString(", ")
 			}
 			isFirst = false
-			captureMsgBuf.WriteString("clusterID: ")
+			captureMsgBuf.WriteString("cluster/namespace: ")
 			captureMsgBuf.WriteString(clusterID)
-			captureMsgBuf.WriteString(" captureID(s): ")
+			captureMsgBuf.WriteString(" changefeed(s): ")
 			captureMsgBuf.WriteString(fmt.Sprintf("%v", captureIDs))
 		}
 		captureMsgBuf.WriteString(",")
@@ -839,6 +850,28 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	}
 
 	return theResult, nil
+}
+
+type onlyState struct {
+	State string `json:"state"`
+}
+
+func isActiveCDCChangefeed(jsonBytes []byte) bool {
+	s := onlyState{}
+	err := json.Unmarshal(jsonBytes, &s)
+	if err != nil {
+		// maybe a compatible issue, skip this key
+		log.L().Error("unmarshal etcd value failed when check CDC changefeed, will skip this key",
+			zap.ByteString("value", jsonBytes),
+			zap.Error(err))
+		return false
+	}
+	switch s.State {
+	case "normal", "stopped", "error":
+		return true
+	default:
+		return false
+	}
 }
 
 type schemaCheckItem struct {
