@@ -73,7 +73,7 @@ func (c *mockClient) WatchNotification(_ context.Context, typ string) clientv3.W
 	c.Lock()
 	defer c.Unlock()
 
-	ch := make(chan clientv3.WatchResponse, 1)
+	ch := make(chan clientv3.WatchResponse, 8)
 	c.notificationWatchers[typ] = append(c.notificationWatchers[typ], ch)
 	return ch
 }
