@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright 2019 PingCAP, Inc.
+# Copyright 2023 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ random_store_id=$(run_pd_ctl --pd $PD_ADDR store | jq 'first(.stores[]|select(.s
 run_pd_ctl --pd $PD_ADDR store label $random_store_id '$mode' 'read_only'
 
 # set placement rule to add a learner replica for each region in the read only store
+run_pd_ctl --pd $PD_ADDR config placement-rules rule-bundle load --out=$TEST_DIR/default_rules.json
 cat tests/br_replica_read/placement_rule_with_learner_template.json | jq  ".[].rules[0].count = $VOTER_COUNT" > $TEST_DIR/placement_rule_with_learner.json
 run_pd_ctl --pd $PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/placement_rule_with_learner.json
 
@@ -83,3 +84,4 @@ run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE
 
 run_sql "DROP DATABASE $DB;"
 run_pd_ctl --pd $PD_ADDR store label $random_store_id '$mode' ''
+run_pd_ctl --pd $PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/default_rules.json
