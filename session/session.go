@@ -2219,11 +2219,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Observe the resource group query total counter if the resource control is enabled and the
 	// current session is attached with a resource group.
-	if variable.EnableResourceControl.Load() && !s.isInternal() {
-		resourceGroupName := s.GetSessionVars().ResourceGroupName
-		if len(resourceGroupName) != 0 && resourceGroupName != variable.DefaultResourceGroupName {
-			metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
-		}
+	resourceGroupName := s.GetSessionVars().ResourceGroupName
+	if len(resourceGroupName) > 0 && resourceGroupName != variable.DefaultResourceGroupName {
+		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
 	}
 
 	if err != nil {
