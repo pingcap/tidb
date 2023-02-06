@@ -134,19 +134,6 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	return &Bundle{Rules: rules}, nil
 }
 
-// newLocationLabelsFromSurvivalPreferences will set the survival preference for all rules.
-func newLocationLabelsFromSurvivalPreferences(survivalPreferenceStr string) ([]string, error) {
-	if len(survivalPreferenceStr) > 0 {
-		labels := []string{}
-		err := yaml.UnmarshalStrict([]byte(survivalPreferenceStr), &labels)
-		if err != nil {
-			return nil, ErrInvalidSurvivalPreferenceFormat
-		}
-		return labels, nil
-	}
-	return nil, nil
-}
-
 // NewBundleFromSugarOptions will transform syntax sugar options into the bundle.
 func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error) {
 	if options == nil {
@@ -256,6 +243,19 @@ func newBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err
 	return bundle, err
 }
 
+// newLocationLabelsFromSurvivalPreferences will parse the survival preferences into location labels.
+func newLocationLabelsFromSurvivalPreferences(survivalPreferenceStr string) ([]string, error) {
+	if len(survivalPreferenceStr) > 0 {
+		labels := []string{}
+		err := yaml.UnmarshalStrict([]byte(survivalPreferenceStr), &labels)
+		if err != nil {
+			return nil, ErrInvalidSurvivalPreferenceFormat
+		}
+		return labels, nil
+	}
+	return nil, nil
+}
+
 // NewBundleFromOptions will transform options into the bundle.
 func NewBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err error) {
 	bundle, err = newBundleFromOptions(options)
@@ -290,6 +290,15 @@ func (b *Bundle) String() string {
 func (b *Bundle) Tidy() error {
 	extraCnt := map[PeerRoleType]int{}
 	newRules := b.Rules[:0]
+
+	// One Bundle is from one PlacementSettings, rule share same location labels, so we can use the first rule's location labels.
+	var locationLabels []string
+	for _, rule := range b.Rules {
+		if len(rule.LocationLabels) > 0 {
+			locationLabels = rule.LocationLabels
+			break
+		}
+	}
 	for i, rule := range b.Rules {
 		// useless Rule
 		if rule.Count <= 0 {
@@ -333,8 +342,8 @@ func (b *Bundle) Tidy() error {
 				Key:    EngineLabelKey,
 				Values: []string{EngineLabelTiFlash},
 			}},
-			// FIXME: @nolouch
-			LocationLabels: b.Rules[0].LocationLabels,
+			// the merged rule should have the same location labels with the original rules.
+			LocationLabels: locationLabels,
 		})
 	}
 	b.Rules = newRules
