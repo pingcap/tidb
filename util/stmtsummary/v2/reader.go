@@ -452,12 +452,14 @@ func openStmtFile(path string) (*stmtFile, error) {
 	f := &stmtFile{file: file}
 	f.begin, err = f.parseBeginTsAndReseek()
 	if err != nil {
+		_ = f.close()
 		if err != io.EOF {
 			return nil, err
 		}
 	}
 	f.end, err = f.parseEndTs()
 	if err != nil {
+		_ = f.close()
 		return nil, err
 	}
 	return f, nil
@@ -501,6 +503,13 @@ func (f *stmtFile) parseEndTs() (int64, error) {
 		return end.Unix(), nil
 	}
 	return 0, nil
+}
+
+func (f *stmtFile) close() error {
+	if f.file != nil {
+		return f.file.Close()
+	}
+	return nil
 }
 
 type stmtFiles struct {
@@ -547,6 +556,9 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 	}
 	for _, entry := range entries {
 		if err := walkFn(filepath.Join(dir, entry.Name()), entry); err != nil {
+			for _, f := range files {
+				_ = f.close()
+			}
 			return nil, err
 		}
 	}
