@@ -107,8 +107,9 @@ func TestSystemVars(t *testing.T) {
 		},
 		{
 			// hidden variable
-			inSessionStates: false,
+			inSessionStates: true,
 			varName:         variable.TiDBTxnReadTS,
+			expectedValue:   "",
 		},
 		{
 			// none-scoped variable

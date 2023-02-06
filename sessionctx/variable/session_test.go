@@ -15,6 +15,8 @@
 package variable_test
 
 import (
+	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -25,10 +27,12 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
@@ -532,4 +536,36 @@ func TestPretectedTSList(t *testing.T) {
 	require.Equal(t, uint64(0), lst.GetMinProtectedTS(0))
 	require.Equal(t, uint64(0), lst.GetMinProtectedTS(1))
 	require.Equal(t, 0, lst.Size())
+}
+
+func TestUserVarConcurrently(t *testing.T) {
+	sv := variable.NewSessionVars(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	var wg util2.WaitGroupWrapper
+	wg.Run(func() {
+		for i := 0; ; i++ {
+			select {
+			case <-time.After(time.Millisecond):
+				name := strconv.Itoa(i)
+				sv.SetUserVarVal(name, types.Datum{})
+				sv.GetUserVarVal(name)
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	wg.Run(func() {
+		for {
+			select {
+			case <-time.After(time.Millisecond):
+				var states sessionstates.SessionStates
+				require.NoError(t, sv.EncodeSessionStates(ctx, &states))
+				require.NoError(t, sv.DecodeSessionStates(ctx, &states))
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	wg.Wait()
+	cancel()
 }
