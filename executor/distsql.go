@@ -792,21 +792,32 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
 		return e.resultCurr, nil
 	}
-	start := time.Now()
+	var (
+		enableStats         = e.stats != nil
+		start               time.Time
+		indexFetchedInstant time.Time
+	)
+	if enableStats {
+		start = time.Now()
+	}
 	task, ok := <-e.resultCh
 	if !ok {
 		return nil, nil
 	}
-	indexFetchedInstant := time.Now()
+	if enableStats {
+		indexFetchedInstant = time.Now()
+	}
 	if err := <-task.doneCh; err != nil {
 		return nil, err
 	}
-	e.stats.NextWaitIndexScan += indexFetchedInstant.Sub(start)
-	if task.buildDone.After(indexFetchedInstant) {
-		e.stats.NextWaitTableLookUpBuild += task.buildDone.Sub(indexFetchedInstant)
-		indexFetchedInstant = task.buildDone
+	if enableStats {
+		e.stats.NextWaitIndexScan += indexFetchedInstant.Sub(start)
+		if task.buildDone.After(indexFetchedInstant) {
+			e.stats.NextWaitTableLookUpBuild += task.buildDone.Sub(indexFetchedInstant)
+			indexFetchedInstant = task.buildDone
+		}
+		e.stats.NextWaitTableLookUpResp += time.Since(indexFetchedInstant)
 	}
-	e.stats.NextWaitTableLookUpResp += time.Since(indexFetchedInstant)
 
 	// Release the memory usage of last task before we handle a new task.
 	if e.resultCurr != nil {
