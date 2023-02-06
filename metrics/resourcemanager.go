@@ -24,6 +24,7 @@ var (
 		Name:      "ema_cpu_usage",
 		Help:      "exponential moving average of CPU usage",
 	})
+	// PoolConcurrencyCounter means how much concurrency in the pool
 	PoolConcurrencyCounter = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
