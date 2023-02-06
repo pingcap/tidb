@@ -110,6 +110,7 @@ go_library(
         "//util/filter",
         "//util/gcutil",
         "//util/generic",
+        "//util/gpool",
         "//util/gpool/spmc",
         "//util/hack",
         "//util/intest",
