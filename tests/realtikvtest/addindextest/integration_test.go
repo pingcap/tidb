@@ -29,12 +29,11 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestAddIndexIngestMemoryUsage(t *testing.T) {
@@ -186,6 +185,9 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 }
 
 func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
+	if variable.DDLEnableDistributeReorg.Load() {
+		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -422,7 +424,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 			return
 		}
 		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
-			idx := findIdxInfo(dom, "addindexlit", "t", "idx")
+			idx := testutil.FindIdxInfo(dom, "addindexlit", "t", "idx")
 			if idx == nil {
 				return
 			}
@@ -459,13 +461,4 @@ func (c *testCallback) OnJobRunBefore(job *model.Job) {
 	if c.OnJobRunBeforeExported != nil {
 		c.OnJobRunBeforeExported(job)
 	}
-}
-
-func findIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
-	if err != nil {
-		logutil.BgLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
-		return nil
-	}
-	return tbl.Meta().FindIndexByName(idxName)
 }

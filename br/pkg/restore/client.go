@@ -64,6 +64,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -168,6 +169,9 @@ type Client struct {
 
 	// the successfully preallocated table IDs.
 	preallocedTableIDs *tidalloc.PreallocIDs
+
+	// the rewrite mode of the downloaded SST files in TiKV.
+	rewriteMode RewriteMode
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -316,6 +320,14 @@ func (rc *Client) GetBatchDdlSize() uint {
 	return rc.batchDdlSize
 }
 
+func (rc *Client) SetRewriteMode(mode RewriteMode) {
+	rc.rewriteMode = mode
+}
+
+func (rc *Client) GetRewriteMode() RewriteMode {
+	return rc.rewriteMode
+}
+
 // Close a client.
 func (rc *Client) Close() {
 	// rc.db can be nil in raw kv mode.
@@ -345,7 +357,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rewriteMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -869,7 +881,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 				}
 			})
 			if err != nil {
-				log.Error("create tables fail")
+				log.Error("create tables fail", zap.Error(err))
 				return err
 			}
 			for _, ct := range cts {
@@ -1041,7 +1053,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, RewriteModeLegacy)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1181,7 +1193,7 @@ func (rc *Client) RestoreSSTFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 			})
 	}
 
@@ -1298,7 +1310,7 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 		finalStore := store
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
-				opt := grpc.WithInsecure()
+				opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 				if rc.tlsConf != nil {
 					opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
 				}
@@ -1410,7 +1422,7 @@ func (rc *Client) execChecksum(
 	concurrency uint,
 	loadStatCh chan<- *CreatedTable,
 ) error {
-	logger := log.With(
+	logger := log.L().With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
@@ -1433,6 +1445,8 @@ func (rc *Client) execChecksum(
 	exe, err := checksum.NewExecutorBuilder(tbl.Table, startTS).
 		SetOldTable(tbl.OldTable).
 		SetConcurrency(concurrency).
+		SetOldKeyspace(tbl.RewriteRule.OldKeyspace).
+		SetNewKeyspace(tbl.RewriteRule.NewKeyspace).
 		Build()
 	if err != nil {
 		return errors.Trace(err)
@@ -2759,6 +2773,10 @@ func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
 		}
 	}
 	return schemas
+}
+
+func CheckKeyspaceBREnable(ctx context.Context, pdClient pd.Client) error {
+	return version.CheckClusterVersion(ctx, pdClient, version.CheckVersionForKeyspaceBR)
 }
 
 func CheckNewCollationEnable(

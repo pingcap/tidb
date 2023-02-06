@@ -112,12 +112,12 @@ func (ss *Schemas) BackupSchemas(
 
 		var checksum *checkpoint.ChecksumItem
 		var exists bool = false
-		if ss.checkpointChecksum != nil {
+		if ss.checkpointChecksum != nil && schema.tableInfo != nil {
 			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
 		}
 		workerPool.ApplyOnErrorGroup(errg, func() error {
 			if schema.tableInfo != nil {
-				logger := log.With(
+				logger := log.L().With(
 					zap.String("db", schema.dbInfo.Name.O),
 					zap.String("table", schema.tableInfo.Name.O),
 				)
