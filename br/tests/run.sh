@@ -24,7 +24,7 @@ rm -rf $TEST_DIR && mkdir -p $TEST_DIR
 # Generate TLS certs
 tests/_utils/generate_certs &> /dev/null
 
-SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.sh | cut -d/ -f2 | sort | grep lightning)}"
+SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.sh | cut -d/ -f2 | sort)}"
 source tests/_utils/run_services
 
 trap stop_services EXIT
