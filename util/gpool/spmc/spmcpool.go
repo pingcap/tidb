@@ -81,7 +81,7 @@ func NewSPMCPool[T any, U any, C any, CT any, TF pooltask.Context[CT]](name stri
 	result.capacity.Add(size)
 	result.workers = newWorkerLoopQueue[T, U, C, CT, TF](int(size))
 	result.cond = sync.NewCond(result.lock)
-	err := resourcemanager.GlobalResourceManager.Register(result, name, component)
+	err := resourcemanager.InstanceResourceManager.Register(result, name, component)
 	if err != nil {
 		return nil, err
 	}
@@ -140,12 +140,22 @@ func (p *Pool[T, U, C, CT, TF]) Tune(size int) {
 	p.SetLastTuneTs(time.Now())
 	p.capacity.Store(int32(size))
 	if size > capacity {
-		// boost
+		for i := 0; i < size-capacity; i++ {
+			if tid, boostTask := p.taskManager.Overclock(); boostTask != nil {
+				p.addWaitingTask()
+				p.taskManager.AddSubTask(tid, boostTask.Clone())
+				p.taskCh <- boostTask
+			}
+		}
 		if size-capacity == 1 {
 			p.cond.Signal()
 			return
 		}
 		p.cond.Broadcast()
+		return
+	}
+	if size < capacity {
+		p.taskManager.Downclock()
 	}
 }
 
@@ -225,7 +235,7 @@ func (p *Pool[T, U, C, CT, TF]) ReleaseAndWait() {
 
 	close(p.stopCh)
 	p.release()
-	defer resourcemanager.GlobalResourceManager.Unregister(p.Name())
+	defer resourcemanager.InstanceResourceManager.Unregister(p.Name())
 	for {
 		// Wait for all workers to exit and all task to be completed.
 		if p.Running() == 0 && p.heartbeatDone.Load() && p.waitingTask.Load() == 0 {

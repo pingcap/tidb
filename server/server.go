@@ -561,6 +561,7 @@ func (s *Server) onConn(conn *clientConn) {
 	}
 
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
+	ctx = context.WithValue(ctx, sched.Debug, "xxxx")
 	ctx, _ = sched.NewTaskGroup(ctx)
 	if err := conn.handshake(ctx); err != nil {
 		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)

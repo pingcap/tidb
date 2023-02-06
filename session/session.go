@@ -30,7 +30,6 @@ import (
 	"math"
 	"math/rand"
 	"runtime/pprof"
-	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,7 +37,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -105,6 +103,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tiancaiamao/sched"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -466,8 +465,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 		}
 		if s.nonPreparedPlanCache == nil { // lazy construction
 			s.nonPreparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().NonPreparedPlanCacheSize),
-				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
-				plannercore.PickPlanFromBucket, s)
+				variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
 		}
 		return s.nonPreparedPlanCache
 	}
@@ -478,8 +476,7 @@ func (s *session) GetPlanCache(isNonPrepared bool) sessionctx.PlanCache {
 	}
 	if s.preparedPlanCache == nil { // lazy construction
 		s.preparedPlanCache = plannercore.NewLRUPlanCache(uint(s.GetSessionVars().PreparedPlanCacheSize),
-			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(),
-			plannercore.PickPlanFromBucket, s)
+			variable.PreparedPlanCacheMemoryGuardRatio.Load(), plannercore.PreparedPlanCacheMaxMemory.Load(), s)
 	}
 	return s.preparedPlanCache
 }
@@ -959,11 +956,9 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	var err error
 	txnSize := s.txn.Size()
 	isPessimistic := s.txn.IsPessimistic()
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "session.doCommitWithRetry")
+	defer r.End()
+
 	err = s.doCommit(ctx)
 	if err != nil {
 		// polish the Write Conflict error message
@@ -1086,11 +1081,8 @@ func (s *session) updateStatsDeltaToCollector() {
 }
 
 func (s *session) CommitTxn(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.CommitTxn", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "session.CommitTxn")
+	defer r.End()
 
 	var commitDetail *tikvutil.CommitDetails
 	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
@@ -1110,10 +1102,8 @@ func (s *session) CommitTxn(ctx context.Context) error {
 }
 
 func (s *session) RollbackTxn(ctx context.Context) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "session.RollbackTxn")
+	defer r.End()
 
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
@@ -1540,11 +1530,7 @@ func (s *session) GetTiDBTableValue(name string) (string, error) {
 var _ sqlexec.SQLParser = &session{}
 
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-	defer trace.StartRegion(ctx, "ParseSQL").End()
+	defer tracing.StartRegion(ctx, "ParseSQL").End()
 
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
@@ -1657,12 +1643,9 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		pprof.SetGoroutineLabels(ctx)
 	}()
 
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.ExecuteInternal", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-		logutil.Eventf(ctx, "execute: %s", sql)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteInternal")
+	defer r.End()
+	logutil.Eventf(ctx, "execute: %s", sql)
 
 	stmtNode, err := s.ParseWithParams(ctx, sql, args...)
 	if err != nil {
@@ -1682,12 +1665,9 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 
 // Execute is deprecated, we can remove it as soon as plugins are migrated.
 func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.Execute", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-		logutil.Eventf(ctx, "execute: %s", sql)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "session.Execute")
+	defer r.End()
+	logutil.Eventf(ctx, "execute: %s", sql)
 
 	stmtNodes, err := s.Parse(ctx, sql)
 	if err != nil {
@@ -2125,16 +2105,12 @@ func (s *session) ExecuteInternalStmt(ctx context.Context, stmtNode ast.StmtNode
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.ExecuteStmt", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
+	defer r.End()
 
 	if err := s.PrepareTxnCtx(ctx); err != nil {
 		return nil, err
 	}
-
 	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
 		return nil, err
 	}
@@ -2313,12 +2289,12 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}
 	})
 
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
-		span1.LogKV("sql", s.OriginText())
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
+	r, ctx := tracing.StartRegionEx(ctx, "session.runStmt")
+	defer r.End()
+	if r.Span != nil {
+		r.Span.LogKV("sql", s.OriginText())
 	}
+
 	se.SetValue(sessionctx.QueryString, s.OriginText())
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
 		se.SetValue(sessionctx.LastExecuteDDL, true)

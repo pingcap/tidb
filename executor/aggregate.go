@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"runtime/debug"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -471,6 +472,14 @@ func (w *HashAggPartialWorker) run(ctx context.Context, sctx sessionctx.Context,
 		}
 		waitGroup.Done()
 	}()
+
+	if x := ctx.Value(sched.Debug); x != nil {
+		fmt.Println("here ... user hash agg request !!!!!!!!!!!!!!!")
+		if x := sched.FromContext(ctx); x==nil{
+			debug.PrintStack()
+		}
+	}
+
 	for {
 		waitStart := time.Now()
 		ok := w.getChildInput()
@@ -526,8 +535,8 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx context.Context, sctx ses
 			}
 			allMemDelta += memDelta
 		}
+		sched.CheckPoint(ctx)
 	}
-	sched.CheckPoint(ctx)
 	w.memTracker.Consume(allMemDelta)
 	return nil
 }
@@ -542,8 +551,8 @@ func (w *HashAggPartialWorker) shuffleIntermData(ctx context.Context, _ *stmtctx
 			groupKeysSlice[finalWorkerIdx] = make([]string, 0, len(w.partialResultsMap)/finalConcurrency)
 		}
 		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKey)
+		sched.CheckPoint(ctx)
 	}
-	sched.CheckPoint(ctx)
 
 	for i := range groupKeysSlice {
 		if groupKeysSlice[i] == nil {
@@ -632,10 +641,10 @@ func (w *baseHashAggWorker) getPartialResult(ctx context.Context, _ *stmtctx.Sta
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
+		sched.CheckPoint(ctx)
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(allMemDelta)
-	sched.CheckPoint(ctx)
 	return partialResults
 }
 
@@ -705,8 +714,8 @@ func (w *HashAggFinalWorker) consumeIntermData(ctx context.Context, sctx session
 					}
 					allMemDelta += memDelta
 				}
+				sched.CheckPoint(ctx)
 			}
-			sched.CheckPoint(ctx)
 			w.memTracker.Consume(allMemDelta)
 		}
 		if w.stats != nil {

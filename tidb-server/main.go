@@ -218,13 +218,18 @@ func main() {
 	setupBinlogClient()
 	setupMetrics()
 
-	go sched.Scheduler()
+	// go sched.Scheduler(sched.LoadOption(0.30), sched.TimeSliceOption(10*time.Millisecond))
+	go sched.Scheduler(sched.LoadOption(0.3))
 
 	keyspaceName := config.GetGlobalKeyspaceName()
 
-	resourcemanager.GlobalResourceManager.Start()
+	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreAndDomain(keyspaceName)
 	svr := createServer(storage, dom)
+	// err = driver.TrySetupGlobalResourceController(context.Background(), dom.ServerID(), storage)
+	// if err != nil {
+	// 	logutil.BgLogger().Warn("failed to setup global resource controller", zap.Error(err))
+	// }
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
@@ -236,7 +241,7 @@ func main() {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
 		cpuprofile.StopCPUProfiler()
-		resourcemanager.GlobalResourceManager.Stop()
+		resourcemanager.InstanceResourceManager.Stop()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
@@ -462,7 +467,6 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Port = uint(p)
 	}
 	if actualFlags[nmCors] {
-		fmt.Println(cors)
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {
