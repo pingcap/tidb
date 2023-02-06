@@ -1032,8 +1032,8 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		return true
 	}
 	var (
-		selOnIdxScan *PhysicalSelection
-		selOnTblScan *PhysicalSelection
+		selOnIdxScan   *PhysicalSelection
+		selOnTblScan   *PhysicalSelection
 		selSelectivity float64
 
 		idxScan *PhysicalIndexScan
