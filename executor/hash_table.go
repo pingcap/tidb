@@ -214,14 +214,14 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 	return matched, nil
 }
 
-// SignalCheckpointForJoin indicates the times of row probe that a signal detection will be triggered.
-const SignalCheckpointForJoin int = 1 << 14
+// signalCheckpointForJoin indicates the times of row probe that a signal detection will be triggered.
+const signalCheckpointForJoin int = 1 << 14
 
-// RowSize is the size of Row.
-const RowSize = int64(unsafe.Sizeof(chunk.Row{}))
+// rowSize is the size of Row.
+const rowSize = int64(unsafe.Sizeof(chunk.Row{}))
 
-// RowPtrSize is the size of RowPtr.
-const RowPtrSize = int64(unsafe.Sizeof(chunk.RowPtr{}))
+// rowPtrSize is the size of RowPtr.
+const rowPtrSize = int64(unsafe.Sizeof(chunk.RowPtr{}))
 
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
