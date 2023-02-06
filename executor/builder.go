@@ -3401,13 +3401,16 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		b.err = err
 		return nil
 	}
+
 	gather := &MPPGather{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
 		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.ctx), LocalQueryID: getMPPQueryID(b.ctx), ServerID: domain.GetDomain(b.ctx).ServerID()},
+		memTracker:   memory.NewTracker(v.ID(), -1),
 	}
+	gather.memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return gather
 }
 
@@ -4220,13 +4223,13 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				continue
 			}
 			handle := kv.IntHandle(content.keys[0].GetInt64())
-			tmp, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
-			kvRanges = append(kvRanges, tmp...)
+			ranges, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
+			kvRanges = append(kvRanges, ranges...)
 		}
 	} else {
 		for _, p := range usedPartitionList {
-			tmp, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
-			kvRanges = append(kvRanges, tmp...)
+			ranges, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
+			kvRanges = append(kvRanges, ranges...)
 		}
 	}
 

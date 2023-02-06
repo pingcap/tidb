@@ -21,32 +21,29 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const maxGroupNameLength = 32
+// MaxGroupNameLength is max length of the name of a resource group
+const MaxGroupNameLength = 32
 
 // NewGroupFromOptions creates a new resource group from the given options.
 func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings) (*rmpb.ResourceGroup, error) {
 	if options == nil {
 		return nil, ErrInvalidGroupSettings
 	}
-	if len(groupName) > maxGroupNameLength {
+	if len(groupName) > MaxGroupNameLength {
 		return nil, ErrTooLongResourceGroupName
 	}
 	group := &rmpb.ResourceGroup{
 		Name: groupName,
 	}
 	var isRUMode bool
-	if options.RRURate > 0 || options.WRURate > 0 {
+	if options.RURate > 0 {
 		isRUMode = true
 		group.Mode = rmpb.GroupMode_RUMode
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{
-			RRU: &rmpb.TokenBucket{
+			RU: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate: options.RRURate,
-				},
-			},
-			WRU: &rmpb.TokenBucket{
-				Settings: &rmpb.TokenLimitSettings{
-					FillRate: options.WRURate,
+					FillRate:   options.RURate,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 		}
@@ -79,20 +76,23 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		}
 
 		group.Mode = rmpb.GroupMode_RawMode
-		group.ResourceSettings = &rmpb.GroupResourceSettings{
+		group.RawResourceSettings = &rmpb.GroupRawResourceSettings{
 			Cpu: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate: cpuRate,
+					FillRate:   cpuRate,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 			IoRead: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate: ioReadRate,
+					FillRate:   ioReadRate,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 			IoWrite: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
-					FillRate: ioWriteRate,
+					FillRate:   ioWriteRate,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 		}

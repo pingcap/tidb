@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/charset"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
@@ -276,6 +278,11 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 
 // DecodeTableID decodes the table ID of the key, if the key is not table key, returns 0.
 func DecodeTableID(key kv.Key) int64 {
+	// If the key is in API V2, then ignore the prefix
+	_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+	if err == nil {
+		key = k
+	}
 	if !key.HasPrefix(tablePrefix) {
 		return 0
 	}
@@ -1734,7 +1741,7 @@ func IndexKVIsUnique(value []byte) bool {
 // VerifyTableIDForRanges verifies that all given ranges are valid to decode the table id.
 func VerifyTableIDForRanges(keyRanges *kv.KeyRanges) ([]int64, error) {
 	tids := make([]int64, 0, keyRanges.PartitionNum())
-	collectFunc := func(ranges []kv.KeyRange) error {
+	collectFunc := func(ranges []kv.KeyRange, _ []int) error {
 		if len(ranges) == 0 {
 			return nil
 		}

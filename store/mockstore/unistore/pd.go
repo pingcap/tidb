@@ -19,10 +19,13 @@ import (
 	"errors"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -34,6 +37,7 @@ type pdClient struct {
 	serviceSafePoints map[string]uint64
 	gcSafePointMu     sync.Mutex
 	globalConfig      map[string]string
+	externalTimestamp atomic.Uint64
 }
 
 func newPDClient(pd *us.MockPD) *pdClient {
@@ -44,26 +48,26 @@ func newPDClient(pd *us.MockPD) *pdClient {
 	}
 }
 
-func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string) ([]pd.GlobalConfigItem, error) {
+func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
 	ret := make([]pd.GlobalConfigItem, len(names))
 	for i, name := range names {
 		if r, ok := c.globalConfig["/global/config/"+name]; ok {
-			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: r}
+			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: r, EventType: pdpb.EventType_PUT}
 		} else {
-			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Error: errors.New("not found")}
+			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: ""}
 		}
 	}
-	return ret, nil
+	return ret, 0, nil
 }
 
-func (c *pdClient) StoreGlobalConfig(ctx context.Context, items []pd.GlobalConfigItem) error {
+func (c *pdClient) StoreGlobalConfig(ctx context.Context, configPath string, items []pd.GlobalConfigItem) error {
 	for _, item := range items {
 		c.globalConfig["/global/config/"+item.Name] = item.Value
 	}
 	return nil
 }
 
-func (c *pdClient) WatchGlobalConfig(ctx context.Context) (chan []pd.GlobalConfigItem, error) {
+func (c *pdClient) WatchGlobalConfig(ctx context.Context, configPath string, revision int64) (chan []pd.GlobalConfigItem, error) {
 	globalConfigWatcherCh := make(chan []pd.GlobalConfigItem, 16)
 	go func() {
 		defer func() {
@@ -176,4 +180,64 @@ func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.K
 // all subsequent messages contains new put events for all keyspaces.
 func (c *pdClient) WatchKeyspaces(ctx context.Context) (chan []*keyspacepb.KeyspaceMeta, error) {
 	return nil, nil
+}
+
+func (c *pdClient) UpdateKeyspaceState(ctx context.Context, id uint32, state keyspacepb.KeyspaceState) (*keyspacepb.KeyspaceMeta, error) {
+	return nil, nil
+}
+
+func (c *pdClient) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
+	return nil, nil
+}
+
+func (c *pdClient) GetResourceGroup(ctx context.Context, resourceGroupName string) (*rmpb.ResourceGroup, error) {
+	return nil, nil
+}
+
+func (c *pdClient) AddResourceGroup(ctx context.Context, metaGroup *rmpb.ResourceGroup) (string, error) {
+	return "", nil
+}
+
+func (c *pdClient) ModifyResourceGroup(ctx context.Context, metaGroup *rmpb.ResourceGroup) (string, error) {
+	return "", nil
+}
+
+func (c *pdClient) DeleteResourceGroup(ctx context.Context, resourceGroupName string) (string, error) {
+	return "", nil
+}
+
+func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
+	return nil, nil
+}
+
+func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) SetExternalTimestamp(ctx context.Context, newTimestamp uint64) error {
+	p, l, err := c.GetTS(ctx)
+	if err != nil {
+		return err
+	}
+
+	currentTSO := oracle.ComposeTS(p, l)
+	if newTimestamp > currentTSO {
+		return errors.New("external timestamp is greater than global tso")
+	}
+	for {
+		externalTimestamp := c.externalTimestamp.Load()
+		if externalTimestamp > newTimestamp {
+			return errors.New("cannot decrease the external timestamp")
+		} else if externalTimestamp == newTimestamp {
+			return nil
+		}
+
+		if c.externalTimestamp.CompareAndSwap(externalTimestamp, newTimestamp) {
+			return nil
+		}
+	}
+}
+
+func (c *pdClient) GetExternalTimestamp(ctx context.Context) (uint64, error) {
+	return c.externalTimestamp.Load(), nil
 }
