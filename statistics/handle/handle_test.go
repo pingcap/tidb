@@ -1096,7 +1096,7 @@ partition by range (a) (
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
-	checkHealthy(60, 50, 66)
+	checkHealthy(33, 0, 50)
 }
 
 func TestGlobalStatsData(t *testing.T) {

@@ -18,8 +18,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"path"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -51,10 +49,12 @@ func newPDClient(pd *us.MockPD) *pdClient {
 }
 
 func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
-	ret := make([]pd.GlobalConfigItem, 0)
-	for k, v := range c.globalConfig {
-		if strings.HasPrefix(k, configPath) {
-			ret = append(ret, pd.GlobalConfigItem{Name: k, Value: v})
+	ret := make([]pd.GlobalConfigItem, len(names))
+	for i, name := range names {
+		if r, ok := c.globalConfig["/global/config/"+name]; ok {
+			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: r, EventType: pdpb.EventType_PUT}
+		} else {
+			ret[i] = pd.GlobalConfigItem{Name: "/global/config/" + name, Value: ""}
 		}
 	}
 	return ret, 0, nil
@@ -62,7 +62,7 @@ func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string, configP
 
 func (c *pdClient) StoreGlobalConfig(ctx context.Context, configPath string, items []pd.GlobalConfigItem) error {
 	for _, item := range items {
-		c.globalConfig[path.Join(configPath, item.Name)] = item.Value
+		c.globalConfig["/global/config/"+item.Name] = item.Value
 	}
 	return nil
 }

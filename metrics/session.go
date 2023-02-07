@@ -179,6 +179,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblPhase})
 
+	ResourceGroupQueryTotalCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "resource_group_query_total",
+			Help:      "Counter of the total number of queries for the resource group",
+		}, []string{LblName})
+
 	AggressiveLockingUsageCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -227,6 +235,8 @@ const (
 	LblModule         = "module"
 	LblRCReadCheckTS  = "read_check"
 	LblRCWriteCheckTS = "write_check"
+
+	LblName = "name"
 
 	LblAggressiveLockingTxnUsed       = "txn-used"
 	LblAggressiveLockingTxnEffective  = "txn-effective"
