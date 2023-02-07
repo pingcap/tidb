@@ -119,7 +119,7 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
-	resourceGroupManager  ResourceGroupManager
+	resourceGroupManager  pd.ResourceManagerClient
 }
 
 // ServerInfo is server static information.
@@ -191,10 +191,11 @@ func GlobalInfoSyncerInit(
 	ctx context.Context,
 	id string,
 	serverIDGetter func() uint64,
-	etcdCli *clientv3.Client,
-	unprefixedEtcdCli *clientv3.Client,
+	etcdCli, unprefixedEtcdCli *clientv3.Client,
+	pdCli pd.Client,
 	codec tikv.Codec,
-	skipRegisterToDashBoard bool) (*InfoSyncer, error) {
+	skipRegisterToDashBoard bool,
+) (*InfoSyncer, error) {
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
 		unprefixedEtcdCli: unprefixedEtcdCli,
@@ -209,8 +210,8 @@ func GlobalInfoSyncerInit(
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
-	is.resourceGroupManager = initResourceGroupManager(etcdCli)
 	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli, codec)
+	is.resourceGroupManager = initResourceGroupManager(pdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -255,11 +256,11 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
-func initResourceGroupManager(etcdCli *clientv3.Client) ResourceGroupManager {
-	if etcdCli == nil {
+func initResourceGroupManager(pdCli pd.Client) pd.ResourceManagerClient {
+	if pdCli == nil {
 		return &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
 	}
-	return NewResourceManager(etcdCli)
+	return pdCli
 }
 
 func initTiFlashReplicaManager(etcdCli *clientv3.Client, codec tikv.Codec) TiFlashReplicaManager {
@@ -598,23 +599,24 @@ func GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, er
 	return is.resourceGroupManager.GetResourceGroup(ctx, name)
 }
 
-// GetAllResourceGroups is used to get all resource groups from resource manager.
-func GetAllResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
+// ListResourceGroups is used to get all resource groups from resource manager.
+func ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
 	}
 
-	return is.resourceGroupManager.GetAllResourceGroups(ctx)
+	return is.resourceGroupManager.ListResourceGroups(ctx)
 }
 
-// CreateResourceGroup is used to create one specific resource group to resource manager.
-func CreateResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
+// AddResourceGroup is used to create one specific resource group to resource manager.
+func AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
 	}
-	return is.resourceGroupManager.CreateResourceGroup(ctx, group)
+	_, err = is.resourceGroupManager.AddResourceGroup(ctx, group)
+	return err
 }
 
 // ModifyResourceGroup is used to modify one specific resource group to resource manager.
@@ -623,7 +625,8 @@ func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	if err != nil {
 		return err
 	}
-	return is.resourceGroupManager.ModifyResourceGroup(ctx, group)
+	_, err = is.resourceGroupManager.ModifyResourceGroup(ctx, group)
+	return err
 }
 
 // DeleteResourceGroup is used to delete one specific resource group from resource manager.
@@ -632,7 +635,8 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	return is.resourceGroupManager.DeleteResourceGroup(ctx, name)
+	_, err = is.resourceGroupManager.DeleteResourceGroup(ctx, name)
+	return err
 }
 
 // PutRuleBundlesWithDefaultRetry will retry for default times
