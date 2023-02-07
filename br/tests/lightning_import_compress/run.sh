@@ -50,7 +50,7 @@ gz=$(grep "import write" /tmp/backup_restore_test/lightning-import-compress3.log
   grep -Eo "bytes=[0-9]+" | sed 's/bytes=//g' | awk '{sum+=$1} END {print sum}')
 
 echo "uncompress: ${uncompress}, gzip: ${gzip}, gz: ${gz}"
-if [ "$uncompress" -lt "$gzip" ] || [ "$uncompress" -lt "$gz" ]; then
+if [ "$uncompress" -le "$gzip" ] || [ "$uncompress" -le "$gz" ]; then
   echo "compress is not working"
   exit 1
 fi
