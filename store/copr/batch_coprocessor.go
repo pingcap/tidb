@@ -1257,7 +1257,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 			return nil, err
 		}
 		if rpcCtxs == nil {
-			logutil.BgLogger().Info("buildBatchCopTasksConsistentHash retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
+			logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
 			err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1291,7 +1291,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 				res = append(res, batchTask)
 			}
 		}
-		logutil.BgLogger().Info("buildBatchCopTasksConsistentHash done", zap.Any("len(tasks)", len(taskMap)), zap.Any("len(tiflash_compute)", len(stores)))
+		logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD done", zap.Any("len(tasks)", len(taskMap)), zap.Any("len(tiflash_compute)", len(stores)))
 		if log.GetLevel() <= zap.DebugLevel {
 			debugStores := make([]string, 0, len(stores))
 			for _, s := range stores {
@@ -1301,7 +1301,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 			for s, b := range taskMap {
 				debugTaskMap[s] = fmt.Sprintf("addr: %s; regionInfos: %v", b.storeAddr, b.regionInfos)
 			}
-			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHash", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", debugStores))
+			logutil.BgLogger().Debug("detailed info buildBatchCopTasksConsistentHashForPD", zap.Any("taskMap", debugTaskMap), zap.Any("allStores", debugStores))
 		}
 		break
 	}
