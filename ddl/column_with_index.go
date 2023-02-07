@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -592,7 +593,7 @@ func getColumnByNameFromTable(tblInfo *model.TableInfo, colName model.CIStr) *mo
 }
 
 // checkDropColumnsNeedReorg returns if the drop column job has composite index covered and index doesn't contains auto increment field.
-func checkDropColumnsNeedReorg(tblInfo *model.TableInfo, colName model.CIStr) (bool, error) {
+func checkDropColumnsNeedReorg(ctx sessionctx.Context, tblInfo *model.TableInfo, colName model.CIStr) (bool, error) {
 	_, cidxInfos := listIndexesWithColumn(colName.L, tblInfo.Indices)
 	if len(cidxInfos) == 0 {
 		return false, nil
@@ -603,6 +604,12 @@ func checkDropColumnsNeedReorg(tblInfo *model.TableInfo, colName model.CIStr) (b
 			col := getColumnByNameFromTable(tblInfo, icol.Name)
 			// Not allow index contains auto increment column.
 			if col != nil && mysql.HasAutoIncrementFlag(col.GetFlag()) {
+				if col.Name.L == colName.L && ctx.GetSessionVars().AllowRemoveAutoInc {
+					// column is the only one auto increment column in composite index
+					// and allow drop auto increment column
+					// continue to allow this case?
+					return false, dbterror.ErrCantDropColWithAutoInc
+				}
 				return false, dbterror.ErrCantDropColWithAutoInc
 			}
 		}
