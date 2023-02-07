@@ -1140,7 +1140,7 @@ type IndexLookUpRunTimeStats struct {
 	TableRowScan        int64
 	TableTaskNum        int64
 	Concurrency         int
-	// record the next wait details.
+	// Record the `Next` call affected wait duration details.
 	NextWaitIndexScan        time.Duration
 	NextWaitTableLookUpBuild time.Duration
 	NextWaitTableLookUpResp  time.Duration
