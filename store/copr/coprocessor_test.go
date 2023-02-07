@@ -696,7 +696,7 @@ func TestBasicSmallTaskConc(t *testing.T) {
 	require.True(t, isSmallTask(&copTask{RowCountHint: 6}))
 	require.True(t, isSmallTask(&copTask{RowCountHint: CopSmallTaskRow}))
 	require.False(t, isSmallTask(&copTask{RowCountHint: CopSmallTaskRow + 1}))
-	_, conc := smallTaskConcurrency([]*copTask{})
+	_, conc := smallTaskConcurrency([]*copTask{}, 16)
 	require.GreaterOrEqual(t, conc, 0)
 }
 
@@ -734,7 +734,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	require.Equal(t, tasks[2].RowCountHint, 3)
 	// task[3] ["t"-"x", "y"-"z"]
 	require.Equal(t, tasks[3].RowCountHint, 3+CopSmallTaskRow)
-	_, conc := smallTaskConcurrency(tasks)
+	_, conc := smallTaskConcurrency(tasks, 16)
 	require.Equal(t, conc, 1)
 
 	ranges = buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
@@ -753,7 +753,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	require.Equal(t, tasks[2].RowCountHint, 3)
 	// task[3] ["t"-"x", "y"-"z"]
 	require.Equal(t, tasks[3].RowCountHint, 6)
-	_, conc = smallTaskConcurrency(tasks)
+	_, conc = smallTaskConcurrency(tasks, 16)
 	require.Equal(t, conc, 2)
 
 	// cross-region long range
@@ -775,12 +775,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	require.Equal(t, tasks[3].RowCountHint, 10)
 }
 
-func TestSmallTaskConcurrency(t *testing.T) {
-	originSmallTaskLimit := smallTaskConcurrencyLimit
-	defer func() {
-		smallTaskConcurrencyLimit = originSmallTaskLimit
-	}()
-	smallTaskConcurrencyLimit = 10
+func TestSmallTaskConcurrencyLimit(t *testing.T) {
 	smallTaskCount := 1000
 	tasks := make([]*copTask, 0, smallTaskCount)
 	for i := 0; i < smallTaskCount; i++ {
@@ -788,7 +783,11 @@ func TestSmallTaskConcurrency(t *testing.T) {
 			RowCountHint: 1,
 		})
 	}
-	count, conc := smallTaskConcurrency(tasks)
-	require.Equal(t, smallTaskConcurrencyLimit, conc)
+	count, conc := smallTaskConcurrency(tasks, 1)
+	require.Equal(t, smallConcPerCore, conc)
+	require.Equal(t, smallTaskCount, count)
+	// also handle 0 value.
+	count, conc = smallTaskConcurrency(tasks, 0)
+	require.Equal(t, smallConcPerCore, conc)
 	require.Equal(t, smallTaskCount, count)
 }

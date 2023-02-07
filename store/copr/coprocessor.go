@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,15 +70,15 @@ const (
 	copNextMaxBackoff      = 20000
 	CopSmallTaskRow        = 32 // 32 is the initial batch size of TiKV
 	smallTaskSigma         = 0.5
+	smallConcPerCore       = 20
 )
-
-var smallTaskConcurrencyLimit = 20 * runtime.NumCPU()
 
 // CopClient is coprocessor client.
 type CopClient struct {
 	kv.RequestTypeSupportedChecker
 	store           *Store
 	replicaReadSeed uint32
+	numcpu          int
 }
 
 // Send builds the request and gets the coprocessor iterator response.
@@ -203,7 +202,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	if tryRowHint {
 		var smallTasks int
-		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks)
+		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks, c.numcpu)
 		if len(tasks)-smallTasks < it.concurrency {
 			it.concurrency = len(tasks) - smallTasks
 		}
@@ -583,7 +582,7 @@ func isSmallTask(task *copTask) bool {
 
 // smallTaskConcurrency counts the small tasks of tasks,
 // then returns the task count and extra concurrency for small tasks.
-func smallTaskConcurrency(tasks []*copTask) (int, int) {
+func smallTaskConcurrency(tasks []*copTask, numcpu int) (int, int) {
 	res := 0
 	for _, task := range tasks {
 		if isSmallTask(task) {
@@ -596,6 +595,10 @@ func smallTaskConcurrency(tasks []*copTask) (int, int) {
 	// Calculate the extra concurrency for small tasks
 	// extra concurrency = tasks / (1 + sigma * sqrt(log(tasks ^ 2)))
 	extraConc := int(float64(res) / (1 + smallTaskSigma*math.Sqrt(2*math.Log(float64(res)))))
+	if numcpu <= 0 {
+		numcpu = 1
+	}
+	smallTaskConcurrencyLimit := smallConcPerCore * numcpu
 	if extraConc > smallTaskConcurrencyLimit {
 		extraConc = smallTaskConcurrencyLimit
 	}

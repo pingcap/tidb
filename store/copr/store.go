@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"math/rand"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -109,6 +110,7 @@ func (s *Store) GetClient() kv.Client {
 	return &CopClient{
 		store:           s,
 		replicaReadSeed: s.nextReplicaReadSeed(),
+		numcpu:          runtime.GOMAXPROCS(0),
 	}
 }
 
