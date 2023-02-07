@@ -97,6 +97,7 @@ func (r *MemReader) Rows() [][]types.Datum {
 	r.s.windowLock.Lock()
 	w := r.s.window
 	if !r.checker.isTimeValid(w.begin.Unix(), end) {
+		r.s.windowLock.Unlock()
 		return nil
 	}
 	values := w.lru.Values()
