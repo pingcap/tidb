@@ -30,6 +30,6 @@ var (
 			Namespace: "tidb",
 			Subsystem: "rm",
 			Name:      "pool_concurrency",
-			Help:      "How many times transactions enter this state",
+			Help:      "How many concurrency in the pool",
 		}, []string{LblType})
 )
