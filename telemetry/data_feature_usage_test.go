@@ -796,6 +796,8 @@ func TestAggressiveLockingUsage(t *testing.T) {
 
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
 
 	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
 
