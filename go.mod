@@ -92,8 +92,7 @@ require (
 	github.com/stretchr/testify v1.8.1
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.6-0.20230207043134-50e86f7d3c1c
-	github.com/tikv/pd v1.1.0-beta.0.20230202094356-18df271ce57f
+	github.com/tikv/client-go/v2 v2.0.6-0.20230207090007-6a1ecaa292b0
 	github.com/tikv/pd/client v0.0.0-20230206191557-2a7c8d4c9676
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.3
