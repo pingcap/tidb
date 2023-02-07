@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 use test;
 drop table if exists test3, test5;
 create table test3(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a));

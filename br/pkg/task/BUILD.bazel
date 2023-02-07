@@ -67,6 +67,7 @@ go_library(
         "@com_github_spf13_pflag//:pflag",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
         "@com_google_cloud_go_storage//:storage",
         "@io_etcd_go_etcd_client_pkg_v3//transport",
@@ -96,6 +97,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/conn",
+        "//br/pkg/errors",
         "//br/pkg/metautil",
         "//br/pkg/restore",
         "//br/pkg/storage",

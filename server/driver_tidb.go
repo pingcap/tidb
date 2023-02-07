@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -191,7 +192,7 @@ func (ts *TiDBStatement) Close() error {
 }
 
 // OpenCtx implements IDriver.
-func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (*TiDBContext, error) {
+func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
 		return nil, err
@@ -208,6 +209,7 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	se.SetSessionStatesHandler(sessionstates.StatePrepareStmt, tc)
+	se.SetExtensions(extensions)
 	return tc, nil
 }
 
@@ -221,12 +223,26 @@ func (tc *TiDBContext) WarningCount() uint16 {
 	return tc.GetSessionVars().StmtCtx.WarningCount()
 }
 
+func (tc *TiDBContext) checkSandBoxMode(stmt ast.StmtNode) error {
+	if !tc.Session.GetSessionVars().InRestrictedSQL && tc.InSandBoxMode() {
+		switch stmt.(type) {
+		case *ast.SetPwdStmt, *ast.AlterUserStmt:
+		default:
+			return errMustChangePassword.GenWithStackByArgs()
+		}
+	}
+	return nil
+}
+
 // ExecuteStmt implements QueryCtx interface.
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	var rs sqlexec.RecordSet
 	var err error
-	if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
-		rs, err = session.HandleNonTransactionalDelete(ctx, s, tc.Session)
+	if err = tc.checkSandBoxMode(stmt); err != nil {
+		return nil, err
+	}
+	if s, ok := stmt.(*ast.NonTransactionalDMLStmt); ok {
+		rs, err = session.HandleNonTransactionalDML(ctx, s, tc.Session)
 	} else {
 		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
 	}
@@ -464,15 +480,56 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	return trs.columns
 }
 
+// rsWithHooks wraps a ResultSet with some hooks (currently only onClosed).
+type rsWithHooks struct {
+	ResultSet
+	onClosed func()
+}
+
+// Close implements ResultSet#Close
+func (rs *rsWithHooks) Close() error {
+	closed := rs.IsClosed()
+	err := rs.ResultSet.Close()
+	if !closed && rs.onClosed != nil {
+		rs.onClosed()
+	}
+	return err
+}
+
+// OnFetchReturned implements fetchNotifier#OnFetchReturned
+func (rs *rsWithHooks) OnFetchReturned() {
+	if impl, ok := rs.ResultSet.(fetchNotifier); ok {
+		impl.OnFetchReturned()
+	}
+}
+
+// Unwrap returns the underlying result set
+func (rs *rsWithHooks) Unwrap() ResultSet {
+	return rs.ResultSet
+}
+
+// unwrapResultSet likes errors.Cause but for ResultSet
+func unwrapResultSet(rs ResultSet) ResultSet {
+	var unRS ResultSet
+	if u, ok := rs.(interface{ Unwrap() ResultSet }); ok {
+		unRS = u.Unwrap()
+	}
+	if unRS == nil {
+		return rs
+	}
+	return unwrapResultSet(unRS)
+}
+
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	ci = &ColumnInfo{
-		Name:    fld.ColumnAsName.O,
-		OrgName: fld.Column.Name.O,
-		Table:   fld.TableAsName.O,
-		Schema:  fld.DBName.O,
-		Flag:    uint16(fld.Column.GetFlag()),
-		Charset: uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
-		Type:    fld.Column.GetType(),
+		Name:         fld.ColumnAsName.O,
+		OrgName:      fld.Column.Name.O,
+		Table:        fld.TableAsName.O,
+		Schema:       fld.DBName.O,
+		Flag:         uint16(fld.Column.GetFlag()),
+		Charset:      uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
+		Type:         fld.Column.GetType(),
+		DefaultValue: fld.Column.GetDefaultValue(),
 	}
 
 	if fld.Table != nil {

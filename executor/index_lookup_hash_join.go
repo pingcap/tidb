@@ -96,6 +96,7 @@ type indexHashJoinInnerWorker struct {
 	wg             *sync.WaitGroup
 	joinKeyBuf     []byte
 	outerRowStatus []outerRowStatusFlag
+	rowIter        *chunk.Iterator4Slice
 }
 
 type indexHashJoinResult struct {
@@ -133,7 +134,6 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	if e.runtimeStats != nil {
 		e.stats = &indexLookUpJoinRuntimeStats{}
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.finished.Store(false)
 	return nil
@@ -287,6 +287,9 @@ func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
 
 // Close implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Close() error {
+	if e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}
@@ -417,7 +420,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 			innerCtx:      e.innerCtx,
 			outerCtx:      e.outerCtx,
 			ctx:           e.ctx,
-			executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+			executorChk:   e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize, e.maxChunkSize, e.AllocPool),
 			indexRanges:   copiedRanges,
 			keyOff2IdxOff: e.keyOff2IdxOff,
 			stats:         innerStats,
@@ -431,6 +434,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.maxChunkSize),
 		joinKeyBuf:        make([]byte, 1),
 		outerRowStatus:    make([]outerRowStatusFlag, 0, e.maxChunkSize),
+		rowIter:           chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice),
 	}
 	iw.memTracker.AttachTo(e.memTracker)
 	if len(copiedRanges) != 0 {
@@ -733,12 +737,11 @@ func (iw *indexHashJoinInnerWorker) joinMatchedInnerRow2Chunk(ctx context.Contex
 	if len(matchedOuterRows) == 0 {
 		return true, joinResult
 	}
-	var (
-		ok     bool
-		iter   = chunk.NewIterator4Slice(matchedOuterRows)
-		cursor = 0
-	)
-	for iter.Begin(); iter.Current() != iter.End(); {
+	var ok bool
+	cursor := 0
+	iw.rowIter.Reset(matchedOuterRows)
+	iter := iw.rowIter
+	for iw.rowIter.Begin(); iter.Current() != iter.End(); {
 		iw.outerRowStatus, err = iw.joiner.tryToMatchOuters(iter, innerRow, joinResult.chk, iw.outerRowStatus)
 		if err != nil {
 			joinResult.err = err
@@ -821,7 +824,8 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 			for _, ptr := range innerRowPtrs {
 				matchedInnerRows = append(matchedInnerRows, task.innerResult.GetRow(ptr))
 			}
-			iter := chunk.NewIterator4Slice(matchedInnerRows)
+			iw.rowIter.Reset(matchedInnerRows)
+			iter := iw.rowIter
 			for iter.Begin(); iter.Current() != iter.End(); {
 				matched, isNull, err := iw.joiner.tryToMatchInners(outerRow, iter, joinResult.chk)
 				if err != nil {

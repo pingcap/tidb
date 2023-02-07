@@ -16,6 +16,7 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -32,7 +33,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -135,6 +135,9 @@ type DBStore struct {
 	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
 	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
 	Vars                       map[string]string `toml:"-" json:"vars"`
+
+	IOTotalBytes *atomic.Uint64 `toml:"-" json:"-"`
+	UUID         string         `toml:"-" json:"-"`
 }
 
 type Config struct {
@@ -340,32 +343,64 @@ type MaxError struct {
 	// In TiDB backend, this also includes all possible SQL errors raised from INSERT,
 	// such as unique key conflict when `on-duplicate` is set to `error`.
 	// When tolerated, the row causing the error will be skipped, and adds 1 to the counter.
+	// The default value is zero, which means that such errors are not tolerated.
 	Type atomic.Int64 `toml:"type" json:"type"`
 
 	// Conflict is the maximum number of unique key conflicts in local backend accepted.
 	// When tolerated, every pair of conflict adds 1 to the counter.
 	// Those pairs will NOT be deleted from the target. Conflict resolution is performed separately.
-	// TODO Currently this is hard-coded to infinity.
-	Conflict atomic.Int64 `toml:"conflict" json:"-"`
+	// The default value is max int64, which means conflict errors will be recorded as much as possible.
+	// Sometime the actual number of conflict record logged will be greater than the value configured here,
+	// because conflict error data are recorded batch by batch.
+	// If the limit is reached in a single batch, the entire batch of records will be persisted before an error is reported.
+	Conflict atomic.Int64 `toml:"conflict" json:"conflict"`
 }
 
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
+	defaultValMap := map[string]int64{
+		"syntax":   0,
+		"charset":  math.MaxInt64,
+		"type":     0,
+		"conflict": math.MaxInt64,
+	}
+	// set default value first
+	cfg.Syntax.Store(defaultValMap["syntax"])
+	cfg.Charset.Store(defaultValMap["charset"])
+	cfg.Type.Store(defaultValMap["type"])
+	cfg.Conflict.Store(defaultValMap["conflict"])
 	switch val := v.(type) {
 	case int64:
 		// ignore val that is smaller than 0
-		if val < 0 {
-			val = 0
+		if val >= 0 {
+			// only set type error
+			cfg.Type.Store(val)
 		}
-		cfg.Syntax.Store(0)
-		cfg.Charset.Store(math.MaxInt64)
-		cfg.Type.Store(val)
-		cfg.Conflict.Store(math.MaxInt64)
 		return nil
 	case map[string]interface{}:
-		// TODO support stuff like `max-error = { charset = 1000, type = 1000 }` if proved useful.
+		// support stuff like `max-error = { charset = 1000, type = 1000 }`.
+		getVal := func(k string, v interface{}) int64 {
+			defaultVal, ok := defaultValMap[k]
+			if !ok {
+				return 0
+			}
+			iVal, ok := v.(int64)
+			if !ok || iVal < 0 {
+				return defaultVal
+			}
+			return iVal
+		}
+		for k, v := range val {
+			switch k {
+			case "type":
+				cfg.Type.Store(getVal(k, v))
+			case "conflict":
+				cfg.Conflict.Store(getVal(k, v))
+			}
+		}
+		return nil
 	default:
+		return errors.Errorf("invalid max-error '%v', should be an integer or a map of string:int64", v)
 	}
-	return errors.Errorf("invalid max-error '%v', should be an integer", v)
 }
 
 // DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
@@ -381,6 +416,10 @@ const (
 	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
 	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
 	DupeResAlgRemove
+
+	// DupeResAlgErr reports an error and stops the import process.
+	// Note: this value is only used for internal.
+	DupeResAlgErr
 )
 
 func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
@@ -448,12 +487,16 @@ type CSVConfig struct {
 	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	// hide these options for lightning configuration file, they can only be used by LOAD DATA
+	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
+	StartingBy string `toml:"-" json:"-"`
 }
 
 type MydumperRuntime struct {
 	ReadBlockSize    ByteSize         `toml:"read-block-size" json:"read-block-size"`
 	BatchSize        ByteSize         `toml:"batch-size" json:"batch-size"`
 	BatchImportRatio float64          `toml:"batch-import-ratio" json:"batch-import-ratio"`
+	SourceID         string           `toml:"source-id" json:"source-id"`
 	SourceDir        string           `toml:"data-source-dir" json:"data-source-dir"`
 	CharacterSet     string           `toml:"character-set" json:"character-set"`
 	CSV              CSVConfig        `toml:"csv" json:"csv"`
@@ -553,11 +596,12 @@ type TikvImporter struct {
 }
 
 type Checkpoint struct {
-	Schema           string                 `toml:"schema" json:"schema"`
-	DSN              string                 `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	Driver           string                 `toml:"driver" json:"driver"`
-	Enable           bool                   `toml:"enable" json:"enable"`
-	KeepAfterSuccess CheckpointKeepStrategy `toml:"keep-after-success" json:"keep-after-success"`
+	Schema           string                    `toml:"schema" json:"schema"`
+	DSN              string                    `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	MySQLParam       *common.MySQLConnectParam `toml:"-" json:"-"`   // For some security reason, we use MySQLParam instead of DSN.
+	Driver           string                    `toml:"driver" json:"driver"`
+	Enable           bool                      `toml:"enable" json:"enable"`
+	KeepAfterSuccess CheckpointKeepStrategy    `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 type Cron struct {
@@ -573,9 +617,8 @@ type Security struct {
 	// RedactInfoLog indicates that whether enabling redact log
 	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
 
-	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
-	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
-	TLSConfigName string `toml:"-" json:"-"`
+	TLSConfig                *tls.Config `toml:"-" json:"-"`
+	AllowFallbackToPlaintext bool        `toml:"-" json:"-"`
 
 	// When DM/engine uses lightning as a library, it can directly pass in the content
 	CABytes   []byte `toml:"-" json:"-"`
@@ -583,10 +626,9 @@ type Security struct {
 	KeyBytes  []byte `toml:"-" json:"-"`
 }
 
-// RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
-// for use in `sql.Open()`. This method is goroutine-safe.
-func (sec *Security) RegisterMySQL() error {
-	if sec == nil {
+// BuildTLSConfig builds the tls config which is used by SQL drier later.
+func (sec *Security) BuildTLSConfig() error {
+	if sec == nil || sec.TLSConfig != nil {
 		return nil
 	}
 
@@ -599,19 +641,8 @@ func (sec *Security) RegisterMySQL() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if tlsConfig != nil {
-		// error happens only when the key coincides with the built-in names.
-		_ = gomysql.RegisterTLSConfig(sec.TLSConfigName, tlsConfig)
-	}
+	sec.TLSConfig = tlsConfig
 	return nil
-}
-
-// DeregisterMySQL deregisters the TLS config with security.TLSConfigName
-func (sec *Security) DeregisterMySQL() {
-	if sec == nil || len(sec.CAPath) == 0 {
-		return
-	}
-	gomysql.DeregisterTLSConfig(sec.TLSConfigName)
 }
 
 // A duration which can be deserialized from a TOML string.
@@ -806,8 +837,16 @@ func (cfg *Config) LoadFromTOML(data []byte) error {
 		unusedGlobalKeyStrs[key.String()] = struct{}{}
 	}
 
+iterateUnusedKeys:
 	for _, key := range unusedConfigKeys {
 		keyStr := key.String()
+		switch keyStr {
+		// these keys are not counted as decoded by toml decoder, but actually they are decoded,
+		// because the corresponding unmarshal logic handles these key's decoding in a custom way
+		case "lightning.max-error.type",
+			"lightning.max-error.conflict":
+			continue iterateUnusedKeys
+		}
 		if _, found := unusedGlobalKeyStrs[keyStr]; found {
 			bothUnused = append(bothUnused, keyStr)
 		} else {
@@ -1134,18 +1173,27 @@ func (cfg *Config) AdjustCheckPoint() {
 		switch cfg.Checkpoint.Driver {
 		case CheckpointDriverMySQL:
 			param := common.MySQLConnectParam{
-				Host:             cfg.TiDB.Host,
-				Port:             cfg.TiDB.Port,
-				User:             cfg.TiDB.User,
-				Password:         cfg.TiDB.Psw,
-				SQLMode:          mysql.DefaultSQLMode,
-				MaxAllowedPacket: defaultMaxAllowedPacket,
-				TLS:              cfg.TiDB.TLS,
+				Host:                     cfg.TiDB.Host,
+				Port:                     cfg.TiDB.Port,
+				User:                     cfg.TiDB.User,
+				Password:                 cfg.TiDB.Psw,
+				SQLMode:                  mysql.DefaultSQLMode,
+				MaxAllowedPacket:         defaultMaxAllowedPacket,
+				TLSConfig:                cfg.TiDB.Security.TLSConfig,
+				AllowFallbackToPlaintext: cfg.TiDB.Security.AllowFallbackToPlaintext,
 			}
-			cfg.Checkpoint.DSN = param.ToDSN()
+			cfg.Checkpoint.MySQLParam = &param
 		case CheckpointDriverFile:
 			cfg.Checkpoint.DSN = "/tmp/" + cfg.Checkpoint.Schema + ".pb"
 		}
+	} else {
+		// try to remove allowAllFiles
+		mysqlCfg, err := gomysql.ParseDSN(cfg.Checkpoint.DSN)
+		if err != nil {
+			return
+		}
+		mysqlCfg.AllowAllFiles = false
+		cfg.Checkpoint.DSN = mysqlCfg.FormatDSN()
 	}
 }
 
@@ -1178,22 +1226,22 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 	}
 
 	switch cfg.TiDB.TLS {
-	case "":
-		if len(cfg.TiDB.Security.CAPath) > 0 || len(cfg.TiDB.Security.CABytes) > 0 ||
-			len(cfg.TiDB.Security.CertPath) > 0 || len(cfg.TiDB.Security.CertBytes) > 0 ||
-			len(cfg.TiDB.Security.KeyPath) > 0 || len(cfg.TiDB.Security.KeyBytes) > 0 {
-			if cfg.TiDB.Security.TLSConfigName == "" {
-				cfg.TiDB.Security.TLSConfigName = uuid.NewString() // adjust this the default value
+	case "skip-verify", "preferred":
+		if cfg.TiDB.Security.TLSConfig == nil {
+			/* #nosec G402 */
+			cfg.TiDB.Security.TLSConfig = &tls.Config{
+				MinVersion:         tls.VersionTLS10,
+				InsecureSkipVerify: true,
+				NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 			}
-			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
-		} else {
-			cfg.TiDB.TLS = "false"
+			cfg.TiDB.Security.AllowFallbackToPlaintext = true
 		}
 	case "cluster":
 		if len(cfg.Security.CAPath) == 0 {
 			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
 		}
-	case "false", "skip-verify", "preferred":
+	case "", "false":
+		cfg.TiDB.TLS = "false"
 		return nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", cfg.TiDB.TLS)

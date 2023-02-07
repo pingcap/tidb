@@ -14,6 +14,8 @@
 package restore
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"fmt"
@@ -24,6 +26,7 @@ import (
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
 	"github.com/pingcap/tidb/errno"
@@ -349,15 +352,15 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 			ExpectFirstRowDatums: [][]types.Datum{
 				{
 					types.NewIntDatum(1),
-					types.NewCollationStringDatum("name_1", ""),
+					types.NewCollationStringDatum("name_1", "utf8mb4_bin"),
 				},
 				{
 					types.NewIntDatum(2),
-					types.NewCollationStringDatum("name_2", ""),
+					types.NewCollationStringDatum("name_2", "utf8mb4_bin"),
 				},
 				{
 					types.NewIntDatum(3),
-					types.NewCollationStringDatum("name_3", ""),
+					types.NewCollationStringDatum("name_3", "utf8mb4_bin"),
 				},
 			},
 			ExpectColumns: []string{"id", "name"},
@@ -398,6 +401,118 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 	tblMeta := mockSrc.GetDBMetaMap()["db01"].Tables[0]
 	for i, dataFile := range tblMeta.DataFiles {
 		theDataInfo := testDataInfos[i]
+		cols, rowDatums, err := ig.ReadFirstNRowsByFileMeta(ctx, dataFile.FileMeta, theDataInfo.FirstN)
+		require.Nil(t, err)
+		t.Logf("%v, %v", cols, rowDatums)
+		require.Equal(t, theDataInfo.ExpectColumns, cols)
+		require.Equal(t, theDataInfo.ExpectFirstRowDatums, rowDatums)
+	}
+
+	theDataInfo := testDataInfos[0]
+	cols, rowDatums, err := ig.ReadFirstNRowsByTableName(ctx, "db01", "tbl01", theDataInfo.FirstN)
+	require.NoError(t, err)
+	require.Equal(t, theDataInfo.ExpectColumns, cols)
+	require.Equal(t, theDataInfo.ExpectFirstRowDatums, rowDatums)
+}
+
+func compressGz(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	_, err := w.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	return buf.Bytes()
+}
+
+func TestGetPreInfoReadCompressedFirstRow(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var (
+		testCSVData01 = []byte(`ival,sval
+111,"aaa"
+222,"bbb"
+`)
+		testSQLData01 = []byte(`INSERT INTO db01.tbl01 (ival, sval) VALUES (333, 'ccc');
+INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`)
+	)
+
+	test1CSVCompressed := compressGz(t, testCSVData01)
+	test1SQLCompressed := compressGz(t, testSQLData01)
+
+	testDataInfos := []struct {
+		FileName             string
+		Data                 []byte
+		FirstN               int
+		CSVConfig            *config.CSVConfig
+		ExpectFirstRowDatums [][]types.Datum
+		ExpectColumns        []string
+	}{
+		{
+			FileName: "/db01/tbl01/data.001.csv.gz",
+			Data:     test1CSVCompressed,
+			FirstN:   1,
+			ExpectFirstRowDatums: [][]types.Datum{
+				{
+					types.NewStringDatum("111"),
+					types.NewStringDatum("aaa"),
+				},
+			},
+			ExpectColumns: []string{"ival", "sval"},
+		},
+		{
+			FileName: "/db01/tbl01/data.001.sql.gz",
+			Data:     test1SQLCompressed,
+			FirstN:   1,
+			ExpectFirstRowDatums: [][]types.Datum{
+				{
+					types.NewUintDatum(333),
+					types.NewStringDatum("ccc"),
+				},
+			},
+			ExpectColumns: []string{"ival", "sval"},
+		},
+	}
+
+	tbl01SchemaBytes := []byte("CREATE TABLE db01.tbl01(id INTEGER PRIMARY KEY AUTO_INCREMENT, ival INTEGER, sval VARCHAR(64));")
+	tbl01SchemaBytesCompressed := compressGz(t, tbl01SchemaBytes)
+
+	tblMockSourceData := &mock.MockTableSourceData{
+		DBName:    "db01",
+		TableName: "tbl01",
+		SchemaFile: &mock.MockSourceFile{
+			FileName: "/db01/tbl01/tbl01.schema.sql.gz",
+			Data:     tbl01SchemaBytesCompressed,
+		},
+		DataFiles: []*mock.MockSourceFile{},
+	}
+	for _, testInfo := range testDataInfos {
+		tblMockSourceData.DataFiles = append(tblMockSourceData.DataFiles, &mock.MockSourceFile{
+			FileName: testInfo.FileName,
+			Data:     testInfo.Data,
+		})
+	}
+	mockDataMap := map[string]*mock.MockDBSourceData{
+		"db01": {
+			Name: "db01",
+			Tables: map[string]*mock.MockTableSourceData{
+				"tbl01": tblMockSourceData,
+			},
+		},
+	}
+	mockSrc, err := mock.NewMockImportSource(mockDataMap)
+	require.Nil(t, err)
+	mockTarget := mock.NewMockTargetInfo()
+	cfg := config.NewConfig()
+	cfg.TikvImporter.Backend = config.BackendLocal
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil)
+	require.NoError(t, err)
+
+	cfg.Mydumper.CSV.Header = true
+	tblMeta := mockSrc.GetDBMetaMap()["db01"].Tables[0]
+	for i, dataFile := range tblMeta.DataFiles {
+		theDataInfo := testDataInfos[i]
+		dataFile.FileMeta.Compression = mydump.CompressionGZ
 		cols, rowDatums, err := ig.ReadFirstNRowsByFileMeta(ctx, dataFile.FileMeta, theDataInfo.FirstN)
 		require.Nil(t, err)
 		t.Logf("%v, %v", cols, rowDatums)
@@ -497,6 +612,100 @@ func TestGetPreInfoSampleSource(t *testing.T) {
 	}
 }
 
+func TestGetPreInfoSampleSourceCompressed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dataFileName := "/db01/tbl01/tbl01.data.001.csv.gz"
+	schemaFileData := []byte("CREATE TABLE db01.tbl01 (id INTEGER PRIMARY KEY AUTO_INCREMENT, ival INTEGER, sval VARCHAR(64));")
+	schemaFileDataCompressed := compressGz(t, schemaFileData)
+	mockDataMap := map[string]*mock.MockDBSourceData{
+		"db01": {
+			Name: "db01",
+			Tables: map[string]*mock.MockTableSourceData{
+				"tbl01": {
+					DBName:    "db01",
+					TableName: "tbl01",
+					SchemaFile: &mock.MockSourceFile{
+						FileName: "/db01/tbl01/tbl01.schema.sql.gz",
+						Data:     schemaFileDataCompressed,
+					},
+					DataFiles: []*mock.MockSourceFile{
+						{
+							FileName: dataFileName,
+							Data:     []byte(nil),
+						},
+					},
+				},
+			},
+		},
+	}
+	mockSrc, err := mock.NewMockImportSource(mockDataMap)
+	require.Nil(t, err)
+	mockTarget := mock.NewMockTargetInfo()
+	cfg := config.NewConfig()
+	cfg.TikvImporter.Backend = config.BackendLocal
+	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil, nil, ropts.WithIgnoreDBNotExist(true))
+	require.NoError(t, err)
+
+	mdDBMeta := mockSrc.GetAllDBFileMetas()[0]
+	mdTblMeta := mdDBMeta.Tables[0]
+	dbInfos, err := ig.GetAllTableStructures(ctx)
+	require.NoError(t, err)
+
+	data := [][]byte{
+		[]byte(`id,ival,sval
+1,111,"aaa"
+2,222,"bbb"
+`),
+		[]byte(`sval,ival,id
+"aaa",111,1
+"bbb",222,2
+`),
+		[]byte(`id,ival,sval
+2,222,"bbb"
+1,111,"aaa"
+`),
+		[]byte(`sval,ival,id
+"aaa",111,2
+"bbb",222,1
+`),
+	}
+	compressedData := make([][]byte, 0, 4)
+	for _, d := range data {
+		compressedData = append(compressedData, compressGz(t, d))
+	}
+
+	subTests := []struct {
+		Data            []byte
+		ExpectIsOrdered bool
+	}{
+		{
+			Data:            compressedData[0],
+			ExpectIsOrdered: true,
+		},
+		{
+			Data:            compressedData[1],
+			ExpectIsOrdered: true,
+		},
+		{
+			Data:            compressedData[2],
+			ExpectIsOrdered: false,
+		},
+		{
+			Data:            compressedData[3],
+			ExpectIsOrdered: false,
+		},
+	}
+	for _, subTest := range subTests {
+		require.NoError(t, mockSrc.GetStorage().WriteFile(ctx, dataFileName, subTest.Data))
+		sampledIndexRatio, isRowOrderedFromSample, err := ig.sampleDataFromTable(ctx, "db01", mdTblMeta, dbInfos["db01"].Tables["tbl01"].Core, nil, defaultImportantVariables)
+		require.NoError(t, err)
+		t.Logf("%v, %v", sampledIndexRatio, isRowOrderedFromSample)
+		require.Greater(t, sampledIndexRatio, 1.0)
+		require.Equal(t, subTest.ExpectIsOrdered, isRowOrderedFromSample)
+	}
+}
+
 func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -553,7 +762,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, lnConfig, targetGetter.cfg)
 
-	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` USE INDEX\\(\\) LIMIT 1").
 		WillReturnError(&mysql_sql_driver.MySQLError{
 			Number:  errno.ErrNoSuchTable,
 			Message: "Table 'test_db.test_tbl' doesn't exist",
@@ -563,7 +772,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NotNil(t, pIsEmpty)
 	require.Equal(t, true, *pIsEmpty)
 
-	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"1"}).
 				RowError(0, sql.ErrNoRows),
@@ -573,7 +782,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NotNil(t, pIsEmpty)
 	require.Equal(t, true, *pIsEmpty)
 
-	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"1"}).AddRow(1),
 		)
@@ -582,7 +791,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NotNil(t, pIsEmpty)
 	require.Equal(t, false, *pIsEmpty)
 
-	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` LIMIT 1").
+	mock.ExpectQuery("SELECT 1 FROM `test_db`.`test_tbl` USE INDEX\\(\\) LIMIT 1").
 		WillReturnError(errors.New("some dummy error"))
 	_, err = targetGetter.IsTableEmpty(ctx, "test_db", "test_tbl")
 	require.Error(t, err)

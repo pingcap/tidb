@@ -61,6 +61,10 @@ type tidbSession struct {
 
 // GetDomain implements glue.Glue.
 func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
+	initStatsSe, err := session.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	se, err := session.CreateSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -69,8 +73,12 @@ func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	err = session.InitMDLVariable(store)
+	if err != nil {
+		return nil, err
+	}
 	// create stats handler for backup and restore.
-	err = dom.UpdateTableStatsLoop(se)
+	err = dom.UpdateTableStatsLoop(se, initStatsSe)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -132,6 +140,10 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err = session.InitMDLVariable(store); err != nil {
+		return errors.Trace(err)
+	}
+
 	// because domain was created during the whole program exists.
 	// and it will register br info to info syncer.
 	// we'd better close it as soon as possible.
@@ -203,11 +215,36 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }
 
-// CreateTables implements glue.BatchCreateTableSession.
-func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
+// SplitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
+// The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
+// TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
+func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, info []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	var err error
 	d := domain.GetDomain(gs.se).DDL()
+	if err = d.BatchCreateTableWithInfo(gs.se, schema, info, append(cs, ddl.OnExistIgnore)...); kv.ErrEntryTooLarge.Equal(err) {
+		if len(info) == 1 {
+			return err
+		}
+		mid := len(info) / 2
+		err = gs.SplitBatchCreateTable(schema, info[:mid])
+		if err != nil {
+			return err
+		}
+		err = gs.SplitBatchCreateTable(schema, info[mid:])
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	return err
+}
+
+// CreateTables implements glue.BatchCreateTableSession.
+func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	var dbName model.CIStr
 
+	// Disable foreign key check when batch create tables.
+	gs.se.GetSessionVars().ForeignKeyChecks = false
 	for db, tablesInDB := range tables {
 		dbName = model.NewCIStr(db)
 		queryBuilder := strings.Builder{}
@@ -231,8 +268,7 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 			cloneTables = append(cloneTables, table)
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, ddl.OnExistIgnore)
-		if err != nil {
+		if err := gs.SplitBatchCreateTable(dbName, cloneTables); err != nil {
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
 			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
 			//we fall back to old way that creating table one by one
@@ -245,13 +281,15 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error {
+func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	d := domain.GetDomain(gs.se).DDL()
 	query, err := gs.showCreateTable(table)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	gs.se.SetValue(sessionctx.QueryString, query)
+	// Disable foreign key check when batch create tables.
+	gs.se.GetSessionVars().ForeignKeyChecks = false
 	// Clone() does not clone partitions yet :(
 	table = table.Clone()
 	if table.Partition != nil {
@@ -259,7 +297,8 @@ func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, tabl
 		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
 		table.Partition = &newPartition
 	}
-	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
+
+	return d.CreateTableWithInfo(gs.se, dbName, table, append(cs, ddl.OnExistIgnore)...)
 }
 
 // Close implements glue.Session.
@@ -302,7 +341,8 @@ func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) strin
 
 // mockSession is used for test.
 type mockSession struct {
-	se session.Session
+	se         session.Session
+	globalVars map[string]string
 }
 
 // GetSessionCtx implements glue.Glue
@@ -349,13 +389,13 @@ func (s *mockSession) CreatePlacementPolicy(ctx context.Context, policy *model.P
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (s *mockSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
+func (s *mockSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
 
 // CreateTable implements glue.Session.
-func (s *mockSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error {
+func (s *mockSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
@@ -367,12 +407,16 @@ func (s *mockSession) Close() {
 
 // GetGlobalVariables implements glue.Session.
 func (s *mockSession) GetGlobalVariable(name string) (string, error) {
-	return "true", nil
+	if ret, ok := s.globalVars[name]; ok {
+		return ret, nil
+	}
+	return "True", nil
 }
 
 // MockGlue only used for test
 type MockGlue struct {
-	se session.Session
+	se         session.Session
+	GlobalVars map[string]string
 }
 
 func (m *MockGlue) SetSession(se session.Session) {
@@ -387,7 +431,8 @@ func (*MockGlue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 // CreateSession implements glue.Glue.
 func (m *MockGlue) CreateSession(store kv.Storage) (glue.Session, error) {
 	glueSession := &mockSession{
-		se: m.se,
+		se:         m.se,
+		globalVars: m.GlobalVars,
 	}
 	return glueSession, nil
 }

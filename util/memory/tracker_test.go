@@ -251,9 +251,6 @@ type mockAction struct {
 	priority int64
 }
 
-func (a *mockAction) SetLogHook(hook func(uint64)) {
-}
-
 func (a *mockAction) Action(t *Tracker) {
 	if a.called && a.fallbackAction != nil {
 		a.fallbackAction.Action(t)

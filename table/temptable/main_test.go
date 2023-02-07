@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
@@ -38,6 +39,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 	}
 	testsetup.SetupForCommonTest()
 	goleak.VerifyTestMain(m, opts...)
@@ -85,7 +87,7 @@ func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
 		State:         model.StatePublic,
 	}
 
-	tbl, err := table.TableFromMeta(nil, tblInfo)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(false), tblInfo)
 	require.NoError(is.t, err)
 
 	return tbl, true

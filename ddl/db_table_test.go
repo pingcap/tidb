@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,11 +26,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
@@ -49,7 +52,7 @@ func TestTableForeignKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("create table t1 (a int, b int, index(a), index(b));")
 	// test create table with foreign key.
 	failSQL := "create table t2 (c int, foreign key (a) references t1(a));"
 	tk.MustGetErrCode(failSQL, errno.ErrKeyColumnDoesNotExits)
@@ -183,7 +186,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -378,6 +381,49 @@ func TestAlterTableWithValidation(t *testing.T) {
 	tk.MustExec("alter table t1 without validation")
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8200|ALTER TABLE WITHOUT VALIDATION is currently unsupported"))
+}
+
+func TestCreateTableWithInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+	info := []*model.TableInfo{{
+		ID:   42,
+		Name: model.NewCIStr("t"),
+	}}
+
+	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+		return false
+	})))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't'").Check(testkit.Rows("42"))
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+
+	var id int64
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		var err error
+		id, err = m.GenGlobalID()
+		return err
+	})
+
+	require.NoError(t, err)
+	info = []*model.TableInfo{{
+		ID:   42,
+		Name: model.NewCIStr("tt"),
+	}}
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+		return true
+	})))
+	idGen, ok := tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tt'").Rows()[0][0].(string)
+	require.True(t, ok)
+	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, idGenNum, id)
 }
 
 func TestBatchCreateTable(t *testing.T) {
@@ -826,8 +872,7 @@ func TestDDLWithInvalidTableInfo(t *testing.T) {
 
 	tk.MustExec("create table t (a bigint, b int, c int generated always as (b+1)) partition by hash(a) partitions 4;")
 	// Test drop partition column.
-	// TODO: refine the error message to compatible with MySQL
-	tk.MustGetErrMsg("alter table t drop column a;", "[planner:1054]Unknown column 'a' in 'expression'")
+	tk.MustGetErrMsg("alter table t drop column a;", "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 	// Test modify column with invalid expression.
 	tk.MustGetErrMsg("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));", "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near \"then (b / a) end));\" ")
 	// Test add column with invalid expression.
@@ -844,7 +889,7 @@ func TestAddColumn2(t *testing.T) {
 
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var writeOnlyTable table.Table
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
@@ -873,7 +918,7 @@ func TestAddColumn2(t *testing.T) {
 	require.NoError(t, err)
 	_, err = writeOnlyTable.AddRecord(tk.Session(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	require.NoError(t, err)
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(ctx)
 	err = tk.Session().CommitTxn(ctx)
 	require.NoError(t, err)
 

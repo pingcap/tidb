@@ -17,12 +17,14 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
@@ -50,6 +52,14 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 func TestModifyColumnReorgInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
+	originalTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
+	limit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(5)
+	defer func() {
+		ddl.ReorgWaitTimeout = originalTimeout
+		variable.SetDDLErrorCountLimit(limit)
+	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -66,7 +76,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
 	var currJob *model.Job
 	var elements []*meta.Element
@@ -112,14 +122,18 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	require.NoError(t, checkErr)
 	// Check whether the reorg information is cleaned up when executing "modify column" failed.
 	checkReorgHandle := func(gotElements, expectedElements []*meta.Element) {
+		require.Equal(t, len(expectedElements), len(gotElements))
 		for i, e := range gotElements {
 			require.Equal(t, expectedElements[i], e)
 		}
+		// check the consistency of the tables.
+		currJobID := strconv.FormatInt(currJob.ID, 10)
+		tk.MustQuery("select job_id, reorg, schema_ids, table_ids, type, processing from mysql.tidb_ddl_job where job_id = " + currJobID).Check(testkit.Rows())
+		tk.MustQuery("select job_id from mysql.tidb_ddl_history where job_id = " + currJobID).Check(testkit.Rows(currJobID))
+		tk.MustQuery("select job_id, ele_id, ele_type, physical_id from mysql.tidb_ddl_reorg where job_id = " + currJobID).Check(testkit.Rows())
 		require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
-		txn, err := ctx.Txn(true)
-		require.NoError(t, err)
-		m := meta.NewMeta(txn)
-		e, start, end, physicalID, err := ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
+		e, start, end, physicalID, err := ddl.NewReorgHandlerForTest(testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
+		require.Error(t, err, "Error not ErrDDLReorgElementNotExists, found orphan row in tidb_ddl_reorg for job.ID %d: e: '%s', physicalID: %d, start: 0x%x end: 0x%x", currJob.ID, e, physicalID, start, end)
 		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 		require.Nil(t, e)
 		require.Nil(t, start)
@@ -149,10 +163,16 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	// Test encountering a "notOwnerErr" error which caused the processing backfill job to exit halfway.
 	// During the period, the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("addIdxNotOwnerErr")`))
-	tk.MustExec("alter table t1 add index idx2(c1)")
-	expectedElements = []*meta.Element{
-		{ID: 7, TypeKey: meta.IndexElementKey}}
-	checkReorgHandle(elements, expectedElements)
+	// TODO: Remove this check after "err" isn't nil in runReorgJobAndHandleErr.
+	if variable.DDLEnableDistributeReorg.Load() {
+		err = tk.ExecToErr("alter table t1 add index idx2(c1)")
+		require.EqualError(t, err, "[ddl:8201]TiDB server is not a DDL owner")
+	} else {
+		tk.MustExec("alter table t1 add index idx2(c1)")
+		expectedElements = []*meta.Element{
+			{ID: 7, TypeKey: meta.IndexElementKey}}
+		checkReorgHandle(elements, expectedElements)
+	}
 	tk.MustExec("admin check table t1")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"))
 }
@@ -188,7 +208,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
@@ -243,7 +263,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
@@ -813,10 +833,7 @@ func TestModifyColumnTypeWithWarnings(t *testing.T) {
 	// 111.22 will be truncated the fraction .22 as .2 with truncated warning for each row.
 	tk.MustExec("alter table t modify column a decimal(4,1)")
 	// there should 4 rows of warnings corresponding to the origin rows.
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
-		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
-		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
-		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '111.22'"))
 
 	// Test the strict warnings is treated as errors under the strict mode.
 	tk.MustExec("drop table if exists t")
@@ -829,15 +846,13 @@ func TestModifyColumnTypeWithWarnings(t *testing.T) {
 	// Test the strict warnings is treated as warnings under the non-strict mode.
 	tk.MustExec("set @@sql_mode=\"\"")
 	tk.MustExec("alter table t modify column a decimal(3,1)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 DECIMAL value is out of range in '(3, 1)'",
-		"Warning 1690 DECIMAL value is out of range in '(3, 1)'",
-		"Warning 1690 DECIMAL value is out of range in '(3, 1)'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 3 warnings with this error code, first warning: DECIMAL value is out of range in '(3, 1)'"))
 }
 
 // TestModifyColumnTypeWhenInterception is to test modifying column type with warnings intercepted by
 // reorg timeout, not owner error and so on.
 func TestModifyColumnTypeWhenInterception(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -858,41 +873,10 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	// Make the regions scale like: [1, 1024), [1024, 2048), [2048, 3072), [3072, 4096]
 	tk.MustQuery("split table t between(0) and (4096) regions 4")
 
-	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{}
-	var checkMiddleWarningCount bool
-	var checkMiddleAddedCount bool
-	// Since the `DefTiDBDDLReorgWorkerCount` is 4, every worker will be assigned with one region
-	// for the first time. Here we mock the insert failure/reorg timeout in region [2048, 3072)
-	// which will lead next handle be set to 2048 and partial warnings be stored into ddl job.
-	// Since the existence of reorg batch size, only the last reorg batch [2816, 3072) of kv
-	// range [2048, 3072) fail to commit, the rest of them all committed successfully. So the
-	// addedCount and warnings count in the job are all equal to `4096 - reorg batch size`.
-	// In the next round of this ddl job, the last reorg batch will be finished.
-	var middleWarningsCount = int64(defaultBatchSize*4 - defaultReorgBatchSize)
-	hook.OnJobUpdatedExported = func(job *model.Job) {
-		if job.SchemaState == model.StateWriteReorganization || job.SnapshotVer != 0 {
-			if len(job.ReorgMeta.WarningsCount) == len(job.ReorgMeta.Warnings) {
-				for _, v := range job.ReorgMeta.WarningsCount {
-					if v == middleWarningsCount {
-						checkMiddleWarningCount = true
-					}
-				}
-			}
-			if job.RowCount == middleWarningsCount {
-				checkMiddleAddedCount = true
-			}
-		}
-	}
-	d.SetHook(hook)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockReorgTimeoutInOneRegion", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockReorgTimeoutInOneRegion"))
 	}()
 	tk.MustExec("alter table t modify column b decimal(3,1)")
-	require.True(t, checkMiddleWarningCount)
-	require.True(t, checkMiddleAddedCount)
-
-	res := tk.MustQuery("show warnings")
-	require.Len(t, res.Rows(), count)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4096 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '11.22'"))
 }

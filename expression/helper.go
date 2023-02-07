@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"context"
 	"math"
 	"strings"
 	"time"
@@ -73,7 +74,7 @@ func getTimeCurrentTimeStamp(ctx sessionctx.Context, tp byte, fsp int) (t types.
 		return value, err
 	}
 	value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)))
-	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime || tp == mysql.TypeDate {
 		err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 		if err != nil {
 			return value, err
@@ -89,12 +90,12 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
 	case string:
-		upperX := strings.ToUpper(x)
-		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
+		lowerX := strings.ToLower(x)
+		if lowerX == ast.CurrentTimestamp || lowerX == ast.CurrentDate {
 			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
 				return d, err
 			}
-		} else if upperX == types.ZeroDatetimeStr {
+		} else if lowerX == types.ZeroDatetimeStr {
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
 			terror.Log(err)
 		} else {
@@ -121,8 +122,8 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 			return d, errDefaultValue
 		}
 	case *ast.FuncCallExpr:
-		if x.FnName.L == ast.CurrentTimestamp {
-			d.SetString(strings.ToUpper(ast.CurrentTimestamp), mysql.DefaultCollationName)
+		if x.FnName.L == ast.CurrentTimestamp || x.FnName.L == ast.CurrentDate {
+			d.SetString(strings.ToUpper(x.FnName.L), mysql.DefaultCollationName)
 			return d, nil
 		}
 		return d, errDefaultValue
@@ -164,7 +165,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := sessionVars.GetSessionOrGlobalSystemVar("timestamp")
+	timestampStr, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "timestamp")
 	if err != nil {
 		return now, err
 	}

@@ -114,6 +114,28 @@ echo "expected panic 0, actual ${actual}"
 [ "$actual" = 0 ]
 
 # check stdout, should contain mysql error log
-actual=$(grep -w "Error 1064: You have an error in your SQL syntax" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
-echo "expect contain Error 1064, actual ${actual}"
+actual=$(grep -w "You have an error in your SQL syntax" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
+echo "expect contain error in SQL syntax, actual ${actual}"
 [ "$actual" -ge 1 ]
+
+# Test for consistency lock with empty database.
+export DUMPLING_TEST_PORT=3306
+run_sql "drop database if exists \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
+
+run_dumpling --consistency lock -B "$DB_NAME" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
+
+cnt=$(grep -w "$DB_NAME" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}-schema-create.sql|wc -l)
+echo "records count is ${cnt}"
+[ "$cnt" = 1 ]
+
+# Test for recording network usage
+run_sql "drop database if exists test_db;"
+run_sql "create database test_db;"
+run_sql "create table test_db.test_table (a int primary key);"
+run_sql "insert into test_db.test_table values (1),(2),(3),(4),(5),(6),(7),(8);"
+
+export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/SetIOTotalBytes=return(1)"
+run_dumpling -B "test_db" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
+cnt=$(grep "IOTotalBytes=" ${DUMPLING_OUTPUT_DIR}/dumpling.log | grep -v "IOTotalBytes=0" | wc -l)
+[ "$cnt" -ge 1 ]

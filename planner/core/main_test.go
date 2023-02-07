@@ -50,15 +50,18 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
 	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "binary_plan_suite")
+	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 
 	callback := func(i int) int {
@@ -127,4 +130,12 @@ func GetFlatPlanSuiteData() testdata.TestData {
 
 func GetBinaryPlanSuiteData() testdata.TestData {
 	return testDataMap["binary_plan_suite"]
+}
+
+func GetIndexMergeSuiteData() testdata.TestData {
+	return testDataMap["index_merge_suite"]
+}
+
+func GetJSONPlanSuiteData() testdata.TestData {
+	return testDataMap["json_plan_suite"]
 }

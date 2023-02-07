@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,7 @@ import (
 
 func TestMockAPI(t *testing.T) {
 	defer view.Stop()
-	vars := NewSessionVars()
+	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
@@ -33,19 +34,19 @@ func TestMockAPI(t *testing.T) {
 	require.Error(t, err)
 
 	// invalid option name
-	err = mock.SetGlobalSysVar("illegalopt", "val")
+	err = mock.SetGlobalSysVar(context.Background(), "illegalopt", "val")
 	require.Error(t, err)
-	err = mock.SetGlobalSysVarOnly("illegalopt", "val")
+	err = mock.SetGlobalSysVarOnly(context.Background(), "illegalopt", "val", true)
 	require.Error(t, err)
 
 	// valid option, invalid value
-	err = mock.SetGlobalSysVar(DefaultAuthPlugin, "invalidvalue")
+	err = mock.SetGlobalSysVar(context.Background(), DefaultAuthPlugin, "invalidvalue")
 	require.Error(t, err)
 
 	// valid option, valid value
-	err = mock.SetGlobalSysVar(DefaultAuthPlugin, "mysql_native_password")
+	err = mock.SetGlobalSysVar(context.Background(), DefaultAuthPlugin, "mysql_native_password")
 	require.NoError(t, err)
-	err = mock.SetGlobalSysVarOnly(DefaultAuthPlugin, "mysql_native_password")
+	err = mock.SetGlobalSysVarOnly(context.Background(), DefaultAuthPlugin, "mysql_native_password", true)
 	require.NoError(t, err)
 
 	// Test GetTiDBTableValue

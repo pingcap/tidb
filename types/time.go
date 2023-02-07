@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"strconv"
@@ -1155,6 +1156,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		hhmmss = true
 	}
 	if err != nil {
+		if err == io.EOF {
+			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		}
 		return ZeroDatetime, errors.Trace(err)
 	}
 

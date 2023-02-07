@@ -146,6 +146,23 @@ func (c *bindCache) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return nil
 }
 
+// GetBindRecordBySQLDigest gets the BindRecord from the cache.
+// The return value is not read-only, but it shouldn't be changed in the caller functions.
+// The function is thread-safe.
+func (c *bindCache) GetBindRecordBySQLDigest(sqlDigest string) (*BindRecord, error) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	bindings := c.get(bindCacheKey(sqlDigest))
+	if len(bindings) > 1 {
+		// currently, we only allow one binding for a sql
+		return nil, errors.New("more than 1 binding matched")
+	}
+	if len(bindings) == 0 || len(bindings[0].Bindings) == 0 {
+		return nil, errors.New("can't find any binding for '" + sqlDigest + "'")
+	}
+	return bindings[0], nil
+}
+
 // GetAllBindRecords return all the bindRecords from the bindCache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.

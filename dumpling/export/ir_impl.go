@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"go.uber.org/zap"
 )
@@ -369,4 +370,23 @@ func (td *multiQueriesChunk) Close() error {
 
 func (*multiQueriesChunk) RawRows() *sql.Rows {
 	return nil
+}
+
+var serverSpecialComments = map[version.ServerType][]string{
+	version.ServerTypeMySQL: {
+		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
+		"/*!40101 SET NAMES binary*/;",
+	},
+	version.ServerTypeTiDB: {
+		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
+		"/*!40101 SET NAMES binary*/;",
+	},
+	version.ServerTypeMariaDB: {
+		"/*!40101 SET NAMES binary*/;",
+		"SET FOREIGN_KEY_CHECKS=0;",
+	},
+}
+
+func getSpecialComments(serverType version.ServerType) []string {
+	return serverSpecialComments[serverType]
 }

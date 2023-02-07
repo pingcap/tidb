@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 set @@tidb_enable_outer_join_reorder=true;
 DROP TABLE IF EXISTS t;
 

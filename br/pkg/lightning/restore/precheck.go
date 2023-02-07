@@ -25,6 +25,7 @@ const (
 	CheckTargetClusterVersion     CheckItemID = "CHECK_TARGET_CLUSTER_VERSION"
 	CheckLocalDiskPlacement       CheckItemID = "CHECK_LOCAL_DISK_PLACEMENT"
 	CheckLocalTempKVDir           CheckItemID = "CHECK_LOCAL_TEMP_KV_DIR"
+	CheckTargetUsingCDCPITR       CheckItemID = "CHECK_TARGET_USING_CDC_PITR"
 )
 
 type CheckResult struct {
@@ -138,7 +139,9 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 	case CheckLocalDiskPlacement:
 		return NewLocalDiskPlacementCheckItem(b.cfg), nil
 	case CheckLocalTempKVDir:
-		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter), nil
+		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
+	case CheckTargetUsingCDCPITR:
+		return NewCDCPITRCheckItem(b.cfg), nil
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}

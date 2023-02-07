@@ -55,7 +55,7 @@ func TestGroupNDVs(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(tk.Session(), stmt, core.WithPreprocessorReturn(ret))
+		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		builder, _ := core.NewPlanBuilder().Init(tk.Session(), ret.InfoSchema, &hint.BlockHintProcessor{})
@@ -123,6 +123,7 @@ func TestNDVGroupCols(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int not null, b int not null, key(a,b))")
 	tk.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")

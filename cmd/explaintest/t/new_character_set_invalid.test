@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 set @@sql_mode = 'strict_trans_tables';
 drop table if exists t;
 create table t (a varchar(255) charset gbk, b varchar(255) charset ascii, c varchar(255) charset utf8);

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -1574,12 +1575,18 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
 		// here and skip this refine operation in all other cases for safety.
 		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
-			ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+			var reason error
+			if arg1IsString {
+				reason = errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg1.String())
+			} else { // arg0IsString
+				reason = errors.Errorf("skip plan-cache: '%v' may be converted to INT", arg0.String())
+			}
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			RemoveMutableConst(ctx, args)
 		} else {
 			return args
 		}
-	} else if ctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	} else if !ctx.GetSessionVars().StmtCtx.UseCache {
 		// We should remove the mutable constant for correctness, because its value may be changed.
 		RemoveMutableConst(ctx, args)
 	}

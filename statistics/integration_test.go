@@ -268,6 +268,7 @@ func TestExpBackoffEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("create table exp_backoff(a int, b int, c int, d int, index idx(a, b, c, d))")
 	tk.MustExec("insert into exp_backoff values(1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 2, 3), (1, 2, 2, 4), (1, 2, 3, 5)")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
@@ -519,14 +520,23 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	tk.MustExec("explain select * from t where a = 1")
 	require.NoError(t, h.LoadNeededHistograms())
 
+	getStatsHealthy := func() int {
+		rows := tk.MustQuery("show stats_healthy where db_name = 'test' and table_name = 't'").Rows()
+		require.Len(t, rows, 1)
+		healthy, err := strconv.Atoi(rows[0][3].(string))
+		require.NoError(t, err)
+		return healthy
+	}
+
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 13)) // 34 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 30)
 	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
-
 	tk.MustExec("insert into t values (1)") // 35 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 25)
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
 	tk.MustExec("analyze table t")
@@ -534,11 +544,13 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	tk.MustExec("delete from t limit 24") // 11 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 31)
 	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
 	tk.MustExec("delete from t limit 1") // 10 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 28)
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 }
 

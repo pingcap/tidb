@@ -79,6 +79,9 @@ for i in $(seq "$TABLE_COUNT"); do
 done
 set -e
 
+# at the failure of last table, all data engines are imported so finished == total
+grep "print lightning status" "$TEST_DIR/lightning.log" | grep -q "equal=true"
+
 export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS"
 # After everything is done, there should be no longer new calls to ImportEngine
 # (and thus `kill_lightning_after_one_import` will spare this final check)

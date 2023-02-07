@@ -223,7 +223,7 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 	tk.MustExec("create table t (a int,b int, unique index idx(b))")
 	tk.MustExec("insert t values (1,1),(2,2)")
 	tk.MustExec("begin")
-	tk.MustGetErrMsg("update t set b=b+1", "[kv:1062]Duplicate entry '2' for key 'idx'")
+	tk.MustGetErrMsg("update t set b=b+1", "[kv:1062]Duplicate entry '2' for key 't.idx'")
 	// update with unchange index column.
 	tk.MustExec("update t set a=a+1")
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
@@ -340,7 +340,7 @@ func TestForUpdateUntouchedIndex(t *testing.T) {
 	tk.MustExec("begin")
 	_, err := tk.Exec("insert into t values (1, 1), (2, 2), (1, 3) on duplicate key update a = a + 1;")
 	require.NotNil(t, err)
-	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 'a'")
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 't.a'")
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
@@ -544,7 +544,7 @@ func TestIssue36903(t *testing.T) {
 	tk.MustExec("insert into t_vwvgdc values (2, 15000, 61.75);")
 	tk.MustExec("BEGIN OPTIMISTIC;")
 	tk.MustExec("insert into t_vwvgdc (wkey, pkey, c_rdsfbc) values (155, 228000, 99.50);")
-	tk.MustQuery("select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;")
+	tk.MustQuery("select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;").Sort().Check(testkit.Rows("15000", "228000"))
 }
 
 func BenchmarkUnionScanRead(b *testing.B) {

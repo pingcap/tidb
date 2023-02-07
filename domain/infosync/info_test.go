@@ -40,6 +40,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 	}
 	goleak.VerifyTestMain(m, opts...)
@@ -66,7 +67,7 @@ func TestTopology(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, false)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, false)
 	require.NoError(t, err)
 
 	err = info.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
@@ -151,7 +152,7 @@ func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 }
 
 func TestPutBundlesRetry(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, false)
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, false)
 	require.NoError(t, err)
 
 	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"})
@@ -215,7 +216,7 @@ func TestPutBundlesRetry(t *testing.T) {
 
 func TestTiFlashManager(t *testing.T) {
 	ctx := context.Background()
-	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, false)
+	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, false)
 	tiflash := NewMockTiFlash()
 	SetMockTiFlash(tiflash)
 

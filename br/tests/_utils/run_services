@@ -26,7 +26,6 @@ export TIDB_STATUS_ADDR="127.0.0.1:10080"
 export TIKV_ADDR="127.0.0.1:2016"
 export TIKV_STATUS_ADDR="127.0.0.1:2018"
 export TIKV_COUNT=3
-export TIFLASH_STATUS="127.0.0.1:17000"
 export TIFLASH_HTTP="127.0.0.1:8125"
 export TIKV_PIDS="${TEST_DIR:?}/tikv_pids.txt"
 

@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 drop table if exists dt;
 CREATE TABLE dt (
 id int(11) unsigned NOT NULL,
@@ -143,10 +144,10 @@ Projection	170.34	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd
     ├─TableReader(Build)	170.34	root		data:Selection
     │ └─Selection	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
     │   └─TableFullScan	1999.00	cop[tikv]	table:gad	keep order:false
-    └─IndexLookUp(Probe)	1.00	root		
-      ├─IndexRangeScan(Build)	3.93	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false
-      └─Selection(Probe)	1.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
-        └─TableRowIDScan	3.93	cop[tikv]	table:sdk	keep order:false
+    └─IndexLookUp(Probe)	170.34	root		
+      ├─IndexRangeScan(Build)	669.25	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false
+      └─Selection(Probe)	170.34	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
+        └─TableRowIDScan	669.25	cop[tikv]	table:sdk	keep order:false
 explain format = 'brief' SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	estRows	task	access object	operator info
 Projection	39.28	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21
@@ -163,10 +164,10 @@ Projection	428.32	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.d
     ├─TableReader(Build)	428.32	root		data:Selection
     │ └─Selection	428.32	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
     │   └─TableFullScan	2000.00	cop[tikv]	table:dt	keep order:false
-    └─IndexLookUp(Probe)	1.00	root		
-      ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false
-      └─Selection(Probe)	1.00	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
-        └─TableRowIDScan	1.00	cop[tikv]	table:rr	keep order:false
+    └─IndexLookUp(Probe)	428.32	root		
+      ├─IndexRangeScan(Build)	428.32	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false
+      └─Selection(Probe)	428.32	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
+        └─TableRowIDScan	428.32	cop[tikv]	table:rr	keep order:false
 explain format = 'brief' select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	estRows	task	access object	operator info
 Projection	207.02	root		test.pp.pc, test.pp.cr, Column#22, Column#23, Column#24

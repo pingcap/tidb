@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -332,6 +333,10 @@ func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 }
 
 func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
+	if variable.DDLEnableDistributeReorg.Load() {
+		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
+	}
+
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists test_db")
 	tk.MustExec("use test_db")
@@ -532,6 +537,34 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("alter table t5 modify a int not null;")
 
 	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
+}
+
+func TestIssue38699(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	//Test multi records
+	tk.MustExec("USE test")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (a int)")
+	tk.MustExec("insert into t values (1000000000), (2000000)")
+	tk.MustExec("alter table t modify a tinyint")
+	result := tk.MustQuery("show warnings")
+	require.Len(t, result.Rows(), 1)
+	result.CheckWithFunc(testkit.Rows("Warning 1690 2 warnings with this error code"), func(actual []string, expected []interface{}) bool {
+		//Check if it starts with x warning(s)
+		return strings.EqualFold(actual[0], expected[0].(string)) && strings.EqualFold(actual[1], expected[1].(string)) && strings.HasPrefix(actual[2], expected[2].(string))
+	})
+
+	//Test single record
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (a int)")
+	tk.MustExec("insert into t values (1000000000)")
+	tk.MustExec("alter table t modify a tinyint")
+	result = tk.MustQuery("show warnings")
+	require.Len(t, result.Rows(), 1)
+	result.Check(testkit.Rows("Warning 1690 constant 1000000000 overflows tinyint"))
 }
 
 func TestPartitionAddPanic(t *testing.T) {

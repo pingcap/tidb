@@ -196,7 +196,25 @@ func GetSSTMetaFromFile(
 	file *backuppb.File,
 	region *metapb.Region,
 	regionRule *import_sstpb.RewriteRule,
-) import_sstpb.SSTMeta {
+	rewriteMode RewriteMode,
+) (meta *import_sstpb.SSTMeta, err error) {
+	r := *region
+	// If the rewrite mode is for keyspace, then the region bound should be decoded.
+	if rewriteMode == RewriteModeKeyspace {
+		if len(region.GetStartKey()) > 0 {
+			_, r.StartKey, err = codec.DecodeBytes(region.GetStartKey(), nil)
+			if err != nil {
+				return
+			}
+		}
+		if len(region.GetEndKey()) > 0 {
+			_, r.EndKey, err = codec.DecodeBytes(region.GetEndKey(), nil)
+			if err != nil {
+				return
+			}
+		}
+	}
+
 	// Get the column family of the file by the file name.
 	var cfName string
 	if strings.Contains(file.GetName(), defaultCFName) {
@@ -208,8 +226,8 @@ func GetSSTMetaFromFile(
 	// Here we rewrites the keys to compare with the keys of the region.
 	rangeStart := regionRule.GetNewKeyPrefix()
 	//  rangeStart = max(rangeStart, region.StartKey)
-	if bytes.Compare(rangeStart, region.GetStartKey()) < 0 {
-		rangeStart = region.GetStartKey()
+	if bytes.Compare(rangeStart, r.GetStartKey()) < 0 {
+		rangeStart = r.GetStartKey()
 	}
 
 	// Append 10 * 0xff to make sure rangeEnd cover all file key
@@ -219,8 +237,8 @@ func GetSSTMetaFromFile(
 	suffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	rangeEnd := append(append([]byte{}, regionRule.GetNewKeyPrefix()...), suffix...)
 	// rangeEnd = min(rangeEnd, region.EndKey)
-	if len(region.GetEndKey()) > 0 && bytes.Compare(rangeEnd, region.GetEndKey()) > 0 {
-		rangeEnd = region.GetEndKey()
+	if len(r.GetEndKey()) > 0 && bytes.Compare(rangeEnd, r.GetEndKey()) > 0 {
+		rangeEnd = r.GetEndKey()
 	}
 
 	if bytes.Compare(rangeStart, rangeEnd) > 0 {
@@ -235,7 +253,7 @@ func GetSSTMetaFromFile(
 		logutil.Key("startKey", rangeStart),
 		logutil.Key("endKey", rangeEnd))
 
-	return import_sstpb.SSTMeta{
+	return &import_sstpb.SSTMeta{
 		Uuid:   id,
 		CfName: cfName,
 		Range: &import_sstpb.Range{
@@ -246,7 +264,7 @@ func GetSSTMetaFromFile(
 		RegionId:    region.GetId(),
 		RegionEpoch: region.GetRegionEpoch(),
 		CipherIv:    file.GetCipherIv(),
-	}
+	}, nil
 }
 
 // makeDBPool makes a session pool with specficated size by sessionFactory.
@@ -749,4 +767,44 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 		validPeers[v.RegionId] = struct{}{}
 	}
 	return validPeers, nil
+}
+
+// in cloud, since iops and bandwidth limitation, write operator in raft is slow, so raft state (logterm, lastlog, commitlog...) are the same among the peers
+// LeaderCandidates select all peers can be select as a leader during the restore
+func LeaderCandidates(peers []*RecoverRegion) ([]*RecoverRegion, error) {
+	if peers == nil {
+		return nil, errors.Annotatef(berrors.ErrRestoreRegionWithoutPeer,
+			"invalid region range")
+	}
+	candidates := make([]*RecoverRegion, 0, len(peers))
+	// by default, the peers[0] to be assign as a leader, since peers already sorted by leader selection rule
+	leader := peers[0]
+	candidates = append(candidates, leader)
+	for _, peer := range peers[1:] {
+		// qualificated candidate is leader.logterm = candidate.logterm && leader.lastindex = candidate.lastindex && && leader.commitindex = candidate.commitindex
+		if peer.LastLogTerm == leader.LastLogTerm && peer.LastIndex == leader.LastIndex && peer.CommitIndex == leader.CommitIndex {
+			log.Debug("leader candidate", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId), zap.Uint64("peer id", peer.PeerId))
+			candidates = append(candidates, peer)
+		}
+	}
+	return candidates, nil
+}
+
+// for region A, has candidate leader x, y, z
+// peer x on store 1 with storeBalanceScore 3
+// peer y on store 3 with storeBalanceScore 2
+// peer z on store 4 with storeBalanceScore 1
+// result: peer z will be select as leader on store 4
+func SelectRegionLeader(storeBalanceScore map[uint64]int, peers []*RecoverRegion) *RecoverRegion {
+	// by default, the peers[0] to be assign as a leader
+	leader := peers[0]
+	minLeaderStore := storeBalanceScore[leader.StoreId]
+	for _, peer := range peers[1:] {
+		log.Debug("leader candidate", zap.Int("score", storeBalanceScore[peer.StoreId]), zap.Int("min-score", minLeaderStore), zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId), zap.Uint64("peer id", peer.PeerId))
+		if storeBalanceScore[peer.StoreId] < minLeaderStore {
+			minLeaderStore = storeBalanceScore[peer.StoreId]
+			leader = peer
+		}
+	}
+	return leader
 }

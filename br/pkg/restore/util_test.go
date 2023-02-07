@@ -52,7 +52,8 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 		StartKey: []byte("t2abc"),
 		EndKey:   []byte("t3a"),
 	}
-	sstMeta := restore.GetSSTMetaFromFile([]byte{}, file, region, rule)
+	sstMeta, err := restore.GetSSTMetaFromFile([]byte{}, file, region, rule, restore.RewriteModeLegacy)
+	require.Nil(t, err)
 	require.Equal(t, "t2abc", string(sstMeta.GetRange().GetStart()))
 	require.Equal(t, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", string(sstMeta.GetRange().GetEnd()))
 }
@@ -459,4 +460,53 @@ func TestCheckConsistencyAndValidPeer(t *testing.T) {
 	_, err = restore.CheckConsistencyAndValidPeer(invalidRegionInfos)
 	require.Error(t, err)
 	require.Regexp(t, ".*invalid restore range.*", err.Error())
+}
+
+func TestLeaderCandidates(t *testing.T) {
+	//key space is continuous
+	validPeer1 := newPeerMeta(9, 11, 2, []byte(""), []byte("bb"), 2, 1, 0, 0, false)
+	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
+	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 0, 2, false)
+
+	peers := []*restore.RecoverRegion{
+		validPeer1,
+		validPeer2,
+		validPeer3,
+	}
+
+	candidates, err := restore.LeaderCandidates(peers)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(candidates))
+}
+
+func TestSelectRegionLeader(t *testing.T) {
+	validPeer1 := newPeerMeta(9, 11, 2, []byte(""), []byte("bb"), 2, 1, 0, 0, false)
+	validPeer2 := newPeerMeta(19, 22, 3, []byte("bb"), []byte("cc"), 2, 1, 0, 1, false)
+	validPeer3 := newPeerMeta(29, 30, 1, []byte("cc"), []byte(""), 2, 1, 0, 2, false)
+
+	peers := []*restore.RecoverRegion{
+		validPeer1,
+		validPeer2,
+		validPeer3,
+	}
+	// init store banlance score all is 0
+	storeBalanceScore := make(map[uint64]int, len(peers))
+	leader := restore.SelectRegionLeader(storeBalanceScore, peers)
+	require.Equal(t, validPeer1, leader)
+
+	// change store banlance store
+	storeBalanceScore[2] = 3
+	storeBalanceScore[3] = 2
+	storeBalanceScore[1] = 1
+	leader = restore.SelectRegionLeader(storeBalanceScore, peers)
+	require.Equal(t, validPeer3, leader)
+
+	// one peer
+	peer := []*restore.RecoverRegion{
+		validPeer3,
+	}
+	// init store banlance score all is 0
+	storeScore := make(map[uint64]int, len(peer))
+	leader = restore.SelectRegionLeader(storeScore, peer)
+	require.Equal(t, validPeer3, leader)
 }

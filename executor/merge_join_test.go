@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strconv"
 	"testing"
 
@@ -255,19 +256,28 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	tk.MustExec("set @@tidb_merge_join_concurrency=4;")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
-	tk.MustExec("insert into t values(1,1)")
-	tk.MustExec("insert into t1 values(1,3),(4,4)")
-
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3),(4,4)")
+	for i := 1; i <= 1024; i += 4 {
+		tk.MustExec(fmt.Sprintf("insert into t1 values(%v,%v),(%v,%v),(%v,%v),(%v,%v)", i, i, i+1, i+1, i+2, i+2, i+3, i+3))
+	}
 	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	result.Check(testkit.Rows("1 3 1 1"))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed(), int64(0))
+
+	var expect []string
+	expect = append(expect, "1 1 1 1")
+	for i := 21; i <= 1024; i++ {
+		expect = append(expect, fmt.Sprintf("%v %v <nil> <nil>", i, i))
+	}
+	sort.Strings(expect)
+	result.Sort().Check(testkit.Rows(expect...))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().MemTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().MemTracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().DiskTracker.BytesConsumed())
+	require.Greater(t, tk.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 }
 
 func TestMergeJoinInDisk(t *testing.T) {

@@ -22,7 +22,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/tracing"
 )
 
 // Type is used to distinguish between different tables that store data in different ways.
@@ -200,13 +200,12 @@ type Table interface {
 
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
 func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("table.AllocAutoIncrementValue", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "table.AllocAutoIncrementValue")
+	defer r.End()
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
-	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, uint64(1), int64(increment), int64(offset))
+	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
+	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -218,7 +217,8 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, uint64(N), increment, offset)
+	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
+	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err
 	}

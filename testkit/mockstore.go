@@ -24,9 +24,11 @@ import (
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/resourcemanager"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -56,6 +58,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 	t.Cleanup(func() {
 		view.Stop()
 	})
+	gctuner.GlobalMemoryLimitTuner.Stop()
 	store, _ := CreateMockStoreAndDomain(t, opts...)
 	return store
 }
@@ -67,12 +70,18 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	dom := bootstrap(t, store, 500*time.Millisecond)
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
+	t.Cleanup(func() {
+		view.Stop()
+		gctuner.GlobalMemoryLimitTuner.Stop()
+	})
 	return schematracker.UnwrapStorage(store), dom
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
 	session.SetSchemaLease(lease)
 	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
@@ -83,6 +92,7 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 		err := store.Close()
 		require.NoError(t, err)
 		view.Stop()
+		resourcemanager.InstanceResourceManager.Reset()
 	})
 	return dom
 }

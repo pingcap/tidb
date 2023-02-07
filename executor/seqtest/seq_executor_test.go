@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -496,11 +495,10 @@ func TestShow(t *testing.T) {
 	))
 
 	tk.MustExec(`drop table if exists t`)
-	_, err := tk.Exec(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
+	tk.MustExecToErr(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
  	PARTITION p0 VALUES LESS THAN (10),
  	PARTITION p1 VALUES LESS THAN (20),
  	PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
-	require.Error(t, err)
 
 	// Test range columns partition
 	tk.MustExec(`drop table if exists t`)
@@ -543,7 +541,7 @@ func TestShow(t *testing.T) {
 
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
+	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y) nonclustered);`)
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year(4) NOT NULL,\n"+
@@ -626,7 +624,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	require.NoError(t, err)
 	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
@@ -775,43 +773,45 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	tk.MustExec("create table t(id int, c int)")
 	// Start handle is 1.
 	r := tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test t _tidb_rowid 1 _TIDB_ROWID"))
 	// Row ID is step + 1.
 	tk.MustExec("insert into t values(1, 1)")
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test t _tidb_rowid 11 _TIDB_ROWID"))
 	// Row ID is original + step.
 	for i := 0; i < int(step); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test t _tidb_rowid 21 _TIDB_ROWID"))
 	tk.MustExec("drop table t")
 
 	// test for a table with the primary key
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test tt id 1 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test tt id 31 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
 	// test for renaming the table
 	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 41 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int auto_increment primary key nonclustered, b int);")
-	tk.MustQuery("show table t next_row_id;").Check(testkit.Rows("test1 t _tidb_rowid 1 AUTO_INCREMENT"))
+	tk.MustQuery("show table t next_row_id;").Check(testkit.Rows(
+		"test1 t _tidb_rowid 1 _TIDB_ROWID",
+		"test1 t _tidb_rowid 1 AUTO_INCREMENT"))
 
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
@@ -832,19 +832,19 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	// Test for a sequence.
 	tk.MustExec("create sequence seq1 start 15 cache 57")
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  15 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  15 SEQUENCE"))
 	r = tk.MustQuery("select nextval(seq1)")
 	r.Check(testkit.Rows("15"))
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  72 SEQUENCE"))
 	r = tk.MustQuery("select nextval(seq1)")
 	r.Check(testkit.Rows("16"))
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  72 SEQUENCE"))
 	r = tk.MustQuery("select setval(seq1, 96)")
 	r.Check(testkit.Rows("96"))
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  97 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  97 SEQUENCE"))
 }
 
 func TestNoHistoryWhenDisableRetry(t *testing.T) {
@@ -900,7 +900,7 @@ func TestPrepareMaxParamCountCheck(t *testing.T) {
 	require.NoError(t, err)
 
 	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
-	_, err = tk.Exec(bigSQL, bigParams...)
+	err = tk.ExecToErr(bigSQL, bigParams...)
 	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1390]Prepared statement contains too many placeholders")
 }
@@ -940,7 +940,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5700)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5900)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -987,16 +987,12 @@ func TestBatchInsertDelete(t *testing.T) {
 
 	// Test tidb_batch_insert could not work if enable-batch-dml is disabled.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("insert into batch_insert (c) select * from batch_insert;", errno.ErrTxnTooLarge)
 	tk.MustExec("set @@session.tidb_batch_insert=0;")
 
 	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
-		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	require.Error(t, err)
-	require.Truef(t, kv.ErrTxnTooLarge.Equal(err), "%v", err)
+	tk.MustGetErrCode(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`, errno.ErrTxnTooLarge)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
@@ -1022,17 +1018,14 @@ func TestBatchInsertDelete(t *testing.T) {
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 
 	// for on duplicate key
-	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
+	tk.MustExec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
-	require.NoError(t, err)
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
 	r.Check(testkit.Rows("320"))
 
 	// Disable BachInsert mode in transition.
 	tk.MustExec("begin;")
-	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("insert into batch_insert (c) select * from batch_insert;", errno.ErrTxnTooLarge)
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("640"))
@@ -1050,9 +1043,7 @@ func TestBatchInsertDelete(t *testing.T) {
 
 	// Test case for batch delete.
 	// This will meet txn too large error.
-	_, err = tk.Exec("delete from batch_insert;")
-	require.Error(t, err)
-	require.True(t, kv.ErrTxnTooLarge.Equal(err))
+	tk.MustGetErrCode("delete from batch_insert;", errno.ErrTxnTooLarge)
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("640"))
 	// Enable batch delete and set batch size to 50.
@@ -1458,8 +1449,7 @@ func TestMaxDeltaSchemaCount(t *testing.T) {
 	tk.RefreshSession()
 	tk.MustExec("use test")
 	require.Equal(t, int64(16384), variable.GetMaxDeltaSchemaCount())
-	_, err := tk.Exec("set @@global.tidb_max_delta_schema_count= invalid_val")
-	require.Truef(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), "err %v", err)
+	tk.MustGetErrCode("set @@global.tidb_max_delta_schema_count= invalid_val", errno.ErrWrongTypeForVar)
 
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= 2048")
 	tk.RefreshSession()

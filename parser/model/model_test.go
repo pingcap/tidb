@@ -442,6 +442,19 @@ func TestJobCodec(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isDependent)
 
+	// test ActionFlashbackCluster with other ddl jobs are dependent.
+	job15 := &Job{
+		ID:         16,
+		Type:       ActionFlashbackCluster,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{0, map[string]interface{}{}, "ON", true},
+	}
+	job15.RawArgs, err = json.Marshal(job15.Args)
+	require.NoError(t, err)
+	isDependent, err = job.IsDependentOn(job15)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
 	require.NoError(t, err)
@@ -771,4 +784,24 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, NewCIStr("c_4")))
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, NewCIStr("c_4"), NewCIStr("c_2")))
 	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, NewCIStr("c_2")))
+}
+
+func TestTTLInfoClone(t *testing.T) {
+	ttlInfo := &TTLInfo{
+		ColumnName:       NewCIStr("test"),
+		IntervalExprStr:  "test_expr",
+		IntervalTimeUnit: 5,
+		Enable:           true,
+	}
+
+	clonedTTLInfo := ttlInfo.Clone()
+	clonedTTLInfo.ColumnName = NewCIStr("test_2")
+	clonedTTLInfo.IntervalExprStr = "test_expr_2"
+	clonedTTLInfo.IntervalTimeUnit = 9
+	clonedTTLInfo.Enable = false
+
+	require.Equal(t, "test", ttlInfo.ColumnName.O)
+	require.Equal(t, "test_expr", ttlInfo.IntervalExprStr)
+	require.Equal(t, 5, ttlInfo.IntervalTimeUnit)
+	require.Equal(t, true, ttlInfo.Enable)
 }

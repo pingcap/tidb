@@ -173,15 +173,11 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	var buffer strings.Builder
-	if len(p.rangeDecidedBy) > 0 {
-		buffer.WriteString("range: decided by [")
-		for i, rangeDecidedBy := range p.rangeDecidedBy {
-			if i != 0 {
-				buffer.WriteString(" ")
-			}
-			buffer.WriteString(rangeDecidedBy.String())
-		}
-		buffer.WriteString("], ")
+	if len(p.rangeInfo) > 0 {
+		// TODO: deal with normalized case
+		buffer.WriteString("range: decided by ")
+		buffer.WriteString(p.rangeInfo)
+		buffer.WriteString(", ")
 	} else if p.haveCorCol() {
 		if normalized {
 			buffer.WriteString("range: decided by ")
@@ -232,7 +228,7 @@ func (p *PhysicalTableScan) haveCorCol() bool {
 }
 
 func (p *PhysicalTableScan) isFullScan() bool {
-	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
+	if len(p.rangeInfo) > 0 || p.haveCorCol() {
 		return false
 	}
 	var unsignedIntHandle bool
@@ -251,7 +247,13 @@ func (p *PhysicalTableScan) isFullScan() bool {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainInfo() string {
-	return "data:" + p.tablePlan.ExplainID().String()
+	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
+
+	if p.ReadReqType == MPP {
+		return fmt.Sprintf("MppVersion: %d, %s", p.ctx.GetSessionVars().ChooseMppVersion(), tablePlanInfo)
+	}
+
+	return tablePlanInfo
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -289,8 +291,11 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (*PhysicalIndexMergeReader) ExplainInfo() string {
-	return ""
+func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+	if p.IsIntersectionType {
+		return "type: intersection"
+	}
+	return "type: union"
 }
 
 // ExplainInfo implements Plan interface.
@@ -385,6 +390,9 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 		if i+1 < len(p.AggFuncs) {
 			builder.WriteString(", ")
 		}
+	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		builder.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
 	}
 	return builder.String()
 }
@@ -543,6 +551,9 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	if len(p.OtherConditions) > 0 {
 		buffer.WriteString(", other cond:")
 		buffer.Write(sortedExplainExpressionList(p.OtherConditions))
+	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
 	}
 	return buffer.String()
 }
@@ -800,6 +811,11 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "Broadcast")
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
+	}
+	if p.CompressionMode != kv.ExchangeCompressionModeNONE {
+		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
+	}
+	if p.ExchangeType == tipb.ExchangeType_Hash {
 		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.HashCols))
 	}
 	if len(p.Tasks) > 0 {

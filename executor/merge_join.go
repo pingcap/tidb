@@ -77,7 +77,7 @@ type mergeJoinTable struct {
 
 func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 	child := exec.children[t.childIndex]
-	t.childChunk = newFirstChunk(child)
+	t.childChunk = tryNewCacheChunk(child)
 	t.childChunkIter = chunk.NewIterator4Chunk(t.childChunk)
 
 	items := make([]expression.Expression, 0, len(t.joinKeys))
@@ -100,7 +100,7 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 					actionSpill = t.rowContainer.ActionSpillForTest()
 				}
 			})
-			exec.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+			exec.ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 		}
 		t.memTracker = memory.NewTracker(memory.LabelForInnerTable, -1)
 	} else {

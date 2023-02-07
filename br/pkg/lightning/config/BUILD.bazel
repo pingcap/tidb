@@ -24,8 +24,9 @@ go_library(
         "@com_github_carlmjohnson_flagext//:flagext",
         "@com_github_docker_go_units//:go-units",
         "@com_github_go_sql_driver_mysql//:mysql",
-        "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//keepalive",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
@@ -43,7 +44,6 @@ go_test(
     deps = [
         ":config",
         "//br/pkg/lightning/common",
-        "//parser/mysql",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_stretchr_testify//require",
     ],

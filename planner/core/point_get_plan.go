@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -43,6 +45,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -86,8 +89,31 @@ type PointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
+	planCostVer2 costVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
+
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []PhysicalPlan
+}
+
+func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
+	if p == nil {
+		return 0
+	}
+	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+}
+
+func (p *PointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+	if p == nil {
+		return 1
+	}
+	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
+}
+
+func (p *PointGetPlan) setProbeParents(probeParents []PhysicalPlan) {
+	p.probeParents = probeParents
 }
 
 type nameValuePair struct {
@@ -312,8 +338,30 @@ type BatchPointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
+	planCostVer2 costVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
+
+	// probeParents records the IndexJoins and Applys with this operator in their inner children.
+	// Please see comments in PhysicalPlan for details.
+	probeParents []PhysicalPlan
+}
+
+func (p *BatchPointGetPlan) getEstRowCountForDisplay() float64 {
+	if p == nil {
+		return 0
+	}
+	return p.statsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
+}
+
+func (p *BatchPointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+	if p == nil {
+		return 1
+	}
+	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
+}
+func (p *BatchPointGetPlan) setProbeParents(probeParents []PhysicalPlan) {
+	p.probeParents = probeParents
 }
 
 // Cost implements PhysicalPlan interface
@@ -561,7 +609,7 @@ func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock
 			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 			// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 			sessVars := ctx.GetSessionVars()
-			if !sessVars.IsAutocommit() || sessVars.InTxn() {
+			if !sessVars.IsAutocommit() || sessVars.InTxn() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 				lock = true
 				waitTime = sessVars.LockWaitTimeout
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
@@ -683,7 +731,7 @@ func newBatchPointGetPlan(
 		}
 	}
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible ||
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, indexHints) {
 			continue
 		}
@@ -1051,7 +1099,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	var err error
 
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible ||
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, tblName.IndexHints) {
 			continue
 		}
@@ -1307,7 +1355,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				con, err = expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx, x, false)
 				if err != nil {
 					return nil, false
 				}
@@ -1321,7 +1369,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
-				con, err = expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx, x, false)
 				if err != nil {
 					return nil, false
 				}
@@ -1546,7 +1594,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
 	}
-	err := updatePlan.buildOnUpdateFKChecks(ctx, is, updatePlan.tblID2Table)
+	err := updatePlan.buildOnUpdateFKTriggers(ctx, is, updatePlan.tblID2Table)
 	if err != nil {
 		return nil
 	}
@@ -1637,6 +1685,16 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			},
 		},
 	}.Init(ctx)
+	var err error
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
+	t, _ := is.TableByID(tbl.ID)
+	if t != nil {
+		tblID2Table := map[int64]table.Table{tbl.ID: t}
+		err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
+		if err != nil {
+			return nil
+		}
+	}
 	return delPlan
 }
 

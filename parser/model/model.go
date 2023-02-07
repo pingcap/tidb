@@ -164,6 +164,9 @@ type ColumnInfo struct {
 
 // Clone clones ColumnInfo.
 func (c *ColumnInfo) Clone() *ColumnInfo {
+	if c == nil {
+		return nil
+	}
 	nc := *c
 	return &nc
 }
@@ -333,6 +336,9 @@ func (c *ColumnInfo) GetTypeDesc() string {
 	return desc
 }
 
+// EmptyColumnInfoSize is the memory usage of ColumnInfoSize
+const EmptyColumnInfoSize = int64(unsafe.Sizeof(ColumnInfo{}))
+
 // FindColumnInfo finds ColumnInfo in cols by name.
 func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 	name = strings.ToLower(name)
@@ -375,8 +381,8 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
-func FindIndexByColumns(tbInfo *TableInfo, cols ...CIStr) *IndexInfo {
-	for _, index := range tbInfo.Indices {
+func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...CIStr) *IndexInfo {
+	for _, index := range indices {
 		if IsIndexPrefixCovered(tbInfo, index, cols...) {
 			return index
 		}
@@ -440,14 +446,16 @@ const (
 	// However, the convert is missed in some scenarios before v2.1.9, so for all those tables prior to TableInfoVersion3, their
 	// charsets / collations will be converted to lower-case while loading from the storage.
 	TableInfoVersion3 = uint16(3)
-	// TableInfoVersion4 indicates that the auto_increment allocator in TiDB has been separated from
-	// _tidb_rowid allocator. This version is introduced to preserve the compatibility of old tables:
-	// the tables with version < TableInfoVersion4 still use a single allocator for auto_increment and _tidb_rowid.
-	// Also see https://github.com/pingcap/tidb/issues/982.
+	// TableInfoVersion4 is not used.
 	TableInfoVersion4 = uint16(4)
+	// TableInfoVersion5 indicates that the auto_increment allocator in TiDB has been separated from
+	// _tidb_rowid allocator when AUTO_ID_CACHE is 1. This version is introduced to preserve the compatibility of old tables:
+	// the tables with version <= TableInfoVersion4 still use a single allocator for auto_increment and _tidb_rowid.
+	// Also see https://github.com/pingcap/tidb/issues/982.
+	TableInfoVersion5 = uint16(5)
 
 	// CurrLatestTableInfoVersion means the latest table info in the current TiDB.
-	CurrLatestTableInfoVersion = TableInfoVersion4
+	CurrLatestTableInfoVersion = TableInfoVersion5
 )
 
 // ExtraHandleName is the name of ExtraHandle Column.
@@ -542,6 +550,13 @@ type TableInfo struct {
 	StatsOptions *StatsOptions `json:"stats_options"`
 
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
+
+	TTLInfo *TTLInfo `json:"ttl_info"`
+}
+
+// SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
+func (t *TableInfo) SepAutoInc() bool {
+	return t.Version >= TableInfoVersion5 && t.AutoIdCache == 1
 }
 
 // TableCacheStatusType is the type of the table cache status
@@ -740,6 +755,10 @@ func (t *TableInfo) Clone() *TableInfo {
 
 	for i := range t.ForeignKeys {
 		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+	}
+
+	if t.TTLInfo != nil {
+		nt.TTLInfo = t.TTLInfo.Clone()
 	}
 
 	return &nt
@@ -1400,10 +1419,14 @@ type IndexInfo struct {
 	Primary       bool           `json:"is_primary"`   // Whether the index is primary key.
 	Invisible     bool           `json:"is_invisible"` // Whether the index is invisible.
 	Global        bool           `json:"is_global"`    // Whether the index is global.
+	MVIndex       bool           `json:"mv_index"`     // Whether the index is multivalued index.
 }
 
 // Clone clones IndexInfo.
 func (index *IndexInfo) Clone() *IndexInfo {
+	if index == nil {
+		return nil
+	}
 	ni := *index
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {
@@ -1730,6 +1753,23 @@ func (p *PolicyInfo) Clone() *PolicyInfo {
 	return &cloned
 }
 
+// TTLInfo records the TTL config
+type TTLInfo struct {
+	ColumnName      CIStr  `json:"column"`
+	IntervalExprStr string `json:"interval_expr"`
+	// `IntervalTimeUnit` is actually ast.TimeUnitType. Use `int` to avoid cycle dependency
+	IntervalTimeUnit int  `json:"interval_time_unit"`
+	Enable           bool `json:"enable"`
+	// JobInterval is the interval between two TTL scan jobs.
+	JobInterval string `json:"job_interval"`
+}
+
+// Clone clones TTLInfo
+func (t *TTLInfo) Clone() *TTLInfo {
+	cloned := *t
+	return &cloned
+}
+
 func writeSettingItemToBuilder(sb *strings.Builder, item string) {
 	if sb.Len() != 0 {
 		sb.WriteString(" ")
@@ -1795,6 +1835,63 @@ func (p *PlacementSettings) String() string {
 // Clone clones the placement settings.
 func (p *PlacementSettings) Clone() *PlacementSettings {
 	cloned := *p
+	return &cloned
+}
+
+// ResourceGroupRefInfo is the struct to refer the resource group.
+type ResourceGroupRefInfo struct {
+	ID   int64 `json:"id"`
+	Name CIStr `json:"name"`
+}
+
+// ResourceGroupSettings is the settings of the resource group
+type ResourceGroupSettings struct {
+	RURate           uint64 `json:"ru_per_sec"`
+	CPULimiter       string `json:"cpu_limit"`
+	IOReadBandwidth  string `json:"io_read_bandwidth"`
+	IOWriteBandwidth string `json:"io_write_bandwidth"`
+	BurstLimit       int64  `json:"burst_limit"`
+}
+
+func (p *ResourceGroupSettings) String() string {
+	sb := new(strings.Builder)
+	if p.RURate != 0 {
+		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate)
+	}
+	if len(p.CPULimiter) > 0 {
+		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter)
+	}
+	if len(p.IOReadBandwidth) > 0 {
+		writeSettingStringToBuilder(sb, "IO_READ_BANDWIDTH", p.IOReadBandwidth)
+	}
+	if len(p.IOWriteBandwidth) > 0 {
+		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth)
+	}
+	// Once burst limit is negative, meaning allow burst with unlimit.
+	if p.BurstLimit < 0 {
+		writeSettingItemToBuilder(sb, "BURSTABLE")
+	}
+	return sb.String()
+}
+
+// Clone clones the resource group settings.
+func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
+	cloned := *p
+	return &cloned
+}
+
+// ResourceGroupInfo is the struct to store the resource group.
+type ResourceGroupInfo struct {
+	*ResourceGroupSettings
+	ID    int64       `json:"id"`
+	Name  CIStr       `json:"name"`
+	State SchemaState `json:"state"`
+}
+
+// Clone clones the ResourceGroupInfo.
+func (p *ResourceGroupInfo) Clone() *ResourceGroupInfo {
+	cloned := *p
+	cloned.ResourceGroupSettings = p.ResourceGroupSettings.Clone()
 	return &cloned
 }
 

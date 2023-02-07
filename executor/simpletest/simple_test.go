@@ -712,6 +712,29 @@ func TestUser(t *testing.T) {
 	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost' ;`
 	tk.MustExec(dropUserSQL)
 
+	// Test create/alter user with `tidb_auth_token`
+	tk.MustExec(`CREATE USER token_user IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`SELECT plugin, token_issuer FROM mysql.user WHERE user = 'token_user'`).Check(testkit.Rows("tidb_auth_token issuer-abc"))
+	tk.MustExec(`ALTER USER token_user REQUIRE token_issuer 'issuer-123'`)
+	tk.MustQuery(`SELECT plugin, token_issuer FROM mysql.user WHERE user = 'token_user'`).Check(testkit.Rows("tidb_auth_token issuer-123"))
+	tk.MustExec(`ALTER USER token_user IDENTIFIED WITH 'tidb_auth_token'`)
+	tk.MustExec(`CREATE USER token_user1 IDENTIFIED WITH 'tidb_auth_token'`)
+	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it"))
+	tk.MustExec(`CREATE USER temp_user IDENTIFIED WITH 'mysql_native_password' BY '1234' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|TOKEN_ISSUER is not needed for 'mysql_native_password' user"))
+	tk.MustExec(`ALTER USER temp_user IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`ALTER USER temp_user IDENTIFIED WITH 'mysql_native_password' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|TOKEN_ISSUER is not needed for the auth plugin"))
+	tk.MustExec(`ALTER USER temp_user IDENTIFIED WITH 'tidb_auth_token'`)
+	tk.MustQuery(`show warnings`).Check(testkit.RowsWithSep("|", "Warning|1105|Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER"))
+	tk.MustExec(`ALTER USER token_user REQUIRE SSL`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`ALTER USER token_user IDENTIFIED WITH 'mysql_native_password' BY '1234'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`ALTER USER token_user IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+
 	// Test alter user.
 	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123', 'test4'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
@@ -724,7 +747,7 @@ func TestUser(t *testing.T) {
 	alterUserSQL = `ALTER USER 'test1'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '111';`
 	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
-	result.Check(testkit.Rows(auth.EncodePassword("222")))
+	result.Check(testkit.Rows(auth.EncodePassword("111")))
 	alterUserSQL = `ALTER USER 'test4'@'localhost' IDENTIFIED WITH 'auth_socket';`
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT plugin FROM mysql.User WHERE User="test4" and Host="localhost"`)
@@ -977,6 +1000,7 @@ partition by range (a) (
 	checkPartitionStats("global", "p0", "p1", "global")
 
 	tk.MustExec("drop stats test_drop_gstats partition p0")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1681|'DROP STATS ... PARTITION ...' is deprecated and will be removed in a future release."))
 	checkPartitionStats("global", "p1", "global")
 
 	err := tk.ExecToErr("drop stats test_drop_gstats partition abcde")
@@ -987,6 +1011,7 @@ partition by range (a) (
 	checkPartitionStats("global", "p1")
 
 	tk.MustExec("drop stats test_drop_gstats global")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1287|'DROP STATS ... GLOBAL' is deprecated and will be removed in a future release. Please use DROP STATS ... instead"))
 	checkPartitionStats("p1")
 
 	tk.MustExec("analyze table test_drop_gstats")
@@ -1031,5 +1056,52 @@ func TestDropStats(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo)
+	h.SetLease(0)
+}
+
+func TestDropStatsForMultipleTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t1 (c1 int, c2 int)")
+	testKit.MustExec("create table t2 (c1 int, c2 int)")
+
+	is := dom.InfoSchema()
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tableInfo1 := tbl1.Meta()
+
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tableInfo2 := tbl2.Meta()
+
+	h := dom.StatsHandle()
+	h.Clear()
+	testKit.MustExec("analyze table t1, t2")
+	statsTbl1 := h.GetTableStats(tableInfo1)
+	require.False(t, statsTbl1.Pseudo)
+	statsTbl2 := h.GetTableStats(tableInfo2)
+	require.False(t, statsTbl2.Pseudo)
+
+	testKit.MustExec("drop stats t1, t2")
+	require.Nil(t, h.Update(is))
+	statsTbl1 = h.GetTableStats(tableInfo1)
+	require.True(t, statsTbl1.Pseudo)
+	statsTbl2 = h.GetTableStats(tableInfo2)
+	require.True(t, statsTbl2.Pseudo)
+
+	testKit.MustExec("analyze table t1, t2")
+	statsTbl1 = h.GetTableStats(tableInfo1)
+	require.False(t, statsTbl1.Pseudo)
+	statsTbl2 = h.GetTableStats(tableInfo2)
+	require.False(t, statsTbl2.Pseudo)
+
+	h.SetLease(1)
+	testKit.MustExec("drop stats t1, t2")
+	require.Nil(t, h.Update(is))
+	statsTbl1 = h.GetTableStats(tableInfo1)
+	require.True(t, statsTbl1.Pseudo)
+	statsTbl2 = h.GetTableStats(tableInfo2)
+	require.True(t, statsTbl2.Pseudo)
 	h.SetLease(0)
 }

@@ -21,8 +21,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/stretchr/testify/require"
@@ -260,4 +263,50 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	ts, err := getGlobalCheckpointFromStorage(ctx, s)
 	require.Nil(t, err)
 	require.Equal(t, ts, uint64(99))
+}
+
+func TestGetLogRangeWithFullBackupDir(t *testing.T) {
+	var fullBackupTS uint64 = 123456
+	testDir := t.TempDir()
+	storage, err := storage.NewLocalStorage(testDir)
+	require.Nil(t, err)
+
+	m := backuppb.BackupMeta{
+		EndVersion: fullBackupTS,
+	}
+	data, err := proto.Marshal(&m)
+	require.Nil(t, err)
+
+	err = storage.WriteFile(context.TODO(), metautil.MetaFile, data)
+	require.Nil(t, err)
+
+	cfg := Config{
+		Storage: testDir,
+	}
+	_, err = getLogRange(context.TODO(), &cfg)
+	require.Error(t, err, errors.Annotate(berrors.ErrStorageUnknown,
+		"the storage has been used for full backup"))
+}
+
+func TestGetLogRangeWithLogBackupDir(t *testing.T) {
+	var startLogBackupTS uint64 = 123456
+	testDir := t.TempDir()
+	storage, err := storage.NewLocalStorage(testDir)
+	require.Nil(t, err)
+
+	m := backuppb.BackupMeta{
+		StartVersion: startLogBackupTS,
+	}
+	data, err := proto.Marshal(&m)
+	require.Nil(t, err)
+
+	err = storage.WriteFile(context.TODO(), metautil.MetaFile, data)
+	require.Nil(t, err)
+
+	cfg := Config{
+		Storage: testDir,
+	}
+	logInfo, err := getLogRange(context.TODO(), &cfg)
+	require.Nil(t, err)
+	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
 }

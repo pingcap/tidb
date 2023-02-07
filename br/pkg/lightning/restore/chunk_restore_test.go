@@ -15,9 +15,13 @@
 package restore
 
 import (
+	"compress/gzip"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -36,7 +40,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	tmock "github.com/pingcap/tidb/util/mock"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -266,6 +277,65 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 	require.Equal(s.T(), int64(19), kvs[0].rowID)
 	require.Equal(s.T(), int64(36), kvs[0].offset)
 	require.Equal(s.T(), []string(nil), kvs[0].columns)
+
+	kvs = <-kvsCh
+	require.Equal(s.T(), 1, len(kvs))
+	require.Nil(s.T(), kvs[0].kvs)
+	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
+}
+
+func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
+	ctx := context.Background()
+	kvsCh := make(chan []deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+
+	p := parser.New()
+	se := tmock.NewContext()
+
+	lastTi := s.tr.tableInfo
+	defer func() {
+		s.tr.tableInfo = lastTi
+	}()
+
+	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL, `c_table` varchar(5), `c_schema` varchar(5), `c_source` varchar(5))", "utf8mb4", "utf8mb4_bin")
+	require.NoError(s.T(), err)
+	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(1))
+	require.NoError(s.T(), err)
+	tableInfo.State = model.StatePublic
+
+	schema := "test_1"
+	tb := "t1"
+	ti := &checkpoints.TidbTableInfo{
+		ID:   tableInfo.ID,
+		DB:   schema,
+		Name: tb,
+		Core: tableInfo,
+	}
+	s.tr.tableInfo = ti
+	s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{
+		Columns: []string{"c_table", "c_schema", "c_source"},
+		Values:  []string{"1", "1", "01"},
+	}
+	defer func() {
+		s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{}
+	}()
+
+	kvEncoder, err := kv.NewTableKVEncoder(s.tr.encTable, &kv.SessionOptions{
+		SQLMode:   s.cfg.TiDB.SQLMode,
+		Timestamp: 1234567895,
+	}, nil, log.L())
+	require.NoError(s.T(), err)
+	cfg := config.NewConfig()
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), kvsCh, 2)
+
+	kvs := <-kvsCh
+	require.Len(s.T(), kvs, 1)
+	require.Equal(s.T(), int64(19), kvs[0].rowID)
+	require.Equal(s.T(), int64(36), kvs[0].offset)
+	require.Equal(s.T(), []string{"c1", "c_table", "c_schema", "c_source"}, kvs[0].columns)
 
 	kvs = <-kvsCh
 	require.Equal(s.T(), 1, len(kvs))
@@ -589,4 +659,124 @@ func (s *chunkRestoreSuite) TestRestore() {
 	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)
+}
+
+func TestCompressChunkRestore(t *testing.T) {
+	// Produce a mock table info
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+	node, err := p.ParseOneStmt(`
+	CREATE TABLE "table" (
+		a INT,
+		b INT,
+		c INT,
+		KEY (b)
+	)
+`, "", "")
+	require.NoError(t, err)
+	core, err := ddl.BuildTableInfoFromAST(node.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+	core.State = model.StatePublic
+
+	// Write some sample CSV dump
+	fakeDataDir := t.TempDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	require.NoError(t, err)
+
+	fakeDataFiles := make([]mydump.FileInfo, 0)
+
+	csvName := "db.table.1.csv.gz"
+	file, err := os.Create(filepath.Join(fakeDataDir, csvName))
+	require.NoError(t, err)
+	gzWriter := gzip.NewWriter(file)
+
+	var totalBytes int64
+	for i := 0; i < 300; i += 3 {
+		n, err := gzWriter.Write([]byte(fmt.Sprintf("%d,%d,%d\r\n", i, i+1, i+2)))
+		require.NoError(t, err)
+		totalBytes += int64(n)
+	}
+
+	err = gzWriter.Close()
+	require.NoError(t, err)
+	err = file.Close()
+	require.NoError(t, err)
+
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
+		TableName: filter.Table{Schema: "db", Name: "table"},
+		FileMeta: mydump.SourceFileMeta{
+			Path:        csvName,
+			Type:        mydump.SourceTypeCSV,
+			Compression: mydump.CompressionGZ,
+			SortKey:     "99",
+			FileSize:    totalBytes,
+		},
+	})
+
+	chunk := checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: 0},
+		FileMeta: fakeDataFiles[0].FileMeta,
+		Chunk: mydump.Chunk{
+			Offset:       0,
+			EndOffset:    totalBytes,
+			PrevRowIDMax: 0,
+			RowIDMax:     100,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := worker.NewPool(ctx, 5, "io")
+	cfg := config.NewConfig()
+	cfg.Mydumper.BatchSize = 111
+	cfg.App.TableConcurrency = 2
+	cfg.Mydumper.CSV.Header = false
+
+	cr, err := newChunkRestore(ctx, 1, cfg, &chunk, w, store, nil)
+	require.NoError(t, err)
+	var (
+		id, lastID int
+		offset     int64 = 0
+		rowID      int64 = 0
+	)
+	for id < 100 {
+		offset, rowID = cr.parser.Pos()
+		err = cr.parser.ReadRow()
+		require.NoError(t, err)
+		rowData := cr.parser.LastRow().Row
+		require.Len(t, rowData, 3)
+		lastID = id
+		for i := 0; id < 100 && i < 3; i++ {
+			require.Equal(t, strconv.Itoa(id), rowData[i].GetString())
+			id++
+		}
+	}
+	require.Equal(t, int64(33), rowID)
+
+	// test read starting from compress files' middle
+	chunk = checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: offset},
+		FileMeta: fakeDataFiles[0].FileMeta,
+		Chunk: mydump.Chunk{
+			Offset:       offset,
+			EndOffset:    totalBytes,
+			PrevRowIDMax: rowID,
+			RowIDMax:     100,
+		},
+	}
+	cr, err = newChunkRestore(ctx, 1, cfg, &chunk, w, store, nil)
+	require.NoError(t, err)
+	for id = lastID; id < 300; {
+		err = cr.parser.ReadRow()
+		require.NoError(t, err)
+		rowData := cr.parser.LastRow().Row
+		require.Len(t, rowData, 3)
+		for i := 0; id < 300 && i < 3; i++ {
+			require.Equal(t, strconv.Itoa(id), rowData[i].GetString())
+			id++
+		}
+	}
+	_, rowID = cr.parser.Pos()
+	require.Equal(t, int64(100), rowID)
+	err = cr.parser.ReadRow()
+	require.Equal(t, io.EOF, errors.Cause(err))
 }

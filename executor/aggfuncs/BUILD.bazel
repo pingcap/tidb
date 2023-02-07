@@ -88,6 +88,8 @@ go_test(
     ],
     embed = [":aggfuncs"],
     flaky = True,
+    race = "on",
+    shard_count = 20,
     deps = [
         "//expression",
         "//expression/aggregation",

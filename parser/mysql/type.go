@@ -43,7 +43,7 @@ const (
 	TypeLongBlob   byte = 0xfb
 	TypeBlob       byte = 0xfc
 	TypeVarString  byte = 0xfd
-	TypeString     byte = 0xfe
+	TypeString     byte = 0xfe /* TypeString is char type */
 	TypeGeometry   byte = 0xff
 )
 

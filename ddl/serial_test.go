@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -112,6 +113,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("use ctwl_db")
 	tk.MustExec("create table tt(id int primary key)")
 	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, constraint cc foreign key (c2) references tt(id), primary key(c1)) auto_increment = 10")
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("insert into t set c2=1")
 	tk.MustExec("create table t1 like ctwl_db.t")
 	tk.MustExec("insert into t1 set c2=11")
@@ -297,7 +299,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 
 	// Test foreign key.
 	tk.MustExec("drop table if exists test_foreign_key, t1")
-	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t1 (a int, b int, index(b))")
 	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b))")
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
@@ -382,7 +384,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists partition_table, tmp_partition_table")
 
 	tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp")
-	tk.MustExec("create table foreign_key_table1 (a int, b int)")
+	tk.MustExec("create table foreign_key_table1 (a int, b int, index(b))")
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
@@ -444,7 +446,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
@@ -459,6 +461,70 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	require.Error(t, err)
 	errMsg := err.Error()
 	require.Truef(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"), "%v", errMsg)
+}
+
+func TestRecoverTableWithTTL(t *testing.T) {
+	store, _ := createMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	defer func(originGC bool) {
+		if originGC {
+			util.EmulatorGCEnable()
+		} else {
+			util.EmulatorGCDisable()
+		}
+	}(util.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	util.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, time.Now().Add(-time.Hour).Format(gcTimeFormat)))
+	getDDLJobID := func(table, tp string) int64 {
+		rs, err := tk.Exec("admin show ddl jobs")
+		require.NoError(t, err)
+		rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		for _, row := range rows {
+			if row.GetString(2) == table && row.GetString(3) == tp {
+				return row.GetInt64(0)
+			}
+		}
+		require.FailNowf(t, "can't find %s table of %s", tp, table)
+		return -1
+	}
+
+	// recover table
+	tk.MustExec("create table t_recover1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop table t_recover1")
+	tk.MustExec("recover table t_recover1")
+	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	// recover table with job id
+	tk.MustExec("create table t_recover2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop table t_recover2")
+	jobID := getDDLJobID("t_recover2", "drop table")
+	tk.MustExec(fmt.Sprintf("recover table BY JOB %d", jobID))
+	tk.MustQuery("show create table t_recover2").Check(testkit.Rows("t_recover2 CREATE TABLE `t_recover2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	// flashback table
+	tk.MustExec("create table t_recover3 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop table t_recover3")
+	tk.MustExec("flashback table t_recover3")
+	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+
+	// flashback database
+	tk.MustExec("create database if not exists test_recover2")
+	tk.MustExec("create table test_recover2.t1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("create table test_recover2.t2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
+	tk.MustExec("drop database test_recover2")
+	tk.MustExec("flashback database test_recover2")
+	tk.MustQuery("show create table test_recover2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table test_recover2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
@@ -619,7 +685,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
@@ -678,7 +744,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
@@ -751,7 +817,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_cjtt(a int)")
 
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	once := sync.Once{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		once.Do(func() {
@@ -824,8 +890,11 @@ func TestAutoRandom(t *testing.T) {
 		require.EqualError(t, err, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
 	}
 
-	assertPKIsNotHandle := func(sql, errCol string) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomPKisNotHandleErrMsg, errCol)
+	assertNotFirstColPK := func(sql, errCol string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomMustFirstColumnInPK, errCol)
+	}
+	assertNoClusteredPK := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomNoClusteredPKErrMsg)
 	}
 	assertAlterValue := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
@@ -868,36 +937,36 @@ func TestAutoRandom(t *testing.T) {
 		tk.MustExec("drop table t")
 	}
 
-	// Only bigint column can set auto_random
+	// Only bigint column can set auto_random.
 	assertBigIntOnly("create table t (a char primary key auto_random(3), b int)", "char")
 	assertBigIntOnly("create table t (a varchar(255) primary key auto_random(3), b int)", "varchar")
 	assertBigIntOnly("create table t (a timestamp primary key auto_random(3), b int)", "timestamp")
+	assertBigIntOnly("create table t (a timestamp auto_random(3), b int, primary key (a, b) clustered)", "timestamp")
 
-	// PKIsHandle, but auto_random is defined on non-primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random (3) primary key, b bigint auto_random (3))", "b")
-	assertPKIsNotHandle("create table t (a bigint auto_random (3), b bigint auto_random(3), primary key(a))", "b")
-	assertPKIsNotHandle("create table t (a bigint auto_random (3), b bigint auto_random(3) primary key)", "a")
+	// Clustered, but auto_random is defined on non-primary key.
+	assertNotFirstColPK("create table t (a bigint auto_random (3) primary key, b bigint auto_random (3))", "b")
+	assertNotFirstColPK("create table t (a bigint auto_random (3), b bigint auto_random(3), primary key(a))", "b")
+	assertNotFirstColPK("create table t (a bigint auto_random (3), b bigint auto_random(3) primary key)", "a")
+	assertNotFirstColPK("create table t (a bigint auto_random, b bigint, primary key (b, a) clustered);", "a")
 
-	// PKIsNotHandle: no primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int)", "a")
-	// PKIsNotHandle: primary key is not a single column.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b bigint, primary key (a, b))", "a")
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
+	// No primary key.
+	assertNoClusteredPK("create table t (a bigint auto_random(3), b int)")
 
-	// PKIsNotHandle: nonclustered integer primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key nonclustered, b int)", "a")
-	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key nonclustered, b int)", "a")
-	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key nonclustered)", "b")
+	// No clustered primary key.
+	assertNoClusteredPK("create table t (a bigint auto_random(3) primary key nonclustered, b int)")
+	assertNoClusteredPK("create table t (a int, b bigint auto_random(3) primary key nonclustered)")
 
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
 	assertWithAutoInc("create table t (a bigint primary key auto_increment auto_random(3))")
 	assertWithAutoInc("create table t (a bigint auto_increment primary key auto_random(3))")
 	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, primary key (a))")
+	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, b int, primary key (a, b) clustered)")
 
 	// Can not set auto_random along with default.
 	assertDefault("create table t (a bigint auto_random primary key default 3)")
 	assertDefault("create table t (a bigint auto_random(2) primary key default 5)")
+	assertDefault("create table t (a bigint auto_random(2) default 5, b int, primary key (a, b) clustered)")
 	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
 		assertDefault("alter table t modify column a bigint auto_random default 3")
 		assertDefault("alter table t alter column a set default 3")
@@ -906,12 +975,14 @@ func TestAutoRandom(t *testing.T) {
 	// Overflow data type max length.
 	assertMaxOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
 	assertMaxOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	assertMaxOverflow("create table t (a bigint auto_random(16), b int, primary key (a, b) clustered)", "a", 16)
 	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
 		assertMaxOverflow("alter table t modify a bigint auto_random(64)", "a", 64)
 		assertMaxOverflow("alter table t modify a bigint auto_random(16)", "a", 16)
 	})
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
+	assertNonPositive("create table t (a bigint auto_random(0), b int, primary key (a, b) clustered)")
 	tk.MustGetErrMsg("create table t (a bigint auto_random(-1) primary key)",
 		`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "-1) primary key)" `)
 
@@ -921,9 +992,16 @@ func TestAutoRandom(t *testing.T) {
 	mustExecAndDrop("create table t (a bigint auto_random(15) primary key)")
 	mustExecAndDrop("create table t (a bigint primary key auto_random(4))")
 	mustExecAndDrop("create table t (a bigint auto_random(4), primary key (a))")
+	mustExecAndDrop("create table t (a bigint auto_random(3), b bigint, primary key (a, b) clustered)")
+	mustExecAndDrop("create table t (a bigint auto_random(3), b int, c char, primary key (a, c) clustered)")
 
 	// Increase auto_random bits.
 	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		tk.MustExec("alter table t modify a bigint auto_random(8)")
+		tk.MustExec("alter table t modify a bigint auto_random(10)")
+		tk.MustExec("alter table t modify a bigint auto_random(12)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(5), b char(255), primary key (a, b) clustered)", func() {
 		tk.MustExec("alter table t modify a bigint auto_random(8)")
 		tk.MustExec("alter table t modify a bigint auto_random(10)")
 		tk.MustExec("alter table t modify a bigint auto_random(12)")
@@ -933,6 +1011,7 @@ func TestAutoRandom(t *testing.T) {
 	mustExecAndDrop("create table t (a bigint auto_random(3) auto_random(2) primary key)")
 	mustExecAndDrop("create table t (a bigint, b bigint auto_random(3) primary key auto_random(2))")
 	mustExecAndDrop("create table t (a bigint auto_random(1) auto_random(2) auto_random(3), primary key (a))")
+	mustExecAndDrop("create table t (a bigint auto_random(1) auto_random(2) auto_random(3), b int, primary key (a, b) clustered)")
 
 	// Add/drop the auto_random attribute is not allowed.
 	mustExecAndDrop("create table t (a bigint auto_random(3) primary key)", func() {
@@ -940,6 +1019,10 @@ func TestAutoRandom(t *testing.T) {
 		assertAlterValue("alter table t change column a b bigint")
 	})
 	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c))", func() {
+		assertAlterValue("alter table t modify column c bigint")
+		assertAlterValue("alter table t change column c d bigint")
+	})
+	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c, a) clustered)", func() {
 		assertAlterValue("alter table t modify column c bigint")
 		assertAlterValue("alter table t change column c d bigint")
 	})
@@ -969,6 +1052,9 @@ func TestAutoRandom(t *testing.T) {
 	})
 	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
 		assertDecreaseBitErr("alter table t modify column a bigint auto_random(1)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(10), b int, primary key (a, b) clustered)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(6)")
 	})
 
 	originStep := autoid.GetStep()
