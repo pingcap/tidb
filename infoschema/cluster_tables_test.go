@@ -1264,3 +1264,28 @@ func TestNewCreatedBindingCanWorkWithPlanCache(t *testing.T) {
 	tk.MustExec("execute stmt using @a")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
+
+func TestCreateBindingForPrepareToken(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, key(a))")
+
+	sql := "select min(*) from t"
+	prep := fmt.Sprintf("prepare stmt from '%s'", sql)
+	tk.MustExec(prep)
+	tk.MustExec("execute stmt")
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Equal(t, len(showRes), 1)
+}

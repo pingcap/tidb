@@ -1098,6 +1098,7 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	}
 
 	parser4binding := parser.New()
+	parser4binding.SetSQLMode(mysql.ModeIgnoreSpace)
 	originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
 		return nil, errors.Errorf("binding failed: %v", err)
