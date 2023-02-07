@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pcc",
+    srcs = [
+        "parse.go",
+        "parse_v6.go",
+        "plan.go",
+    ],
+    importpath = "github.com/pingcap/tidb/planner/pcc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser",
+        "//parser/ast",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "pcc_test",
+    srcs = [
+        "main_test.go",
+        "parse_v6_test.go",
+    ],
+    embed = [":pcc"],
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
