@@ -78,10 +78,11 @@ type StmtSummary struct {
 	optMaxSQLLength        *atomic2.Uint32
 	optRefreshInterval     *atomic2.Uint32
 
-	window  *stmtWindow
-	storage stmtStorage
-	closeWg sync.WaitGroup
-	closed  atomic.Bool
+	window     *stmtWindow
+	windowLock sync.Mutex
+	storage    stmtStorage
+	closeWg    sync.WaitGroup
+	closed     atomic.Bool
 }
 
 // NewStmtSummary creates a new StmtSummary from Config.
@@ -194,9 +195,9 @@ func (s *StmtSummary) SetMaxStmtCount(v uint32) error {
 		v = 1
 	}
 	s.optMaxStmtCount.Store(v)
-	s.window.Lock()
+	s.windowLock.Lock()
 	_ = s.window.lru.SetCapacity(uint(v))
-	s.window.Unlock()
+	s.windowLock.Unlock()
 
 	return nil
 }
@@ -248,17 +249,39 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		// and this record is an internal query.
 		return
 	}
-	// Finally, add info to the current statistics window.
-	s.window.add(info)
+
+	/* Finally, add info to the current statistics window. */
+
+	k := &stmtKey{
+		schemaName: info.SchemaName,
+		digest:     info.Digest,
+		prevDigest: info.PrevSQLDigest,
+		planDigest: info.PlanDigest,
+	}
+	k.Hash() // Calculate hash value in advance, to reduce the time holding the window lock.
+
+	s.windowLock.Lock()
+	var record *lockedStmtRecord
+	if v, ok := s.window.lru.Get(k); ok {
+		record = v.(*lockedStmtRecord)
+	} else {
+		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
+		s.window.lru.Put(k, record)
+	}
+	s.windowLock.Unlock()
+
+	record.Lock()
+	record.Add(info)
+	record.Unlock()
 }
 
 // Evicted returns the number of statements evicted for the current
 // time window. The returned type is one row consisting of three
 // columns: [BEGIN_TIME, END_TIME, EVICTED_COUNT].
 func (s *StmtSummary) Evicted() []types.Datum {
-	s.window.Lock()
+	s.windowLock.Lock()
 	count := int64(s.window.evicted.count())
-	s.window.Unlock()
+	s.windowLock.Unlock()
 	if count == 0 {
 		return nil
 	}
@@ -270,14 +293,16 @@ func (s *StmtSummary) Evicted() []types.Datum {
 // Clear clears all data in the current window, and the data that
 // has been persisted will not be cleared.
 func (s *StmtSummary) Clear() {
+	s.windowLock.Lock()
+	defer s.windowLock.Unlock()
 	s.window.clear()
 }
 
 // ClearInternal clears all internal queries of the current window,
 // and the data that has been persisted will not be cleared.
 func (s *StmtSummary) ClearInternal() {
-	s.window.Lock()
-	defer s.window.Unlock()
+	s.windowLock.Lock()
+	defer s.windowLock.Unlock()
 	for _, k := range s.window.lru.Keys() {
 		v, _ := s.window.lru.Get(k)
 		if v.(*lockedStmtRecord).IsInternal {
@@ -300,9 +325,9 @@ func (s *StmtSummary) Close() {
 // returned. Since the historical data has been persisted, we only
 // refer to the statistics data of the current window in memory.
 func (s *StmtSummary) GetMoreThanCntBindableStmt(cnt int64) []*stmtsummary.BindableStmt {
-	s.window.Lock()
+	s.windowLock.Lock()
 	values := s.window.lru.Values()
-	s.window.Unlock()
+	s.windowLock.Unlock()
 	stmts := make([]*stmtsummary.BindableStmt, 0, len(values))
 	for _, value := range values {
 		record := value.(*lockedStmtRecord)
@@ -350,22 +375,21 @@ func (s *StmtSummary) rotateLoop() {
 			return
 		case <-tick.C:
 			now := timeNow()
-			w := s.window
-			w.Lock()
+			s.windowLock.Lock()
 			// The current window has expired and needs to be refreshed and persisted.
-			if now.After(w.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
-				s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
-				size := w.lru.Size()
+			if now.After(s.window.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
+				size := s.window.lru.Size()
 				if size > 0 {
 					// Persist window asynchronously.
 					s.closeWg.Add(1)
 					go func() {
 						defer s.closeWg.Done()
-						s.storage.persist(w, now)
+						s.storage.persist(s.window, now)
 					}()
 				}
+				s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
 			}
-			w.Unlock()
+			s.windowLock.Unlock()
 		}
 	}
 }
@@ -375,7 +399,6 @@ func (s *StmtSummary) rotateLoop() {
 // according to the LRU strategy. All evicted data will be aggregated
 // into stmtEvicted.
 type stmtWindow struct {
-	sync.Mutex
 	begin   time.Time
 	lru     *kvcache.SimpleLRUCache // *stmtKey => *lockedStmtRecord
 	evicted *stmtEvicted
@@ -396,33 +419,7 @@ func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
 	return w
 }
 
-func (w *stmtWindow) add(info *stmtsummary.StmtExecInfo) {
-	k := &stmtKey{
-		schemaName: info.SchemaName,
-		digest:     info.Digest,
-		prevDigest: info.PrevSQLDigest,
-		planDigest: info.PlanDigest,
-	}
-	k.Hash() // Calculate hash value in advance, to reduce the time holding the window lock.
-
-	w.Lock()
-	var record *lockedStmtRecord
-	if v, ok := w.lru.Get(k); ok {
-		record = v.(*lockedStmtRecord)
-	} else {
-		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
-		w.lru.Put(k, record)
-	}
-	w.Unlock()
-
-	record.Lock()
-	record.Add(info)
-	record.Unlock()
-}
-
 func (w *stmtWindow) clear() {
-	w.Lock()
-	defer w.Unlock()
 	w.lru.DeleteAll()
 	w.evicted = newStmtEvicted()
 }

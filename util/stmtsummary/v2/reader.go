@@ -94,14 +94,14 @@ func (r *MemReader) Rows() [][]types.Datum {
 		return nil
 	}
 	end := timeNow().Unix()
+	r.s.windowLock.Lock()
 	w := r.s.window
 	if !r.checker.isTimeValid(w.begin.Unix(), end) {
 		return nil
 	}
-	w.Lock()
 	values := w.lru.Values()
 	evicted := w.evicted
-	w.Unlock()
+	r.s.windowLock.Unlock()
 	rows := make([][]types.Datum, 0, len(values)+1)
 	for _, v := range values {
 		record := v.(*lockedStmtRecord)
@@ -528,7 +528,6 @@ func (f *stmtFile) close() error {
 }
 
 type stmtFiles struct {
-	id    int
 	files []*stmtFile
 }
 

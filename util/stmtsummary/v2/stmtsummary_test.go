@@ -23,23 +23,24 @@ import (
 )
 
 func TestStmtWindow(t *testing.T) {
-	w := newStmtWindow(time.Unix(0, 0), 5)
-	w.add(GenerateStmtExecInfo4Test("digest1"))
-	w.add(GenerateStmtExecInfo4Test("digest1"))
-	w.add(GenerateStmtExecInfo4Test("digest2"))
-	w.add(GenerateStmtExecInfo4Test("digest2"))
-	w.add(GenerateStmtExecInfo4Test("digest3"))
-	w.add(GenerateStmtExecInfo4Test("digest4"))
-	w.add(GenerateStmtExecInfo4Test("digest5"))
-	w.add(GenerateStmtExecInfo4Test("digest6"))
-	w.add(GenerateStmtExecInfo4Test("digest7"))
-	require.Equal(t, 5, w.lru.Size())
-	require.Equal(t, 2, w.evicted.count())
-	require.Equal(t, int64(4), w.evicted.other.ExecCount) // digest1 digest1 digest2 digest2
-	w.clear()
-	require.Equal(t, 0, w.lru.Size())
-	require.Equal(t, 0, w.evicted.count())
-	require.Equal(t, int64(0), w.evicted.other.ExecCount)
+	ss := NewStmtSummary4Test(5)
+	defer ss.Close()
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+	ss.Add(GenerateStmtExecInfo4Test("digest4"))
+	ss.Add(GenerateStmtExecInfo4Test("digest5"))
+	ss.Add(GenerateStmtExecInfo4Test("digest6"))
+	ss.Add(GenerateStmtExecInfo4Test("digest7"))
+	require.Equal(t, 5, ss.window.lru.Size())
+	require.Equal(t, 2, ss.window.evicted.count())
+	require.Equal(t, int64(4), ss.window.evicted.other.ExecCount) // digest1 digest1 digest2 digest2
+	ss.Clear()
+	require.Equal(t, 0, ss.window.lru.Size())
+	require.Equal(t, 0, ss.window.evicted.count())
+	require.Equal(t, int64(0), ss.window.evicted.other.ExecCount)
 }
 
 func TestStmtSummary(t *testing.T) {
