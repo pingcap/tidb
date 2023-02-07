@@ -196,6 +196,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
 	prometheus.MustRegister(NonTransactionalDMLCount)
 	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
+	prometheus.MustRegister(ResourceGroupQueryTotalCounter)
 	prometheus.MustRegister(MemoryUsage)
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
@@ -219,6 +220,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLPhaseTime)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
+	prometheus.MustRegister(PoolConcurrencyCounter)
 
 	prometheus.MustRegister(HistoricalStatsCounter)
 	prometheus.MustRegister(PlanReplayerTaskCounter)

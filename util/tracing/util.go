@@ -16,6 +16,7 @@ package tracing
 
 import (
 	"context"
+	"runtime/trace"
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
@@ -65,4 +66,47 @@ func ChildSpanFromContxt(ctx context.Context, opName string) (opentracing.Span, 
 		}
 	}
 	return noopSpan(), ctx
+}
+
+// StartRegion provides better API, integrating both opentracing and runtime.trace facilities into one.
+// Recommended usage is
+//
+//	defer tracing.StartRegion(ctx, "myTracedRegion").End()
+func StartRegion(ctx context.Context, regionType string) Region {
+	r := trace.StartRegion(ctx, regionType)
+	var span1 opentracing.Span
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 = span.Tracer().StartSpan(regionType, opentracing.ChildOf(span.Context()))
+	}
+	return Region{
+		Region: r,
+		Span:   span1,
+	}
+}
+
+// StartRegionEx returns Region together with the context.
+// Recommended usage is
+//
+//		r, ctx := tracing.StartRegionEx(ctx, "myTracedRegion")
+//	     defer r.End()
+func StartRegionEx(ctx context.Context, regionType string) (Region, context.Context) {
+	r := StartRegion(ctx, regionType)
+	if r.Span != nil {
+		ctx = opentracing.ContextWithSpan(ctx, r.Span)
+	}
+	return r, ctx
+}
+
+// Region is a region of code whose execution time interval is traced.
+type Region struct {
+	*trace.Region
+	opentracing.Span
+}
+
+// End marks the end of the traced code region.
+func (r Region) End() {
+	if r.Span != nil {
+		r.Span.Finish()
+	}
+	r.Region.End()
 }
