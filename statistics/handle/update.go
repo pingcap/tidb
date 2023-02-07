@@ -506,9 +506,11 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 		h.globalMap.Unlock()
 	}()
 	// TODO: pass in do.InfoSchema() to DumpStatsDeltaToKV.
-	h.mu.Lock()
-	is := h.mu.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	h.mu.Unlock()
+	is := func() infoschema.InfoSchema {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.mu.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	}()
 	currentTime := time.Now()
 	for id, item := range deltaMap {
 		if !h.needDumpStatsDelta(is, mode, id, item, currentTime) {
