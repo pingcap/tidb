@@ -2100,20 +2100,24 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 
 // ResourceGroupOption is used for parsing resource group option.
 type ResourceGroupOption struct {
-	Tp       ResourceUnitType
-	StrValue string
+	Tp        ResourceUnitType
+	StrValue  string
+	UintValue uint64
+	BoolValue bool
 }
 
 type ResourceUnitType int
 
 const (
-	ResourceUnitCPU ResourceUnitType = iota
-	ResourceRRURate
-	ResourceWRURate
-	// Only valied when read/wirte not setting.
-	ResourceUnitIORate
-	ResourceUnitIOReadRate
-	ResourceUnitIOWriteRate
+	// RU mode
+	ResourceRURate ResourceUnitType = iota
+	// Raw mode
+	ResourceUnitCPU
+	ResourceUnitIOReadBandwidth
+	ResourceUnitIOWriteBandwidth
+
+	// Options
+	ResourceBurstableOpiton
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -2122,33 +2126,31 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	}
 	fn := func() error {
 		switch n.Tp {
+		case ResourceRURate:
+			ctx.WriteKeyWord("RU_PER_SEC ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
 		case ResourceUnitCPU:
 			ctx.WriteKeyWord("CPU ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
-		case ResourceRRURate:
-			ctx.WriteKeyWord("RRU_PER_SEC ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-		case ResourceWRURate:
-			ctx.WriteKeyWord("WRU_PER_SEC ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-		case ResourceUnitIOReadRate:
+		case ResourceUnitIOReadBandwidth:
 			ctx.WriteKeyWord("IO_READ_BANDWIDTH ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
-		case ResourceUnitIOWriteRate:
+		case ResourceUnitIOWriteBandwidth:
 			ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
+		case ResourceBurstableOpiton:
+			ctx.WriteKeyWord("BURSTABLE")
 		default:
 			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
 		}
 		return nil
 	}
 	// WriteSpecialComment
-	return ctx.WriteWithSpecialComments(tidb.FeatureIDResouceGroup, fn)
+	return ctx.WriteWithSpecialComments(tidb.FeatureIDResourceGroup, fn)
 }
 
 type StatsOptionType int

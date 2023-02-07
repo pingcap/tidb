@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"runtime/pprof"
-	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -314,14 +314,10 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
 		return ErrQueryInterrupted
 	}
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	if trace.IsEnabled() {
-		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
-	}
+
+	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
+	defer r.End()
+
 	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
 		registerSQLAndPlanInExecForTopSQL(sessVars)
 	}
@@ -595,7 +591,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			req.AppendInt64(0, job.ID)
 			req.AppendString(1, schemaName)
 			req.AppendString(2, tableName)
-			req.AppendString(3, subJob.Type.String()+" /* subjob */")
+			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob))
 			req.AppendString(4, subJob.SchemaState.String())
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
@@ -615,6 +611,16 @@ func showAddIdxReorgTp(job *model.Job) string {
 			if len(tp) > 0 {
 				return " /* " + tp + " */"
 			}
+		}
+	}
+	return ""
+}
+
+func showAddIdxReorgTpInSubJob(subJob *model.SubJob) string {
+	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
+		tp := subJob.ReorgTp.String()
+		if len(tp) > 0 {
+			return " /* " + tp + " */"
 		}
 	}
 	return ""
@@ -674,8 +680,21 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	e.jobs = append(e.jobs, jobs...)
-	e.jobs = append(e.jobs, historyJobs...)
+	appendedJobID := make(map[int64]struct{})
+	// deduplicate job results
+	// for situations when this operation happens at the same time with new DDLs being executed
+	for _, job := range jobs {
+		if _, ok := appendedJobID[job.ID]; !ok {
+			appendedJobID[job.ID] = struct{}{}
+			e.jobs = append(e.jobs, job)
+		}
+	}
+	for _, historyJob := range historyJobs {
+		if _, ok := appendedJobID[historyJob.ID]; !ok {
+			appendedJobID[historyJob.ID] = struct{}{}
+			e.jobs = append(e.jobs, historyJob)
+		}
+	}
 
 	return nil
 }
@@ -749,8 +768,25 @@ func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	e.jobs = append(e.jobs, jobs...)
-	e.jobs = append(e.jobs, historyJobs...)
+	appendedJobID := make(map[int64]struct{})
+	// deduplicate job results
+	// for situations when this operation happens at the same time with new DDLs being executed
+	for _, job := range jobs {
+		if _, ok := appendedJobID[job.ID]; !ok {
+			appendedJobID[job.ID] = struct{}{}
+			e.jobs = append(e.jobs, job)
+		}
+	}
+	for _, historyJob := range historyJobs {
+		if _, ok := appendedJobID[historyJob.ID]; !ok {
+			appendedJobID[historyJob.ID] = struct{}{}
+			e.jobs = append(e.jobs, historyJob)
+		}
+	}
+
+	if e.cursor < int(e.offset) {
+		e.cursor = int(e.offset)
+	}
 
 	return nil
 }
@@ -766,9 +802,12 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(ctx context.Context, req *chunk.Ch
 	}
 	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		if i >= int(e.offset) && i < int(e.offset+e.limit) {
+		// i is make true to be >= int(e.offset)
+		if i < int(e.offset+e.limit) {
 			req.AppendString(0, strconv.FormatInt(e.jobs[i].ID, 10))
 			req.AppendString(1, e.jobs[i].Query)
+		} else {
+			break
 		}
 	}
 	e.cursor += numCurBatch
@@ -1350,6 +1389,9 @@ type LimitExec struct {
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
+
+	// Log the close time when opentracing is enabled.
+	span opentracing.Span
 }
 
 // Next implements the Executor Next interface.
@@ -1427,13 +1469,29 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	e.childResult = tryNewCacheChunk(e.children[0])
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		e.span = span
+	}
 	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *LimitExec) Close() error {
+	start := time.Now()
+
 	e.childResult = nil
-	return e.baseExecutor.Close()
+	err := e.baseExecutor.Close()
+
+	elapsed := time.Since(start)
+	if elapsed > time.Millisecond {
+		logutil.BgLogger().Info("limit executor close takes a long time",
+			zap.Duration("elapsed", elapsed))
+		if e.span != nil {
+			span1 := e.span.Tracer().StartSpan("limitExec.Close", opentracing.ChildOf(e.span.Context()), opentracing.StartTime(start))
+			defer span1.Finish()
+		}
+	}
+	return err
 }
 
 func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
@@ -1465,11 +1523,8 @@ func init() {
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
 		}(time.Now())
 
-		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
-			defer span1.Finish()
-			ctx = opentracing.ContextWithSpan(ctx, span1)
-		}
+		r, ctx := tracing.StartRegionEx(ctx, "executor.EvalSubQuery")
+		defer r.End()
 
 		e := newExecutorBuilder(sctx, is, nil)
 		exec := e.build(p)

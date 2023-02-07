@@ -15,10 +15,10 @@
 package txn
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
@@ -72,14 +73,22 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
+	txn.exitAggressiveLockingIfInapplicable(ctx, keys)
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
-	return txn.extractKeyErr(err)
+	if err != nil {
+		return txn.extractKeyErr(err)
+	}
+	return txn.generateWriteConflictForLockedWithConflict(lockCtx)
 }
 
 func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
+	txn.exitAggressiveLockingIfInapplicable(ctx, keys)
 	err := txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
-	return txn.extractKeyErr(err)
+	if err != nil {
+		return txn.extractKeyErr(err)
+	}
+	return txn.generateWriteConflictForLockedWithConflict(lockCtx)
 }
 
 func (txn *tikvTxn) Commit(ctx context.Context) error {
@@ -156,11 +165,8 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (iter kv.Iterator, err error) {
 // Do not use len(value) == 0 or value == nil to represent non-exist.
 // If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tikvTxn.BatchGet", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "tikvTxn.BatchGet")
+	defer r.End()
 	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys)
 }
 
@@ -264,6 +270,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
 	case kv.TxnSource:
 		txn.KVTxn.SetTxnSource(val.(uint64))
+	case kv.ResourceGroupName:
+		txn.KVTxn.SetResourceGroupName(val.(string))
 	}
 }
 
@@ -337,6 +345,65 @@ func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 
 func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...kv.FlagsOp) {
 	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(flags)...)
+}
+
+func (txn *tikvTxn) exitAggressiveLockingIfInapplicable(ctx context.Context, keys [][]byte) {
+	if len(keys) > 1 && txn.IsInAggressiveLockingMode() {
+		// Only allow aggressive locking if it only needs to lock one key. Considering that it's possible that a
+		// statement causes multiple calls to `LockKeys` (which means some keys may have been locked in aggressive
+		// locking mode), here we exit aggressive locking mode by calling DoneAggressiveLocking instead of cancelling.
+		// Then the previously-locked keys during execution in this statement (if any) will be turned into the state
+		// as if they were locked in normal way.
+		// Note that the issue https://github.com/pingcap/tidb/issues/35682 also exists here.
+		txn.KVTxn.DoneAggressiveLocking(ctx)
+	}
+}
+
+func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {
+	if lockCtx.MaxLockedWithConflictTS != 0 {
+		var bufTableID, bufRest bytes.Buffer
+		foundKey := false
+		for k, v := range lockCtx.Values {
+			if v.LockedWithConflictTS >= lockCtx.MaxLockedWithConflictTS {
+				foundKey = true
+				prettyWriteKey(&bufTableID, &bufRest, []byte(k))
+				break
+			}
+		}
+		if !foundKey {
+			bufTableID.WriteString("<unknown>")
+		}
+		// TODO: Primary is not exported here.
+		primary := " primary=<unknown>"
+		primaryRest := ""
+		return kv.ErrWriteConflict.FastGenByArgs(txn.StartTS(), 0, lockCtx.MaxLockedWithConflictTS, bufTableID.String(), bufRest.String(), primary, primaryRest, "LockedWithConflict")
+	}
+	return nil
+}
+
+// StartAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
+// TODO: Update the methods' signatures in client-go to avoid this adaptor functions.
+func (txn *tikvTxn) StartAggressiveLocking() error {
+	txn.KVTxn.StartAggressiveLocking()
+	return nil
+}
+
+// RetryAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
+func (txn *tikvTxn) RetryAggressiveLocking(ctx context.Context) error {
+	txn.KVTxn.RetryAggressiveLocking(ctx)
+	return nil
+}
+
+// CancelAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
+func (txn *tikvTxn) CancelAggressiveLocking(ctx context.Context) error {
+	txn.KVTxn.CancelAggressiveLocking(ctx)
+	return nil
+}
+
+// DoneAggressiveLocking adapts the method signature of `KVTxn` to satisfy kv.AggressiveLockingController.
+func (txn *tikvTxn) DoneAggressiveLocking(ctx context.Context) error {
+	txn.KVTxn.DoneAggressiveLocking(ctx)
+	return nil
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.

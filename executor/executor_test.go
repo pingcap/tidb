@@ -204,6 +204,15 @@ func TestPlanReplayerCapture(t *testing.T) {
 func TestPlanReplayerContinuesCapture(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@global.tidb_enable_historical_stats='OFF'")
+	_, err := tk.Exec("set @@global.tidb_enable_plan_replayer_continues_capture='ON'")
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continues_capture")
+
+	tk.MustExec("set @@global.tidb_enable_historical_stats='ON'")
+	tk.MustExec("set @@global.tidb_enable_plan_replayer_continues_capture='ON'")
+
 	prHandle := dom.GetPlanReplayerHandle()
 	tk.MustExec("delete from mysql.plan_replayer_status;")
 	tk.MustExec("use test")
@@ -234,13 +243,16 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
 		"Alter routine Functions,Procedures To alter or drop stored functions/procedures",
+		"Config Server Admin To use SHOW CONFIG and SET CONFIG statements",
 		"Create Databases,Tables,Indexes To create new databases and tables",
 		"Create routine Databases To use CREATE FUNCTION/PROCEDURE",
+		"Create role Server Admin To create new roles",
 		"Create temporary tables Databases To use CREATE TEMPORARY TABLE",
 		"Create view Tables To create new views",
 		"Create user Server Admin To create new users",
 		"Delete Tables To delete existing rows",
 		"Drop Databases,Tables To drop databases, tables, and views",
+		"Drop role Server Admin To drop roles",
 		"Event Server Admin To create, alter, drop and execute events",
 		"Execute Functions,Procedures To execute stored routines",
 		"File File access on server To read and write files on the server",
@@ -277,6 +289,7 @@ func TestShow(t *testing.T) {
 		"RESTRICTED_USER_ADMIN Server Admin ",
 		"RESTRICTED_CONNECTION_ADMIN Server Admin ",
 		"RESTRICTED_REPLICA_WRITER_ADMIN Server Admin ",
+		"RESOURCE_GROUP_ADMIN Server Admin ",
 	))
 	require.Len(t, tk.MustQuery("show table status").Rows(), 1)
 }
@@ -1521,6 +1534,21 @@ func TestSetOperation(t *testing.T) {
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
+
+	// from https://github.com/pingcap/tidb/issues/40279
+	tk.MustExec("CREATE TABLE `issue40279` (`a` char(155) NOT NULL DEFAULT 'on1unvbxp5sko6mbetn3ku26tuiyju7w3wc0olzto9ew7gsrx',`b` mediumint(9) NOT NULL DEFAULT '2525518',PRIMARY KEY (`b`,`a`) /*T![clustered_index] CLUSTERED */);")
+	tk.MustExec("insert into `issue40279` values ();")
+	tk.MustQuery("( select    `issue40279`.`b` as r0 , from_base64( `issue40279`.`a` ) as r1 from `issue40279` ) " +
+		"except ( " +
+		"select    `issue40279`.`a` as r0 , elt(2, `issue40279`.`a` , `issue40279`.`a` ) as r1 from `issue40279`);").
+		Check(testkit.Rows("2525518 <nil>"))
+	tk.MustExec("drop table if exists t2")
+
+	tk.MustExec("CREATE TABLE `t2` (   `a` varchar(20) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t2 values(0xCED2)")
+	result := tk.MustQuery("(select elt(2,t2.a,t2.a) from t2) except (select 0xCED2  from t2)")
+	rows := result.Rows()
+	require.Len(t, rows, 0)
 }
 
 func TestSetOperationOnDiffColType(t *testing.T) {
@@ -2086,6 +2114,8 @@ func TestIncorrectLimitArg(t *testing.T) {
 
 	tk.MustGetErrMsg(`execute stmt1 using @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
 	tk.MustGetErrMsg(`execute stmt2 using @b, @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
+	tk.MustGetErrMsg(`execute stmt2 using @a, @b;`, `[planner:1210]Incorrect arguments to LIMIT`)
+	tk.MustGetErrMsg(`execute stmt2 using @a, @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
 }
 
 func TestExecutorLimit(t *testing.T) {
@@ -4364,7 +4394,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
-	tk.Session().StmtCommit()
+	tk.Session().StmtCommit(context.Background())
 
 	re = tk.MustQuery("admin show ddl jobs 1")
 	row = re.Rows()[0]
@@ -5538,6 +5568,8 @@ func TestAdmin(t *testing.T) {
 	}))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
@@ -5646,6 +5678,68 @@ func TestAdmin(t *testing.T) {
 	result = tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
 	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query), fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
 	require.NoError(t, err)
+
+	// check situations when `admin show ddl job 20` happens at the same time with new DDLs being executed
+	var wg sync.WaitGroup
+	wg.Add(2)
+	flag := true
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			tk.MustExec("drop table if exists admin_test9")
+			tk.MustExec("create table admin_test9 (c1 int, c2 int, c3 int default 1, index (c1))")
+		}
+	}()
+	go func() {
+		// check that the result set has no duplication
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			result := tk2.MustQuery(`admin show ddl job queries 20`)
+			rows := result.Rows()
+			rowIDs := make(map[string]struct{})
+			for _, row := range rows {
+				rowID := fmt.Sprintf("%v", row[0])
+				if _, ok := rowIDs[rowID]; ok {
+					flag = false
+					return
+				}
+				rowIDs[rowID] = struct{}{}
+			}
+		}
+	}()
+	wg.Wait()
+	require.True(t, flag)
+
+	// check situations when `admin show ddl job queries limit 3 offset 2` happens at the same time with new DDLs being executed
+	var wg2 sync.WaitGroup
+	wg2.Add(2)
+	flag = true
+	go func() {
+		defer wg2.Done()
+		for i := 0; i < 10; i++ {
+			tk.MustExec("drop table if exists admin_test9")
+			tk.MustExec("create table admin_test9 (c1 int, c2 int, c3 int default 1, index (c1))")
+		}
+	}()
+	go func() {
+		// check that the result set has no duplication
+		defer wg2.Done()
+		for i := 0; i < 10; i++ {
+			result := tk2.MustQuery(`admin show ddl job queries limit 3 offset 2`)
+			rows := result.Rows()
+			rowIDs := make(map[string]struct{})
+			for _, row := range rows {
+				rowID := fmt.Sprintf("%v", row[0])
+				if _, ok := rowIDs[rowID]; ok {
+					flag = false
+					return
+				}
+				rowIDs[rowID] = struct{}{}
+			}
+		}
+	}()
+	wg2.Wait()
+	require.True(t, flag)
 
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
@@ -6303,4 +6397,135 @@ func TestIssue39211(t *testing.T) {
 	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("set @@tidb_enable_null_aware_anti_join=true;")
 	tk.MustQuery("select * from t where (a,b) not in (select a, b from s);").Check(testkit.Rows())
+}
+
+func TestPlanReplayerDumpTPCDS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table catalog_sales
+(
+    cs_sold_date_sk           int                       ,
+    cs_sold_time_sk           int                       ,
+    cs_ship_date_sk           int                       ,
+    cs_bill_customer_sk       int                       ,
+    cs_bill_cdemo_sk          int                       ,
+    cs_bill_hdemo_sk          int                       ,
+    cs_bill_addr_sk           int                       ,
+    cs_ship_customer_sk       int                       ,
+    cs_ship_cdemo_sk          int                       ,
+    cs_ship_hdemo_sk          int                       ,
+    cs_ship_addr_sk           int                       ,
+    cs_call_center_sk         int                       ,
+    cs_catalog_page_sk        int                       ,
+    cs_ship_mode_sk           int                       ,
+    cs_warehouse_sk           int                       ,
+    cs_item_sk                int               not null,
+    cs_promo_sk               int                       ,
+    cs_order_number           int               not null,
+    cs_quantity               int                       ,
+    cs_wholesale_cost         decimal(7,2)                  ,
+    cs_list_price             decimal(7,2)                  ,
+    cs_sales_price            decimal(7,2)                  ,
+    cs_ext_discount_amt       decimal(7,2)                  ,
+    cs_ext_sales_price        decimal(7,2)                  ,
+    cs_ext_wholesale_cost     decimal(7,2)                  ,
+    cs_ext_list_price         decimal(7,2)                  ,
+    cs_ext_tax                decimal(7,2)                  ,
+    cs_coupon_amt             decimal(7,2)                  ,
+    cs_ext_ship_cost          decimal(7,2)                  ,
+    cs_net_paid               decimal(7,2)                  ,
+    cs_net_paid_inc_tax       decimal(7,2)                  ,
+    cs_net_paid_inc_ship      decimal(7,2)                  ,
+    cs_net_paid_inc_ship_tax  decimal(7,2)                  ,
+    cs_net_profit             decimal(7,2)                  ,
+    primary key (cs_item_sk, cs_order_number)
+);`)
+	tk.MustExec(`create table store_sales
+(
+    ss_sold_date_sk           int                       ,
+    ss_sold_time_sk           int                       ,
+    ss_item_sk                int               not null,
+    ss_customer_sk            int                       ,
+    ss_cdemo_sk               int                       ,
+    ss_hdemo_sk               int                       ,
+    ss_addr_sk                int                       ,
+    ss_store_sk               int                       ,
+    ss_promo_sk               int                       ,
+    ss_ticket_number          int               not null,
+    ss_quantity               int                       ,
+    ss_wholesale_cost         decimal(7,2)                  ,
+    ss_list_price             decimal(7,2)                  ,
+    ss_sales_price            decimal(7,2)                  ,
+    ss_ext_discount_amt       decimal(7,2)                  ,
+    ss_ext_sales_price        decimal(7,2)                  ,
+    ss_ext_wholesale_cost     decimal(7,2)                  ,
+    ss_ext_list_price         decimal(7,2)                  ,
+    ss_ext_tax                decimal(7,2)                  ,
+    ss_coupon_amt             decimal(7,2)                  ,
+    ss_net_paid               decimal(7,2)                  ,
+    ss_net_paid_inc_tax       decimal(7,2)                  ,
+    ss_net_profit             decimal(7,2)                  ,
+    primary key (ss_item_sk, ss_ticket_number)
+);`)
+	tk.MustExec(`create table date_dim
+(
+    d_date_sk                 int               not null,
+    d_date_id                 char(16)              not null,
+    d_date                    date                          ,
+    d_month_seq               int                       ,
+    d_week_seq                int                       ,
+    d_quarter_seq             int                       ,
+    d_year                    int                       ,
+    d_dow                     int                       ,
+    d_moy                     int                       ,
+    d_dom                     int                       ,
+    d_qoy                     int                       ,
+    d_fy_year                 int                       ,
+    d_fy_quarter_seq          int                       ,
+    d_fy_week_seq             int                       ,
+    d_day_name                char(9)                       ,
+    d_quarter_name            char(6)                       ,
+    d_holiday                 char(1)                       ,
+    d_weekend                 char(1)                       ,
+    d_following_holiday       char(1)                       ,
+    d_first_dom               int                       ,
+    d_last_dom                int                       ,
+    d_same_day_ly             int                       ,
+    d_same_day_lq             int                       ,
+    d_current_day             char(1)                       ,
+    d_current_week            char(1)                       ,
+    d_current_month           char(1)                       ,
+    d_current_quarter         char(1)                       ,
+    d_current_year            char(1)                       ,
+    primary key (d_date_sk)
+);`)
+	tk.MustQuery(`plan replayer dump explain with ssci as (
+select ss_customer_sk customer_sk
+      ,ss_item_sk item_sk
+from store_sales,date_dim
+where ss_sold_date_sk = d_date_sk
+  and d_month_seq between 1212 and 1212 + 11
+group by ss_customer_sk
+        ,ss_item_sk),
+csci as(
+ select cs_bill_customer_sk customer_sk
+      ,cs_item_sk item_sk
+from catalog_sales,date_dim
+where cs_sold_date_sk = d_date_sk
+  and d_month_seq between 1212 and 1212 + 11
+group by cs_bill_customer_sk
+        ,cs_item_sk)
+ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null then 1 else 0 end) store_only
+      ,sum(case when ssci.customer_sk is null and csci.customer_sk is not null then 1 else 0 end) catalog_only
+      ,sum(case when ssci.customer_sk is not null and csci.customer_sk is not null then 1 else 0 end) store_and_catalog
+from ssci left join csci on (ssci.customer_sk=csci.customer_sk
+                               and ssci.item_sk = csci.item_sk)
+UNION
+ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null then 1 else 0 end) store_only
+      ,sum(case when ssci.customer_sk is null and csci.customer_sk is not null then 1 else 0 end) catalog_only
+      ,sum(case when ssci.customer_sk is not null and csci.customer_sk is not null then 1 else 0 end) store_and_catalog
+from ssci right join csci on (ssci.customer_sk=csci.customer_sk
+                               and ssci.item_sk = csci.item_sk)
+limit 100;`)
 }

@@ -552,6 +552,10 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if tblInfo.Partition != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
+	}
 
 	changingCol := modifyInfo.changingCol
 	if changingCol == nil {
@@ -806,7 +810,13 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, j
 func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
-	rh := newReorgHandler(t, w.sess)
+	sctx, err1 := w.sessPool.get()
+	if err1 != nil {
+		err = errors.Trace(err1)
+		return
+	}
+	defer w.sessPool.put(sctx)
+	rh := newReorgHandler(newSession(sctx))
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return false, ver, errors.Trace(err)
@@ -1116,8 +1126,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
 		logutil.BgLogger().Info("[ddl] update column and indexes",
 			zap.Int64("job ID", reorgInfo.Job.ID),
-			zap.ByteString("element type", reorgInfo.currElement.TypeKey),
-			zap.Int64("element ID", reorgInfo.currElement.ID),
+			zap.Stringer("element", reorgInfo.currElement),
 			zap.String("start key", hex.EncodeToString(reorgInfo.StartKey)),
 			zap.String("end key", hex.EncodeToString(reorgInfo.EndKey)))
 		if err != nil {
@@ -1147,7 +1156,7 @@ type updateColumnWorker struct {
 	jobContext *JobContext
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		logutil.BgLogger().Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.String("reorgInfo", reorgInfo.String()))
@@ -1163,7 +1172,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, t table.PhysicalTable, de
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
-		backfillCtx:   newBackfillCtx(reorgInfo.d, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
+		backfillCtx:   newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.ReorgMeta.ReorgTp, reorgInfo.SchemaName, t),
 		oldColInfo:    oldCol,
 		newColInfo:    newCol,
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
@@ -1181,7 +1190,7 @@ func (*updateColumnWorker) String() string {
 	return typeUpdateColumnWorker.String()
 }
 
-func (*updateColumnWorker) GetTask() (*BackfillJob, error) {
+func (*updateColumnWorker) GetTasks() ([]*BackfillJob, error) {
 	panic("[ddl] update column worker GetTask function doesn't implement")
 }
 
@@ -1291,8 +1300,8 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if err != nil {
 		return w.reformatErrors(err)
 	}
-	if w.sessCtx.GetSessionVars().StmtCtx.GetWarnings() != nil && len(w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()) != 0 {
-		warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+	warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
+	if len(warn) != 0 {
 		//nolint:forcetypeassert
 		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
 	}
@@ -1376,8 +1385,9 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
-		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
+		// Optimize for few warnings!
+		warningsMap := make(map[errors.ErrorID]*terror.Error, 2)
+		warningsCountMap := make(map[errors.ErrorID]int64, 2)
 		for _, rowRecord := range rowRecords {
 			taskCtx.scanCount++
 

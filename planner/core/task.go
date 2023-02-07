@@ -86,6 +86,7 @@ type copTask struct {
 
 	idxMergePartPlans      []PhysicalPlan
 	idxMergeIsIntersection bool
+	idxMergeAccessMVIndex  bool
 
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
@@ -688,6 +689,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			partialPlans:       t.idxMergePartPlans,
 			tablePlan:          t.tablePlan,
 			IsIntersectionType: t.idxMergeIsIntersection,
+			AccessMVIndex:      t.idxMergeAccessMVIndex,
 		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
@@ -1072,7 +1074,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		if !propMatched {
 			return nil, false
 		}
-
 		idxScan.Desc = isDesc
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
@@ -1100,6 +1101,8 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			}
 		}
 		tblScan.Desc = isDesc
+		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func and the struct tableResultHandler for more details.
+		tblScan.KeepOrder = true
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
 		stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1160,6 +1163,12 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	for _, t := range tasks {
 		if _, ok := t.(*mppTask); ok {
+			if p.TP() == plancodec.TypePartitionUnion {
+				// In attach2MppTasks(), will attach PhysicalUnion to mppTask directly.
+				// But PartitionUnion cannot pushdown to tiflash, so here disable PartitionUnion pushdown to tiflash explicitly.
+				// For now, return invalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
+				return invalidTask
+			}
 			return p.attach2MppTasks(tasks...)
 		}
 	}
@@ -2234,6 +2243,14 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
+
+	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
+		// Use compress when exchange type is `Hash`
+		if sender.ExchangeType == tipb.ExchangeType_Hash {
+			sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
+		}
+	}
+
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)

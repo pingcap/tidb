@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -58,6 +59,7 @@ import (
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -198,6 +200,8 @@ const (
 	TableMemoryUsage = "MEMORY_USAGE"
 	// TableMemoryUsageOpsHistory is the memory control operators history.
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
+	// TableResourceGroups is the metadata of resource groups.
+	TableResourceGroups = "RESOURCE_GROUPS"
 )
 
 const (
@@ -304,6 +308,7 @@ var tableIDMap = map[string]int64{
 	TableMemoryUsageOpsHistory:           autoid.InformationSchemaDBID + 85,
 	ClusterTableMemoryUsage:              autoid.InformationSchemaDBID + 86,
 	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
+	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -820,6 +825,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -1586,6 +1592,13 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 256},
 }
 
+var tableResourceGroupsCols = []columnInfo{
+	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
+	{name: "RU_PER_SEC", tp: mysql.TypeLonglong, size: 21},
+	{name: "RU_TOKENS", tp: mysql.TypeLonglong, size: 21},
+	{name: "BURSTABLE", tp: mysql.TypeVarchar, size: 3},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2048,6 +2061,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableUserAttributes:                     tableUserAttributesCols,
 	TableMemoryUsage:                        tableMemoryUsageCols,
 	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
+	TableResourceGroups:                     tableResourceGroupsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -2321,7 +2335,7 @@ func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string
 }
 
 func getServerInfoByGRPC(ctx context.Context, address string, tp diagnosticspb.ServerInfoType) ([]*diagnosticspb.ServerInfoItem, error) {
-	opt := grpc.WithInsecure()
+	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 	security := config.GetGlobalConfig().Security
 	if len(security.ClusterSSLCA) != 0 {
 		clusterSecurity := security.ClusterSecurity()

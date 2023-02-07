@@ -23,7 +23,7 @@ go_library(
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",
-        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "//util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/autoid",
@@ -32,6 +32,7 @@ go_library(
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -94,12 +95,18 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli        *clientv3.Client
-	info           *ServerInfo
-	serverInfoPath string
-	minStartTS     uint64
-	minStartTSPath string
-	managerMu      struct {
+	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
+	etcdCli *clientv3.Client
+	// `unprefixedEtcdCli` will never set the etcd namespace prefix by keyspace.
+	// It is only used in storeMinStartTS and RemoveMinStartTS now.
+	// It must be used when the etcd path isn't needed to separate by keyspace.
+	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
+	unprefixedEtcdCli *clientv3.Client
+	info              *ServerInfo
+	serverInfoPath    string
+	minStartTS        uint64
+	minStartTSPath    string
+	managerMu         struct {
 		mu sync.RWMutex
 		util2.SessionManager
 	}
@@ -111,6 +118,7 @@ type InfoSyncer struct {
 	placementManager      PlacementManager
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
+	resourceGroupManager  ResourceGroupManager
 }
 
 // ServerInfo is server static information.
@@ -178,12 +186,13 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() uint64, etcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
+func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() uint64, etcdCli *clientv3.Client, unprefixedEtcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
 	is := &InfoSyncer{
-		etcdCli:        etcdCli,
-		info:           getServerInfo(id, serverIDGetter),
-		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
-		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		etcdCli:           etcdCli,
+		unprefixedEtcdCli: unprefixedEtcdCli,
+		info:              getServerInfo(id, serverIDGetter),
+		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
+		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
@@ -192,6 +201,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
+	is.resourceGroupManager = initResourceGroupManager(etcdCli)
 	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -235,6 +245,13 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 		return &mockPlacementManager{}
 	}
 	return &PDPlacementManager{etcdCli: etcdCli}
+}
+
+func initResourceGroupManager(etcdCli *clientv3.Client) ResourceGroupManager {
+	if etcdCli == nil {
+		return &mockResourceGroupManager{groups: make(map[string]*rmpb.ResourceGroup)}
+	}
+	return NewResourceManager(etcdCli)
 }
 
 func initTiFlashReplicaManager(etcdCli *clientv3.Client) TiFlashReplicaManager {
@@ -503,7 +520,7 @@ func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) 
 	return util2.InternalHTTPClient().Do(req)
 }
 
-// GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
+// GetAllRuleBundles is used to get all rule bundles from PD It is used to load full rules from PD while fullload infoschema.
 func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -561,6 +578,53 @@ func PutRuleBundlesWithRetry(ctx context.Context, bundles []*placement.Bundle, m
 	}
 
 	return
+}
+
+// GetResourceGroup is used to get one specific resource group from resource manager.
+func GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	return is.resourceGroupManager.GetResourceGroup(ctx, name)
+}
+
+// GetAllResourceGroups is used to get all resource groups from resource manager.
+func GetAllResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	return is.resourceGroupManager.GetAllResourceGroups(ctx)
+}
+
+// CreateResourceGroup is used to create one specific resource group to resource manager.
+func CreateResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.resourceGroupManager.CreateResourceGroup(ctx, group)
+}
+
+// ModifyResourceGroup is used to modify one specific resource group to resource manager.
+func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.resourceGroupManager.ModifyResourceGroup(ctx, group)
+}
+
+// DeleteResourceGroup is used to delete one specific resource group from resource manager.
+func DeleteResourceGroup(ctx context.Context, name string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	return is.resourceGroupManager.DeleteResourceGroup(ctx, name)
 }
 
 // PutRuleBundlesWithDefaultRetry will retry for default times
@@ -664,20 +728,20 @@ func (is *InfoSyncer) GetMinStartTS() uint64 {
 
 // storeMinStartTS stores self server min start timestamp to etcd.
 func (is *InfoSyncer) storeMinStartTS(ctx context.Context) error {
-	if is.etcdCli == nil {
+	if is.unprefixedEtcdCli == nil {
 		return nil
 	}
-	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
+	return util.PutKVToEtcd(ctx, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
 		strconv.FormatUint(is.minStartTS, 10),
 		clientv3.WithLease(is.session.Lease()))
 }
 
 // RemoveMinStartTS removes self server min start timestamp from etcd.
 func (is *InfoSyncer) RemoveMinStartTS() {
-	if is.etcdCli == nil {
+	if is.unprefixedEtcdCli == nil {
 		return
 	}
-	err := util.DeleteKeyFromEtcd(is.minStartTSPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	err := util.DeleteKeyFromEtcd(is.minStartTSPath, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
 	}

@@ -71,6 +71,8 @@ const (
 	PlanReplayerTaskMetaSQLDigest = "sqlDigest"
 	// PlanReplayerTaskMetaPlanDigest indicates the plan digest of this task
 	PlanReplayerTaskMetaPlanDigest = "planDigest"
+	// PlanReplayerTaskEnableHistoricalStats indicates whether the task is using historical stats
+	PlanReplayerTaskEnableHistoricalStats = "enableHistoricalStats"
 )
 
 type tableNamePair struct {
@@ -106,12 +108,14 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 			tne.err = err
 			return in, true
 		}
-		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
-		if tp.DBName == "" {
-			tp.DBName = tne.curDB.L
-		}
-		if _, ok := tne.names[tp]; !ok {
-			tne.names[tp] = struct{}{}
+		if t.TableInfo != nil {
+			tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
+			if tp.DBName == "" {
+				tp.DBName = tne.curDB.L
+			}
+			if _, ok := tne.names[tp]; !ok {
+				tne.names[tp] = struct{}{}
+			}
 		}
 	} else if s, ok := in.(*ast.SelectStmt); ok {
 		if s.With != nil && len(s.With.CTEs) > 0 {
@@ -278,8 +282,16 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
-	// For capture task, we don't dump stats
-	if !task.IsCapture {
+	// For capture task, we dump stats in storage only if EnableHistoricalStatsForCapture is disabled.
+	// For manual plan replayer dump command, we directly dump stats in storage
+	if task.IsCapture {
+		if !task.IsContinuesCapture && variable.EnableHistoricalStatsForCapture.Load() {
+			// Dump stats
+			if err = dumpStats(zw, pairs, do); err != nil {
+				return err
+			}
+		}
+	} else {
 		// Dump stats
 		if err = dumpStats(zw, pairs, do); err != nil {
 			return err
@@ -350,6 +362,7 @@ func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	varMap[PlanReplayerTaskMetaIsContinues] = strconv.FormatBool(task.IsContinuesCapture)
 	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
 	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
+	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(variable.EnableHistoricalStatsForCapture.Load())
 	if err := toml.NewEncoder(cf).Encode(varMap); err != nil {
 		return errors.AddStack(err)
 	}

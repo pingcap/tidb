@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/intest"
 )
 
 const shard = 8
@@ -45,6 +46,11 @@ func (s *ShardPoolMap) Add(key string, pool *PoolContainer) error {
 	return s.pools[hash(key)].Add(key, pool)
 }
 
+// Del deletes a pool to the map.
+func (s *ShardPoolMap) Del(key string) {
+	s.pools[hash(key)].Del(key)
+}
+
 // Iter iterates the map
 func (s *ShardPoolMap) Iter(fn func(pool *PoolContainer)) {
 	for i := 0; i < shard; i++ {
@@ -64,11 +70,17 @@ func newPoolMap() poolMap {
 func (p *poolMap) Add(key string, pool *PoolContainer) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if _, contain := p.poolMap[key]; contain {
+	if _, contain := p.poolMap[key]; contain && !intest.InTest {
 		return errors.New("pool is already exist")
 	}
 	p.poolMap[key] = pool
 	return nil
+}
+
+func (p *poolMap) Del(key string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.poolMap, key)
 }
 
 func (p *poolMap) Iter(fn func(pool *PoolContainer)) {

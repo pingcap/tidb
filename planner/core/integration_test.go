@@ -1280,6 +1280,27 @@ func TestIssue15110(t *testing.T) {
 	tk.MustExec("explain format = 'brief' SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
 }
 
+func TestIssue40910(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t(a int, b int, index idx_a(a), index idx_b(b));`)
+
+	tk.MustExec("select * from t where a > 1 and a < 10 order by b;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec("create session binding for select * from t where a > 1 and a < 10 order by b using select /*+ use_index(t, idx_a) */ * from t where a > 1 and a < 10 order by b;")
+	tk.MustExec("select * from t where a > 1 and a < 10 order by b;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustExec("select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustExec("select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The system ignores the hints in the current query and uses the hints specified in the bindSQL: SELECT /*+ use_index(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 1 AND `a` < 10 ORDER BY `b`"))
+}
+
 func TestReadFromStorageHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1322,6 +1343,95 @@ func TestReadFromStorageHint(t *testing.T) {
 		res.Check(testkit.Rows(output[i].Plan...))
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
+}
+
+func TestKeepOrderHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t, t1, th")
+	tk.MustExec("drop view if exists v, v1")
+	tk.MustExec("create table t(a int, b int, primary key(a));")
+	tk.MustExec("create table t1(a int, b int, index idx_a(a));")
+	tk.MustExec("create table th (a int, key(a)) partition by hash(a) partitions 4;")
+	tk.MustExec("create definer='root'@'localhost' view v as select * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("create definer='root'@'localhost' view v1 as select * from t where a<10 order by a limit 1;")
+
+	// If the optimizer can not generate the keep order plan, it will report error
+	err := tk.ExecToErr("explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 limit 1;")
+	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+
+	err = tk.ExecToErr("explain select /*+ order_index(t, primary) */ * from t where a<10 limit 1;")
+	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+
+	// The partition table can not keep order
+	tk.MustExec("analyze table th;")
+	err = tk.ExecToErr("select a from th where a<1 order by a limit 1;")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("select /*+ order_index(th, a) */ a from th where a<1 order by a limit 1;")
+	require.EqualError(t, err, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+func TestKeepOrderHintWithBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx_a(a));")
+
+	// create binding for order_index hint
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res := tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from `test` . `t1` where `a` < ? order by `a` limit ?")
+	require.Equal(t, res[0][1], "SELECT /*+ order_index(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
+
+	tk.MustExec("drop global binding for select * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, len(res), 0)
+
+	// create binding for no_order_index hint
+	tk.MustExec("create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from `test` . `t1` where `a` < ? order by `a` limit ?")
+	require.Equal(t, res[0][1], "SELECT /*+ no_order_index(`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1")
+
+	tk.MustExec("drop global binding for select * from t1 where a<10 order by a limit 1;")
+	tk.MustExec("select * from t1 where a<10 order by a limit 1;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	res = tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, len(res), 0)
 }
 
 func TestViewHint(t *testing.T) {
@@ -2937,7 +3047,7 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "10000.00", "root", " data:ExchangeSender_8"},
+		{"TableReader_9", "10000.00", "root", " MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "10000.00", "mpp[tiflash]", " ExchangeType: PassThrough"},
 		{"  └─Projection_4", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#3"},
 		{"    └─TableFullScan_7", "10000.00", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},
@@ -2971,7 +3081,7 @@ func TestRightShiftPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "rightshift(test.t.a, test.t.b)->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -3423,7 +3533,7 @@ func TestReverseUTF8PushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "reverse(test.t.a)->Column#3"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -3457,7 +3567,7 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "reverse(test.t.a)->Column#3"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -3491,7 +3601,7 @@ func TestSpacePushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "space(test.t.a)->Column#3"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -6693,7 +6803,7 @@ func TestIssue31202(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
-		"TableReader 10000.00 root  data:ExchangeSender",
+		"TableReader 10000.00 root  MppVersion: 1, data:ExchangeSender",
 		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─TableFullScan 10000.00 mpp[tiflash] table:t31202 keep order:false, stats:pseudo"))
 
@@ -7228,7 +7338,7 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "repeat(cast(test.t.a, var_string(20)), test.t.b)->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7257,7 +7367,7 @@ func TestIssue36194(t *testing.T) {
 	}
 	tk.MustQuery("explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where a + 1 > 20 limit 100;;").Check(testkit.Rows(
 		"Limit 100.00 root  offset:0, count:100",
-		"└─TableReader 100.00 root  data:ExchangeSender",
+		"└─TableReader 100.00 root  MppVersion: 1, data:ExchangeSender",
 		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
 		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
@@ -7280,7 +7390,7 @@ func TestGetFormatPushDownToTiFlash(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	tk.MustQuery("explain format = 'brief' select GET_FORMAT(DATE, location) from t;").Check(testkit.Rows(
-		"TableReader 10000.00 root  data:ExchangeSender",
+		"TableReader 10000.00 root  MppVersion: 1, data:ExchangeSender",
 		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Projection 10000.00 mpp[tiflash]  get_format(DATE, test.t.location)->Column#3",
 		"    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
@@ -7361,7 +7471,7 @@ func TestLeftShiftPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "leftshift(test.t.a, test.t.b)->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7400,7 +7510,7 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.a)->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7408,7 +7518,7 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select hex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.b)->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7433,7 +7543,7 @@ func TestBinPushDownToTiFlash(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "bin(test.t.a)->Column#3"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7467,7 +7577,7 @@ func TestEltPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "elt(test.t.a, test.t.b)->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7500,7 +7610,7 @@ func TestRegexpInstrPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "regexp_instr(test.t.expr, test.t.pattern, 1, 1, 0, test.t.match_type)->Column#8"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7533,7 +7643,7 @@ func TestRegexpSubstrPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "regexp_substr(test.t.expr, test.t.pattern, 1, 1, test.t.match_type)->Column#7"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7566,7 +7676,7 @@ func TestRegexpReplacePushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "regexp_replace(test.t.expr, test.t.pattern, test.t.repl, 1, 1, test.t.match_type)->Column#8"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7603,7 +7713,7 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "cast(test.t.a, time BINARY)->Column#4, cast(test.t.b, time BINARY)->Column#5"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7628,7 +7738,7 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	rows := [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "unhex(cast(test.t.a, var_string(20)))->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -7636,7 +7746,7 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select unhex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]interface{}{
-		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"TableReader_9", "root", "MppVersion: 1, data:ExchangeSender_8"},
 		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "unhex(test.t.b)->Column#4"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -8218,4 +8328,73 @@ func TestAutoIncrementCheckWithCheckConstraint(t *testing.T) {
 		CHECK (id IN (0, 1)),
 		KEY idx_autoinc_id (id)
 	)`)
+}
+
+func TestMppVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint, b bigint)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		setStmt := strings.HasPrefix(tt, "set")
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			if !setStmt {
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			}
+		})
+		if setStmt {
+			tk.MustExec(tt)
+		} else {
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	}
+}
+
+// https://github.com/pingcap/tidb/issues/36888.
+func TestIssue36888(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	tk.MustExec("CREATE TABLE t1(c0 INT);")
+
+	tk.MustExec("INSERT INTO t0 VALUES (NULL);")
+	tk.MustQuery("SELECT t0.c0 FROM t0 LEFT JOIN t1 ON t0.c0>=t1.c0 WHERE (CONCAT_WS(t0.c0, t1.c0) IS NULL);").Check(testkit.Rows("<nil>"))
+}
+
+// https://github.com/pingcap/tidb/issues/40285.
+func TestIssue40285(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t(col1 enum('p5', '9a33x') NOT NULL DEFAULT 'p5',col2 tinyblob DEFAULT NULL) ENGINE = InnoDB DEFAULT CHARSET = latin1 COLLATE = latin1_bin;")
+	tk.MustQuery("(select last_value(col1) over () as r0 from t) union all (select col2 as r0 from t);")
 }

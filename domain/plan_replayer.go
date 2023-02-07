@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/replayer"
@@ -164,7 +164,18 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, instance))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.String("sql", record.OriginSQL),
 			zap.Error(err))
+		// try insert record without original sql
+		_, err = exec.ExecuteInternal(ctx, fmt.Sprintf(
+			"insert into mysql.plan_replayer_status (sql_digest, plan_digest, token, instance) values ('%s','%s','%s','%s')",
+			record.SQLDigest, record.PlanDigest, record.Token, instance))
+		if err != nil {
+			logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+				zap.String("sqlDigest", record.SQLDigest),
+				zap.String("planDigest", record.PlanDigest),
+				zap.Error(err))
+		}
 	}
 }
 
@@ -365,9 +376,11 @@ type planReplayerTaskDumpWorker struct {
 }
 
 func (w *planReplayerTaskDumpWorker) run() {
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker started.")
 	for task := range w.taskCH {
 		w.handleTask(task)
 	}
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker exited.")
 }
 
 func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
@@ -377,6 +390,7 @@ func (w *planReplayerTaskDumpWorker) handleTask(task *PlanReplayerDumpTask) {
 	occupy := true
 	handleTask := true
 	defer func() {
+		util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpWorker", nil, false)
 		logutil.BgLogger().Debug("[plan-replayer-capture] handle task",
 			zap.String("sql-digest", sqlDigest),
 			zap.String("plan-digest", planDigest),
@@ -419,7 +433,7 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
-	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture)
+	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture, task.IsContinuesCapture, variable.EnableHistoricalStatsForCapture.Load())
 	if err != nil {
 		logutil.BgLogger().Warn("[plan-replayer-capture] generate task file failed",
 			zap.String("sqlDigest", taskKey.SQLDigest),
@@ -429,7 +443,6 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 	}
 	task.Zf = file
 	task.FileName = fileName
-	task.EncodedPlan, _ = task.EncodePlan(task.SessionVars.StmtCtx, false)
 	if task.InExecute && len(task.NormalizedSQL) > 0 {
 		p := parser.New()
 		stmts, _, err := p.ParseSQL(task.NormalizedSQL)
@@ -536,7 +549,6 @@ type PlanReplayerDumpTask struct {
 	replayer.PlanReplayerTaskKey
 
 	// tmp variables stored during the query
-	EncodePlan    func(*stmtctx.StatementContext, bool) (string, string)
 	TblStats      map[int64]interface{}
 	InExecute     bool
 	NormalizedSQL string

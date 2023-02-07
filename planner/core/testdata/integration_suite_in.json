@@ -654,6 +654,60 @@
     ]
   },
   {
+    "name": "TestKeepOrderHint",
+    "cases": [
+      "explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 limit 1;",
+      "explain select /*+ no_order_index(t, primary) */ * from t where a<10 limit 1;",
+
+      // The index doesn't exist
+      "explain select /*+ order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;",
+      "explain select /*+ order_index(t, idx_b) */ * from t where b<10 order by b limit 1;",
+      "explain select /*+ no_order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;",
+      "explain select /*+ no_order_index(t, idx_b) */ * from t where b<10 order by b limit 1;",
+
+      // Use the order_index/ no_order_index with the use_index/ ignore_index/ force_index hint at the same time
+      "explain select /*+ order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+
+      "explain select /*+ order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
+
+      "explain select /*+ no_order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
+
+      "explain select /*+ no_order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+
+      // Use the order_index/ no_order_index with the use_view hint at the same time
+      "explain select /*+ qb_name(qb, v) order_index(t1@qb, idx_a) */ * from v",
+      "explain select /*+ qb_name(qb, v1) order_index(t@qb, primary) */ * from v1",
+      "explain select /*+ qb_name(qb, v) no_order_index(t1@qb, idx_a) */ * from v",
+      "explain select /*+ qb_name(qb, v1) no_order_index(t@qb, primary) */ * from v1",
+
+      // Use the order_index/ no_order_index with CTE at the same time
+      "explain WITH CTE AS (select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "explain WITH CTE AS (select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "explain WITH CTE AS (select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "explain WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;"
+    ]
+  },
+  {
     "name": "TestViewHint",
     "cases": [
       // Hint for view v
@@ -965,6 +1019,20 @@
     "cases": [
       "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)",
       "desc format = 'brief' select count(*) from tt group by b1"
+    ]
+  },
+  {
+    "name": "TestMppVersion",
+    "cases": [
+      "desc format = 'brief' select count(*) as cnt from t group by a, b",
+      "set mpp_exchange_compression_mode = UNSPECIFIED",
+      "desc format = 'brief' select count(*) as cnt from t group by a, b",
+      "set mpp_version = 0",
+      "set mpp_exchange_compression_mode = fast",
+      "desc format = 'brief' select count(*) as cnt from t group by a, b",
+      "set mpp_version = -1",
+      "set mpp_exchange_compression_mode = high_compression",
+      "desc format = 'brief' select count(*) as cnt from t group by a, b"
     ]
   },
   {

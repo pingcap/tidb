@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -184,6 +185,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForMemoryUsageOpsHistory(sctx)
 		case infoschema.ClusterTableMemoryUsageOpsHistory:
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
+		case infoschema.TableResourceGroups:
+			err = e.setDataFromResourceGroups()
 		}
 		if err != nil {
 			return nil, err
@@ -1677,11 +1680,11 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		}
 	}
 	for _, fk := range table.ForeignKeys {
-		fkRefCol := ""
-		if len(fk.RefCols) > 0 {
-			fkRefCol = fk.RefCols[0].O
-		}
 		for i, key := range fk.Cols {
+			fkRefCol := ""
+			if len(fk.RefCols) > i {
+				fkRefCol = fk.RefCols[i].O
+			}
 			col := nameToCol[key.L]
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // CONSTRAINT_CATALOG
@@ -3381,6 +3384,42 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 			policy.PlacementSettings.Learners,
 		)
 		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromResourceGroups() error {
+	resourceGroups, err := infosync.GetAllResourceGroups(context.TODO())
+	if err != nil {
+		return errors.Errorf("failed to access resource group manager, error message is %s", err.Error())
+	}
+	rows := make([][]types.Datum, 0, len(resourceGroups))
+	for _, group := range resourceGroups {
+		//mode := ""
+		burstable := "NO"
+		switch group.Mode {
+		case rmpb.GroupMode_RUMode:
+			if group.RUSettings.RU.Settings.BurstLimit < 0 {
+				burstable = "YES"
+			}
+			row := types.MakeDatums(
+				group.Name,
+				group.RUSettings.RU.Settings.FillRate,
+				uint64(group.RUSettings.RU.Tokens),
+				burstable,
+			)
+			rows = append(rows, row)
+		default:
+			//mode = "UNKNOWN_MODE"
+			row := types.MakeDatums(
+				group.Name,
+				nil,
+				nil,
+				nil,
+			)
+			rows = append(rows, row)
+		}
 	}
 	e.rows = rows
 	return nil

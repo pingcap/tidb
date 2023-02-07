@@ -15,14 +15,7 @@
 package scheduler
 
 import (
-	"time"
-
 	"github.com/pingcap/tidb/resourcemanager/util"
-	"go.uber.org/atomic"
-)
-
-var (
-	minCPUSchedulerInterval = atomic.NewDuration(time.Minute)
 )
 
 // Command is the command for scheduler
@@ -39,5 +32,5 @@ const (
 
 // Scheduler is a scheduler interface
 type Scheduler interface {
-	Tune(component util.Component, p util.GorotinuePool) Command
+	Tune(component util.Component, p util.GoroutinePool) Command
 }

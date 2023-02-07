@@ -549,7 +549,8 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	startTS := txn.StartTS()
 	updateStatsMeta := func(id int64) error {
 		var err error
-		if h.IsTableLocked(id) {
+		// This lock is already locked on it so it use isTableLocked without lock.
+		if h.isTableLocked(id) {
 			if delta.Delta < 0 {
 				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 			} else {
@@ -557,9 +558,13 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 			}
 		} else {
 			if delta.Delta < 0 {
-				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+					"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)", startTS, id, delta.Count, -delta.Delta, -delta.Delta)
 			} else {
-				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+					"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS, id, delta.Count, delta.Delta)
 			}
 		}
 		statsVer = startTS
@@ -1474,10 +1479,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback, enablePseud
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count)
+		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count, t.ModifyCount)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, true)
+		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, t.ModifyCount, true)
 	}
 	q.Expected = int64(expected)
 	return err

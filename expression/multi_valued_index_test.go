@@ -46,14 +46,22 @@ func TestMultiValuedIndexDDL(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustGetErrCode("CREATE TABLE t(x INT, KEY k ((1 AND CAST(JSON_ARRAY(x) AS UNSIGNED ARRAY))));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, key mvi((cast(cast(f1 as unsigned array) as unsigned array))));", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, primary key mvi((cast(cast(f1 as unsigned array) as unsigned array))));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, key mvi((cast(f1->>'$[*]' as unsigned array))));", errno.ErrInvalidTypeForJSON)
 	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as year array))));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as json array))));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as char(10) charset gbk array))));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("create table t(j json, gc json as ((concat(cast(j->'$[*]' as unsigned array),\"x\"))));", errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("create table t(j json, gc json as (cast(j->'$[*]' as unsigned array)));", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode(`create table t1(j json, key i1((cast(j->"$" as char array))));`, errno.ErrNotSupportedYet)
+	tk.MustGetErrCode(`create table t1(j json, key i1((cast(j->"$" as binary array))));`, errno.ErrNotSupportedYet)
+	tk.MustGetErrCode(`create table t1(j json, key i1((cast(j->"$" as float array))));`, errno.ErrNotSupportedYet)
+	tk.MustGetErrCode(`create table t1(j json, key i1((cast(j->"$" as double array))));`, errno.ErrNotSupportedYet)
+	tk.MustGetErrCode(`create table t1(j json, key i1((cast(j->"$" as decimal(4,2) array))));`, errno.ErrNotSupportedYet)
 	tk.MustGetErrCode("create view v as select cast('[1,2,3]' as unsigned array);", errno.ErrNotSupportedYet)
 	tk.MustExec("create table t(a json, index idx((cast(a as signed array))));")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a json, index idx(((cast(a as signed array)))))")
 
 	tk.MustExec("drop table t")
 	tk.MustGetErrCode("create table t(a json, b int, index idx(b, (cast(a as signed array)), (cast(a as signed array))));", errno.ErrNotSupportedYet)
@@ -65,6 +73,12 @@ func TestMultiValuedIndexDDL(t *testing.T) {
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a json, b int, index idx3(b, (cast(a as signed array))));")
+	tk.MustExec("drop table t")
+	tk.MustExec("set names gbk")
+	tk.MustExec("create table t(a json, b int, index idx3(b, (cast(a as char(10) array))));")
+
+	tk.MustExec("CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);")
+	tk.MustExecToErr("CREATE TABLE t (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON, FOREIGN KEY fk_user_id ((cast(doc->'$[*]' as signed array))) REFERENCES users(id));")
 }
 
 func TestMultiValuedIndexDML(t *testing.T) {
@@ -101,35 +115,6 @@ func TestMultiValuedIndexDML(t *testing.T) {
 		tk.MustGetErrCode(`insert into t values ('["汉字"]');`, errno.ErrInvalidJSONValueForFuncIndex)
 		tk.MustGetErrCode(`insert into t values ('[1.2]');`, errno.ErrInvalidJSONValueForFuncIndex)
 		tk.MustGetErrCode(`insert into t values ('[1.0]');`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values (json_array(cast("11:00:00" as time)));`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values (json_array(cast("2022-02-02" as date)));`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values (json_array(cast('{"a":1}' as json)));`, errno.ErrInvalidJSONValueForFuncIndex)
-
-		tk.MustExec(`drop table if exists t;`)
-		tk.MustExec(`create table t(a json, index idx((cast(a as double array))));`)
-		tk.MustExec(`insert into t values ('[1,2,3]');`)
-		tk.MustExec(`insert into t values ('[-1]');`)
-		tk.MustGetErrCode(`insert into t values ('["1"]');`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values ('["a"]');`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values ('["汉字"]');`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustExec(`insert into t values ('[1.2]');`)
-		tk.MustExec(`insert into t values ('[1.0]');`)
-		tk.MustGetErrCode(`insert into t values (json_array(cast("11:00:00" as time)));`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values (json_array(cast("2022-02-02" as date)));`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values (json_array(cast('{"a":1}' as json)));`, errno.ErrInvalidJSONValueForFuncIndex)
-
-		tk.MustExec(`drop table if exists t;`)
-		tk.MustExec(`create table t(a json, index idx((cast(a as decimal(10, 2) array))));`)
-		tk.MustExec(`insert into t values ('[1,2,3]');`)
-		tk.MustExec(`insert into t values ('[-1]');`)
-		tk.MustGetErrCode(`insert into t values ('["1"]');`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values ('["a"]');`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustGetErrCode(`insert into t values ('["汉字"]');`, errno.ErrInvalidJSONValueForFuncIndex)
-		tk.MustExec(`insert into t values ('[1.2]');`)
-		tk.MustExec(`insert into t values ('[1.0]');`)
-		tk.MustExec(`insert into t values ('[1.1102]');`)
 		tk.MustGetErrCode(`insert into t values (json_array(cast("11:00:00" as time)));`, errno.ErrInvalidJSONValueForFuncIndex)
 		tk.MustGetErrCode(`insert into t values (json_array(cast("2022-02-02" as date)));`, errno.ErrInvalidJSONValueForFuncIndex)
 		tk.MustGetErrCode(`insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));`, errno.ErrInvalidJSONValueForFuncIndex)
@@ -245,16 +230,18 @@ func TestWriteMultiValuedIndex(t *testing.T) {
 	tk.MustExec("insert into t1 values (3, '[]')")
 	tk.MustExec("insert into t1 values (4, '[2,3,4]')")
 	tk.MustExec("insert into t1 values (5, null)")
+	tk.MustExec("insert into t1 values (6, '1')")
 
 	t1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	for _, index := range t1.Indices() {
 		if index.Meta().MVIndex {
-			checkCount(t, t1.IndexPrefix(), index, store, 10)
+			checkCount(t, t1.IndexPrefix(), index, store, 11)
 			checkKey(t, t1.IndexPrefix(), index, store, [][]types.Datum{
 				{types.NewDatum(nil), types.NewIntDatum(5)},
 				{types.NewIntDatum(1), types.NewIntDatum(1)},
 				{types.NewIntDatum(1), types.NewIntDatum(2)},
+				{types.NewIntDatum(1), types.NewIntDatum(6)},
 				{types.NewIntDatum(2), types.NewIntDatum(1)},
 				{types.NewIntDatum(2), types.NewIntDatum(2)},
 				{types.NewIntDatum(2), types.NewIntDatum(4)},
@@ -277,6 +264,7 @@ func TestWriteMultiValuedIndex(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, '[\"abc\", \"abc \"]')")
 	tk.MustExec("insert into t1 values (2, '[\"b\"]')")
 	tk.MustExec("insert into t1 values (3, '[\"b   \"]')")
+	tk.MustQuery("select pk from t1 where 'b   ' member of (a)").Check(testkit.Rows("3"))
 
 	t1, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -308,6 +296,42 @@ func TestWriteMultiValuedIndex(t *testing.T) {
 		}
 	}
 
+	tk.MustExec("delete from t1")
+	for _, index := range t1.Indices() {
+		if index.Meta().MVIndex {
+			checkCount(t, t1.IndexPrefix(), index, store, 0)
+		}
+	}
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1(pk int primary key, a json, index idx((cast(a as unsigned array))))")
+	tk.MustExec("insert into t1 values (1, '[1,2,2,3]')")
+	tk.MustExec("insert into t1 values (2, '[1,2,3]')")
+	tk.MustExec("insert into t1 values (3, '[]')")
+	tk.MustExec("insert into t1 values (4, '[2,3,4]')")
+	tk.MustExec("insert into t1 values (5, null)")
+	tk.MustExec("insert into t1 values (6, '1')")
+
+	t1, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	for _, index := range t1.Indices() {
+		if index.Meta().MVIndex {
+			checkCount(t, t1.IndexPrefix(), index, store, 11)
+			checkKey(t, t1.IndexPrefix(), index, store, [][]types.Datum{
+				{types.NewDatum(nil), types.NewIntDatum(5)},
+				{types.NewUintDatum(1), types.NewIntDatum(1)},
+				{types.NewUintDatum(1), types.NewIntDatum(2)},
+				{types.NewUintDatum(1), types.NewIntDatum(6)},
+				{types.NewUintDatum(2), types.NewIntDatum(1)},
+				{types.NewUintDatum(2), types.NewIntDatum(2)},
+				{types.NewUintDatum(2), types.NewIntDatum(4)},
+				{types.NewUintDatum(3), types.NewIntDatum(1)},
+				{types.NewUintDatum(3), types.NewIntDatum(2)},
+				{types.NewUintDatum(3), types.NewIntDatum(4)},
+				{types.NewUintDatum(4), types.NewIntDatum(4)},
+			})
+		}
+	}
 	tk.MustExec("delete from t1")
 	for _, index := range t1.Indices() {
 		if index.Meta().MVIndex {

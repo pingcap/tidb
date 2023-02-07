@@ -43,6 +43,14 @@ var (
 			Help:      "The jobs count in the specified status",
 		}, []string{LblType})
 
+	TTLTaskStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ttl_task_status",
+			Help:      "The tasks count in the specified status",
+		}, []string{LblType})
+
 	TTLPhaseTime = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

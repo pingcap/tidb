@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -269,7 +270,7 @@ func TestIssue22307(t *testing.T) {
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert into t values(1, 1);")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr1, checkErr2 error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
@@ -570,7 +571,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	tk1.MustExec("use test")
 
 	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var currJob *model.Job
 	ctx := mock.NewContext()
 	ctx.Store = store
@@ -618,10 +619,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	// Check whether the reorg information is cleaned up.
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
+	element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)
@@ -961,7 +959,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 	}()
 
 	var jobID int64
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		jobID = job.ID
 	}
@@ -993,7 +991,11 @@ func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1, 1)")
-	tk.MustGetErrMsg("alter table t add index idx(b)", "[ddl:-1]DDL job rollback, error msg: job.ErrCount:1, mock unknown type: ast.whenClause.")
+	if variable.DDLEnableDistributeReorg.Load() {
+		tk.MustGetErrMsg("alter table t add index idx(b)", "[ddl:-1]job.ErrCount:0, mock unknown type: ast.whenClause.")
+	} else {
+		tk.MustGetErrMsg("alter table t add index idx(b)", "[ddl:-1]DDL job rollback, error msg: job.ErrCount:1, mock unknown type: ast.whenClause.")
+	}
 	tk.MustExec("drop table if exists t")
 }
 
@@ -1093,7 +1095,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 
 	var cancelErr error
 	var rs []sqlexec.RecordSet
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	d := dom.DDL()
 	originalHook := d.GetHook()
 	d.SetHook(hook)
@@ -1506,7 +1508,7 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	first := true
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
@@ -1531,7 +1533,7 @@ func TestHashPartitionAddColumn(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
@@ -1554,7 +1556,7 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 	var wg sync.WaitGroup
 	var checkErr error
 	one := false
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateDeleteOnly {
 			return
@@ -1576,4 +1578,53 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 	tk.MustExec("alter table t modify column a text(100)")
 	wg.Wait()
 	require.EqualError(t, checkErr, "[ddl:1101]BLOB/TEXT/JSON column 'a' can't have a default value")
+}
+
+func TestMDLTruncateTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("begin")
+	tk.MustExec("select * from t for update")
+
+	var wg sync.WaitGroup
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	wg.Add(2)
+	var timetk2 time.Time
+	var timetk3 time.Time
+
+	one := false
+	f := func(job *model.Job) {
+		if !one {
+			one = true
+		} else {
+			return
+		}
+		go func() {
+			tk3.MustExec("truncate table test.t")
+			timetk3 = time.Now()
+			wg.Done()
+		}()
+	}
+
+	hook.OnJobUpdatedExported.Store(&f)
+	dom.DDL().SetHook(hook)
+
+	go func() {
+		tk2.MustExec("truncate table test.t")
+		timetk2 = time.Now()
+		wg.Done()
+	}()
+
+	time.Sleep(2 * time.Second)
+	timeMain := time.Now()
+	tk.MustExec("commit")
+	wg.Wait()
+	require.True(t, timetk2.After(timeMain))
+	require.True(t, timetk3.After(timeMain))
 }

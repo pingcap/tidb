@@ -1,7 +1,7 @@
 {
   "all_revive": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "/rules_go_work-*": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code"
@@ -9,32 +9,32 @@
   },
   "asciicheck": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "br/pkg/lightning/web/res_vfsdata.go": "ignore code"
     }
   },
   "asmdecl": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "assign": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "atomic": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "atomicalign": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -46,31 +46,31 @@
   },
   "bools": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "buildtag": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "printf": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "unreachable": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "composites": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "br/pkg/glue/console_glue_test.go": "ignore code",
       "br/pkg/restore/db_test.go": "ignore code",
@@ -79,45 +79,45 @@
   },
   "copylocks": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo code"
     }
   },
   "ctrlflow": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "deadcode": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "deepequalerrors": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "durationcheck": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       "/rules_go_work-*": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "errorsas": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "errcheck": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_test\\.go$": "ignore generated code",
       "util/logutil": "ignore util/logutil code",
@@ -131,20 +131,20 @@
   },
   "exportloopref": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "filepermission": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code"
     }
   },
   "fieldalignment": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code",
       ".*_test\\.go$": "ignore test code"
@@ -188,13 +188,13 @@
   },
   "findcall": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "forcetypeassert": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
@@ -219,7 +219,7 @@
   },
   "gofmt": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
@@ -230,7 +230,7 @@
   "gci": {
     "exclude_files": {
       "external/": "no need to vet third party code",
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
       ".*\\.pb\\.go$": "generated code",
@@ -260,37 +260,37 @@
   },
   "httpresponse": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "ifaceassert": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "ineffassign": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "inspect": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "loopclosure": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "lostcancel": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -298,33 +298,33 @@
     "exclude_files": {
       "/cgo/": "ignore cgo code",
       ".*_test\\.go$": "ignore generated code",
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "misspell": {
     "exclude_files": {
       "/cgo/": "ignore cgo code",
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "nilfunc": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "nilness": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "ignore cgo"
     }
   },
   "noloopclosure": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
@@ -339,13 +339,13 @@
   },
   "pkgfact": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "revive": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       "GOROOT/": "ignore code",
       "/cgo/": "ignore cgo",
       "tools/": "ignore tool code",
@@ -405,54 +405,55 @@
       "parser/": "parser code",
       "meta/": "parser code",
       "extension/": "extension code",
-      "resourcemanager/": "resourcemanager code"
+      "resourcemanager/": "resourcemanager code",
+      "keyspace": "keyspace code"
     }
   },
   "shift": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "sortslice": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "stdmethods": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "stringintconv": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "structtag": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "testinggoroutine": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "tests": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "unconvert": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*\\.pb\\.go$": "generated code",
       "parser/parser.go": "generated code",
       "/cgo/": "no need to vet third party code for cgo",
@@ -464,27 +465,27 @@
   },
   "unmarshal": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "unsafeptr": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/digester.go": "ignore code"
     }
   },
   "unusedresult": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/digester_test.go": "ignore code"
     }
   },
   "rowserrcheck": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "server/tidb_test.go": "ignore test code",
       "server/tidb_serial_test.go": "ignore test code",
@@ -496,250 +497,250 @@
   },
   "S1000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1002": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1003": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1004": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1005": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1006": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1007": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1008": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1009": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1010": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1011": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1012": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1013": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1014": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1015": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1016": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1017": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1018": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1019": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/parser.go": "ignore code"
     }
   },
   "S1020": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1021": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "tools/check/ut.go": "ignore code"
     }
   },
   "S1022": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1023": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/parser.go": "ignore code"
     }
   },
   "S1024": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1025": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1026": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1027": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1028": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1029": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1030": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1031": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1032": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1033": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1034": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1035": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1036": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1037": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1038": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1039": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "S1040": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/parser.go": "ignore generated code"
     }
@@ -747,158 +748,167 @@
   "SA1019": {
     "exclude_files": {
       "/build/": "no need to linter code",
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*_test\\.go$": "ignore test code"
+      ".*_test\\.go$": "ignore test code",
+      "br/pkg/restore/split/client.go": "github.com/golang/protobuf deprecated",
+      "br/pkg/streamhelper/advancer_cliext.go": "github.com/golang/protobuf deprecated",
+      "br/pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
+      "br/pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated"
     },
     "only_files": {
       "util/gctuner": "util/gctuner",
       "util/cgroup": "util/cgroup code",
       "util/watcher": "util/watcher",
-      "br/pkg/lightning/restore/": "br/pkg/lightning/restore/",
-      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
+      "br/pkg/": "br/pkg",
       "executor/aggregate.go": "executor/aggregate.go",
-      "types/json_binary_functions.go": "types/json_binary_functions.go",
-      "types/json_binary_test.go": "types/json_binary_test.go",
+      "types/": "types",
       "ddl/": "enable to ddl",
       "expression/builtin_cast.go": "enable expression/builtin_cast.go",
       "planner/core/plan.go": "planner/core/plan.go",
-      "server/conn.go": "server/conn.go",
-      "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go",
       "extension/": "extension code",
-      "resourcemanager/": "resourcemanager code"
+      "resourcemanager/": "resourcemanager code",
+      "keyspace/": "keyspace code",
+      "server/": "server code",
+      "meta": "meta code"
+    }
+  },
+  "SA1029": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore test code"
     }
   },
   "SA2000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA2001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA2003": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA3000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA3001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA4009": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5002": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5003": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5004": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5005": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5007": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5008": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5009": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5010": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5011": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA5012": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA6000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA6001": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "SA6005": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
   "prealloc": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
@@ -906,7 +916,7 @@
   },
   "predeclared": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
       "parser/parser.go": "ignore generated code",
@@ -915,7 +925,7 @@
   },
   "U1000": {
     "exclude_files": {
-      "/external/": "no need to vet third party code",
+      "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
   }

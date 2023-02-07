@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//parser/auth",
         "//parser/charset",
-        "//parser/duration",
         "//parser/mysql",
         "//parser/terror",
         "//parser/types",
@@ -32,6 +31,7 @@ go_test(
     deps = [
         "//parser/charset",
         "//parser/mysql",
+        "//parser/terror",
         "//parser/types",
         "@com_github_stretchr_testify//require",
     ],

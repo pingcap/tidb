@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/util/memory"
@@ -697,6 +698,12 @@ const (
 	// TiDBCostModelVersion is a internal switch to indicates the cost model version.
 	TiDBCostModelVersion = "tidb_cost_model_version"
 
+	// TiDBIndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
+	// IndexJoin can cause plenty of extra double read tasks, which consume lots of resources and take a long time.
+	// Since the number of double read tasks is hard to estimated accurately, we leave this variable to let us can adjust this
+	// part of cost manually.
+	TiDBIndexJoinDoubleReadPenaltyCostRate = "tidb_index_join_double_read_penalty_cost_rate"
+
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 
@@ -786,6 +793,19 @@ const (
 
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
+
+	// MppExchangeCompressionMode indicates the data compression method in mpp exchange operator
+	MppExchangeCompressionMode = "mpp_exchange_compression_mode"
+
+	// MppVersion indicates the mpp-version used to build mpp plan
+	MppVersion = "mpp_version"
+
+	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// is enabled.
+	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
+
+	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
+	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
 )
 
 // TiDB vars that have only global scope
@@ -892,6 +912,10 @@ const (
 	PasswordReuseTime = "password_reuse_interval"
 	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
 	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
+	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
+	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
+	// TiDBEnableResourceControl indicates whether resource control feature is enabled
+	TiDBEnableResourceControl = "tidb_enable_resource_control"
 )
 
 // TiDB intentional limits
@@ -1126,30 +1150,35 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
-	DefTiDBGOGCTunerThreshold                float64 = 0.6
-	DefTiDBOptPrefixIndexSingleScan                  = true
-	DefTiDBExternalTS                                = 0
-	DefTiDBEnableExternalTSRead                      = false
-	DefTiDBEnableReusechunk                          = true
-	DefTiDBUseAlloc                                  = false
-	DefTiDBEnablePlanReplayerCapture                 = false
-	DefTiDBIndexMergeIntersectionConcurrency         = ConcurrencyUnset
-	DefTiDBTTLJobEnable                              = true
-	DefTiDBTTLScanBatchSize                          = 500
-	DefTiDBTTLScanBatchMaxSize                       = 10240
-	DefTiDBTTLScanBatchMinSize                       = 1
-	DefTiDBTTLDeleteBatchSize                        = 100
-	DefTiDBTTLDeleteBatchMaxSize                     = 10240
-	DefTiDBTTLDeleteBatchMinSize                     = 1
-	DefTiDBTTLDeleteRateLimit                        = 0
-	DefPasswordReuseHistory                          = 0
-	DefPasswordReuseTime                             = 0
-	DefTiDBStoreBatchSize                            = 0
-	DefTiDBHistoricalStatsDuration                   = 7 * 24 * time.Hour
-	DefTiDBTTLJobScheduleWindowStartTime             = "00:00 +0000"
-	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
-	DefTiDBTTLScanWorkerCount                        = 4
-	DefTiDBTTLDeleteWorkerCount                      = 4
+	DefTiDBGOGCTunerThreshold                      float64 = 0.6
+	DefTiDBOptPrefixIndexSingleScan                        = true
+	DefTiDBExternalTS                                      = 0
+	DefTiDBEnableExternalTSRead                            = false
+	DefTiDBEnableReusechunk                                = true
+	DefTiDBUseAlloc                                        = false
+	DefTiDBEnablePlanReplayerCapture                       = false
+	DefTiDBIndexMergeIntersectionConcurrency               = ConcurrencyUnset
+	DefTiDBTTLJobEnable                                    = true
+	DefTiDBTTLScanBatchSize                                = 500
+	DefTiDBTTLScanBatchMaxSize                             = 10240
+	DefTiDBTTLScanBatchMinSize                             = 1
+	DefTiDBTTLDeleteBatchSize                              = 100
+	DefTiDBTTLDeleteBatchMaxSize                           = 10240
+	DefTiDBTTLDeleteBatchMinSize                           = 1
+	DefTiDBTTLDeleteRateLimit                              = 0
+	DefPasswordReuseHistory                                = 0
+	DefPasswordReuseTime                                   = 0
+	DefTiDBStoreBatchSize                                  = 0
+	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture                 = false
+	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                              = 4
+	DefTiDBTTLDeleteWorkerCount                            = 4
+	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                           = false
+	DefTiDBPessimisticTransactionAggressiveLocking         = false
+	DefTiDBEnablePlanCacheForParamLimit                    = true
 )
 
 // Process global variables.
@@ -1225,6 +1254,8 @@ var (
 	IsSandBoxModeEnabled               = atomic.NewBool(false)
 	MaxPreparedStmtCountValue          = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
+	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
 )
 
 var (
@@ -1246,6 +1277,16 @@ var (
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
+	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
+	SetGlobalResourceControl atomic.Pointer[func(bool)]
+)
+
+// Hooks functions for Cluster Resource Control.
+var (
+	// EnableGlobalResourceControlFunc is the function registered by tikv_driver to set cluster resource control.
+	EnableGlobalResourceControlFunc func() = func() {}
+	// DisableGlobalResourceControlFunc is the function registered by tikv_driver to unset cluster resource control.
+	DisableGlobalResourceControlFunc func() = func() {}
 )
 
 func serverMemoryLimitDefaultValue() string {
