@@ -3142,7 +3142,6 @@ func testPartitionAddIndexOrPK(t *testing.T, tk *testkit.TestKit, key string) {
 	partition p6 values less than (2012),
 	partition p7 values less than (2018)
 	);`)
-	logutil.BgLogger().Warn("xxx$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ 111")
 	testPartitionAddIndex(tk, t, key)
 
 	// test hash partition table.
@@ -3152,7 +3151,6 @@ func testPartitionAddIndexOrPK(t *testing.T, tk *testkit.TestKit, key string) {
 	id int not null,
 	hired date not null
 	) partition by hash( year(hired) ) partitions 4;`)
-	logutil.BgLogger().Warn("xxx$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ 222")
 	testPartitionAddIndex(tk, t, key)
 
 	// Test hash partition for pr 10475.
@@ -3200,7 +3198,6 @@ func testPartitionAddIndex(tk *testkit.TestKit, t *testing.T, key string) {
 	tk.MustExec(dml)
 
 	tk.MustExec(fmt.Sprintf("alter table partition_add_idx add %s idx1 (hired)", key))
-	logutil.BgLogger().Warn("xxx@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()

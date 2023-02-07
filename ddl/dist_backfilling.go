@@ -232,9 +232,8 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, con
 	// TODO: At present, only add index is processed. In the future, different elements need to be distinguished.
 	var err error
 	var pTblID int64
-	bJobs := make([]*BackfillJob, 0, concurrency)
 	for i := 0; i < retrySQLTimes; i++ {
-		bJobs, err = GetAndMarkBackfillJobsForOneEle(sess, concurrency, runningJobID, d.uuid, pTblID, InstanceLease)
+		bJobs, err := GetAndMarkBackfillJobsForOneEle(sess, concurrency, runningJobID, d.uuid, pTblID, InstanceLease)
 		if err != nil {
 			// TODO: add test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {

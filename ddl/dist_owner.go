@@ -282,7 +282,7 @@ func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, 
 	return checkReorgJobFinished(dc.ctx, sess, &dc.reorgCtx, ddlJobID, currEle)
 }
 
-func (dc *ddlCtx) splitPhysicalTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext) error {
+func (dc *ddlCtx) splitPhysicalTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJobContext) {
 	defaultSQLMode := sess.GetSessionVars().SQLMode
 	defer func() { sess.GetSessionVars().SQLMode = defaultSQLMode }()
 	// Make timestamp type can be inserted ZeroTimestamp.
@@ -309,20 +309,20 @@ func (dc *ddlCtx) splitPhysicalTableToBackfillJobs(sess *session, reorgInfo *reo
 			logutil.BgLogger().Info("[ddl] split backfill jobs to table start", zap.Int64("jobID", reorgInfo.Job.ID),
 				zap.Stringer("ele", reorgInfo.currElement), zap.Int("donePTbls", pTblMetaCnt), zap.Bool("more", ok))
 			if !ok {
-				return nil
+				return
 			}
 			if err = dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
-				return err
+				return
 			}
 
 			err = dc.splitTableToBackfillJobs(sess, reorgInfo, sJobCtx, pTblMeta)
 			if err != nil {
-				return err
+				return
 			}
 			pTblMetaCnt++
 		}
 	}
-	return nil
+	return
 }
 
 func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgContexts, ddlJobID int64, currEle *meta.Element) error {
