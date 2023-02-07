@@ -38,6 +38,7 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 	columns := table.Meta().Columns
 
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(1000)
+	defer stmtSummary.Close()
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
@@ -79,6 +80,7 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
 	columns := table.Meta().Columns
 
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(1)
+	defer stmtSummary.Close()
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
@@ -139,6 +141,7 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 	require.NoError(t, file.Close())
 
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(2)
+	defer stmtSummary.Close()
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))

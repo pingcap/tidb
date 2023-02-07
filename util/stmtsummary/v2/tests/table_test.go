@@ -31,6 +31,7 @@ import (
 
 func TestStmtSummaryTable(t *testing.T) {
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
+	defer stmtSummary.Close()
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store, stmtSummary)
 
@@ -204,6 +205,7 @@ func TestStmtSummaryTable(t *testing.T) {
 
 func TestStmtSummaryTablePrivilege(t *testing.T) {
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
+	defer stmtSummary.Close()
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store, stmtSummary)
 
@@ -256,6 +258,7 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 
 func TestCapturePrivilege(t *testing.T) {
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
+	defer stmtSummary.Close()
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store, stmtSummary)
 	enableStmtSummaryV2InBindHandle(t, store, stmtSummary)
@@ -308,6 +311,7 @@ func TestCapturePrivilege(t *testing.T) {
 
 func TestStmtSummaryErrorCount(t *testing.T) {
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
+	defer stmtSummary.Close()
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store, stmtSummary)
 
@@ -332,6 +336,7 @@ func TestStmtSummaryErrorCount(t *testing.T) {
 
 func TestStmtSummaryPreparedStatements(t *testing.T) {
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
+	defer stmtSummary.Close()
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store, stmtSummary)
 
@@ -354,6 +359,7 @@ func TestStmtSummaryPreparedStatements(t *testing.T) {
 
 func TestStmtSummarySensitiveQuery(t *testing.T) {
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
+	defer stmtSummary.Close()
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store, stmtSummary)
 
@@ -376,6 +382,7 @@ func TestStmtSummarySensitiveQuery(t *testing.T) {
 
 func TestStmtSummaryTableOther(t *testing.T) {
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
+	defer stmtSummary.Close()
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store, stmtSummary)
 
@@ -408,6 +415,7 @@ func TestStmtSummaryTableOther(t *testing.T) {
 
 func TestStmtSummaryHistoryTableOther(t *testing.T) {
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
+	defer stmtSummary.Close()
 	store := testkit.CreateMockStore(t)
 	tk := newTestKitWithRoot(t, store, stmtSummary)
 
@@ -441,6 +449,7 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
+	defer stmtSummary.Close()
 	store := testkit.CreateMockStore(t)
 	tmp := testkit.NewTestKit(t, store)
 	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
