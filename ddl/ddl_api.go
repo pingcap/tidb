@@ -4382,7 +4382,7 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, false, dbterror.ErrCantDropColWithAutoInc
 	}
-	needReorg, err = checkDropColumnsNeedReorg(tblInfo, colName)
+	needReorg, err = checkDropColumnsNeedReorg(ctx, tblInfo, colName)
 	if err != nil {
 		return false, false, err
 	}
