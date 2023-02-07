@@ -121,7 +121,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("drop resource group y")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
-  
+
 	tk.MustGetErrCode("create resource group x ru_per_sec=1000 ru_per_sec=200", mysql.ErrParse)
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 ru_per_sec=200, ru_per_sec=300", "Dupliated options specified")
 	tk.MustGetErrCode("create resource group x burstable, burstable", mysql.ErrParse)
