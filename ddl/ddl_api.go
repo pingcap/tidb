@@ -1911,9 +1911,6 @@ func BuildTableInfo(
 					return nil, dbterror.ErrPKIndexCantBeInvisible
 				}
 			}
-			if tbInfo.PKIsHandle {
-				continue
-			}
 		}
 
 		if constr.Tp == ast.ConstraintFulltext {

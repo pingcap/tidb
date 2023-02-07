@@ -35,6 +35,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPKIsHandle(t *testing.T) {
+	tblInfo := buildTableInfo(t, "CREATE TABLE `t` (`a` int NOT NULL, `b` int, PRIMARY KEY (`a`))")
+	require.True(t, tblInfo.PKIsHandle)
+	require.Len(t, tblInfo.Indices, 1)
+	require.NotNil(t, tblInfo.GetPrimaryKey())
+}
+
 func TestMultiColumnCommonHandle(t *testing.T) {
 	tblInfo := buildTableInfo(t, "create table t (a int, b int, u varchar(64) unique, nu varchar(64), primary key (a, b), index nu (nu))")
 	var idxUnique, idxNonUnique table.Index
