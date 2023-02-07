@@ -427,8 +427,12 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 		return 0, false
 	}
 	var healthy int64
-	if t.ModifyCount < t.Count {
-		healthy = int64((1.0 - float64(t.ModifyCount)/float64(t.Count)) * 100.0)
+	count := float64(t.Count)
+	if histCount := t.GetColRowCount(); histCount > 0 {
+		count = histCount
+	}
+	if float64(t.ModifyCount) < count {
+		healthy = int64((1.0 - float64(t.ModifyCount)/count) * 100.0)
 	} else if t.ModifyCount == 0 {
 		healthy = 100
 	}
