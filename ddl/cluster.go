@@ -752,6 +752,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
+
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
@@ -768,6 +769,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				return ver, errors.Trace(err)
 			}
 		}
+
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
