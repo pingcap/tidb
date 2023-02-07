@@ -370,7 +370,7 @@ func (m *dbTableMetaMgr) UpdateTableStatus(ctx context.Context, status metaStatu
 }
 
 func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
-	needChecksum bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error,
+	otherHasDupe bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error,
 ) {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
@@ -393,7 +393,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		taskHasDuplicates                          bool
 	)
 	newStatus := metaStatusChecksuming
-	needChecksum = true
+	otherHasDupe = false
 	needRemoteDupe = true
 	err = exec.Transact(ctx, "checksum pre-check", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(
@@ -423,9 +423,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 				return err
 			}
 
-			if taskHasDuplicates {
-				needChecksum = false
-			}
+			otherHasDupe = otherHasDupe || taskHasDuplicates
 
 			// skip finished meta
 			if status >= metaStatusFinished {
@@ -436,7 +434,6 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 				if status >= metaStatusChecksuming {
 					newStatus = status
 					needRemoteDupe = status == metaStatusChecksuming
-					needChecksum = needChecksum && needRemoteDupe
 					return nil
 				}
 
@@ -445,7 +442,6 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 
 			if status < metaStatusChecksuming {
 				newStatus = metaStatusChecksumSkipped
-				needChecksum = false
 				needRemoteDupe = false
 				break
 			} else if status == metaStatusChecksuming {
@@ -475,12 +471,12 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		return false, false, nil, err
 	}
 
-	if needChecksum {
+	if !otherHasDupe && needRemoteDupe {
 		ck := verify.MakeKVChecksum(totalBytes, totalKvs, totalChecksum)
 		baseTotalChecksum = &ck
 	}
 	log.FromContext(ctx).Info("check table checksum", zap.String("table", m.tr.tableName),
-		zap.Bool("checksum", needChecksum), zap.String("new_status", newStatus.String()))
+		zap.Bool("checksum", otherHasDupe), zap.String("new_status", newStatus.String()))
 	return
 }
 
