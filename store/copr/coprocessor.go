@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,6 +72,8 @@ const (
 	CopSmallTaskRow        = 32 // 32 is the initial batch size of TiKV
 	smallTaskSigma         = 0.5
 )
+
+var smallTaskConcurrencyLimit = 20 * runtime.NumCPU()
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -590,8 +593,11 @@ func smallTaskConcurrency(tasks []*copTask) (int, int) {
 	}
 	// Calculate the extra concurrency for small tasks
 	// extra concurrency = tasks / (1 + sigma * sqrt(log(tasks ^ 2)))
-	extraConc := float64(res) / (1 + smallTaskSigma*math.Sqrt(2*math.Log(float64(res))))
-	return res, int(extraConc)
+	extraConc := int(float64(res) / (1 + smallTaskSigma*math.Sqrt(2*math.Log(float64(res)))))
+	if extraConc > smallTaskConcurrencyLimit {
+		extraConc = smallTaskConcurrencyLimit
+	}
+	return res, extraConc
 }
 
 type copIterator struct {
