@@ -220,6 +220,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TTLPhaseTime)
 
 	prometheus.MustRegister(EMACPUUsageGauge)
+	prometheus.MustRegister(PoolConcurrencyCounter)
 
 	prometheus.MustRegister(HistoricalStatsCounter)
 	prometheus.MustRegister(PlanReplayerTaskCounter)
