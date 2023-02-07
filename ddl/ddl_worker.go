@@ -53,10 +53,14 @@ import (
 var (
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = atomicutil.NewInt32(0)
+	// backfillContextID is used for generating the next backfill context ID.
+	backfillContextID = atomicutil.NewInt32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 
 	mockDDLErrOnce = int64(0)
+	// TestNotifyBeginTxnCh is used for if the txn is beginning in runInTxn.
+	TestNotifyBeginTxnCh = make(chan struct{})
 )
 
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
@@ -163,18 +167,19 @@ func (w *worker) Close() {
 	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
 
-func (d *ddl) asyncNotifyByEtcd(addingDDLJobKey string, job *model.Job) {
+func (d *ddlCtx) asyncNotifyByEtcd(etcdPath string, jobID int64, jobType string) {
 	if d.etcdCli == nil {
 		return
 	}
 
-	jobID := strconv.FormatInt(job.ID, 10)
+	jobIDStr := strconv.FormatInt(jobID, 10)
 	timeStart := time.Now()
-	err := util.PutKVToEtcd(d.ctx, d.etcdCli, 1, addingDDLJobKey, jobID)
+	err := util.PutKVToEtcd(d.ctx, d.etcdCli, 1, etcdPath, jobIDStr)
 	if err != nil {
-		logutil.BgLogger().Info("[ddl] notify handling DDL job failed", zap.String("jobID", jobID), zap.Error(err))
+		logutil.BgLogger().Info("[ddl] notify handling DDL job failed",
+			zap.String("etcdPath", etcdPath), zap.Int64("jobID", jobID), zap.String("type", jobType), zap.Error(err))
 	}
-	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerNotifyDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerNotifyDDLJob, jobType, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 }
 
 func asyncNotify(ch chan struct{}) {
@@ -674,18 +679,18 @@ var DDLBackfillers = map[model.ActionType]string{
 	model.ActionDropIndex:    "drop_index",
 }
 
-func getDDLRequestSource(job *model.Job) string {
-	if tp, ok := DDLBackfillers[job.Type]; ok {
+func getDDLRequestSource(jobType model.ActionType) string {
+	if tp, ok := DDLBackfillers[jobType]; ok {
 		return kv.InternalTxnBackfillDDLPrefix + tp
 	}
 	return kv.InternalTxnDDL
 }
 
-func (w *JobContext) setDDLLabelForDiagnosis(job *model.Job) {
+func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 	if w.tp != "" {
 		return
 	}
-	w.tp = getDDLRequestSource(job)
+	w.tp = getDDLRequestSource(jobType)
 	w.ddlJobCtx = kv.WithInternalSourceType(w.ddlJobCtx, w.ddlJobSourceType())
 }
 
@@ -738,7 +743,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
 	w.setDDLLabelForTopSQL(job.ID, job.Query)
-	w.setDDLSourceForDiagnosis(job)
+	w.setDDLSourceForDiagnosis(job.ID, job.Type)
 	jobContext := w.jobContext(job.ID)
 	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
