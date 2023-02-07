@@ -227,6 +227,7 @@ go_test(
         "//errno",
         "//executor",
         "//infoschema",
+        "//keyspace",
         "//kv",
         "//meta",
         "//meta/autoid",

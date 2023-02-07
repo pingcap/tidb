@@ -32,12 +32,15 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -77,6 +80,7 @@ type TiFlashReplicaManagerCtx struct {
 	etcdCli              *clientv3.Client
 	sync.RWMutex         // protect tiflashProgressCache
 	tiflashProgressCache map[int64]float64
+	codec                tikv.Codec
 }
 
 // Close is called to close TiFlashReplicaManagerCtx.
@@ -230,6 +234,11 @@ func (m *TiFlashReplicaManagerCtx) SetTiFlashGroupConfig(ctx context.Context) er
 
 // SetPlacementRule is a helper function to set placement rule.
 func (m *TiFlashReplicaManagerCtx) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
+	// TiDB 6.6 doesn't support tiflash multi-tenancy yet.
+	// TODO(iosmanthus): remove this check after TiDB supports tiflash multi-tenancy.
+	if m.codec.GetAPIVersion() == kvrpcpb.APIVersion_V2 && rule.Count > 0 {
+		return errors.Trace(dbterror.ErrNotSupportedYet.GenWithStackByArgs("TiFlash replica doesn't support API V2"))
+	}
 	if err := m.SetTiFlashGroupConfig(ctx); err != nil {
 		return err
 	}

@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -186,7 +187,14 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() uint64, etcdCli *clientv3.Client, unprefixedEtcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
+func GlobalInfoSyncerInit(
+	ctx context.Context,
+	id string,
+	serverIDGetter func() uint64,
+	etcdCli *clientv3.Client,
+	unprefixedEtcdCli *clientv3.Client,
+	codec tikv.Codec,
+	skipRegisterToDashBoard bool) (*InfoSyncer, error) {
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
 		unprefixedEtcdCli: unprefixedEtcdCli,
@@ -202,7 +210,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
 	is.resourceGroupManager = initResourceGroupManager(etcdCli)
-	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli)
+	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli, codec)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -254,13 +262,13 @@ func initResourceGroupManager(etcdCli *clientv3.Client) ResourceGroupManager {
 	return NewResourceManager(etcdCli)
 }
 
-func initTiFlashReplicaManager(etcdCli *clientv3.Client) TiFlashReplicaManager {
+func initTiFlashReplicaManager(etcdCli *clientv3.Client, codec tikv.Codec) TiFlashReplicaManager {
 	if etcdCli == nil {
 		m := mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return &m
 	}
 	logutil.BgLogger().Warn("init TiFlashReplicaManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
-	return &TiFlashReplicaManagerCtx{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]float64)}
+	return &TiFlashReplicaManagerCtx{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
 func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
@@ -1218,6 +1226,10 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 
 // ConfigureTiFlashPDForPartitions configures pd rule for all partition in partitioned tables.
 func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string, tableID int64) error {
+	if config.GetGlobalKeyspaceName() != "" && count > 0 {
+		// TiDB 6.6 doesn't support tiflash multi-tenancy yet.
+		return errors.Trace(dbterror.ErrNotSupportedYet.GenWithStackByArgs("TiFlash replica doesn't support API V2"))
+	}
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)

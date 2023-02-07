@@ -31,7 +31,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
@@ -5399,10 +5398,6 @@ func shouldModifyTiFlashReplica(tbReplicaInfo *model.TiFlashReplicaInfo, replica
 
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
-	// TiDB 6.6 doesn't support tiflash multi-tenancy yet.
-	if d.ddlCtx.store.GetCodec().GetAPIVersion() == kvrpcpb.APIVersion_V2 && replicaInfo.Count > 0 {
-		return errors.Trace(dbterror.ErrNotSupportedYet.GenWithStackByArgs("TiFlash replica doesn't support API V2"))
-	}
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
