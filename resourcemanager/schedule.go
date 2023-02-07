@@ -31,6 +31,9 @@ func (r *ResourceManager) schedule() {
 }
 
 func (r *ResourceManager) schedulePool(pool *util.PoolContainer) scheduler.Command {
+	if pool.Pool.Running() == 0 {
+		return scheduler.Hold
+	}
 	for _, sch := range r.scheduler {
 		cmd := sch.Tune(pool.Component, pool.Pool)
 		switch cmd {
