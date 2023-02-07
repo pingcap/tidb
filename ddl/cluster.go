@@ -53,9 +53,6 @@ var pdScheduleKey = []string{
 	"merge-schedule-limit",
 }
 
-// FlashbackGetMinSafeTimeTimeout only for test, don't change it.
-var FlashbackGetMinSafeTimeTimeout = time.Minute // 1min
-
 const (
 	flashbackMaxBackoff = 1800000         // 1800s
 	flashbackTimeout    = 3 * time.Minute // 3min
@@ -128,12 +125,18 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 		return errors.Errorf("cannot set flashback timestamp to future time")
 	}
 
+	flashbackGetMinSafeTimeTimeout := time.Minute
+	failpoint.Inject("changeFlashbackGetMinSafeTimeTimeout", func(val failpoint.Value) {
+		t := val.(int)
+		flashbackGetMinSafeTimeTimeout = time.Duration(t)
+	})
+
 	start := time.Now()
 	minSafeTime := getStoreGlobalMinSafeTS(sctx.GetStore())
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for oracleFlashbackTS.After(minSafeTime) {
-		if time.Since(start) >= FlashbackGetMinSafeTimeTimeout {
+		if time.Since(start) >= flashbackGetMinSafeTimeTimeout {
 			return errors.Errorf("cannot set flashback timestamp after min-resolved-ts(%s)", minSafeTime)
 		}
 		select {

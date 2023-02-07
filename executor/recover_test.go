@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -353,13 +352,8 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	originTimeout := ddl.FlashbackGetMinSafeTimeTimeout
-	ddl.FlashbackGetMinSafeTimeTimeout = 0
-	defer func() {
-		ddl.FlashbackGetMinSafeTimeTimeout = originTimeout
-	}()
-
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
@@ -404,7 +398,7 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 			start := time.Now()
 			tk.MustContainErrMsg(testcase.sql,
 				"cannot set flashback timestamp after min-resolved-ts")
-			// When set `FlashbackGetMinSafeTimeTimeout` = 0, no retry for `getStoreGlobalMinSafeTS`.
+			// When set `flashbackGetMinSafeTimeTimeout` = 0, no retry for `getStoreGlobalMinSafeTS`.
 			require.Less(t, time.Since(start), time.Second)
 		} else {
 			tk.MustExec(testcase.sql)
@@ -412,6 +406,7 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/changeFlashbackGetMinSafeTimeTimeout"))
 }
 
 func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
