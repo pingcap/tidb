@@ -617,26 +617,41 @@ func TestTempIndexValueCodec(t *testing.T) {
 	require.NoError(t, err)
 	encodedValueCopy := make([]byte, len(encodedValue))
 	copy(encodedValueCopy, encodedValue)
-	tempIdxVal := EncodeTempIndexValue(encodedValue, 'b')
-	originVal, handle, isDelete, unique, keyVer := DecodeTempIndexValue(tempIdxVal, false)
-	require.Nil(t, handle)
-	require.False(t, isDelete || unique)
-	require.Equal(t, keyVer, byte('b'))
-	require.EqualValues(t, encodedValueCopy, originVal)
 
-	tempIdxVal = EncodeTempIndexValueDeletedUnique(kv.IntHandle(100), 'm')
-	originVal, handle, isDelete, unique, keyVer = DecodeTempIndexValue(tempIdxVal, false)
-	require.Equal(t, handle.IntValue(), int64(100))
-	require.True(t, isDelete)
-	require.True(t, unique)
-	require.Equal(t, keyVer, byte('m'))
-	require.Empty(t, originVal)
+	tempIdxVal := TempIndexValueElem{
+		Value:  encodedValue,
+		KeyVer: 'b',
+	}
+	val := tempIdxVal.Encode(nil)
+	var newTempIdxVal TempIndexValueElem
+	remain, err := newTempIdxVal.DecodeOne(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(remain))
+	require.EqualValues(t, tempIdxVal, newTempIdxVal)
 
-	tempIdxVal = EncodeTempIndexValueDeleted('b')
-	originVal, handle, isDelete, unique, keyVer = DecodeTempIndexValue(tempIdxVal, false)
-	require.Nil(t, handle)
-	require.True(t, isDelete)
-	require.False(t, unique)
-	require.Equal(t, keyVer, byte('b'))
-	require.Empty(t, originVal)
+	idxVal := EncodeHandleInUniqueIndexValue(kv.IntHandle(100), false)
+	tempIdxVal = TempIndexValueElem{
+		Value:    idxVal,
+		KeyVer:   'm',
+		Distinct: true,
+	}
+	newTempIdxVal = TempIndexValueElem{}
+	val = tempIdxVal.Encode(nil)
+	remain, err = newTempIdxVal.DecodeOne(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(remain))
+	require.Equal(t, newTempIdxVal.Handle.IntValue(), int64(100))
+	newTempIdxVal.Handle = nil
+	require.EqualValues(t, tempIdxVal, newTempIdxVal)
+
+	tempIdxVal = TempIndexValueElem{
+		IsDelete: true,
+		KeyVer:   'b',
+	}
+	newTempIdxVal = TempIndexValueElem{}
+	val = tempIdxVal.Encode(nil)
+	remain, err = newTempIdxVal.DecodeOne(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(remain))
+	require.EqualValues(t, tempIdxVal, newTempIdxVal)
 }

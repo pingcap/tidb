@@ -154,7 +154,17 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			indexHandle kv.Handle
 		)
 		if idxID != m.indexID {
-			value = tablecodec.DecodeTempIndexOriginValue(m.value)
+			if tablecodec.TempIndexValueIsUntouched(m.value) {
+				// We never commit the untouched key values to the storage. Skip this check.
+				continue
+			}
+			tempIdxVal, err := tablecodec.DecodeTempIndexValue(m.value, false)
+			if err != nil {
+				return err
+			}
+			if !tempIdxVal.IsEmpty() {
+				value = tempIdxVal.Current().Value
+			}
 			if len(value) == 0 {
 				// Skip the deleted operation values.
 				continue
@@ -209,9 +219,20 @@ func checkIndexKeys(
 			return errors.New("index not found")
 		}
 
+		var isTmpIdxValAndDeleted bool
 		// If this is temp index data, need remove last byte of index data.
 		if idxID != m.indexID {
-			value = append(value, m.value[:len(m.value)-1]...)
+			if tablecodec.TempIndexValueIsUntouched(m.value) {
+				// We never commit the untouched key values to the storage. Skip this check.
+				continue
+			}
+			tmpVal, err := tablecodec.DecodeTempIndexValue(m.value, t.Meta().IsCommonHandle)
+			if err != nil {
+				return err
+			}
+			curElem := tmpVal.Current()
+			isTmpIdxValAndDeleted = curElem.IsDelete
+			value = append(value, curElem.Value...)
 		} else {
 			value = append(value, m.value...)
 		}
@@ -245,7 +266,7 @@ func checkIndexKeys(
 		}
 
 		// When it is in add index new backfill state.
-		if len(value) == 0 || (idxID != m.indexID && (tablecodec.CheckTempIndexValueIsDelete(value))) {
+		if len(value) == 0 || isTmpIdxValAndDeleted {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())

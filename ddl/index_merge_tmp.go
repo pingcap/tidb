@@ -259,40 +259,49 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 				return false, nil
 			}
 
-			originVal, handle, isDelete, unique, keyVer := tablecodec.DecodeTempIndexValue(rawValue, isCommonHandle)
-			if keyVer == tables.TempIndexKeyTypeMerge || keyVer == tables.TempIndexKeyTypeDelete {
-				// For 'm' version kvs, they are double-written.
-				// For 'd' version kvs, they are written in the delete-only state and can be dropped safely.
-				return true, nil
+			tempIdxVal, err := tablecodec.DecodeTempIndexValue(rawValue, isCommonHandle)
+			if err != nil {
+				return false, err
 			}
+			tempIdxVal = tempIdxVal.FilterOverwritten()
 
-			if handle == nil {
-				// If the handle is not found in the value of the temp index, it means
-				// 1) This is not a deletion marker, the handle is in the key or the origin value.
-				// 2) This is a deletion marker, but the handle is in the key of temp index.
-				handle, err = tablecodec.DecodeIndexHandle(indexKey, originVal, len(w.index.Meta().Columns))
-				if err != nil {
-					return false, err
+			// Extract the operations on the original index and replay them later.
+			for _, elem := range tempIdxVal {
+				if elem.KeyVer == tables.TempIndexKeyTypeMerge || elem.KeyVer == tables.TempIndexKeyTypeDelete {
+					// For 'm' version kvs, they are double-written.
+					// For 'd' version kvs, they are written in the delete-only state and can be dropped safely.
+					return true, nil
 				}
+
+				if elem.Handle == nil {
+					// If the handle is not found in the value of the temp index, it means
+					// 1) This is not a deletion marker, the handle is in the key or the origin value.
+					// 2) This is a deletion marker, but the handle is in the key of temp index.
+					elem.Handle, err = tablecodec.DecodeIndexHandle(indexKey, elem.Value, len(w.index.Meta().Columns))
+					if err != nil {
+						return false, err
+					}
+				}
+
+				originIdxKey := make([]byte, len(indexKey))
+				copy(originIdxKey, indexKey)
+				tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, originIdxKey)
+
+				idxRecord := &temporaryIndexRecord{
+					handle: elem.Handle,
+					delete: elem.IsDelete,
+					unique: elem.Distinct,
+					skip:   false,
+				}
+				if !elem.IsDelete {
+					idxRecord.vals = elem.Value
+					idxRecord.distinct = tablecodec.IndexKVIsUnique(elem.Value)
+				}
+				w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
+				w.originIdxKeys = append(w.originIdxKeys, originIdxKey)
+				w.tmpIdxKeys = append(w.tmpIdxKeys, indexKey)
 			}
 
-			originIdxKey := make([]byte, len(indexKey))
-			copy(originIdxKey, indexKey)
-			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, originIdxKey)
-
-			idxRecord := &temporaryIndexRecord{
-				handle: handle,
-				delete: isDelete,
-				unique: unique,
-				skip:   false,
-			}
-			if !isDelete {
-				idxRecord.vals = originVal
-				idxRecord.distinct = tablecodec.IndexKVIsUnique(originVal)
-			}
-			w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
-			w.originIdxKeys = append(w.originIdxKeys, originIdxKey)
-			w.tmpIdxKeys = append(w.tmpIdxKeys, indexKey)
 			lastKey = indexKey
 			return true, nil
 		})
