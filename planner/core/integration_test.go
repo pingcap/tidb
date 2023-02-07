@@ -8398,3 +8398,93 @@ func TestIssue40285(t *testing.T) {
 	tk.MustExec("CREATE TABLE t(col1 enum('p5', '9a33x') NOT NULL DEFAULT 'p5',col2 tinyblob DEFAULT NULL) ENGINE = InnoDB DEFAULT CHARSET = latin1 COLLATE = latin1_bin;")
 	tk.MustQuery("(select last_value(col1) over () as r0 from t) union all (select col2 as r0 from t);")
 }
+
+func TestIsIPv4ToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(v4 varchar(100), v6 varchar(100))")
+	tk.MustExec("insert into t values('123.123.123.123', 'F746:C349:48E3:22F2:81E0:0EA8:E7B6:8286')")
+	tk.MustExec("insert into t values('0.0.0.0', '0000:0000:0000:0000:0000:0000:0000:0000')")
+	tk.MustExec("insert into t values('127.0.0.1', '2001:0:2851:b9f0:6d:2326:9036:f37a')")
+	tk.MustExec("insert into t values('192.168.0.0/10', 'fe80::2dc3:25a5:49a1:6002%24')")
+	tk.MustExec("insert into t values('192.168.99.22.123', '4207:A33A:58D3:F2C3:8EDC:A548:3EC7:0D00:0D00')")
+	tk.MustExec("insert into t values('999.999.999.999', '4207:A33A:58D3:F2C3:8EDC:A548::0D00')")
+	tk.MustExec("insert into t values('3.2.1.', '4207::::8EDC:A548:3EC7:0D00')")
+	tk.MustExec("insert into t values('3..2.1', '4207:::::A548:3EC7:0D00')")
+	tk.MustExec("insert into t values('...', '::::::')")
+	tk.MustExec("insert into t values('4556456', '4556456')")
+	tk.MustExec("insert into t values('ajdjioa', 'ajdjioa')")
+	tk.MustExec("insert into t values('', '')")
+	tk.MustExec("insert into t values(null,null)")
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "is_ipv4(test.t.v4)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select is_ipv4(v4) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestIsIPv6ToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(v4 varchar(100), v6 varchar(100))")
+	tk.MustExec("insert into t values('123.123.123.123', 'F746:C349:48E3:22F2:81E0:0EA8:E7B6:8286')")
+	tk.MustExec("insert into t values('0.0.0.0', '0000:0000:0000:0000:0000:0000:0000:0000')")
+	tk.MustExec("insert into t values('127.0.0.1', '2001:0:2851:b9f0:6d:2326:9036:f37a')")
+	tk.MustExec("insert into t values('192.168.0.0/10', 'fe80::2dc3:25a5:49a1:6002%24')")
+	tk.MustExec("insert into t values('192.168.99.22.123', '4207:A33A:58D3:F2C3:8EDC:A548:3EC7:0D00:0D00')")
+	tk.MustExec("insert into t values('999.999.999.999', '4207:A33A:58D3:F2C3:8EDC:A548::0D00')")
+	tk.MustExec("insert into t values('3.2.1.', '4207::::8EDC:A548:3EC7:0D00')")
+	tk.MustExec("insert into t values('3..2.1', '4207:::::A548:3EC7:0D00')")
+	tk.MustExec("insert into t values('...', '::::::')")
+	tk.MustExec("insert into t values('4556456', '4556456')")
+	tk.MustExec("insert into t values('ajdjioa', 'ajdjioa')")
+	tk.MustExec("insert into t values('', '')")
+	tk.MustExec("insert into t values(null,null)")
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "is_ipv6(test.t.v6)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select is_ipv6(v6) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
