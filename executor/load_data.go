@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
@@ -63,10 +64,6 @@ type LoadDataExec struct {
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
-	// TODO: support load data without local field.
-	if e.FileLocRef == ast.FileLocServer {
-		return errors.New("Load Data: don't support load data without local field")
-	}
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
 		return errors.New("Load Data: don't support load data terminated is nil")
@@ -79,8 +76,21 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	switch e.FileLocRef {
-	case ast.FileLocServer:
-		panic("FileLocServer should be handled earlier")
+	case ast.FileLocServerOrRemote:
+		u, err := storage.ParseRawURL(e.loadDataInfo.Path)
+		if err != nil {
+			return err
+		}
+		var filename string
+		u.Path, filename = filepath.Split(u.Path)
+		b, err := storage.ParseBackendFromURL(u, nil)
+		if err != nil {
+			return err
+		}
+		if b.GetLocal() != nil {
+			return errors.Errorf("Load Data: don't support load data from tidb-server's disk")
+		}
+		return e.loadFromRemote(ctx, b, filename)
 	case ast.FileLocClient:
 		// let caller use handleQuerySpecial to read data in this connection
 		sctx := e.loadDataInfo.ctx
@@ -90,27 +100,15 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return errors.New("Load Data: previous load data option wasn't closed normally")
 		}
 		sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
-	case ast.FileLocRemote:
-		return e.loadFromRemote(ctx)
 	}
 	return nil
 }
 
-func (e *LoadDataExec) loadFromRemote(ctx context.Context) error {
-	u, err := storage.ParseRawURL(e.loadDataInfo.Path)
-	if err != nil {
-		return err
-	}
-	var filename string
-	u.Path, filename = filepath.Split(u.Path)
-	b, err := storage.ParseBackendFromURL(u, nil)
-	if err != nil {
-		return err
-	}
-	if b.GetLocal() != nil {
-		return errors.Errorf("Load Data: don't support load data from tidb-server when set REMOTE, path %s", e.loadDataInfo.Path)
-	}
-
+func (e *LoadDataExec) loadFromRemote(
+	ctx context.Context,
+	b *backup.StorageBackend,
+	filename string,
+) error {
 	opt := &storage.ExternalStorageOptions{}
 	if InTest {
 		opt.NoCredentials = true
