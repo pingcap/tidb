@@ -17,7 +17,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/keyspace"
 	"os"
 	"testing"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/tikv/client-go/v2/tikv"
