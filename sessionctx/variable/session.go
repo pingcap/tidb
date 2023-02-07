@@ -1347,6 +1347,10 @@ type SessionVars struct {
 	// is enabled.
 	PessimisticTransactionAggressiveLocking bool
 
+	// EnableIndexJoinInnerSideMultiPattern indicates whether enable multi pattern for index join inner side
+	// For now it is not public to user
+	EnableIndexJoinInnerSideMultiPattern bool
+
 	// StmtSummary collects statements summary for the current session.
 	StmtSummary *stmtSummary
 }
