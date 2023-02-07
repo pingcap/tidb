@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror"
 )
@@ -45,14 +43,6 @@ const (
 )
 
 // Util functions
-
-func toJsonString(val interface{}) string {
-	r, err := json.Marshal(val)
-	if err != nil {
-		return ""
-	}
-	return string(r)
-}
 
 func getOrCreateTempCompositeIndexes(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, idxInfos []*model.IndexInfo) ([]*model.IndexInfo, error) {
 	ctidxInfos := getTempCompositeIndexes(tblInfo, idxInfos)
@@ -143,15 +133,6 @@ func renameTempCompositeIdxToOrigin(idx *model.IndexInfo, cidxInfos []*model.Ind
 
 func trimTempCompositeIdxPrefix(name string) string {
 	return strings.TrimPrefix(name, tempCompositeIndexPrefix)
-}
-
-func inColumnNames(col *model.IndexColumn, colNames []model.CIStr) bool {
-	for _, colName := range colNames {
-		if colName.L == col.Name.L {
-			return true
-		}
-	}
-	return false
 }
 
 func listIndexesWithColumn(colName string, indices []*model.IndexInfo) ([]*model.IndexInfo, []*model.IndexInfo) {
@@ -566,8 +547,8 @@ func updateReorgDone(job *model.Job, indexInfo *model.IndexInfo) bool {
 		// Move to next then update reorg related struct
 		newReorgMeta := &model.DDLReorgMeta{
 			SQLMode:       job.ReorgMeta.SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
+			Warnings:      job.ReorgMeta.Warnings,
+			WarningsCount: job.ReorgMeta.WarningsCount,
 			Location:      job.ReorgMeta.Location,
 			ReorgTp:       job.ReorgMeta.ReorgTp,
 			IsDistReorg:   job.ReorgMeta.IsDistReorg,
@@ -583,13 +564,12 @@ func updateReorgDone(job *model.Job, indexInfo *model.IndexInfo) bool {
 
 // rollback related functions
 
-func getColumnByNameFromTable(tblInfo *model.TableInfo, colName model.CIStr) *model.ColumnInfo {
+func getColumnMapFromTable(tblInfo *model.TableInfo) map[string]*model.ColumnInfo {
+	ret := make(map[string]*model.ColumnInfo)
 	for _, colInfo := range tblInfo.Columns {
-		if colInfo.Name.L == colName.L {
-			return colInfo
-		}
+		ret[colInfo.Name.L] = colInfo
 	}
-	return nil
+	return ret
 }
 
 // checkDropColumnsNeedReorg returns if the drop column job has composite index covered and index doesn't contains auto increment field.
@@ -598,12 +578,11 @@ func checkDropColumnsNeedReorg(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	if len(cidxInfos) == 0 {
 		return false, nil
 	}
+	colMaps := getColumnMapFromTable(tblInfo)
 
 	for _, idxInfo := range cidxInfos {
 		for _, icol := range idxInfo.Columns {
-			col := getColumnByNameFromTable(tblInfo, icol.Name)
-			// Not allow index contains auto increment column.
-			if col != nil && mysql.HasAutoIncrementFlag(col.GetFlag()) {
+			if col, have := colMaps[icol.Name.L]; have && mysql.HasAutoIncrementFlag(col.GetFlag()) {
 				if col.Name.L == colName.L && ctx.GetSessionVars().AllowRemoveAutoInc {
 					// column is the only one auto increment column in composite index
 					// and allow drop auto increment column
