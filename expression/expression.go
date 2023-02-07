@@ -1065,7 +1065,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// ast.FindInSet, ast.Repeat,
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
-		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
+		ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
 		ast.Right, /* ast.Left */
 
 		// json functions.
@@ -1096,6 +1096,12 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
 		ast.UUID:
 
+		return true
+	case InternalFuncFromBinary, InternalFuncToBinary:
+		arg0 := sf.Function.getArgs()[0]
+		if arg0.GetType().EvalType() == types.ETString && arg0.GetType().GetCharset() == charset.CharsetGB18030 {
+			return false
+		}
 		return true
 	case ast.Round:
 		switch sf.Function.PbCode() {
