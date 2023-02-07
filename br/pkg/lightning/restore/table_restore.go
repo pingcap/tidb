@@ -794,6 +794,7 @@ func (tr *TableRestore) postProcess(
 			}
 			hasDupe = hasLocalDupe
 		}
+		failpoint.Inject("SlowDownCheckDupe", func() {})
 
 		otherHasDupe, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
 		if err != nil {
