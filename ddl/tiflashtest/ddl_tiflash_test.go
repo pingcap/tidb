@@ -458,9 +458,7 @@ func TestTiFlashFlashbackCluster(t *testing.T) {
 
 	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	ChangeGCSafePoint(tk, time.Now().Add(-10*time.Second), "true", "10m0s")
@@ -473,8 +471,7 @@ func TestTiFlashFlashbackCluster(t *testing.T) {
 	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)), errorMsg)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 }
 
 func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, table string) {
