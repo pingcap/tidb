@@ -18,7 +18,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/tracing"
 )
 
 // index is the data structure for index data in the KV store.
@@ -123,7 +123,8 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 			if !c.tblInfo.Columns[c.idxInfo.Columns[i].Offset].FieldType.IsArray() {
 				val = append(val, v)
 			} else {
-				if v.IsNull() {
+				// if the datum type is not JSON, it must come from cleanup index.
+				if v.IsNull() || v.Kind() != types.KindMysqlJSON {
 					val = append(val, v)
 					jsonIsNull = true
 					continue
@@ -168,11 +169,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	indexedValues := c.getIndexedValue(indexedValue)
 	ctx := opt.Ctx
 	if ctx != nil {
-		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-			span1 := span.Tracer().StartSpan("index.Create", opentracing.ChildOf(span.Context()))
-			defer span1.Finish()
-			ctx = opentracing.ContextWithSpan(ctx, span1)
-		}
+		var r tracing.Region
+		r, ctx = tracing.StartRegionEx(ctx, "index.Create")
+		defer r.End()
 	} else {
 		ctx = context.TODO()
 	}

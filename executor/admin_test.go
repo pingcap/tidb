@@ -302,6 +302,88 @@ func TestAdminRecoverIndex(t *testing.T) {
 
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check table admin_test")
+
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), unique key i1((c2+1)))")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20)")
+	r = tk.MustQuery("admin recover index admin_test i1")
+	r.Check(testkit.Rows("0 5"))
+	tk.MustExec("admin check table admin_test")
+	ctx = mock.NewContext()
+	ctx.Store = store
+	is = domain.InfoSchema()
+	dbName = model.NewCIStr("test")
+	tblName = model.NewCIStr("admin_test")
+	tbl, err = is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+
+	tblInfo = tbl.Meta()
+	idxInfo = tblInfo.FindIndexByName("i1")
+	indexOpr = tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	sc = ctx.GetSessionVars().StmtCtx
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), kv.IntHandle(1))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(i1)")
+	r.Check(testkit.Rows("4"))
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	r = tk.MustQuery("admin recover index admin_test i1")
+	r.Check(testkit.Rows("1 5"))
+	tk.MustExec("admin check table admin_test")
+
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), unique key i1(c1, c2));")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20);")
+	tk.MustExec("admin recover index admin_test i1;")
+}
+
+func TestAdminCleanupMVIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))))")
+	tk.MustExec("insert into t values (0, '[0,1,2]')")
+	tk.MustExec("insert into t values (1, '[1,2,3]')")
+	tk.MustExec("insert into t values (2, '[2,3,4]')")
+	tk.MustExec("insert into t values (3, '[3,4,5]')")
+	tk.MustExec("insert into t values (4, '[4,5,6]')")
+	tk.MustExec("admin check table t")
+
+	// Make some corrupted index. Build the index information.
+	ctx := mock.NewContext()
+	ctx.Store = store
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("t")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
+
+	cpIdx := idxInfo.Clone()
+	cpIdx.MVIndex = false
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(9), kv.IntHandle(9), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table t")
+	require.Error(t, err)
+
+	r := tk.MustQuery("admin cleanup index t idx")
+	r.Check(testkit.Rows("1"))
+	tk.MustExec("admin check table t")
 }
 
 func TestClusteredIndexAdminRecoverIndex(t *testing.T) {

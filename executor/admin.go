@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -190,6 +191,9 @@ type RecoverIndexExec struct {
 	colFieldTypes []*types.FieldType
 	srcChunk      *chunk.Chunk
 	handleCols    plannercore.HandleCols
+
+	containsGenedCol bool
+	cols             []*expression.Column
 
 	// below buf is used to reduce allocations.
 	recoverRows []recoverRows
@@ -379,7 +383,10 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if err != nil {
 				return nil, err
 			}
-			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
+			idxVals, err := e.buildIndexedValues(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
+			if err != nil {
+				return nil, err
+			}
 			e.idxValsBufs[result.scanRowCount] = idxVals
 			rsData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: false})
@@ -389,6 +396,40 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 	}
 
 	return e.recoverRows, nil
+}
+
+func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Datum, fieldTypes []*types.FieldType, idxValLen int) ([]types.Datum, error) {
+	if !e.containsGenedCol {
+		return extractIdxVals(row, idxVals, fieldTypes, idxValLen), nil
+	}
+
+	if e.cols == nil {
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.ctx, model.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
+		if err != nil {
+			return nil, err
+		}
+		e.cols = columns
+	}
+
+	if cap(idxVals) < idxValLen {
+		idxVals = make([]types.Datum, idxValLen)
+	} else {
+		idxVals = idxVals[:idxValLen]
+	}
+
+	for i, col := range e.index.Meta().Columns {
+		if e.table.Meta().Columns[col.Offset].IsGenerated() {
+			val, err := e.cols[col.Offset].EvalVirtualColumn(row)
+			if err != nil {
+				return nil, err
+			}
+			val.Copy(&idxVals[i])
+		} else {
+			val := row.GetDatum(col.Offset, &(e.table.Meta().Columns[col.Offset].FieldType))
+			val.Copy(&idxVals[i])
+		}
+	}
+	return idxVals, nil
 }
 
 func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) error {
@@ -551,7 +592,7 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 	}
 	e.idxColFieldTypes = make([]*types.FieldType, 0, len(e.columns))
 	for _, col := range e.columns {
-		e.idxColFieldTypes = append(e.idxColFieldTypes, &col.FieldType)
+		e.idxColFieldTypes = append(e.idxColFieldTypes, col.FieldType.ArrayType())
 	}
 	return e.idxColFieldTypes
 }

@@ -65,6 +65,9 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+// DefaultResourceGroupName is the default resource group name.
+const DefaultResourceGroupName = "default"
+
 var (
 	// PreparedStmtCount is exported for test.
 	PreparedStmtCount int64
@@ -1034,6 +1037,10 @@ type SessionVars struct {
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
 
+	mppVersion kv.MppVersion
+
+	mppExchangeCompressionMode kv.ExchangeCompressionMode
+
 	PlannerSelectBlockAsName []ast.HintTable
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
@@ -1462,6 +1469,23 @@ func (s *SessionVars) IsMPPEnforced() bool {
 	return s.allowMPPExecution && s.enforceMPPExecution
 }
 
+// ChooseMppVersion indicates the mpp-version used to build mpp plan, if mpp-version is unspecified, use the latest version.
+func (s *SessionVars) ChooseMppVersion() kv.MppVersion {
+	if s.mppVersion == kv.MppVersionUnspecified {
+		return kv.GetNewestMppVersion()
+	}
+	return s.mppVersion
+}
+
+// ChooseMppExchangeCompressionMode indicates the data compression method in mpp exchange operator
+func (s *SessionVars) ChooseMppExchangeCompressionMode() kv.ExchangeCompressionMode {
+	if s.mppExchangeCompressionMode == kv.ExchangeCompressionModeUnspecified {
+		// If unspecified, use recommended mode
+		return kv.RecommendedExchangeCompressionMode
+	}
+	return s.mppExchangeCompressionMode
+}
+
 // RaiseWarningWhenMPPEnforced will raise a warning when mpp mode is enforced and executing explain statement.
 // TODO: Confirm whether this function will be inlined and
 // omit the overhead of string construction when calling with false condition.
@@ -1711,6 +1735,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
+		mppVersion:                    kv.MppVersionUnspecified,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2294,16 +2320,16 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 // EncodeSessionStates saves session states into SessionStates.
 func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
+	s.userVars.lock.RLock()
 	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
 	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.userVars.types))
-	s.userVars.lock.RLock()
-	defer s.userVars.lock.RUnlock()
 	for name, userVar := range s.userVars.values {
 		sessionStates.UserVars[name] = userVar.Clone()
 	}
 	for name, userVarType := range s.userVars.types {
 		sessionStates.UserVarTypes[name] = userVarType.Clone()
 	}
+	s.userVars.lock.RUnlock()
 
 	// Encode other session contexts.
 	sessionStates.PreparedStmtID = s.preparedStmtID
@@ -2331,11 +2357,9 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 // DecodeSessionStates restores session states from SessionStates.
 func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
-	s.userVars.values = make(map[string]types.Datum, len(sessionStates.UserVars))
 	for name, userVar := range sessionStates.UserVars {
 		s.SetUserVarVal(name, *userVar.Clone())
 	}
-	s.userVars.types = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
 	for name, userVarType := range sessionStates.UserVarTypes {
 		s.SetUserVarType(name, userVarType.Clone())
 	}

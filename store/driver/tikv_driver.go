@@ -39,7 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
-	rmclient "github.com/tikv/pd/pkg/mcs/resource_manager/client"
+	rmclient "github.com/tikv/pd/client/resource_manager/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -196,10 +196,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// If there's setting keyspace-name, then skipped GC worker logic.
-		// It needs a group of special tidb nodes to execute GC worker logic.
-		// TODO: remove this restriction while merged keyspace GC worker logic.
-		disableGC = true
 	}
 
 	codec := pdClient.GetCodec()
