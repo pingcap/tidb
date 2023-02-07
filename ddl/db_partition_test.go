@@ -5381,7 +5381,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 
-	// WASHERE: How to test these?
+	// TODO: How to test these, without sleeping in test?
 	//tk.MustQuery(`select * from mysql.gc_delete_range_done`).Sort().Check(testkit.Rows())
 	//time.Sleep(1 * time.Second)
 	//tk.MustQuery(`select * from mysql.gc_delete_range`).Sort().Check(testkit.Rows())
@@ -5409,14 +5409,3 @@ func TestReorgPartitionData(t *testing.T) {
 	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("0 Zero value! 0 2022-02-30 00:00:00"))
 	tk.MustExec(`admin check table t`)
 }
-
-// TODO Test with/without PK, indexes, UK, virtual, virtual stored columns
-
-// How to test rollback?
-// Create new table
-// insert some data
-// start reorganize partition
-// pause and get the AddingPartition IDs for later use
-// continue reorganize partition and fail or crash in points of interests
-// check if there are any data to be read from the AddingPartition IDs
-// check if the table structure is correct.

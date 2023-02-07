@@ -154,8 +154,6 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		for _, def := range pi.AddingDefinitions {
 			ret.reorganizePartitions[def.ID] = nil
 		}
-		// TODO: Test decreasing end range and concurrently insert in the gap
-		// TODO: Test increasing end range and concurrently insert into the gap
 		ret.doubleWritePartitions = make(map[int64]interface{}, len(pi.DroppingDefinitions))
 		for _, def := range pi.DroppingDefinitions {
 			p, err := initPartition(ret, def)
@@ -1509,20 +1507,11 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		// So this special order is chosen: add record first, errors such as
 		// 'Key Already Exists' will generally happen during step1, errors are
 		// unlikely to happen in step2.
-		// TODO: check what happens with foreign keys in step 2?
 		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
 		if err != nil {
-			// TODO, test this!! I assume that we need to clean this up,
-			// since there are non-atomic changes in the transaction buffer
-			// which if committed will cause inconsistencies?
-			// What to do if something during the cleanup fails? Can we block
-			// the transaction from ever being committed?
 			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
 			return errors.Trace(err)
 		}
-		// TODO: Test if the update is in different partitions before reorg,
-		// but is now in the same during the reorg? And vice-versa...
-		// What if the change is in the same reorged partition?!?
 		newTo, newFrom := int64(0), int64(0)
 		if _, ok := t.reorganizePartitions[to]; ok {
 			newTo, err = t.locateReorgPartition(ctx, newData)
@@ -1553,8 +1542,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		if newFrom != 0 {
 			tbl := t.GetPartition(newFrom)
 			err = tbl.RemoveRecord(ctx, h, currData)
-			// How to handle error, which can happen when the data is not yet backfilled
-			// TODO: Create a test for this!!!
+			// TODO: Can this happen? When the data is not yet backfilled?
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1589,15 +1577,12 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
 			tbl = t.GetPartition(newTo)
 			_, err = tbl.AddRecord(ctx, newData)
-			// TODO: Could there be a case where a duplicate unique key could happen here?
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 		tbl = t.GetPartition(newFrom)
 		err = tbl.RemoveRecord(ctx, h, currData)
-		// How to handle error, which can happen when the data is not yet backfilled
-		// TODO: Create a test for this!!!
 		if err != nil {
 			return errors.Trace(err)
 		}

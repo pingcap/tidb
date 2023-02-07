@@ -226,7 +226,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionCreateTables:
 		return b.applyCreateTables(m, diff)
 	case model.ActionReorganizePartition:
-		// TODO: How to test?
 		return b.applyReorganizePartition(m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
@@ -290,9 +289,7 @@ func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff
 	return tblIDs, nil
 }
 
-// TODO: How to test this?
 func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	// Is this needed? Since there should be no difference more than partition changes?
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)

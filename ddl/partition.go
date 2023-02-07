@@ -2338,7 +2338,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo, true)
 		}
 
-		// TODO: test...
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
@@ -2440,8 +2439,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.Definitions = newDefs
 		tblInfo.Partition.Num = uint64(len(newDefs))
 
-		// TODO: How do we handle the table schema change for Adding and Dropping Definitions?
-
 		// Now all the data copying is done, but we cannot simply remove the droppingDefinitions
 		// since they are a part of the normal Definitions that other nodes with
 		// the current schema version. So we need to double write for one more schema version
@@ -2458,10 +2455,6 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// the droppingDefinitions during this time
 		// By adding StateDeleteReorg state, client B will write to both
 		// the new (previously addingDefinitions) AND droppingDefinitions
-		// TODO: Make sure the dropLabelRules are done both if successful (droppingDefinitions) or if rollback (addingDefinitions)
-		// TODO: Make sure stats is handled (eventually dropped for old partitions, and added for new?)
-		// Hmm, maybe we should actually update the stats here as well?
-		// Can we collect the stats while doing the reorg?
 
 		// Register the droppingDefinitions ids for rangeDelete
 		// and the addingDefinitions for handling in the updateSchemaVersion
@@ -2530,7 +2523,6 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 		if kv.IsTxnRetryableError(err) {
 			return false, ver, errors.Trace(err)
 		}
-		// TODO: Create tests for this!
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] reorg partition job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
@@ -2553,11 +2545,6 @@ type reorgPartitionWorker struct {
 	writeColOffsetMap map[int64]int
 	maxOffset         int
 	reorgedTbl        table.PartitionedTable
-
-	// SQL MODE should be ignored for reorganize partition?
-	// TODO: Test with zero date? and NULL timestamp?
-	// Test with generated/virtual stored columns.
-	// Can indexes be affected?
 
 	jobContext *JobContext
 }
