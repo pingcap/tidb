@@ -87,7 +87,7 @@ type tableMetaMgr interface {
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
 	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
-		needChecksum bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error)
+		otherHasDupe bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error)
 	FinishTable(ctx context.Context) error
 }
 
@@ -1069,7 +1069,7 @@ func (m noopTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum 
 }
 
 func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (bool, bool, *verify.KVChecksum, error) {
-	return true, true, &verify.KVChecksum{}, nil
+	return false, true, &verify.KVChecksum{}, nil
 }
 
 func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {

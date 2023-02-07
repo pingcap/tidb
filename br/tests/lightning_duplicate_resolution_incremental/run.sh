@@ -21,11 +21,14 @@ check_cluster_version 5 2 0 'duplicate detection' || exit 0
 LOG_FILE1="$TEST_DIR/lightning-duplicate-resolution1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-resolution2.log"
 
-# make sure after first lightning finishes importing, the second lightning then starts
+# let lightning run a bit slow to avoid some table in the first lightning finish too fast.
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckDupe=sleep(5000)"
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_resolution_incremental.sorted1" \
-  --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml"
+  --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml" &
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_resolution_incremental.sorted2" \
-  --enable-checkpoint=1 --log-file "$LOG_FILE2" --config "tests/$TEST_NAME/config2.toml"
+  --enable-checkpoint=1 --log-file "$LOG_FILE2" --config "tests/$TEST_NAME/config2.toml" &
+
+wait
 
 # Ensure table is consistent.
 run_sql 'admin check table dup_resolve_detect.ta'
