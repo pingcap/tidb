@@ -473,7 +473,7 @@ func TestIssue40679(t *testing.T) {
 	require.True(t, strings.Contains(rows[1][0].(string), "RangeScan")) // RangeScan not FullScan
 
 	tk.MustExec("execute st using @a1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: 1.1 may be rewritten"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: '1.1' may be rewritten"))
 }
 
 func TestIssue41032(t *testing.T) {
