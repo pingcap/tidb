@@ -499,13 +499,9 @@ func TestBuildPagingTasks(t *testing.T) {
 	req := &kv.Request{}
 	req.Paging.Enable = true
 	req.Paging.MinPagingSize = paging.MinPagingSize
-<<<<<<< HEAD
 	flashReq := &kv.Request{}
 	flashReq.StoreType = kv.TiFlash
 	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
-=======
-	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
->>>>>>> 98aff8c2119 (executor: disable paging for small limit (#41120))
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.Len(t, tasks, 1)
@@ -524,7 +520,7 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	}()
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 
-	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
 	defer pdCli.Close()
 
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
@@ -536,7 +532,7 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	req.Paging.Enable = true
 	req.Paging.MinPagingSize = paging.MinPagingSize
 	req.LimitSize = 1
-	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.Len(t, tasks, 1)
