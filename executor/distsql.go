@@ -78,7 +78,7 @@ type lookupTableTask struct {
 
 	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
 	buildDoneTime time.Time
-	doneCh    chan error
+	doneCh        chan error
 
 	// indexOrder map is used to save the original index order for the handles.
 	// Without this map, the original index order might be lost.
@@ -812,9 +812,9 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	}
 	if enableStats {
 		e.stats.NextWaitIndexScan += indexFetchedInstant.Sub(start)
-		if task.buildDone.After(indexFetchedInstant) {
-			e.stats.NextWaitTableLookUpBuild += task.buildDone.Sub(indexFetchedInstant)
-			indexFetchedInstant = task.buildDone
+		if task.buildDoneTime.After(indexFetchedInstant) {
+			e.stats.NextWaitTableLookUpBuild += task.buildDoneTime.Sub(indexFetchedInstant)
+			indexFetchedInstant = task.buildDoneTime
 		}
 		e.stats.NextWaitTableLookUpResp += time.Since(indexFetchedInstant)
 	}
@@ -1337,7 +1337,7 @@ func getDatumRow(r *chunk.Row, fields []*types.FieldType) []types.Datum {
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
 	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
-	task.buildDone = time.Now()
+	task.buildDoneTime = time.Now()
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err

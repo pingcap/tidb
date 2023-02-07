@@ -616,11 +616,11 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(execdetails.FormatDuration(s.buildTaskDuration))
 		}
 		if s.distSQLConcurrency > 0 {
-			buf.WriteString(", distsql_concurrency: ")
+			buf.WriteString(", max_distsql_concurrency: ")
 			buf.WriteString(strconv.FormatInt(int64(s.distSQLConcurrency), 10))
 		}
 		if s.extraConcurrency > 0 {
-			buf.WriteString(", extra_concurrency: ")
+			buf.WriteString(", max_extra_concurrency: ")
 			buf.WriteString(strconv.FormatInt(int64(s.extraConcurrency), 10))
 		}
 		if s.storeBatchedNum > 0 {
