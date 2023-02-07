@@ -88,7 +88,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(2000), g.RURate)
 	re.Equal(int64(-1), g.BurstLimit)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 0 YES"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 YES"))
 
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -137,15 +137,15 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	// Check information schema table information_schema.resource_groups
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 0 NO"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 NO"))
 	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=1000"))
 
 	tk.MustExec("create resource group y RU_PER_SEC=2000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 0 NO"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 NO"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000"))
 
 	tk.MustExec("alter resource group y RU_PER_SEC=4000 BURSTABLE")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 0 YES"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 YES"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 BURSTABLE"))
 
 	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("2"))

@@ -39,11 +39,15 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 	if options.RURate > 0 {
 		isRUMode = true
 		group.Mode = rmpb.GroupMode_RUMode
+		burstLimit := options.BurstLimit
+		if burstLimit >= 0 {
+			burstLimit = int64(options.RURate)
+		}
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
 					FillRate:   options.RURate,
-					BurstLimit: options.BurstLimit,
+					BurstLimit: burstLimit,
 				},
 			},
 		}
@@ -76,23 +80,31 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 		}
 
 		group.Mode = rmpb.GroupMode_RawMode
+		cpuBurst := options.BurstLimit
+		ioReadBurst := options.BurstLimit
+		ioWriteBurst := options.BurstLimit
+		if options.BurstLimit >= 0 {
+			cpuBurst = int64(cpuRate)
+			ioReadBurst = int64(ioReadRate)
+			ioWriteBurst = int64(ioWriteRate)
+		}
 		group.RawResourceSettings = &rmpb.GroupRawResourceSettings{
 			Cpu: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
 					FillRate:   cpuRate,
-					BurstLimit: options.BurstLimit,
+					BurstLimit: cpuBurst,
 				},
 			},
 			IoRead: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
 					FillRate:   ioReadRate,
-					BurstLimit: options.BurstLimit,
+					BurstLimit: ioReadBurst,
 				},
 			},
 			IoWrite: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
 					FillRate:   ioWriteRate,
-					BurstLimit: options.BurstLimit,
+					BurstLimit: ioWriteBurst,
 				},
 			},
 		}
