@@ -16,7 +16,6 @@ package domain_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/keyspace"
 	"testing"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"

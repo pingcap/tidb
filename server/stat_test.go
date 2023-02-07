@@ -16,12 +16,12 @@ package server
 
 import (
 	"context"
-	"github.com/pingcap/tidb/keyspace"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
