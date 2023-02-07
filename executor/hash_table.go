@@ -244,7 +244,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	)
 	c.chkBuf = nil
 	c.memTracker.Consume(-c.chkBufSizeForOneProbe + int64(cap(innerPtrs))*rowPtrSize)
-	defer c.memTracker.Consume(-int64(cap(innerPtrs)) * rowPtrSize)
+	defer c.memTracker.Consume(-int64(cap(innerPtrs))*rowPtrSize + memDelta)
 	c.chkBufSizeForOneProbe = 0
 
 	for i, ptr := range innerPtrs {
@@ -256,10 +256,6 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)
 		if err != nil {
 			return nil, nil, err
-		}
-		if !ok {
-			atomic.AddInt64(&c.stat.probeCollision, 1)
-			continue
 		}
 		if c.chkBuf != lastChunkBufPointer && lastChunkBufPointer != nil {
 			lastChunkSize := lastChunkBufPointer.MemoryUsage()
@@ -274,12 +270,15 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			c.memTracker.Consume(memDelta + 1)
 			memDelta = 0
 		}
+		if !ok {
+			atomic.AddInt64(&c.stat.probeCollision, 1)
+			continue
+		}
 		matched = append(matched, matchedRow)
 		if needPtr {
 			matchedPtrs = append(matchedPtrs, ptr)
 		}
 	}
-	c.memTracker.Consume(memDelta)
 	return matched, matchedPtrs, err
 }
 
