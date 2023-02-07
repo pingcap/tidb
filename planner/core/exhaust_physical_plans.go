@@ -2683,6 +2683,10 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
 			if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+				// if variable doesn't allow DistinctAggPushDown, just produce root task type.
+				taskTypes = []property.TaskType{property.RootTaskType}
+			} else if !la.canPushToCop(kv.TiKV) {
+				// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
 				taskTypes = []property.TaskType{property.RootTaskType}
 			} else if !la.distinctArgsMeetsProperty() {
 				continue
@@ -2831,6 +2835,15 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	return
 }
 
+// getHashAggs will generate some kinds of taskType here, which finally converted to different task plan.
+// when deciding whether to add a kind of taskType, there is a rule here. [Not is Not, Yes is not Sure]
+// eg: which means
+//
+//	1: when you find something here that block hashAgg to be pushed down to XXX, just skip adding the XXXTaskType.
+//	2: when you find nothing here to block hashAgg to be pushed down to XXX, just add the XXXTaskType here.
+//	for 2, the final result for this physical operator enumeration is chosen or rejected is according to more factors later (hint/variable/partition/virtual-col/cost)
+//
+// That is to say, the non-complete positive judgement of canPushDownToMPP/canPushDownToTiFlash/canPushDownToTiKV is not that for sure here.
 func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsSortItemEmpty() {
 		return nil
@@ -2845,6 +2858,10 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+			// if variable doesn't allow DistinctAggPushDown, just produce root task type.
+			taskTypes = []property.TaskType{property.RootTaskType}
+		} else if !la.canPushToCop(kv.TiKV) {
+			// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
