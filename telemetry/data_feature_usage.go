@@ -249,7 +249,7 @@ type TxnUsage struct {
 	AssertionLevel                string                          `json:"assertionLevel"`
 	RcCheckTS                     bool                            `json:"rcCheckTS"`
 	RCWriteCheckTS                bool                            `json:"rcWriteCheckTS"`
-	AggressiveLocking             bool                            `json:"aggressiveLocking""`
+	AggressiveLocking             bool                            `json:"aggressiveLocking"`
 	SavepointCounter              int64                           `json:"SavepointCounter"`
 	LazyUniqueCheckSetCounter     int64                           `json:"lazyUniqueCheckSetCounter"`
 	AggressiveLockingUsageCounter m.AggressiveLockingUsageCounter `json:"AggressiveLockingUsageCounter"`
