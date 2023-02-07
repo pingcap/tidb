@@ -531,7 +531,7 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 		err = mockClient.Close()
 		require.NoError(t, err)
 	}()
-	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 
 	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
 	defer pdCli.Close()
@@ -549,6 +549,7 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
 	require.False(t, tasks[0].paging)
 	require.Equal(t, tasks[0].pagingSize, uint64(0))
 }
