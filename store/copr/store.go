@@ -77,6 +77,7 @@ type Store struct {
 	*kvStore
 	coprCache       *coprCache
 	replicaReadSeed uint32
+	numcpu          int
 }
 
 // NewStore creates a new store instance.
@@ -91,6 +92,7 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 		kvStore:         &kvStore{store: s},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
+		numcpu:          runtime.GOMAXPROCS(0),
 	}, nil
 }
 
@@ -110,7 +112,6 @@ func (s *Store) GetClient() kv.Client {
 	return &CopClient{
 		store:           s,
 		replicaReadSeed: s.nextReplicaReadSeed(),
-		numcpu:          runtime.GOMAXPROCS(0),
 	}
 }
 
