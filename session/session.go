@@ -2931,10 +2931,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		if config.GetGlobalConfig().EnableTelemetry {
 			// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
 			// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
-			go func() {
-				dom.TelemetryReportLoop(ses[5])
-				dom.TelemetryRotateSubWindowLoop(ses[5])
-			}()
+			dom.TelemetryReportLoop(ses[5])
+			dom.TelemetryRotateSubWindowLoop(ses[5])
 		}
 	}
 
