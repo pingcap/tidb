@@ -386,19 +386,19 @@ func (t *Table) ColumnByName(colName string) *Column {
 }
 
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
-func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch, bool) {
+func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
 	if isIndex {
 		if idxStatsInfo, ok := t.Indices[ID]; ok {
-			return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
+			return idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
 		}
 		// newly added index which is not analyzed yet
-		return 0, nil, nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	if colStatsInfo, ok := t.Columns[ID]; ok {
-		return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
+		return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
 	}
 	// newly added column which is not analyzed yet
-	return 0, nil, nil, nil, nil, false
+	return nil, nil, nil, nil, false
 }
 
 // GetColRowCount tries to get the row count of the a column if possible.

@@ -16,6 +16,7 @@ package handle
 
 import (
 	"context"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -153,8 +155,16 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	if err != nil {
 		return err
 	}
+	if len(newColGlobalStats.MissingPartitionStats) > 0 {
+		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", tblInfo.Name.L),
+			zap.String("item", "columns"), zap.Strings("missing", newColGlobalStats.MissingPartitionStats))
+	}
 	for i := 0; i < newColGlobalStats.Num; i++ {
 		hg, cms, topN := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i]
+		if hg == nil {
+			// All partitions have no stats so global stats are not created.
+			continue
+		}
 		// fms for global stats doesn't need to dump to kv.
 		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, newColGlobalStats.ModifyCount,
 			0, hg, cms, topN, 2, 1, false, StatsMetaHistorySourceSchemaChange)
@@ -184,8 +194,16 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if err != nil {
 			return err
 		}
+		if len(newIndexGlobalStats.MissingPartitionStats) > 0 {
+			logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", tblInfo.Name.L),
+				zap.String("item", "index "+idx.Name.L), zap.Strings("missing", newIndexGlobalStats.MissingPartitionStats))
+		}
 		for i := 0; i < newIndexGlobalStats.Num; i++ {
 			hg, cms, topN := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i]
+			if hg == nil {
+				// All partitions have no stats so global stats are not created.
+				continue
+			}
 			// fms for global stats doesn't need to dump to kv.
 			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, newIndexGlobalStats.ModifyCount, 1, hg, cms, topN, 2, 1, false, StatsMetaHistorySourceSchemaChange)
 			if err != nil {

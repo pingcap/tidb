@@ -869,6 +869,13 @@ func TestSetVar(t *testing.T) {
 	require.Equal(t, uint64(2), tk.Session().GetSessionVars().CDCWriteSource)
 	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
+
+	// test tidb_skip_missing_partition_stats
+	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("1")) // default value
+	tk.MustExec("set global tidb_skip_missing_partition_stats = 0")
+	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_skip_missing_partition_stats = 1")
+	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("1"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {

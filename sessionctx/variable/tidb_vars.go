@@ -916,6 +916,10 @@ const (
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBSkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 )
 
 // TiDB intentional limits
@@ -1179,6 +1183,7 @@ const (
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
+	DefTiDBSkipMissingPartitionStats                       = true
 )
 
 // Process global variables.
@@ -1256,6 +1261,7 @@ var (
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
 	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
+	SkipMissingPartitionStats          = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
 )
 
 var (

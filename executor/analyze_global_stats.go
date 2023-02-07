@@ -86,6 +86,10 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 				}
 				for i := 0; i < globalStats.Num; i++ {
 					hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
+					if hg == nil {
+						// All partitions have no stats so global stats are not created.
+						continue
+					}
 					// fms for global stats doesn't need to dump to kv.
 					err = statsHandle.SaveStatsToStorage(globalStatsID.tableID,
 						globalStats.Count,
