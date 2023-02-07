@@ -55,7 +55,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil)
+	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -63,13 +63,14 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 }
 
 // rewriteAstExpr rewrites ast expression directly.
-func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
+func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
 	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
+	b.allowBuildCastArray = allowCastArray
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.schema = schema
@@ -1183,6 +1184,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
+		if v.Tp.IsArray() && !er.b.allowBuildCastArray {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
+			return retNode, false
+		}
 		arg := er.ctxStack[len(er.ctxStack)-1]
 		er.err = expression.CheckArgsNotMultiColumnRow(arg)
 		if er.err != nil {
@@ -1195,7 +1200,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
 		if v.Tp.EvalType() == types.ETString {
 			castFunction.SetCoercibility(expression.CoercibilityImplicit)
 			if v.Tp.GetCharset() == charset.CharsetASCII {
@@ -1550,16 +1559,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
 				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
-					if c.GetType().EvalType() == types.ETString {
-						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
-						// here and skip this refine operation in all other cases for safety.
-						er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
-					} else {
-						continue
+					if c.GetType().EvalType() == types.ETInt {
+						continue // no need to refine it
 					}
-				} else if er.sctx.GetSessionVars().StmtCtx.SkipPlanCache {
-					// We should remove the mutable constant for correctness, because its value may be changed.
+					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
 					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)

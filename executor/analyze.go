@@ -267,20 +267,8 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 	if !historicalStatsEnabled {
 		return nil
 	}
-
-	is := domain.GetDomain(sctx).InfoSchema()
-	tbl, existed := is.TableByID(tableID)
-	if !existed {
-		return errors.Errorf("cannot get table by id %d", tableID)
-	}
-	tblInfo := tbl.Meta()
-	dbInfo, existed := is.SchemaByTable(tblInfo)
-	if !existed {
-		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
-	}
-	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
-		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
-	}
+	historicalStatsWorker := domain.GetDomain(sctx).GetHistoricalStatsWorker()
+	historicalStatsWorker.SendTblToDumpHistoricalStats(tableID)
 	return nil
 }
 
@@ -303,6 +291,8 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 		}
 	}
 
+	tableIDs := map[int64]struct{}{}
+
 	// save analyze results in single-thread.
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
@@ -323,18 +313,15 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 
-		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, e.ctx.GetSessionVars().EnableAnalyzeSnapshot, handle.StatsMetaHistorySourceAnalyze); err1 != nil {
 			tableID := results.TableID.TableID
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err), zap.Int64("tableID", tableID))
 			finishJobWithLog(e.ctx, results.Job, err)
 		} else {
 			finishJobWithLog(e.ctx, results.Job, nil)
-			// Dump stats to historical storage.
-			if err := recordHistoricalStats(e.ctx, results.TableID.TableID); err != nil {
-				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
-			}
 		}
 		invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
@@ -342,6 +329,13 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 			return errors.Trace(ErrQueryInterrupted)
 		}
 	}
+	// Dump stats to historical storage.
+	for tableID := range tableIDs {
+		if err := recordHistoricalStats(e.ctx, tableID); err != nil {
+			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+		}
+	}
+
 	return err
 }
 
@@ -360,6 +354,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			worker.run(ctx1, e.ctx.GetSessionVars().EnableAnalyzeSnapshot)
 		})
 	}
+	tableIDs := map[int64]struct{}{}
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
@@ -382,6 +377,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
+		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		saveResultsCh <- results
 	}
 	close(saveResultsCh)
@@ -393,6 +389,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 			errMsg = append(errMsg, err1.Error())
 		}
 		err = errors.New(strings.Join(errMsg, ","))
+	}
+	for tableID := range tableIDs {
+		// Dump stats to historical storage.
+		if err := recordHistoricalStats(e.ctx, tableID); err != nil {
+			logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+		}
 	}
 	return err
 }

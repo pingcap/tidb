@@ -20,11 +20,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
@@ -38,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
@@ -513,6 +517,14 @@ func TestAlterUserStmt(t *testing.T) {
 	tk.MustExec("GRANT RESTRICTED_TABLES_ADMIN ON *.* TO semuser1")
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3")
 	tk.MustExec("GRANT SYSTEM_USER ON *.* to semuser3") // user is both restricted + has SYSTEM_USER (or super)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'on'")
+	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec=1000")
+	tk.MustExec(`ALTER USER 'semuser1' RESOURCE GROUP rg1`)
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "semuser1"`).Check(testkit.Rows("{\"resource_group\": \"rg1\"}"))
+
+	tk.MustExec(`ALTER USER 'semuser1' COMMENT 'comment1'`)
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "semuser1"`).Check(testkit.Rows("{\"metadata\": {\"comment\": \"comment1\"}, \"resource_group\": \"rg1\"}"))
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil))
 	tk.MustExec("ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
@@ -1123,6 +1135,16 @@ func TestCreateDropUser(t *testing.T) {
 	tk.MustExec(`SET ROLE tcd2;`)
 	tk.MustExec(`CREATE USER tcd3`)
 	tk.MustExec(`DROP USER tcd3`)
+
+	tk.MustExec(`CREATE USER usr1`)
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{}"))
+	tk.MustExec(`DROP USER usr1`)
+
+	tk.MustExec("set global tidb_enable_resource_control = 'on'")
+	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec=1000")
+	tk.MustExec(`CREATE USER usr1 RESOURCE GROUP rg1`)
+	tk.MustQuery(`SELECT User_attributes FROM mysql.user WHERE User = "usr1"`).Check(testkit.Rows("{\"resource_group\": \"rg1\"}"))
+	tk.MustExec(`DROP USER usr1`)
 }
 
 func TestConfigPrivilege(t *testing.T) {
@@ -2554,6 +2576,46 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	tk.MustExec(dropStmt)
 }
 
+func TestResourceGroupAdminDynamicPriv(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	// tk1 is the root user, create a new user for test.
+	tk1.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk1.MustExec("CREATE USER resource_group_user")
+	tk1.MustExec("set @@global.tidb_enable_resource_control = 1")
+
+	// tk2 is the new user.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.Session().Auth(&auth.UserIdentity{
+		Username: "resource_group_user",
+		Hostname: "localhost",
+	}, nil, nil)
+	err := tk2.ExecToErr("CREATE RESOURCE GROUP test RU_PER_SEC = 666")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation")
+
+	// grant the RESOURCE_GROUP_ADMIN dynamic privilege to the user.
+	tk1.MustExec("GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_user")
+	tk1.MustQuery("SHOW GRANTS FOR resource_group_user").Check(testkit.Rows(
+		`GRANT USAGE ON *.* TO 'resource_group_user'@'%'`,
+		`GRANT RESOURCE_GROUP_ADMIN ON *.* TO 'resource_group_user'@'%'`))
+
+	tk2.MustExec("CREATE RESOURCE GROUP test RU_PER_SEC = 666")
+	tk2.MustExec("CREATE RESOURCE GROUP test2 RU_PER_SEC = 999")
+
+	tk2.MustExec("ALTER RESOURCE GROUP test2 RU_PER_SEC = 1000")
+	tk2.MustExec("DROP RESOURCE GROUP test2")
+
+	tk1.MustExec("REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_user")
+	err = tk2.ExecToErr("ALTER RESOURCE GROUP test RU_PER_SEC = 667")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation")
+	err = tk2.ExecToErr("DROP RESOURCE GROUP test")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN privilege(s) for this operation")
+}
+
 func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2962,4 +3024,184 @@ func TestIssue37488(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "dba_test", Hostname: "192.168.13.15"}, nil, nil))
 	tk.MustQuery("select current_user()").Check(testkit.Rows("dba_test@192.168.%"))
 	tk.MustExec("DROP TABLE IF EXISTS a;") // succ
+}
+
+func TestCheckPasswordExpired(t *testing.T) {
+	sessionVars := variable.NewSessionVars(nil)
+	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	record := privileges.NewUserRecord("%", "root")
+	userPrivilege := privileges.NewUserPrivileges(privileges.NewHandle(), nil)
+
+	record.PasswordExpired = true
+	_, err := userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
+
+	record.PasswordExpired = false
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.DefaultPasswordLifetime, "2")
+	require.NoError(t, err)
+	// use default_password_lifetime
+	record.PasswordLifeTime = -1
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -2)
+	time.Sleep(time.Second)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -1)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.NoError(t, err)
+
+	// never expire
+	record.PasswordLifeTime = 0
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -10)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.NoError(t, err)
+
+	// expire with the specified time
+	record.PasswordLifeTime = 3
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -3)
+	time.Sleep(time.Second)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.ErrorContains(t, err, "Your password has expired. To log in you must change it using a client that supports expired passwords")
+	record.PasswordLastChanged = time.Now().AddDate(0, 0, -2)
+	_, err = userPrivilege.CheckPasswordExpired(sessionVars, &record)
+	require.NoError(t, err)
+}
+
+func TestPasswordExpireWithoutSandBoxMode(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
+
+	// PASSWORD EXPIRE
+	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost"}
+	tk := testkit.NewTestKit(t, store)
+	err := tk.Session().Auth(user, nil, nil)
+	require.ErrorContains(t, err, "Your password has expired")
+
+	// PASSWORD EXPIRE NEVER
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' IDENTIFIED BY '' PASSWORD EXPIRE NEVER`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+
+	// PASSWORD EXPIRE INTERVAL N DAY
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE INTERVAL 2 DAY`)
+	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 1 DAY) where user='testuser'`)
+	rootTk.MustExec(`FLUSH PRIVILEGES`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 2 DAY) where user='testuser'`)
+	rootTk.MustExec(`FLUSH PRIVILEGES`)
+	time.Sleep(2 * time.Second)
+	err = tk.Session().Auth(user, nil, nil)
+	require.ErrorContains(t, err, "Your password has expired")
+
+	// PASSWORD EXPIRE DEFAULT
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE DEFAULT`)
+	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 2`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.ErrorContains(t, err, "Your password has expired")
+	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 3`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+}
+
+func TestPasswordExpireWithSandBoxMode(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
+	variable.IsSandBoxModeEnabled.Store(true)
+
+	// PASSWORD EXPIRE
+	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost"}
+	tk := testkit.NewTestKit(t, store)
+	err := tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.True(t, tk.Session().InSandBoxMode())
+	tk.Session().DisableSandBoxMode()
+
+	// PASSWORD EXPIRE NEVER
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' IDENTIFIED BY '' PASSWORD EXPIRE NEVER`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// PASSWORD EXPIRE INTERVAL N DAY
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE INTERVAL 2 DAY`)
+	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 1 DAY) where user='testuser'`)
+	rootTk.MustExec(`FLUSH PRIVILEGES`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+	rootTk.MustExec(`UPDATE mysql.user SET password_last_changed = (now() - INTERVAL 2 DAY) where user='testuser'`)
+	rootTk.MustExec(`FLUSH PRIVILEGES`)
+	time.Sleep(2 * time.Second)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.True(t, tk.Session().InSandBoxMode())
+	tk.Session().DisableSandBoxMode()
+
+	// PASSWORD EXPIRE DEFAULT
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' PASSWORD EXPIRE DEFAULT`)
+	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 2`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.True(t, tk.Session().InSandBoxMode())
+	tk.Session().DisableSandBoxMode()
+	rootTk.MustExec(`SET GLOBAL default_password_lifetime = 3`)
+	err = tk.Session().Auth(user, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+}
+
+func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
+	// prepare signing certs
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
+	sessionstates.SetKeyPath(keyPath)
+	sessionstates.SetCertPath(certPath)
+
+	// prepare user
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
+	// prepare session token
+	token, err := sessionstates.CreateSessionToken("testuser")
+	require.NoError(t, err)
+	tokenBytes, err := json.Marshal(token)
+	require.NoError(t, err)
+
+	// Test password expiration without sandbox.
+	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost", AuthPlugin: mysql.AuthTiDBSessionToken}
+	tk := testkit.NewTestKit(t, store)
+	err = tk.Session().Auth(user, tokenBytes, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// Test password expiration with sandbox.
+	variable.IsSandBoxModeEnabled.Store(true)
+	err = tk.Session().Auth(user, tokenBytes, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// Disable resource group.
+	require.Equal(t, "", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Enable resource group.
+	variable.EnableResourceControl.Store(true)
+	err = tk.Session().Auth(user, tokenBytes, nil)
+	require.NoError(t, err)
+	require.Equal(t, "default", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Non-default resource group.
+	rootTk.MustExec("CREATE RESOURCE GROUP rg1 RU_PER_SEC = 999")
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' RESOURCE GROUP rg1`)
+	err = tk.Session().Auth(user, tokenBytes, nil)
+	require.NoError(t, err)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Wrong token
+	err = tk.Session().Auth(user, nil, nil)
+	require.ErrorContains(t, err, "Access denied")
 }

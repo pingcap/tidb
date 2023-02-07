@@ -12,9 +12,12 @@ go_test(
     deps = [
         "//config",
         "//executor",
+        "//infoschema",
         "//kv",
         "//meta/autoid",
+        "//parser",
         "//parser/ast",
+        "//parser/auth",
         "//parser/format",
         "//parser/model",
         "//parser/mysql",

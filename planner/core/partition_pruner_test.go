@@ -91,12 +91,12 @@ func TestRangeColumnPartitionPruningForIn(t *testing.T) {
 			"└─PartitionUnion 2.00 root  ",
 			"  ├─HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
 			"  │ └─IndexReader 1.00 root  index:HashAgg",
-			"  │   └─HashAgg 1.00 cop[tikv]  funcs:count(test_range_col_in.t1.dt)->Column#7",
+			"  │   └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
 			"  │     └─Selection 20.00 cop[tikv]  in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)",
 			"  │       └─IndexFullScan 10000.00 cop[tikv] table:t1, partition:p20201127, index:PRIMARY(id, dt) keep order:false, stats:pseudo",
 			"  └─HashAgg 1.00 root  funcs:count(Column#10)->Column#5",
 			"    └─IndexReader 1.00 root  index:HashAgg",
-			"      └─HashAgg 1.00 cop[tikv]  funcs:count(test_range_col_in.t1.dt)->Column#10",
+			"      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#10",
 			"        └─Selection 20.00 cop[tikv]  in(test_range_col_in.t1.dt, 2020-11-27 00:00:00.000000, 2020-11-28 00:00:00.000000)",
 			"          └─IndexFullScan 10000.00 cop[tikv] table:t1, partition:p20201128, index:PRIMARY(id, dt) keep order:false, stats:pseudo"))
 

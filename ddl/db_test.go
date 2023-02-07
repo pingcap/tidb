@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -40,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	parsertypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -54,7 +55,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -270,7 +270,7 @@ func TestIssue22307(t *testing.T) {
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert into t values(1, 1);")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr1, checkErr2 error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
@@ -571,7 +571,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	tk1.MustExec("use test")
 
 	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	var currJob *model.Job
 	ctx := mock.NewContext()
 	ctx.Store = store
@@ -619,10 +619,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	// Check whether the reorg information is cleaned up.
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
+	element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)
@@ -898,11 +895,11 @@ func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
 	tk.MustExec("drop table if exists global_temp_auto_id")
 	tk.MustExec("create global temporary table global_temp_auto_id(id int primary key auto_increment) on commit delete rows")
 	tk.MustExec("begin")
-	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 1 AUTO_INCREMENT"))
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 1 _TIDB_ROWID"))
 	tk.MustExec("insert into global_temp_auto_id value(null)")
 	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("1"))
 	tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("1"))
-	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 2 AUTO_INCREMENT"))
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 2 _TIDB_ROWID"))
 	tk.MustExec("commit")
 	tk.MustExec("drop table global_temp_auto_id")
 
@@ -914,12 +911,12 @@ func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 ON COMMIT DELETE ROWS"))
-		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 100 AUTO_INCREMENT"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 100 _TIDB_ROWID"))
 		tk.MustExec("begin")
 		tk.MustExec("insert into global_temp_auto_id value(null)")
 		tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("100"))
 		tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("100"))
-		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 101 AUTO_INCREMENT"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 101 _TIDB_ROWID"))
 		tk.MustExec("commit")
 	}
 	tk.MustExec("drop table global_temp_auto_id")
@@ -962,7 +959,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 	}()
 
 	var jobID int64
-	hook := &ddl.TestDDLCallback{}
+	hook := &callback.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		jobID = job.ID
 	}
@@ -980,202 +977,6 @@ func TestDDLJobErrorCount(t *testing.T) {
 	require.True(t, kv.ErrEntryTooLarge.Equal(historyJob.Error))
 }
 
-func TestCommitTxnWithIndexChange(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	// Prepare work.
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_enable_metadata_lock=0")
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
-	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
-	tk.MustExec("insert t1 values (1, 10, 100), (2, 20, 200)")
-	tk.MustExec("alter table t1 add index k2(c2)")
-	tk.MustExec("alter table t1 drop index k2")
-	tk.MustExec("alter table t1 add index k2(c2)")
-	tk.MustExec("alter table t1 drop index k2")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	// tkSQLs are the sql statements for the pessimistic transaction.
-	// tk2DDL are the ddl statements executed before the pessimistic transaction.
-	// idxDDL is the DDL statement executed between pessimistic transaction begin and commit.
-	// failCommit means the pessimistic transaction commit should fail not.
-	type caseUnit struct {
-		tkSQLs     []string
-		tk2DDL     []string
-		idxDDL     string
-		checkSQLs  []string
-		rowsExps   [][]string
-		failCommit bool
-		stateEnd   model.SchemaState
-	}
-
-	cases := []caseUnit{
-		// Test secondary index
-		{[]string{"insert into t1 values(3, 30, 300)",
-			"insert into t2 values(11, 11, 11)"},
-			[]string{"alter table t1 add index k2(c2)",
-				"alter table t1 drop index k2",
-				"alter table t1 add index kk2(c2, c1)",
-				"alter table t1 add index k2(c2)",
-				"alter table t1 drop index k2"},
-			"alter table t1 add index k2(c2)",
-			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
-				"select c3, c2 from t1 use index(k2) where c2 = 10",
-				"select * from t1",
-				"select * from t2 where c1 = 11"},
-			[][]string{{"200 20"},
-				{"100 10"},
-				{"1 10 100", "2 20 200", "3 30 300"},
-				{"11 11 11"}},
-			false,
-			model.StateNone},
-		// Test secondary index
-		{[]string{"insert into t2 values(5, 50, 500)",
-			"insert into t2 values(11, 11, 11)",
-			"delete from t2 where c2 = 11",
-			"update t2 set c2 = 110 where c1 = 11"},
-			// "update t2 set c1 = 10 where c3 = 100"},
-			[]string{"alter table t1 add index k2(c2)",
-				"alter table t1 drop index k2",
-				"alter table t1 add index kk2(c2, c1)",
-				"alter table t1 add index k2(c2)",
-				"alter table t1 drop index k2"},
-			"alter table t1 add index k2(c2)",
-			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
-				"select c3, c2 from t1 use index(k2) where c2 = 10",
-				"select * from t1",
-				"select * from t2 where c1 = 11",
-				"select * from t2 where c3 = 100"},
-			[][]string{{"200 20"},
-				{"100 10"},
-				{"1 10 100", "2 20 200"},
-				{},
-				{"1 10 100"}},
-			false,
-			model.StateNone},
-		// Test unique index
-		{[]string{"insert into t1 values(3, 30, 300)",
-			"insert into t1 values(4, 40, 400)",
-			"insert into t2 values(11, 11, 11)",
-			"insert into t2 values(12, 12, 11)"},
-			[]string{"alter table t1 add unique index uk3(c3)",
-				"alter table t1 drop index uk3",
-				"alter table t2 add unique index ukc1c3(c1, c3)",
-				"alter table t2 add unique index ukc3(c3)",
-				"alter table t2 drop index ukc1c3",
-				"alter table t2 drop index ukc3",
-				"alter table t2 add index kc3(c3)"},
-			"alter table t1 add unique index uk3(c3)",
-			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
-				"select c3, c2 from t1 use index(uk3) where c3 = 300",
-				"select c3, c2 from t1 use index(uk3) where c3 = 400",
-				"select * from t1",
-				"select * from t2"},
-			[][]string{{"200 20"},
-				{"300 30"},
-				{"400 40"},
-				{"1 10 100", "2 20 200", "3 30 300", "4 40 400"},
-				{"1 10 100", "2 20 200", "11 11 11", "12 12 11"}},
-			false, model.StateNone},
-		// Test unique index fail to commit, this case needs the new index could be inserted
-		{[]string{"insert into t1 values(3, 30, 300)",
-			"insert into t1 values(4, 40, 300)",
-			"insert into t2 values(11, 11, 11)",
-			"insert into t2 values(12, 11, 12)"},
-			//[]string{"alter table t1 add unique index uk3(c3)", "alter table t1 drop index uk3"},
-			[]string{},
-			"alter table t1 add unique index uk3(c3)",
-			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
-				"select c3, c2 from t1 use index(uk3) where c3 = 300",
-				"select c3, c2 from t1 where c1 = 4",
-				"select * from t1",
-				"select * from t2"},
-			[][]string{{"200 20"},
-				{},
-				{},
-				{"1 10 100", "2 20 200"},
-				{"1 10 100", "2 20 200"}},
-			true,
-			model.StateWriteOnly},
-	}
-	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
-
-	// Test add index state change
-	do := dom.DDL()
-	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly}
-	for _, startState := range startStates {
-		endStatMap := session.ConstOpAddIndex[startState]
-		var endStates []model.SchemaState
-		for st := range endStatMap {
-			endStates = append(endStates, st)
-		}
-		slices.Sort(endStates)
-		for _, endState := range endStates {
-			for _, curCase := range cases {
-				if endState < curCase.stateEnd {
-					break
-				}
-				tk2.MustExec("drop table if exists t1")
-				tk2.MustExec("drop table if exists t2")
-				tk2.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
-				tk2.MustExec("create table t2 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
-				tk2.MustExec("insert t1 values (1, 10, 100), (2, 20, 200)")
-				tk2.MustExec("insert t2 values (1, 10, 100), (2, 20, 200)")
-				tk2.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
-				tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
-				tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10 100", "2 20 200"))
-
-				for _, DDLSQL := range curCase.tk2DDL {
-					tk2.MustExec(DDLSQL)
-				}
-				hook := &ddl.TestDDLCallback{Do: dom}
-				prepared := false
-				committed := false
-				hook.OnJobRunBeforeExported = func(job *model.Job) {
-					if job.SchemaState == startState {
-						if !prepared {
-							tk.MustExec("begin pessimistic")
-							for _, tkSQL := range curCase.tkSQLs {
-								tk.MustExec(tkSQL)
-							}
-							prepared = true
-						}
-					}
-				}
-				onJobUpdatedExportedFunc := func(job *model.Job) {
-					if job.SchemaState == endState {
-						if !committed {
-							if curCase.failCommit {
-								err := tk.ExecToErr("commit")
-								require.Error(t, err)
-							} else {
-								tk.MustExec("commit")
-							}
-						}
-						committed = true
-					}
-				}
-				hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-				originalCallback := do.GetHook()
-				do.SetHook(hook)
-				tk2.MustExec(curCase.idxDDL)
-				do.SetHook(originalCallback)
-				tk2.MustExec("admin check table t1")
-				for i, checkSQL := range curCase.checkSQLs {
-					if len(curCase.rowsExps[i]) > 0 {
-						tk2.MustQuery(checkSQL).Check(testkit.Rows(curCase.rowsExps[i]...))
-					} else {
-						tk2.MustQuery(checkSQL).Check(nil)
-					}
-				}
-			}
-		}
-	}
-	tk.MustExec("admin check table t1")
-}
-
 // TestAddIndexFailOnCaseWhenCanExit is used to close #19325.
 func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", `return(true)`))
@@ -1190,7 +991,11 @@ func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1, 1)")
-	tk.MustGetErrMsg("alter table t add index idx(b)", "[ddl:-1]DDL job rollback, error msg: job.ErrCount:1, mock unknown type: ast.whenClause.")
+	if variable.DDLEnableDistributeReorg.Load() {
+		tk.MustGetErrMsg("alter table t add index idx(b)", "[ddl:-1]job.ErrCount:0, mock unknown type: ast.whenClause.")
+	} else {
+		tk.MustGetErrMsg("alter table t add index idx(b)", "[ddl:-1]DDL job rollback, error msg: job.ErrCount:1, mock unknown type: ast.whenClause.")
+	}
 	tk.MustExec("drop table if exists t")
 }
 
@@ -1290,7 +1095,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 
 	var cancelErr error
 	var rs []sqlexec.RecordSet
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	d := dom.DDL()
 	originalHook := d.GetHook()
 	d.SetHook(hook)
@@ -1376,55 +1181,6 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, ".*8028.*Information schema is changed during the execution of the statement.*", err.Error())
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
-	tk.MustExec("admin check table t1, t2")
-}
-
-func TestAmendTxnSavepointWithDDL(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("set global tidb_enable_metadata_lock=0")
-	tk2.MustExec("use test;")
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
-	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
-
-	prepareFn := func() {
-		tk.MustExec("drop table if exists t1, t2")
-		tk.MustExec("create table t1 (c1 int primary key, c2 int)")
-		tk.MustExec("create table t2 (c1 int primary key, c2 int)")
-	}
-
-	prepareFn()
-	tk.MustExec("truncate table t1")
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("savepoint s1")
-	tk.MustExec("insert t1 values (1, 11)")
-	tk.MustExec("savepoint s2")
-	tk.MustExec("insert t2 values (1, 11)")
-	tk.MustExec("rollback to s2")
-	tk2.MustExec("alter table t1 add index idx2(c2)")
-	tk2.MustExec("alter table t2 add index idx2(c2)")
-	tk.MustExec("commit")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows())
-	tk.MustExec("admin check table t1, t2")
-
-	prepareFn()
-	tk.MustExec("truncate table t1")
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("savepoint s1")
-	tk.MustExec("insert t1 values (1, 11)")
-	tk.MustExec("savepoint s2")
-	tk.MustExec("insert t2 values (1, 11)")
-	tk.MustExec("savepoint s3")
-	tk.MustExec("insert t2 values (2, 22)")
-	tk.MustExec("rollback to s3")
-	tk2.MustExec("alter table t1 add index idx2(c2)")
-	tk2.MustExec("alter table t2 add index idx2(c2)")
-	tk.MustExec("commit")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("1 11"))
 	tk.MustExec("admin check table t1, t2")
 }
 
@@ -1584,13 +1340,11 @@ func TestLogAndShowSlowLog(t *testing.T) {
 }
 
 func TestReportingMinStartTimestamp(t *testing.T) {
-	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
 
 	infoSyncer := dom.InfoSyncer()
-	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	infoSyncer.SetSessionManager(sm)
 	beforeTS := oracle.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
 	afterTS := oracle.GoTimeToTS(time.Now())
@@ -1599,13 +1353,21 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	now := time.Now()
 	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
 	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
+	sm := se.GetSessionManager().(*testkit.MockSessionManager)
 	sm.PS = []*util.ProcessInfo{
-		{CurTxnStartTS: 0},
-		{CurTxnStartTS: math.MaxUint64},
-		{CurTxnStartTS: lowerLimit},
-		{CurTxnStartTS: validTS},
+		{CurTxnStartTS: 0, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: math.MaxUint64, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: lowerLimit, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
+		{CurTxnStartTS: validTS, ProtectedTSList: &se.GetSessionVars().ProtectedTSList},
 	}
-	infoSyncer.SetSessionManager(sm)
+	infoSyncer.ReportMinStartTS(dom.Store())
+	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
+
+	unhold := se.GetSessionVars().ProtectedTSList.HoldTS(validTS - 1)
+	infoSyncer.ReportMinStartTS(dom.Store())
+	require.Equal(t, validTS-1, infoSyncer.GetMinStartTS())
+
+	unhold()
 	infoSyncer.ReportMinStartTS(dom.Store())
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }
@@ -1746,7 +1508,7 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	first := true
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
@@ -1762,4 +1524,107 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column a char(10)")
+}
+
+func TestHashPartitionAddColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("delete from t")
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add column c int")
+}
+
+func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+
+	var wg sync.WaitGroup
+	var checkErr error
+	one := false
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateDeleteOnly {
+			return
+		}
+		if !one {
+			one = true
+		} else {
+			return
+		}
+		wg.Add(1)
+		go func() {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			_, checkErr = tk2.Exec("alter table t alter column a set default 1")
+			wg.Done()
+		}()
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t modify column a text(100)")
+	wg.Wait()
+	require.EqualError(t, checkErr, "[ddl:1101]BLOB/TEXT/JSON column 'a' can't have a default value")
+}
+
+func TestMDLTruncateTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("begin")
+	tk.MustExec("select * from t for update")
+
+	var wg sync.WaitGroup
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	wg.Add(2)
+	var timetk2 time.Time
+	var timetk3 time.Time
+
+	one := false
+	f := func(job *model.Job) {
+		if !one {
+			one = true
+		} else {
+			return
+		}
+		go func() {
+			tk3.MustExec("truncate table test.t")
+			timetk3 = time.Now()
+			wg.Done()
+		}()
+	}
+
+	hook.OnJobUpdatedExported.Store(&f)
+	dom.DDL().SetHook(hook)
+
+	go func() {
+		tk2.MustExec("truncate table test.t")
+		timetk2 = time.Now()
+		wg.Done()
+	}()
+
+	time.Sleep(2 * time.Second)
+	timeMain := time.Now()
+	tk.MustExec("commit")
+	wg.Wait()
+	require.True(t, timetk2.After(timeMain))
+	require.True(t, timetk3.After(timeMain))
 }

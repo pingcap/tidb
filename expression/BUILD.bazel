@@ -111,6 +111,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_pkg_errors//:errors",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_golang_x_exp//slices",
         "@org_golang_x_tools//container/intsets",
@@ -121,7 +122,7 @@ go_library(
 
 go_test(
     name = "expression_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "bench_test.go",
         "builtin_arithmetic_test.go",
@@ -176,6 +177,7 @@ go_test(
         "integration_serial_test.go",
         "integration_test.go",
         "main_test.go",
+        "multi_valued_index_test.go",
         "scalar_function_test.go",
         "schema_test.go",
         "typeinfer_test.go",

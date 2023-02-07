@@ -344,6 +344,7 @@ func TestDurationToTS(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit2 := testkit.NewTestKit(t, store)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -353,7 +354,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
+	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
 	require.NoError(t, err)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
@@ -552,10 +553,10 @@ func TestReloadExtStatsLockRelease(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
 	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	tk.MustExec("analyze table t")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr", `return("")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/injectExtStatsLoadErr", `return("")`))
 	err := tk.ExecToErr("admin reload stats_extended")
 	require.Equal(t, "gofail extendedStatsFromStorage error", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/injectExtStatsLoadErr"))
 	// Check the lock is released by `admin reload stats_extended` if error happens.
 	tk.MustExec("analyze table t")
 }
@@ -621,16 +622,16 @@ func TestLoadStats(t *testing.T) {
 	require.True(t, idx.IsFullLoad())
 
 	// Following test tests whether the LoadNeededHistograms would panic.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail", `return(true)`))
 	err = h.LoadNeededHistograms()
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderFail"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic", "panic"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic", "panic"))
 	err = h.LoadNeededHistograms()
 	require.Error(t, err)
 	require.Regexp(t, ".*getStatsReader panic.*", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/mockGetStatsReaderPanic"))
 	err = h.LoadNeededHistograms()
 	require.NoError(t, err)
 }
@@ -1095,7 +1096,7 @@ partition by range (a) (
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
-	checkHealthy(60, 50, 66)
+	checkHealthy(33, 0, 50)
 }
 
 func TestGlobalStatsData(t *testing.T) {
@@ -3299,7 +3300,7 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 
 	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta())
+	version, err := dom.StatsHandle().RecordHistoricalStatsToStorage("t", tableInfo.Meta(), tableInfo.Meta().ID, false)
 	require.NoError(t, err)
 
 	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()
@@ -3542,4 +3543,36 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	require.Equal(t, int64(2), tbl1Stats2.Count)
 	tbl2Stats2 := handle.GetTableStats(tbl2.Meta())
 	require.Equal(t, int64(2), tbl2Stats2.Count)
+}
+
+func TestIssue39336(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+create table t1 (
+    a datetime(3) default null,
+    b int
+) partition by range (b) (
+    partition p0 values less than (1000),
+    partition p1 values less than (maxvalue)
+)`)
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`
+insert into t1 values
+('1000-00-09 00:00:00.000',    1),
+('1000-00-06 00:00:00.000',    1),
+('1000-00-06 00:00:00.000',    1),
+('2022-11-23 14:24:30.000',    1),
+('2022-11-23 14:24:32.000',    1),
+('2022-11-23 14:24:33.000',    1),
+('2022-11-23 14:24:35.000',    1),
+('2022-11-23 14:25:08.000', 1001),
+('2022-11-23 14:25:09.000', 1001)`)
+	tk.MustExec("analyze table t1 with 0 topn")
+	rows := tk.MustQuery("show analyze status where job_info like 'merge global stats%'").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "finished", rows[0][7])
 }

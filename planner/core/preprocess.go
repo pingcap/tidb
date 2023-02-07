@@ -298,16 +298,21 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
 		p.stmtTp = TypeCreate
-		EraseLastSemicolon(node.OriginNode)
-		EraseLastSemicolon(node.HintedNode)
-		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+		if node.OriginNode != nil {
+			// if node.PlanDigest is not empty, this binding will be created from history, the node.OriginNode and node.HintedNode should be nil
+			EraseLastSemicolon(node.OriginNode)
+			EraseLastSemicolon(node.HintedNode)
+			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+		}
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
-		EraseLastSemicolon(node.OriginNode)
-		if node.HintedNode != nil {
-			EraseLastSemicolon(node.HintedNode)
-			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+		if node.OriginNode != nil {
+			EraseLastSemicolon(node.OriginNode)
+			if node.HintedNode != nil {
+				EraseLastSemicolon(node.HintedNode)
+				p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
+			}
 		}
 		return in, true
 	case *ast.RecoverTableStmt:

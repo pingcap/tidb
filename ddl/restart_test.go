@@ -141,7 +141,7 @@ func TestStat(t *testing.T) {
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo.Name},
+		Args:       []interface{}{true},
 	}
 
 	done := make(chan error, 1)

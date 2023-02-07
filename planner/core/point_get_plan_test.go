@@ -189,7 +189,7 @@ func TestGetExtraColumn(t *testing.T) {
 	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid from t where a = 1`).Check(testkit.Rows(`Point_Get 1.00 root table:t, index:idx(a) `))
 	tk.MustExec(`commit`)
 	tk.MustQuery(`explain format='brief' select count(_tidb_rowid) from t where a=1`).Check(testkit.Rows(
-		`HashAgg 1.00 root  funcs:count(test.t._tidb_rowid)->Column#4`,
+		`StreamAgg 1.00 root  funcs:count(test.t._tidb_rowid)->Column#4`,
 		`└─Point_Get 1.00 root table:t, index:idx(a) `))
 	tk.MustQuery(`explain format='brief' select *, date_format(b, "") from t where a =1 for update`).Check(testkit.Rows(
 		`Projection 1.00 root  test.t.a, test.t.b, date_format(cast(test.t.b, datetime BINARY), )->Column#4`,

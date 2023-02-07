@@ -8,7 +8,9 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 5,
     deps = [
+        "//autoid_service",
         "//config",
         "//ddl/testutil",
         "//meta/autoid",
@@ -17,6 +19,7 @@ go_test(
         "//sessionctx/variable",
         "//testkit",
         "//testkit/testutil",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",

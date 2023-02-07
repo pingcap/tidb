@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -142,11 +141,9 @@ func (rc *reorgCtx) increaseRowCount(count int64) {
 	atomic.AddInt64(&rc.rowCount, count)
 }
 
-func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
+func (rc *reorgCtx) getRowCount() int64 {
 	row := atomic.LoadInt64(&rc.rowCount)
-	h, _ := (rc.doneKey.Load()).(nullableKey)
-	element, _ := (rc.element.Load()).(*meta.Element)
-	return row, h.key, element
+	return row
 }
 
 // runReorgJob is used as a portal to do the reorganization work.
@@ -197,7 +194,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 	}
 
-	rc := w.getReorgCtx(job)
+	rc := w.getReorgCtx(job.ID)
 	if rc == nil {
 		// This job is cancelling, we should return ErrCancelledDDLJob directly.
 		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
@@ -207,7 +204,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
-		rc = w.newReorgCtx(reorgInfo)
+		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.StartKey, reorgInfo.currElement, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
@@ -233,7 +230,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 			d.removeReorgCtx(job)
 			return dbterror.ErrCancelledDDLJob
 		}
-		rowCount, _, _ := rc.getRowCountAndKey()
+		rowCount := rc.getRowCount()
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
 		} else {
@@ -253,17 +250,13 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		}
 
 		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
-		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
-			return errors.Trace(err1)
-		}
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
 		d.removeReorgCtx(job)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount, doneKey, currentElement := rc.getRowCountAndKey()
+		rowCount := rc.getRowCount()
 		job.SetRowCount(rowCount)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
@@ -272,18 +265,9 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 		rc.resetWarnings()
 
-		// Update a reorgInfo's handle.
-		// Since daemon-worker is triggered by timer to store the info half-way.
-		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
-		err := rh.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
-
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
 			zap.Duration("wait time", waitTimeout),
-			zap.ByteString("element type", currentElement.TypeKey),
-			zap.Int64("element ID", currentElement.ID),
-			zap.Int64("total added row count", rowCount),
-			zap.String("done key", hex.EncodeToString(doneKey)),
-			zap.Error(err))
+			zap.Int64("total added row count", rowCount))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return dbterror.ErrWaitReorgTimeout
 	}
@@ -291,7 +275,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 }
 
 func (w *worker) mergeWarningsIntoJob(job *model.Job) {
-	rc := w.getReorgCtx(job)
+	rc := w.getReorgCtx(job.ID)
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	partWarnings := rc.mu.warnings
@@ -354,17 +338,21 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (dc *ddlCtx) isReorgRunnable(job *model.Job) error {
+func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	if isChanClosed(dc.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	if dc.getReorgCtx(job).isReorgCanceled() {
+	if dc.getReorgCtx(jobID).isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
 	}
 
+	// If isDistReorg is true, we needn't check if it is owner.
+	if isDistReorg {
+		return nil
+	}
 	if !dc.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
 		logutil.BgLogger().Info("[ddl] DDL is not the DDL owner", zap.String("ID", dc.uuid))
@@ -386,6 +374,7 @@ type reorgInfo struct {
 	// PhysicalTableID is used to trace the current partition we are handling.
 	// If the table is not partitioned, PhysicalTableID would be TableID.
 	PhysicalTableID int64
+	dbInfo          *model.DBInfo
 	elements        []*meta.Element
 	currElement     *meta.Element
 }
@@ -585,7 +574,7 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
+func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo,
 	tbl table.Table, elements []*meta.Element, mergingTmpIdx bool) (*reorgInfo, error) {
 	var (
 		element *meta.Element
@@ -641,10 +630,6 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = rh.RemoveDDLReorgHandle(job, elements)
-		if err != nil {
-			return &info, errors.Trace(err)
-		}
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
@@ -672,7 +657,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()), zap.Bool("enableConcurrentDDL", rh.enableConcurrentDDL))
+				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
 			}
 			return &info, errors.Trace(err)
 		}
@@ -685,11 +670,12 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job,
 	info.currElement = element
 	info.elements = elements
 	info.mergingTmpIdx = mergingTmpIdx
+	info.dbInfo = dbInfo
 
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, dbInfo *model.DBInfo, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -745,32 +731,30 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 	info.PhysicalTableID = pid
 	info.currElement = element
 	info.elements = elements
+	info.dbInfo = dbInfo
 
 	return &info, nil
 }
 
+// UpdateReorgMeta creates a new transaction and updates tidb_ddl_reorg table,
+// so the reorg can restart in case of issues.
 func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err error) {
 	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
-	se, err := pool.get()
+	sctx, err := pool.get()
 	if err != nil {
 		return
 	}
-	defer pool.put(se)
+	defer pool.put(sctx)
 
-	sess := newSession(se)
+	sess := newSession(sctx)
 	err = sess.begin()
 	if err != nil {
 		return
 	}
-	txn, err := sess.txn()
-	if err != nil {
-		sess.rollback()
-		return err
-	}
-	rh := newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load())
-	err = rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
+	rh := newReorgHandler(sess)
+	err = updateDDLReorgHandle(rh.s, r.Job.ID, startKey, r.EndKey, r.PhysicalTableID, r.currElement)
 	err1 := sess.commit()
 	if err == nil {
 		err = err1
@@ -780,65 +764,48 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 
 // reorgHandler is used to handle the reorg information duration reorganization DDL job.
 type reorgHandler struct {
-	m *meta.Meta
 	s *session
-
-	enableConcurrentDDL bool
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
-func NewReorgHandlerForTest(t *meta.Meta, sess sessionctx.Context) *reorgHandler {
-	return newReorgHandler(t, newSession(sess), variable.EnableConcurrentDDL.Load())
+func NewReorgHandlerForTest(sess sessionctx.Context) *reorgHandler {
+	return newReorgHandler(newSession(sess))
 }
 
-func newReorgHandler(t *meta.Meta, sess *session, enableConcurrentDDL bool) *reorgHandler {
-	return &reorgHandler{m: t, s: sess, enableConcurrentDDL: enableConcurrentDDL}
-}
-
-// UpdateDDLReorgStartHandle saves the job reorganization latest processed element and start handle for later resuming.
-func (r *reorgHandler) UpdateDDLReorgStartHandle(job *model.Job, element *meta.Element, startKey kv.Key) error {
-	if r.enableConcurrentDDL {
-		return updateDDLReorgStartHandle(r.s, job, element, startKey)
-	}
-	return r.m.UpdateDDLReorgStartHandle(job, element, startKey)
-}
-
-// UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
-func (r *reorgHandler) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	if r.enableConcurrentDDL {
-		return updateDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
-	}
-	return r.m.UpdateDDLReorgHandle(job.ID, startKey, endKey, physicalTableID, element)
+func newReorgHandler(sess *session) *reorgHandler {
+	return &reorgHandler{s: sess}
 }
 
 // InitDDLReorgHandle initializes the job reorganization information.
 func (r *reorgHandler) InitDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
-	if r.enableConcurrentDDL {
-		return initDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
-	}
-	return r.m.UpdateDDLReorgHandle(job.ID, startKey, endKey, physicalTableID, element)
+	return initDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
 }
 
 // RemoveReorgElementFailPoint removes the element of the reorganization information.
 func (r *reorgHandler) RemoveReorgElementFailPoint(job *model.Job) error {
-	if r.enableConcurrentDDL {
-		return removeReorgElement(r.s, job)
-	}
-	return r.m.RemoveReorgElement(job)
+	return removeReorgElement(r.s, job)
 }
 
 // RemoveDDLReorgHandle removes the job reorganization related handles.
 func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
-	if r.enableConcurrentDDL {
-		return removeDDLReorgHandle(r.s, job, elements)
+	return removeDDLReorgHandle(r.s, job, elements)
+}
+
+// CleanupDDLReorgHandles removes the job reorganization related handles.
+func CleanupDDLReorgHandles(job *model.Job, s *session) {
+	if job != nil && !job.IsFinished() && !job.IsSynced() {
+		// Job is given, but it is neither finished nor synced; do nothing
+		return
 	}
-	return r.m.RemoveDDLReorgHandle(job, elements)
+
+	err := cleanDDLReorgHandles(s, job)
+	if err != nil {
+		// ignore error, cleanup is not that critical
+		logutil.BgLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
+	}
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
-	if r.enableConcurrentDDL {
-		return getDDLReorgHandle(r.s, job)
-	}
-	return r.m.GetDDLReorgHandle(job)
+	return getDDLReorgHandle(r.s, job)
 }

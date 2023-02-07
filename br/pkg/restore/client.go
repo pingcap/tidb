@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -63,6 +64,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -167,6 +169,9 @@ type Client struct {
 
 	// the successfully preallocated table IDs.
 	preallocedTableIDs *tidalloc.PreallocIDs
+
+	// the rewrite mode of the downloaded SST files in TiKV.
+	rewriteMode RewriteMode
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -315,6 +320,14 @@ func (rc *Client) GetBatchDdlSize() uint {
 	return rc.batchDdlSize
 }
 
+func (rc *Client) SetRewriteMode(mode RewriteMode) {
+	rc.rewriteMode = mode
+}
+
+func (rc *Client) GetRewriteMode() RewriteMode {
+	return rc.rewriteMode
+}
+
 // Close a client.
 func (rc *Client) Close() {
 	// rc.db can be nil in raw kv mode.
@@ -344,7 +357,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rewriteMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -868,7 +881,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 				}
 			})
 			if err != nil {
-				log.Error("create tables fail")
+				log.Error("create tables fail", zap.Error(err))
 				return err
 			}
 			for _, ct := range cts {
@@ -940,7 +953,9 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
 		}
 		backupTi := table.Info
-		if len(ti.Columns) != len(backupTi.Columns) {
+		// skip checking the number of columns in mysql.user table,
+		// because higher versions of TiDB may add new columns.
+		if len(ti.Columns) != len(backupTi.Columns) && backupTi.Name.L != sysUserTableName {
 			log.Error("column count mismatch",
 				zap.Stringer("table", table.Info.Name),
 				zap.Int("col in cluster", len(ti.Columns)),
@@ -959,6 +974,13 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
+				// skip when the backed up mysql.user table is missing columns.
+				if backupTi.Name.L == sysUserTableName {
+					log.Warn("missing column in backup data",
+						zap.Stringer("table", table.Info.Name),
+						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					continue
+				}
 				log.Error("missing column in backup data",
 					zap.Stringer("table", table.Info.Name),
 					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
@@ -977,6 +999,29 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 					table.Info.Name.O,
 					col.Name, col.FieldType.String(),
 					backupCol.Name, backupCol.FieldType.String())
+			}
+		}
+
+		if backupTi.Name.L == sysUserTableName {
+			// check whether the columns of table in cluster are less than the backup data
+			clusterColMap := make(map[string]*model.ColumnInfo)
+			for i := range ti.Columns {
+				col := ti.Columns[i]
+				clusterColMap[col.Name.L] = col
+			}
+			// order can be different
+			for i := range backupTi.Columns {
+				col := backupTi.Columns[i]
+				clusterCol := clusterColMap[col.Name.L]
+				if clusterCol == nil {
+					log.Error("missing column in cluster data",
+						zap.Stringer("table", table.Info.Name),
+						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+						"missing column in cluster data, table: %s, col: %s %s",
+						table.Info.Name.O,
+						col.Name, col.FieldType.String())
+				}
 			}
 		}
 	}
@@ -1008,7 +1053,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, RewriteModeLegacy)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1094,6 +1139,18 @@ func (rc *Client) SplitRanges(ctx context.Context,
 	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
+func (rc *Client) WrapLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
+	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
+	return NewLogFilesIterWithSplitHelper(iter, rules, client, splitSize, splitKeys), nil
+}
+
 // RestoreSSTFiles tries to restore the files.
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
@@ -1136,7 +1193,7 @@ func (rc *Client) RestoreSSTFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 			})
 	}
 
@@ -1253,7 +1310,7 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 		finalStore := store
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
-				opt := grpc.WithInsecure()
+				opt := grpc.WithTransportCredentials(insecure.NewCredentials())
 				if rc.tlsConf != nil {
 					opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
 				}
@@ -1365,7 +1422,7 @@ func (rc *Client) execChecksum(
 	concurrency uint,
 	loadStatCh chan<- *CreatedTable,
 ) error {
-	logger := log.With(
+	logger := log.L().With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
@@ -1388,6 +1445,8 @@ func (rc *Client) execChecksum(
 	exe, err := checksum.NewExecutorBuilder(tbl.Table, startTS).
 		SetOldTable(tbl.OldTable).
 		SetConcurrency(concurrency).
+		SetOldKeyspace(tbl.RewriteRule.OldKeyspace).
+		SetNewKeyspace(tbl.RewriteRule.NewKeyspace).
 		Build()
 	if err != nil {
 		return errors.Trace(err)
@@ -2011,19 +2070,21 @@ func (rc *Client) RestoreKVFiles(
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
-			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer func() {
 					onProgress(int64(len(files)))
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
 
-					filenames := make([]string, 0, len(files))
-					for _, f := range files {
-						filenames = append(filenames, f.Path+", ")
+					if err == nil {
+						filenames := make([]string, 0, len(files))
+						for _, f := range files {
+							filenames = append(filenames, f.Path+", ")
+						}
+						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 					}
-					log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
-						zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 				}()
 
 				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
@@ -2031,14 +2092,14 @@ func (rc *Client) RestoreKVFiles(
 		}
 	}
 
-	if supportBatch {
-		err = ApplyKVFilesWithBatchMethod(ctx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
-	} else {
-		err = ApplyKVFilesWithSingelMethod(ctx, iter, applyFunc)
-	}
-	if err != nil {
+	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+		if supportBatch {
+			err = ApplyKVFilesWithBatchMethod(ectx, iter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc)
+		} else {
+			err = ApplyKVFilesWithSingelMethod(ectx, iter, applyFunc)
+		}
 		return errors.Trace(err)
-	}
+	})
 
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
 	if skipFile > 0 {
@@ -2583,7 +2644,7 @@ func (rc *Client) SaveSchemas(
 
 	schemas := TidyOldSchemas(sr)
 	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
-	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
+	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2612,6 +2673,74 @@ func (rc *Client) IsFullClusterRestore() bool {
 
 func (rc *Client) SetWithSysTable(withSysTable bool) {
 	rc.withSysTable = withSysTable
+}
+
+func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage) error {
+	dom, err := g.GetDomain(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	info := dom.InfoSchema()
+	allSchema := info.AllSchemas()
+	recorder := tiflashrec.New()
+
+	expectTiFlashStoreCount := uint64(0)
+	needTiFlash := false
+	for _, s := range allSchema {
+		for _, t := range s.Tables {
+			if t.TiFlashReplica != nil {
+				expectTiFlashStoreCount = mathutil.Max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
+				recorder.AddTable(t.ID, *t.TiFlashReplica)
+				needTiFlash = true
+			}
+		}
+	}
+	if !needTiFlash {
+		log.Info("no need to set tiflash replica, since there is no tables enable tiflash replica")
+		return nil
+	}
+	// we wait for ten minutes to wait tiflash starts.
+	// since tiflash only starts when set unmark recovery mode finished.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	err = utils.WithRetry(timeoutCtx, func() error {
+		tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
+		log.Info("get tiflash store count for resetting TiFlash Replica",
+			zap.Uint64("count", tiFlashStoreCount))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tiFlashStoreCount < expectTiFlashStoreCount {
+			log.Info("still waiting for enough tiflash store start",
+				zap.Uint64("expect", expectTiFlashStoreCount),
+				zap.Uint64("actual", tiFlashStoreCount),
+			)
+			return errors.New("tiflash store count is less than expected")
+		}
+		return nil
+	}, &waitTiFlashBackoffer{
+		Attempts:    30,
+		BaseBackoff: 4 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+
+	sqls := recorder.GenerateResetAlterTableDDLs(info)
+	log.Info("Generating SQLs for resetting tiflash replica",
+		zap.Strings("sqls", sqls))
+
+	return g.UseOneShotSession(storage, false, func(se glue.Session) error {
+		for _, sql := range sqls {
+			if errExec := se.ExecuteInternal(ctx, sql); errExec != nil {
+				logutil.WarnTerm("Failed to restore tiflash replica config, you may execute the sql restore it manually.",
+					logutil.ShortError(errExec),
+					zap.String("sql", sql),
+				)
+			}
+		}
+		return nil
+	})
 }
 
 // MockClient create a fake client used to test.
@@ -2644,6 +2773,10 @@ func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
 		}
 	}
 	return schemas
+}
+
+func CheckKeyspaceBREnable(ctx context.Context, pdClient pd.Client) error {
+	return version.CheckClusterVersion(ctx, pdClient, version.CheckVersionForKeyspaceBR)
 }
 
 func CheckNewCollationEnable(
@@ -2688,4 +2821,28 @@ func CheckNewCollationEnable(
 	collate.SetNewCollationEnabledForTest(enabled)
 	log.Info("set new_collation_enabled", zap.Bool("new_collation_enabled", enabled))
 	return nil
+}
+
+type waitTiFlashBackoffer struct {
+	Attempts    int
+	BaseBackoff time.Duration
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *waitTiFlashBackoffer) NextBackoff(error) time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
+		return 0
+	}
+	b.BaseBackoff *= 2
+	if b.BaseBackoff > 32*time.Second {
+		b.BaseBackoff = 32 * time.Second
+	}
+	return bo
+}
+
+// Attempt returns the remain attempt times
+func (b *waitTiFlashBackoffer) Attempt() int {
+	return b.Attempts
 }

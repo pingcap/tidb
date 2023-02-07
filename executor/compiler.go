@@ -18,12 +18,9 @@ import (
 	"context"
 	"strings"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -34,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -58,11 +56,9 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecStmt, err error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
+	r, ctx := tracing.StartRegionEx(ctx, "executor.Compile")
+	defer r.End()
+
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -156,40 +152,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 			}
 		}
 	}
-	if c.Ctx.GetSessionVars().EnablePlanReplayerCapture && !c.Ctx.GetSessionVars().InRestrictedSQL {
-		checkPlanReplayerCaptureTask(c.Ctx, stmtNode)
+	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
+		return nil, err
 	}
-
 	return stmt, nil
-}
-
-func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode) {
-	tasks := domain.GetDomain(sctx).GetPlanReplayerHandle().GetTasks()
-	_, sqlDigest := sctx.GetSessionVars().StmtCtx.SQLDigest()
-	_, planDigest := getPlanDigest(sctx.GetSessionVars().StmtCtx)
-	for _, task := range tasks {
-		if task.SQLDigest == sqlDigest.String() && task.PlanDigest == planDigest.String() {
-			sendPlanReplayerDumpTask(sqlDigest.String(), planDigest.String(), sctx, stmtNode)
-		}
-	}
-}
-
-func sendPlanReplayerDumpTask(sqlDigest, planDigest string, sctx sessionctx.Context, stmtNode ast.StmtNode) {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	dumpTask := &domain.PlanReplayerDumpTask{
-		PlanReplayerTaskKey: domain.PlanReplayerTaskKey{
-			SQLDigest:  sqlDigest,
-			PlanDigest: planDigest,
-		},
-		EncodePlan:      GetEncodedPlan,
-		TblStats:        stmtCtx.TableStats,
-		SessionBindings: handle.GetAllBindRecord(),
-		SessionVars:     sctx.GetSessionVars(),
-		ExecStmts:       []ast.StmtNode{stmtNode},
-		Analyze:         false,
-	}
-	domain.GetDomain(sctx).GetPlanReplayerHandle().SendTask(dumpTask)
 }
 
 // needLowerPriority checks whether it's needed to lower the execution priority

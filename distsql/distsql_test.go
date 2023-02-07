@@ -107,7 +107,8 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 }
 
 func TestSelectResultRuntimeStats(t *testing.T) {
-	basic := &execdetails.BasicRuntimeStats{}
+	stmtStats := execdetails.NewRuntimeStatsColl(nil)
+	basic := stmtStats.GetBasicRuntimeStats(1)
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
 		copRespTime:        []time.Duration{time.Second, time.Millisecond},
@@ -120,8 +121,6 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	}
 
 	s2 := *s1
-	stmtStats := execdetails.NewRuntimeStatsColl(nil)
-	stmtStats.RegisterStats(1, basic)
 	stmtStats.RegisterStats(1, s1)
 	stmtStats.RegisterStats(1, &s2)
 	stats := stmtStats.GetRootStats(1)

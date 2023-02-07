@@ -461,8 +461,14 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
 	if s.cfg.Store == "tikv" {
+		keyspaceName := config.GetGlobalKeyspaceName()
 		for {
-			fullPath := fmt.Sprintf("tikv://%s", s.cfg.Path)
+			var fullPath string
+			if keyspaceName == "" {
+				fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
+			} else {
+				fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+			}
 			store, err := store.New(fullPath)
 			if err != nil {
 				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
@@ -477,7 +483,9 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
 				break
 			}
-			service := autoid.New(s.statusListener.Addr().String(), etcdAddr, store, ebd.TLSConfig())
+			selfAddr := fmt.Sprintf("%s:%d", s.cfg.AdvertiseAddress, s.cfg.Status.StatusPort)
+			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
+			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
 			pb.RegisterAutoIDAllocServer(grpcServer, service)
 			s.autoIDService = service
 			break

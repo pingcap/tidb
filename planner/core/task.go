@@ -86,6 +86,7 @@ type copTask struct {
 
 	idxMergePartPlans      []PhysicalPlan
 	idxMergeIsIntersection bool
+	idxMergeAccessMVIndex  bool
 
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
@@ -688,6 +689,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			partialPlans:       t.idxMergePartPlans,
 			tablePlan:          t.tablePlan,
 			IsIntersectionType: t.idxMergeIsIntersection,
+			AccessMVIndex:      t.idxMergeAccessMVIndex,
 		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
@@ -989,6 +991,9 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 // Before that is done, we use this logic to provide a way to keep the order property when reading from TiKV, so that we can use the orderliness of index to speed up the query.
 // Here we can change the execution plan to TopN(TiDB)->Reader(TiDB)->Limit(TiKV)->Scan(TiKV).(TiFlash is not supported).
 func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bool) {
+	if copTsk.getStoreType() != kv.TiKV {
+		return nil, false
+	}
 	copTsk = copTsk.copy().(*copTask)
 	if len(copTsk.rootTaskConds) > 0 {
 		return nil, false
@@ -1061,9 +1066,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 	if pi == nil {
 		return nil, false
 	}
-	if pi.Type == model.PartitionTypeList {
-		return nil, false
-	}
 
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
@@ -1072,7 +1074,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		if !propMatched {
 			return nil, false
 		}
-
 		idxScan.Desc = isDesc
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
@@ -1100,6 +1101,8 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			}
 		}
 		tblScan.Desc = isDesc
+		// SplitRangesAcrossInt64Boundary needs the KeepOrder flag. See that func and the struct tableResultHandler for more details.
+		tblScan.KeepOrder = true
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
 		stats := deriveLimitStats(childProfile, float64(newCount))
@@ -1160,6 +1163,12 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...task) task {
 func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	for _, t := range tasks {
 		if _, ok := t.(*mppTask); ok {
+			if p.TP() == plancodec.TypePartitionUnion {
+				// In attach2MppTasks(), will attach PhysicalUnion to mppTask directly.
+				// But PartitionUnion cannot pushdown to tiflash, so here disable PartitionUnion pushdown to tiflash explicitly.
+				// For now, return invalidTask immediately, we can refine this by letting childTask of PartitionUnion convert to rootTask.
+				return invalidTask
+			}
 			return p.attach2MppTasks(tasks...)
 		}
 	}
@@ -1236,12 +1245,17 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		ret = false
 	}
 
-	if !ret && sc.InExplainStmt {
+	if !ret {
 		storageName := storeType.Name()
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
-		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
+		warnErr := errors.New("Aggregation can not be pushed to " + storageName + " because " + reason)
+		if sc.InExplainStmt {
+			sc.AppendWarning(warnErr)
+		} else {
+			sc.AppendExtraWarning(warnErr)
+		}
 	}
 	return ret
 }
@@ -1740,8 +1754,12 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			t = cop.convertToRootTask(p.ctx)
 			attachPlan2Task(p, t)
 		} else {
-			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+			storeType := cop.getStoreType()
+			// TiFlash doesn't support Stream Aggregation
+			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
+				return invalidTask
+			}
+			partialAgg, finalAgg := p.newPartialAggregate(storeType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -2056,6 +2074,19 @@ type mppTask struct {
 
 	partTp   property.MPPPartitionType
 	hashCols []*property.MPPPartitionColumn
+
+	// rootTaskConds record filters of TableScan that cannot be pushed down to TiFlash.
+
+	// For logical plan like: HashAgg -> Selection -> TableScan, if filters in Selection cannot be pushed to TiFlash.
+	// Planner will generate physical plan like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> PhysicalTableScan(cop tiflash)
+	// Because planner will make mppTask invalid directly then use copTask directly.
+
+	// But in DisaggregatedTiFlash mode, cop and batchCop protocol is disabled, so we have to consider this situation for mppTask.
+	// When generating PhysicalTableScan, if prop.TaskTp is RootTaskType, mppTask will be converted to rootTask,
+	// and filters in rootTaskConds will be added in a Selection which will be executed in TiDB.
+	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
+	rootTaskConds []expression.Expression
+	tblColHists   *statistics.HistColl
 }
 
 func (t *mppTask) count() float64 {
@@ -2135,6 +2166,32 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	rt := &rootTask{
 		p: p,
 	}
+
+	if len(t.rootTaskConds) > 0 {
+		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
+		// so this Selection will be executed in TiDB.
+		_, isTableScan := t.p.(*PhysicalTableScan)
+		_, isSelection := t.p.(*PhysicalSelection)
+		if isSelection {
+			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
+		}
+		if !isTableScan {
+			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
+			// It's only for TableScan. This is ensured by converting mppTask to rootTask just after TableScan is built,
+			// so no other operators are added into this mppTask.
+			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
+			return invalidTask
+		}
+		selectivity, _, err := t.tblColHists.Selectivity(ctx, t.rootTaskConds, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			selectivity = SelectionFactor
+		}
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.p.statsInfo().Scale(selectivity), rt.p.SelectBlockOffset())
+		sel.fromDataSource = true
+		sel.SetChildren(rt.p)
+		rt.p = sel
+	}
 	return rt
 }
 
@@ -2186,6 +2243,14 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
+
+	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
+		// Use compress when exchange type is `Hash`
+		if sender.ExchangeType == tipb.ExchangeType_Hash {
+			sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
+		}
+	}
+
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)

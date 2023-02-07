@@ -551,6 +551,8 @@ type PhysicalIndexMergeReader struct {
 	// IsIntersectionType means whether it's intersection type or union type.
 	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
 	IsIntersectionType bool
+	// AccessMVIndex indicates whether this IndexMergeReader access a MVIndex.
+	AccessMVIndex bool
 
 	// PartialPlans flats the partialPlans to construct executor pb.
 	PartialPlans [][]PhysicalPlan
@@ -1501,7 +1503,8 @@ type PhysicalExchangeSender struct {
 	ExchangeType tipb.ExchangeType
 	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
-	Tasks []*kv.MPPTask
+	Tasks           []*kv.MPPTask
+	CompressionMode kv.ExchangeCompressionMode
 }
 
 // Clone implment PhysicalPlan interface.
@@ -1514,6 +1517,7 @@ func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np.basePhysicalPlan = *base
 	np.ExchangeType = p.ExchangeType
 	np.HashCols = p.HashCols
+	np.CompressionMode = p.CompressionMode
 	return np, nil
 }
 
@@ -1753,6 +1757,10 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
+func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
+}
+
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalHashAgg)
@@ -1785,6 +1793,10 @@ func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, pr
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
 	basePhysicalAgg
+}
+
+func (p *PhysicalStreamAgg) getPointer() *basePhysicalAgg {
+	return &p.basePhysicalAgg
 }
 
 // Clone implements PhysicalPlan interface.

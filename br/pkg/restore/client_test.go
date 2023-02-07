@@ -195,9 +195,19 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	userTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("user"))
 	require.NoError(t, err)
 
-	// column count mismatch
+	// user table in cluster have more columns(success)
 	mockedUserTI := userTI.Clone()
-	mockedUserTI.Columns = mockedUserTI.Columns[:len(mockedUserTI.Columns)-1]
+	userTI.Columns = append(userTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}})
+	require.NoError(t, err)
+	userTI.Columns = userTI.Columns[:len(userTI.Columns)-1]
+
+	// user table in cluster have less columns(failed)
+	mockedUserTI = userTI.Clone()
+	mockedUserTI.Columns = append(mockedUserTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
 	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
@@ -212,15 +222,6 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 		Info: mockedUserTI,
 	}})
 	require.NoError(t, err)
-
-	// missing column
-	mockedUserTI = userTI.Clone()
-	mockedUserTI.Columns[0].Name = model.NewCIStr("new-name")
-	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
-		DB:   tmpSysDB,
-		Info: mockedUserTI,
-	}})
-	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 
 	// incompatible column type
 	mockedUserTI = userTI.Clone()
@@ -238,6 +239,19 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 		Info: mockedUserTI,
 	}})
 	require.NoError(t, err)
+
+	// use the mysql.db table to test for column count mismatch.
+	dbTI, err := client.GetTableSchema(cluster.Domain, sysDB, model.NewCIStr("db"))
+	require.NoError(t, err)
+
+	// other system tables in cluster have more columns(failed)
+	mockedDBTI := dbTI.Clone()
+	dbTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: model.NewCIStr("new-name")})
+	err = client.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}})
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 }
 
 func TestInitFullClusterRestore(t *testing.T) {

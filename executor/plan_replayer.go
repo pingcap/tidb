@@ -31,9 +31,11 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -117,13 +119,18 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 			zap.Error(err))
 		return err
 	}
+	err = domain.GetDomain(e.ctx).GetPlanReplayerHandle().CollectPlanReplayerTask()
+	if err != nil {
+		logutil.BgLogger().Warn("collect task failed", zap.Error(err))
+	}
+	logutil.BgLogger().Info("collect plan replayer task success")
 	e.endFlag = true
 	return nil
 }
 
 func (e *PlanReplayerExec) createFile() error {
 	var err error
-	e.DumpInfo.File, e.DumpInfo.FileName, err = domain.GeneratePlanReplayerFile()
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(false, false, false)
 	if err != nil {
 		return err
 	}
@@ -133,7 +140,12 @@ func (e *PlanReplayerExec) createFile() error {
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
+	startTS, err := sessiontxn.GetTxnManager(e.ctx).GetStmtReadTS()
+	if err != nil {
+		return err
+	}
 	task := &domain.PlanReplayerDumpTask{
+		StartTS:     startTS,
 		FileName:    fileName,
 		Zf:          zf,
 		SessionVars: e.ctx.GetSessionVars(),
@@ -375,21 +387,23 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	sqls := strings.Split(buf.String(), ";")
-	if len(sqls) != 3 {
-		return errors.New("plan replayer: create schema and tables failed")
-	}
+	originText := buf.String()
+	index1 := strings.Index(originText, ";")
+	createDatabaseSQL := originText[:index1+1]
+	index2 := strings.Index(originText[index1+1:], ";")
+	useDatabaseSQL := originText[index1+1:][:index2+1]
+	createTableSQL := originText[index1+1:][index2+1:]
 	c := context.Background()
 	// create database if not exists
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[0])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, createDatabaseSQL)
 	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 	// use database
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[1])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, useDatabaseSQL)
 	if err != nil {
 		return err
 	}
 	// create table or view
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[2])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, createTableSQL)
 	if err != nil {
 		return err
 	}
@@ -436,6 +450,9 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 
 	// build schema and table first
 	for _, zipFile := range z.File {
+		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
+			continue
+		}
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
 			err = createSchemaAndItems(e.Ctx, zipFile)

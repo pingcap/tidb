@@ -27,7 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -85,7 +85,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	}
 
 	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, nil)
+	initTableCommon(&t, tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false))
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		ret, err := newCachedTable(&t)
 		if err != nil {
@@ -700,11 +700,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	var ctx context.Context
 	if opt.Ctx != nil {
 		ctx = opt.Ctx
-		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-			span1 := span.Tracer().StartSpan("table.AddRecord", opentracing.ChildOf(span.Context()))
-			defer span1.Finish()
-			ctx = opentracing.ContextWithSpan(ctx, span1)
-		}
+		var r tracing.Region
+		r, ctx = tracing.StartRegionEx(ctx, "table.AddRecord")
+		defer r.End()
 	} else {
 		ctx = context.Background()
 	}
@@ -1521,8 +1519,7 @@ func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table,
 			// shard = 0010000000000000000000000000000000000000000000000000000000000000
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
-		txnCtx := sctx.GetSessionVars().TxnCtx
-		shard := txnCtx.GetCurrentShard(int(n))
+		shard := sctx.GetSessionVars().GetCurrentShard(int(n))
 		base = shardFmt.Compose(shard, base)
 		maxID = shardFmt.Compose(shard, maxID)
 	}
@@ -1547,7 +1544,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 		// Use an independent allocator for global temporary tables.
 		if t.meta.TempTableType == model.TempTableGlobal {
 			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
-				return autoid.Allocators{alloc}
+				return autoid.NewAllocators(false, alloc)
 			}
 			// If the session is not in a txn, for example, in "show create table", use the original allocator.
 			// Otherwise the would be a nil pointer dereference.
@@ -1557,8 +1554,9 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 
 	// Replace the row id allocator with the one in session variables.
 	sessAlloc := ctx.GetSessionVars().IDAllocator
-	retAllocs := make([]autoid.Allocator, 0, len(t.allocs))
-	copy(retAllocs, t.allocs)
+	allocs := t.allocs.Allocs
+	retAllocs := make([]autoid.Allocator, 0, len(allocs))
+	copy(retAllocs, allocs)
 
 	overwritten := false
 	for i, a := range retAllocs {
@@ -1571,7 +1569,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	if !overwritten {
 		retAllocs = append(retAllocs, sessAlloc)
 	}
-	return retAllocs
+	return autoid.NewAllocators(t.allocs.SepAutoInc, retAllocs...)
 }
 
 // Type implements table.Table Type interface.
@@ -1889,26 +1887,35 @@ func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum
 		} else {
 			datum = row[pkCol.Offset]
 		}
-		// Try to truncate index values.
-		// Says that primary key(a (8)),
-		// For index t(a), don't truncate the value.
-		// For index t(a(9)), truncate to a(9).
-		// For index t(a(7)), truncate to a(8).
-		truncateTargetCol := pkIdxCol
-		for _, idxCol := range idx.Columns {
-			if idxCol.Offset == pkCol.Offset {
-				truncateTargetCol = maxIndexLen(pkIdxCol, idxCol)
-				break
-			}
-		}
-		tablecodec.TruncateIndexValue(&datum, truncateTargetCol, pkCol)
-		if collate.IsBinCollation(pkCol.GetCollate()) {
-			rsData = append(rsData, types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString())))
-		} else {
-			rsData = append(rsData, datum)
-		}
+		TryTruncateRestoredData(&datum, pkCol, pkIdxCol, idx)
+		ConvertDatumToTailSpaceCount(&datum, pkCol)
+		rsData = append(rsData, datum)
 	}
 	return rsData
+}
+
+// TryTruncateRestoredData tries to truncate index values.
+// Says that primary key(a (8)),
+// For index t(a), don't truncate the value.
+// For index t(a(9)), truncate to a(9).
+// For index t(a(7)), truncate to a(8).
+func TryTruncateRestoredData(datum *types.Datum, pkCol *model.ColumnInfo,
+	pkIdxCol *model.IndexColumn, idx *model.IndexInfo) {
+	truncateTargetCol := pkIdxCol
+	for _, idxCol := range idx.Columns {
+		if idxCol.Offset == pkIdxCol.Offset {
+			truncateTargetCol = maxIndexLen(pkIdxCol, idxCol)
+			break
+		}
+	}
+	tablecodec.TruncateIndexValue(datum, truncateTargetCol, pkCol)
+}
+
+// ConvertDatumToTailSpaceCount converts a string datum to an int datum that represents the tail space count.
+func ConvertDatumToTailSpaceCount(datum *types.Datum, col *model.ColumnInfo) {
+	if collate.IsBinCollation(col.GetCollate()) {
+		*datum = types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString()))
+	}
 }
 
 func maxIndexLen(idxA, idxB *model.IndexColumn) *model.IndexColumn {
@@ -1925,7 +1932,7 @@ func maxIndexLen(idxA, idxB *model.IndexColumn) *model.IndexColumn {
 }
 
 func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
-	for _, alloc := range allocs {
+	for _, alloc := range allocs.Allocs {
 		if alloc.GetType() == autoid.SequenceType {
 			return alloc, nil
 		}
@@ -1939,7 +1946,7 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 	pkColIds := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.TableScan{
 		TableId:          tableInfo.ID,
-		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
+		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false),
 		PrimaryColumnIds: pkColIds,
 	}
 	if tableInfo.IsCommonHandle {
@@ -1953,7 +1960,7 @@ func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []
 	pkColIds := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
-		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
+		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false),
 		PrimaryColumnIds: pkColIds,
 		IsFastScan:       &fastScan,
 	}

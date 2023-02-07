@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/keyspace"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
@@ -227,9 +228,12 @@ type Controller struct {
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
+	dupIndicator   *atomic.Bool
 
 	preInfoGetter       PreRestoreInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
+
+	keyspaceName string
 }
 
 // LightningStatus provides the finished bytes and total bytes of the current task.
@@ -263,6 +267,10 @@ type ControllerParam struct {
 	CheckpointStorage storage.ExternalStorage
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
 	CheckpointName string
+	// DupIndicator can expose the duplicate detection result to the caller
+	DupIndicator *atomic.Bool
+	// Keyspace name
+	KeyspaceName string
 }
 
 func NewRestoreController(
@@ -350,7 +358,7 @@ func NewRestoreControllerWithPauser(
 			}
 		}
 
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr)
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr, p.KeyspaceName)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -430,9 +438,12 @@ func NewRestoreControllerWithPauser(
 		errorMgr:       errorMgr,
 		status:         p.Status,
 		taskMgr:        nil,
+		dupIndicator:   p.DupIndicator,
 
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
+
+		keyspaceName: p.KeyspaceName,
 	}
 
 	return rc, nil
@@ -934,7 +945,7 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 					if _, ok := fileChunks[c.Key.Path]; !ok {
 						fileChunks[c.Key.Path] = 0.0
 					}
-					remainChunkCnt := float64(c.Chunk.EndOffset-c.Chunk.Offset) / float64(c.Chunk.EndOffset-c.Key.Offset)
+					remainChunkCnt := float64(c.UnfinishedSize()) / float64(c.TotalSize())
 					fileChunks[c.Key.Path] += remainChunkCnt
 				}
 			}
@@ -949,7 +960,8 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 				}
 				if fileMeta.FileMeta.Type == mydump.SourceTypeCSV {
 					cfg := rc.cfg.Mydumper
-					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat && !cfg.CSV.Header {
+					if fileMeta.FileMeta.FileSize > int64(cfg.MaxRegionSize) && cfg.StrictFormat &&
+						!cfg.CSV.Header && fileMeta.FileMeta.Compression == mydump.CompressionNone {
 						estimatedChunkCount += math.Round(float64(fileMeta.FileMeta.FileSize) / float64(cfg.MaxRegionSize))
 					} else {
 						estimatedChunkCount++
@@ -1495,7 +1507,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 
 		// Disable GC because TiDB enables GC already.
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf("tikv://%s?disableGC=true", rc.cfg.TiDB.PdAddr),
+			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", rc.cfg.TiDB.PdAddr, rc.keyspaceName),
 			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
 		)
 		if err != nil {
@@ -1615,7 +1627,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			} else {
 				for _, eng := range cp.Engines {
 					for _, chunk := range eng.Chunks {
-						totalDataSizeToRestore += chunk.Chunk.EndOffset - chunk.Chunk.Offset
+						totalDataSizeToRestore += chunk.UnfinishedSize()
 					}
 				}
 			}
@@ -2136,6 +2148,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
 			}
+			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
+			if err := rc.checkCDCPiTR(ctx); err != nil {
+				return common.ErrCheckCDCPiTR.Wrap(err).GenWithStackByArgs()
+			}
 		}
 	}
 
@@ -2291,6 +2307,8 @@ type deliveredKVs struct {
 	columns []string
 	offset  int64
 	rowID   int64
+
+	realOffset int64 // indicates file reader's current position, only used for compressed files
 }
 
 type deliverResult struct {
@@ -2319,14 +2337,25 @@ func (cr *chunkRestore) deliverLoop(
 
 	dataSynced := true
 	hasMoreKVs := true
+	var startRealOffset, currRealOffset int64 // save to 0 at first
+
 	for hasMoreKVs {
-		var dataChecksum, indexChecksum verify.KVChecksum
+		c := keyspace.CodecV1
+		if t.kvStore != nil {
+			c = t.kvStore.GetCodec()
+		}
+		var (
+			dataChecksum  = verify.NewKVChecksumWithKeyspace(c)
+			indexChecksum = verify.NewKVChecksumWithKeyspace(c)
+		)
 		var columns []string
 		var kvPacket []deliveredKVs
 		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
 		// chunk checkpoint should stay the same
 		startOffset := cr.chunk.Chunk.Offset
 		currOffset := startOffset
+		startRealOffset = cr.chunk.Chunk.RealOffset
+		currRealOffset = startRealOffset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
 
 	populate:
@@ -2341,12 +2370,14 @@ func (cr *chunkRestore) deliverLoop(
 					if p.kvs == nil {
 						// This is the last message.
 						currOffset = p.offset
+						currRealOffset = p.realOffset
 						hasMoreKVs = false
 						break populate
 					}
-					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
+					p.kvs.ClassifyAndAppend(&dataKVs, dataChecksum, &indexKVs, indexChecksum)
 					columns = p.columns
 					currOffset = p.offset
+					currRealOffset = p.realOffset
 					rowID = p.rowID
 				}
 			case <-ctx.Done():
@@ -2410,9 +2441,10 @@ func (cr *chunkRestore) deliverLoop(
 		// No need to apply a lock since this is the only thread updating `cr.chunk.**`.
 		// In local mode, we should write these checkpoints after engine flushed.
 		lastOffset := cr.chunk.Chunk.Offset
-		cr.chunk.Checksum.Add(&dataChecksum)
-		cr.chunk.Checksum.Add(&indexChecksum)
+		cr.chunk.Checksum.Add(dataChecksum)
+		cr.chunk.Checksum.Add(indexChecksum)
 		cr.chunk.Chunk.Offset = currOffset
+		cr.chunk.Chunk.RealOffset = currRealOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
 
 		if m, ok := metric.FromContext(ctx); ok {
@@ -2420,16 +2452,21 @@ func (cr *chunkRestore) deliverLoop(
 			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
 			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
 			// TODO: reproduce and find the root cause and fix it completely
-
-			delta := currOffset - startOffset
+			var lowOffset, highOffset int64
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
+				lowOffset, highOffset = startRealOffset, currRealOffset
+			} else {
+				lowOffset, highOffset = startOffset, currOffset
+			}
+			delta := highOffset - lowOffset
 			if delta >= 0 {
 				m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(delta))
 				if rc.status != nil && rc.status.backend == config.BackendTiDB {
 					rc.status.FinishedFileSize.Add(delta)
 				}
 			} else {
-				deliverLogger.Warn("offset go back", zap.Int64("curr", currOffset),
-					zap.Int64("start", startOffset))
+				deliverLogger.Warn("offset go back", zap.Int64("curr", highOffset),
+					zap.Int64("start", lowOffset))
 			}
 		}
 
@@ -2610,14 +2647,22 @@ func (cr *chunkRestore) encodeLoop(
 		canDeliver := false
 		kvPacket := make([]deliveredKVs, 0, maxKvPairsCnt)
 		curOffset := offset
-		var newOffset, rowID int64
+		var newOffset, rowID, realOffset int64
 		var kvSize uint64
+		var realOffsetErr error
 	outLoop:
 		for !canDeliver {
 			readDurStart := time.Now()
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
+				realOffset, realOffsetErr = cr.parser.RealPos()
+				if realOffsetErr != nil {
+					logger.Warn("fail to get data engine RealPos, progress may not be accurate",
+						log.ShortError(realOffsetErr), zap.String("file", cr.chunk.FileMeta.Path))
+				}
+			}
 
 			switch errors.Cause(err) {
 			case nil:
@@ -2679,7 +2724,8 @@ func (cr *chunkRestore) encodeLoop(
 				continue
 			}
 
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset, rowID: rowID})
+			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
+				rowID: rowID, realOffset: realOffset})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
@@ -2711,7 +2757,7 @@ func (cr *chunkRestore) encodeLoop(
 		}
 	}
 
-	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset}})
+	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset, realOffset: cr.chunk.FileMeta.FileSize}})
 	return
 }
 

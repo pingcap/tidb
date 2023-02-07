@@ -21,10 +21,9 @@ package session
 import (
 	"context"
 	"encoding/hex"
-	"flag"
 	"fmt"
+	"io/ioutil"
 	osuser "os/user"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -60,6 +60,10 @@ import (
 
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
+	// WARNING: There are some limitations on altering the schema of mysql.user table.
+	// Adding columns that are nullable or have default values is permitted.
+	// But operations like dropping or renaming columns may break the compatibility with BR.
+	// REFERENCE ISSUE: https://github.com/pingcap/tidb/issues/38785
 	CreateUserTable = `CREATE TABLE IF NOT EXISTS mysql.user (
 		Host					CHAR(255),
 		User					CHAR(32),
@@ -98,8 +102,13 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_reuse_history  smallint unsigned DEFAULT NULL,
+		Password_reuse_time     smallint unsigned DEFAULT NULL,
 		User_attributes			json,
 		Token_issuer			VARCHAR(255),
+		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -265,6 +274,8 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
+		sql_digest varchar(64),
+		plan_digest varchar(64),
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -401,6 +412,7 @@ const (
 		modify_count bigint(64) NOT NULL,
 		count bigint(64) NOT NULL,
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
+    	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
 		UNIQUE KEY table_version (table_id, version),
 		KEY table_create_time (table_id, create_time)
@@ -429,7 +441,19 @@ const (
 	);`
 	// CreateMDLView is a view about metadata locks.
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
-	select JOB_ID, DB_NAME, TABLE_NAME, QUERY, SESSION_ID, TxnStart, TIDB_DECODE_SQL_DIGESTS(ALL_SQL_DIGESTS, 4096) AS SQL_DIGESTS from information_schema.ddl_jobs, information_schema.CLUSTER_TIDB_TRX, information_schema.CLUSTER_PROCESSLIST where ddl_jobs.STATE = 'running' and find_in_set(ddl_jobs.table_id, CLUSTER_TIDB_TRX.RELATED_TABLE_IDS) and CLUSTER_TIDB_TRX.SESSION_ID=CLUSTER_PROCESSLIST.ID
+		SELECT job_id,
+			db_name,
+			table_name,
+			query,
+			session_id,
+			txnstart,
+			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
+		FROM information_schema.ddl_jobs,
+			information_schema.cluster_tidb_trx,
+			information_schema.cluster_processlist
+		WHERE (ddl_jobs.state != 'synced' and ddl_jobs.state != 'cancelled')
+			AND Find_in_set(ddl_jobs.table_id, cluster_tidb_trx.related_table_ids)
+			AND cluster_tidb_trx.session_id = cluster_processlist.id
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -456,6 +480,74 @@ const (
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id));`
+
+	// CreatePasswordHistory is a table save history passwd.
+	CreatePasswordHistory = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
+         Host char(255)  NOT NULL DEFAULT '',
+         User char(32)  NOT NULL DEFAULT '',
+         Password_timestamp timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+         Password text,
+         PRIMARY KEY (Host,User,Password_timestamp )
+        ) COMMENT='Password history for user accounts' `
+
+	// CreateTTLTableStatus is a table about TTL job schedule
+	CreateTTLTableStatus = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_table_status (
+		table_id bigint(64) PRIMARY KEY,
+        parent_table_id bigint(64),
+        table_statistics text DEFAULT NULL,
+		last_job_id varchar(64) DEFAULT NULL,
+		last_job_start_time timestamp NULL DEFAULT NULL,
+		last_job_finish_time timestamp NULL DEFAULT NULL,
+		last_job_ttl_expire timestamp NULL DEFAULT NULL,
+        last_job_summary text DEFAULT NULL,
+		current_job_id varchar(64) DEFAULT NULL,
+		current_job_owner_id varchar(64) DEFAULT NULL,
+		current_job_owner_addr varchar(256) DEFAULT NULL,
+		current_job_owner_hb_time timestamp,
+		current_job_start_time timestamp NULL DEFAULT NULL,
+		current_job_ttl_expire timestamp NULL DEFAULT NULL,
+		current_job_state text DEFAULT NULL,
+		current_job_status varchar(64) DEFAULT NULL,
+  		current_job_status_update_time timestamp NULL DEFAULT NULL);`
+
+	// CreateTTLTask is a table about parallel ttl tasks
+	CreateTTLTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_task (
+		job_id varchar(64) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		scan_id int NOT NULL,
+		scan_range_start BLOB,
+		scan_range_end BLOB,
+		expire_time timestamp NOT NULL,
+		owner_id varchar(64) DEFAULT NULL,
+		owner_addr varchar(64) DEFAULT NULL,
+		owner_hb_time timestamp DEFAULT NULL,
+		status varchar(64) DEFAULT 'waiting',
+		status_update_time timestamp NULL DEFAULT NULL,
+		state text,
+		created_time timestamp NOT NULL,
+		primary key(job_id, scan_id),
+		key(created_time));`
+
+	// CreateTTLJobHistory is a table that stores ttl job's history
+	CreateTTLJobHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
+		job_id varchar(64) PRIMARY KEY,
+		table_id bigint(64) NOT NULL,
+        parent_table_id bigint(64) NOT NULL,
+    	table_schema varchar(64) NOT NULL,
+		table_name varchar(64) NOT NULL,
+    	partition_name varchar(64) DEFAULT NULL,
+		create_time timestamp NOT NULL,
+		finish_time timestamp NOT NULL,
+		ttl_expire timestamp NOT NULL,
+        summary_text text,
+		expired_rows bigint(64) DEFAULT NULL,
+    	deleted_rows bigint(64) DEFAULT NULL,
+    	error_delete_rows bigint(64) DEFAULT NULL,
+    	status varchar(64) NOT NULL,
+    	key(table_schema, table_name, create_time),
+    	key(parent_table_id, create_time),
+    	key(create_time)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -485,6 +577,7 @@ func bootstrap(s Session) {
 		if dom.DDL().OwnerManager().IsOwner() {
 			doDDLWorks(s)
 			doDMLWorks(s)
+			runBootstrapSQLFile = true
 			logutil.BgLogger().Info("bootstrap successful",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -681,14 +774,36 @@ const (
 	version102 = 102
 	// version103 adds the tables mysql.stats_table_locked
 	version103 = 103
+	// version104 add `sql_digest` and `plan_digest` to `bind_info`
+	version104 = 104
+	// version105 insert "tidb_cost_model_version|1" to mysql.GLOBAL_VARIABLES if there is no tidb_cost_model_version.
+	// This will only happens when we upgrade a cluster before 6.0.
+	version105 = 105
+	// version106 add mysql.password_history, and Password_reuse_history, Password_reuse_time into mysql.user.
+	version106 = 106
+	// version107 add columns related to password expiration into mysql.user
+	version107 = 107
+	// version108 adds the table tidb_ttl_table_status
+	version108 = 108
+	// version109 add column source to mysql.stats_meta_history
+	version109 = 109
+	// version110 sets tidb_enable_gc_aware_memory_track to off when a cluster upgrades from some version lower than v6.5.0.
+	version110 = 110
+	// version111 adds the table tidb_ttl_task and tidb_ttl_job_history
+	version111 = 111
+	// version112 modifies the view tidb_mdl_view
+	version112 = 112
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version103
+var currentBootstrapVersion int64 = version112
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
+
+// whether to run the sql file in bootstrap.
+var runBootstrapSQLFile = false
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -793,6 +908,15 @@ var (
 		upgradeToVer101,
 		upgradeToVer102,
 		upgradeToVer103,
+		upgradeToVer104,
+		upgradeToVer105,
+		upgradeToVer106,
+		upgradeToVer107,
+		upgradeToVer108,
+		upgradeToVer109,
+		upgradeToVer110,
+		upgradeToVer111,
+		upgradeToVer112,
 	}
 )
 
@@ -892,11 +1016,6 @@ func upgrade(s Session) {
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
-
-	if err == nil && ver <= version92 {
-		logutil.BgLogger().Info("start migrate DDLs")
-		err = domain.GetDomain(s).DDL().MoveJobFromQueue2Table(true)
-	}
 
 	if err != nil {
 		sleepTime := 1 * time.Second
@@ -1566,7 +1685,8 @@ func initBindInfoTable(s Session) {
 }
 
 func insertBuiltinBindInfoRow(s Session) {
-	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
+						VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
 		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin,
 	)
 }
@@ -2079,6 +2199,91 @@ func upgradeToVer103(s Session, ver int64) {
 	doReentrantDDL(s, CreateStatsTableLocked)
 }
 
+func upgradeToVer104(s Session, ver int64) {
+	if ver >= version104 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `sql_digest` varchar(64)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
+}
+
+// For users that upgrade TiDB from a pre-6.0 version, we want to disable tidb cost model2 by default to keep plans unchanged.
+func upgradeToVer105(s Session, ver int64) {
+	if ver >= version105 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion, "1")
+}
+
+func upgradeToVer106(s Session, ver int64) {
+	if ver >= version106 {
+		return
+	}
+	doReentrantDDL(s, CreatePasswordHistory)
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_history` smallint unsigned  DEFAULT NULL AFTER `Create_Tablespace_Priv` ")
+	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_time` smallint unsigned DEFAULT NULL AFTER `Password_reuse_history`")
+}
+
+func upgradeToVer107(s Session, ver int64) {
+	if ver >= version107 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N'")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP DEFAULT CURRENT_TIMESTAMP()")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED DEFAULT NULL")
+}
+
+func upgradeToVer108(s Session, ver int64) {
+	if ver >= version108 {
+		return
+	}
+	doReentrantDDL(s, CreateTTLTableStatus)
+}
+
+func upgradeToVer109(s Session, ver int64) {
+	if ver >= version109 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
+}
+
+// For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
+func upgradeToVer110(s Session, ver int64) {
+	if ver >= version110 {
+		return
+	}
+	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableGCAwareMemoryTrack, 0)
+}
+
+func upgradeToVer111(s Session, ver int64) {
+	if ver >= version111 {
+		return
+	}
+	doReentrantDDL(s, CreateTTLTask)
+	doReentrantDDL(s, CreateTTLJobHistory)
+}
+
+func upgradeToVer112(s Session, ver int64) {
+	if ver >= version112 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2114,6 +2319,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", mysql.SystemDB)
 	// Create user table.
 	mustExecute(s, CreateUserTable)
+	// Create password history.
+	mustExecute(s, CreatePasswordHistory)
 	// Create privilege tables.
 	mustExecute(s, CreateGlobalPrivTable)
 	mustExecute(s, CreateDBPrivTable)
@@ -2181,12 +2388,44 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreatePlanReplayerTaskTable)
 	// Create stats_meta_table_locked table
 	mustExecute(s, CreateStatsTableLocked)
+	// Create tidb_ttl_table_status table
+	mustExecute(s, CreateTTLTableStatus)
+	// Create tidb_ttl_task table
+	mustExecute(s, CreateTTLTask)
+	// Create tidb_ttl_job_history table
+	mustExecute(s, CreateTTLJobHistory)
 }
 
-// inTestSuite checks if we are bootstrapping in the context of tests.
-// There are some historical differences in behavior between tests and non-tests.
-func inTestSuite() bool {
-	return flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
+// doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
+// It is useful for setting the initial value of GLOBAL variables.
+func doBootstrapSQLFile(s Session) {
+	sqlFile := config.GetGlobalConfig().InitializeSQLFile
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	if sqlFile == "" {
+		return
+	}
+	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
+	b, err := ioutil.ReadFile(sqlFile) //nolint:gosec
+	if err != nil {
+		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
+	}
+	stmts, err := s.Parse(ctx, string(b))
+	if err != nil {
+		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
+	}
+	for _, stmt := range stmts {
+		rs, err := s.ExecuteStmt(ctx, stmt)
+		if err != nil {
+			logutil.BgLogger().Warn("InitializeSQLFile error", zap.Error(err))
+		}
+		if rs != nil {
+			// I don't believe we need to drain the result-set in bootstrap mode
+			// but if required we can do this here in future.
+			if err := rs.Close(); err != nil {
+				logutil.BgLogger().Fatal("unable to close result", zap.Error(err))
+			}
+		}
+	}
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -2201,10 +2440,14 @@ func doDMLWorks(s Session) {
 		if err != nil {
 			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
-		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
 		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
 	} else {
-		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
 		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
 	}
 
@@ -2229,11 +2472,11 @@ func doDMLWorks(s Session) {
 				vVal = variable.On
 			}
 		case variable.TiDBMemOOMAction:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.OOMActionLog
 			}
 		case variable.TiDBEnableAutoAnalyze:
-			if inTestSuite() {
+			if intest.InTest {
 				vVal = variable.Off
 			}
 		// For the following sysvars, we change the default
@@ -2293,8 +2536,7 @@ func mustExecute(s Session, sql string, args ...interface{}) {
 	_, err := s.ExecuteInternal(ctx, sql, args...)
 	defer cancel()
 	if err != nil {
-		debug.PrintStack()
-		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
+		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 

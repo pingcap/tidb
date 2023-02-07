@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -138,6 +139,8 @@ func TestNormalizedPlan(t *testing.T) {
 		newNormalized, newDigest := core.NormalizeFlatPlan(flat)
 		require.Equal(t, normalized, newNormalized)
 		require.Equal(t, digest, newDigest)
+		// Test for GenHintsFromFlatPlan won't panic.
+		core.GenHintsFromFlatPlan(flat)
 
 		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
 		normalizedPlanRows := getPlanRows(normalizedPlan)
@@ -1107,4 +1110,35 @@ func TestOuterJoinOnNull(t *testing.T) {
 	tk.MustExec("INSERT INTO t3 VALUES (1);")
 	tk.MustQuery("SELECT ((NOT ('i'))AND(t2.c0)) IS NULL FROM  t2 RIGHT JOIN t3 ON t3.c0;").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2 RIGHT JOIN t3 ON t2.c0 WHERE ((NOT ('i'))AND(t2.c0)) IS NULL;").Check(testkit.Rows("<nil> 1"))
+}
+
+func TestJSONPlanInExplain(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int, key(id))")
+	tk.MustExec("create table t2(id int, key(id))")
+
+	var input []string
+	var output []struct {
+		SQL      string
+		JSONPlan []*core.ExplainInfoForEncode
+	}
+	planSuiteData := core.GetJSONPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, test := range input {
+		resJSON := tk.MustQuery(test).Rows()
+		var res []*core.ExplainInfoForEncode
+		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), &res))
+		for j, expect := range output[i].JSONPlan {
+			require.Equal(t, expect.ID, res[j].ID)
+			require.Equal(t, expect.EstRows, res[j].EstRows)
+			require.Equal(t, expect.ActRows, res[j].ActRows)
+			require.Equal(t, expect.TaskType, res[j].TaskType)
+			require.Equal(t, expect.AccessObject, res[j].AccessObject)
+			require.Equal(t, expect.OperatorInfo, res[j].OperatorInfo)
+		}
+	}
 }

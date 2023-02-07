@@ -22,12 +22,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	autoid1 "github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -76,7 +79,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).RowID()
+			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
 			if err1 != nil {
@@ -137,7 +140,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).RowID()
+			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
 			if err1 != nil {
@@ -188,7 +191,7 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).RowID()
+		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
 			return err1
@@ -221,7 +224,7 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 	var newBase, newEnd int64
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).RowID()
+		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
 			return err1
@@ -251,6 +254,7 @@ type Service struct {
 func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) *Service {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
+
 	cli, err := clientv3.New(clientv3.Config{
 		LogConfig:        &etcdLogCfg,
 		Endpoints:        etcdAddr,
@@ -268,9 +272,12 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 	if err != nil {
 		panic(err)
 	}
+	return newWithCli(selfAddr, cli, store)
+}
 
+func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
-	err = l.CampaignOwner()
+	err := l.CampaignOwner()
 	if err != nil {
 		panic(err)
 	}
@@ -297,7 +304,7 @@ func (m *mockClient) Rebase(ctx context.Context, in *autoid.RebaseRequest, opts 
 var global = make(map[string]*mockClient)
 
 // MockForTest is used for testing, the UT test and unistore use this.
-func MockForTest(store kv.Storage) *mockClient {
+func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 	uuid := store.UUID()
 	ret, ok := global[uuid]
 	if !ok {
@@ -400,8 +407,15 @@ func (s *Service) getAlloc(dbID, tblID int64, isUnsigned bool) *autoIDValue {
 
 func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
+		logutil.BgLogger().Info("[autoid service] Alloc AutoID fail, not leader")
 		return nil, errors.New("not leader")
 	}
+
+	failpoint.Inject("mockErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mock reload failed"))
+		}
+	})
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
 
@@ -425,10 +439,13 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 			val.end = currentEnd
 			return nil
 		})
+		if err != nil {
+			return &autoid.AutoIDResponse{Errmsg: []byte(err.Error())}, nil
+		}
 		return &autoid.AutoIDResponse{
 			Min: currentEnd,
 			Max: currentEnd,
-		}, err
+		}, nil
 	}
 
 	val.Lock()
@@ -442,16 +459,19 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		min, max, err = val.alloc4Signed(ctx, s.store, req.DbID, req.TblID, req.IsUnsigned, req.N, req.Increment, req.Offset)
 	}
 
+	if err != nil {
+		return &autoid.AutoIDResponse{Errmsg: []byte(err.Error())}, nil
+	}
 	return &autoid.AutoIDResponse{
 		Min: min,
 		Max: max,
-	}, err
+	}, nil
 }
 
 func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbID, tblID, requiredBase int64, isUnsigned bool) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).RowID()
+		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
 			return err1
@@ -477,6 +497,7 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 // req.N = 0 is handled specially, it is used to return the current auto ID value.
 func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
+		logutil.BgLogger().Info("[autoid service] Rebase() fail, not leader")
 		return nil, errors.New("not leader")
 	}
 
@@ -484,7 +505,7 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 	if req.Force {
 		err := val.forceRebase(ctx, s.store, req.DbID, req.TblID, req.Base, req.IsUnsigned)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return &autoid.RebaseResponse{Errmsg: []byte(err.Error())}, nil
 		}
 	}
 
@@ -494,5 +515,12 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 	} else {
 		err = val.rebase4Signed(ctx, s.store, req.DbID, req.TblID, req.Base)
 	}
-	return &autoid.RebaseResponse{}, err
+	if err != nil {
+		return &autoid.RebaseResponse{Errmsg: []byte(err.Error())}, nil
+	}
+	return &autoid.RebaseResponse{}, nil
+}
+
+func init() {
+	autoid1.MockForTest = MockForTest
 }

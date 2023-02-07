@@ -1325,8 +1325,11 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
 			// Don't use the join columns if their collations are unmatched and the new collation is enabled.
 			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.GetType()) && types.IsString(outerKeys[ijHelper.curIdxOff2KeyOff[i]].RetType.GetType()) {
-				_, coll := expression.DeriveCollationFromExprs(nil, idxCol, outerKeys[ijHelper.curIdxOff2KeyOff[i]])
-				if !collate.CompatibleCollate(idxCol.GetType().GetCollate(), coll) {
+				et, err := expression.CheckAndDeriveCollationFromExprs(ijHelper.innerPlan.ctx, "equal", types.ETInt, idxCol, outerKeys[ijHelper.curIdxOff2KeyOff[i]])
+				if err != nil {
+					logutil.BgLogger().Error("Unexpected error happened during constructing index join", zap.Stack("stack"))
+				}
+				if !collate.CompatibleCollate(idxCol.GetType().GetCollate(), et.Collation) {
 					ijHelper.curIdxOff2KeyOff[i] = -1
 				}
 			}
@@ -1928,7 +1931,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		}
 	})
 
-	if (p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0 {
+	if (p.preferJoinType&preferBCJoin) == 0 && (p.preferJoinType&preferShuffleJoin) == 0 && p.preferJoinType > 0 {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
 		if prop.IsFlashProp() {
 			return nil, false, nil
@@ -1956,6 +1959,21 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		} else {
 			mppJoins := p.tryToGetMppHashJoin(prop, false)
 			joins = append(joins, mppJoins...)
+		}
+	} else {
+		hasMppHints := false
+		var errMsg string
+		if (p.preferJoinType & preferShuffleJoin) > 0 {
+			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+			hasMppHints = true
+		}
+		if (p.preferJoinType & preferBCJoin) > 0 {
+			errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
+			hasMppHints = true
+		}
+		if hasMppHints {
+			warning := ErrInternal.GenWithStack(errMsg)
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
 	if prop.IsFlashProp() {
@@ -2515,7 +2533,7 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]
 }
 
 // canPushToCop checks if it can be pushed to some stores. For TiKV, it only checks datasource.
-// For TiFlash, it will check whether the operator is supported, but note that the check might be inaccrute.
+// For TiFlash, it will check whether the operator is supported, but note that the check might be inaccrate.
 func (p *baseLogicalPlan) canPushToCop(storeTp kv.StoreType) bool {
 	return p.canPushToCopImpl(storeTp, false)
 }
@@ -2730,8 +2748,11 @@ func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 		}
 	}
 	if hasUnsupportedDistinct {
+		warnErr := errors.New("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct")
 		if la.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-			la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct"))
+			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warnErr)
+		} else {
+			la.ctx.GetSessionVars().StmtCtx.AppendExtraWarning(warnErr)
 		}
 		return false
 	}
@@ -2855,6 +2876,21 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	}
 	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)
+	} else {
+		hasMppHints := false
+		var errMsg string
+		if la.aggHints.preferAggType&preferMPP1PhaseAgg > 0 {
+			errMsg = "The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
+			hasMppHints = true
+		}
+		if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
+			errMsg = "The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
+			hasMppHints = true
+		}
+		if hasMppHints {
+			warning := ErrInternal.GenWithStack(errMsg)
+			la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
 	}
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}

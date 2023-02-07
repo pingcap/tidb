@@ -301,6 +301,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if oldTbInfoID > 0 && orReplace {
 			err = t.DropTableOrView(schemaID, oldTbInfoID)
 			if err != nil {
+				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
 			err = t.GetAutoIDAccessors(schemaID, oldTbInfoID).Del()
@@ -404,6 +405,11 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 	schemaID := recoverInfo.SchemaID
 	tblInfo := recoverInfo.TableInfo
+	if tblInfo.TTLInfo != nil {
+		// force disable TTL job schedule for recovered table
+		tblInfo.TTLInfo.Enable = false
+	}
+
 	// check GC and safe point
 	gcEnable, err := checkGCEnable(w)
 	if err != nil {
@@ -812,8 +818,8 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
-func onRebaseRowIDType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	return onRebaseAutoID(d, d.store, t, job, autoid.RowIDAllocType)
+func onRebaseAutoIncrementIDType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(d, d.store, t, job, autoid.AutoIncrementType)
 }
 
 func onRebaseAutoRandomType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -862,7 +868,7 @@ func onRebaseAutoID(d *ddlCtx, store kv.Storage, t *meta.Meta, job *model.Job, t
 		newBase = newBaseTemp
 	}
 
-	if tp == autoid.RowIDAllocType {
+	if tp == autoid.AutoIncrementType {
 		tblInfo.AutoIncID = newBase
 	} else {
 		tblInfo.AutoRandID = newBase

@@ -28,18 +28,21 @@ var (
 	_ DDLNode = &AlterTableStmt{}
 	_ DDLNode = &AlterSequenceStmt{}
 	_ DDLNode = &AlterPlacementPolicyStmt{}
+	_ DDLNode = &AlterResourceGroupStmt{}
 	_ DDLNode = &CreateDatabaseStmt{}
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
 	_ DDLNode = &CreateViewStmt{}
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
+	_ DDLNode = &CreateResourceGroupStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &FlashBackDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
 	_ DDLNode = &DropSequenceStmt{}
 	_ DDLNode = &DropPlacementPolicyStmt{}
+	_ DDLNode = &DropResourceGroupStmt{}
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 	_ DDLNode = &RepairTableStmt{}
@@ -1093,7 +1096,8 @@ func (n *CreateTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	for i, option := range n.Options {
+	options := tableOptionsWithRestoreTTLFlag(ctx.Flags, n.Options)
+	for i, option := range options {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing CreateTableStmt TableOption: [%v]", i)
@@ -1277,6 +1281,32 @@ func (n *DropPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropPlacementPolicyStmt)
+	return v.Leave(n)
+}
+
+type DropResourceGroupStmt struct {
+	ddlNode
+
+	IfExists          bool
+	ResourceGroupName model.CIStr
+}
+
+// Restore implements Restore interface.
+func (n *DropResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP RESOURCE GROUP ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteName(n.ResourceGroupName.O)
+	return nil
+}
+
+func (n *DropResourceGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropResourceGroupStmt)
 	return v.Leave(n)
 }
 
@@ -1537,6 +1567,43 @@ func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreatePlacementPolicyStmt)
+	return v.Leave(n)
+}
+
+// CreateResourceGroupStmt is a statement to create a policy.
+type CreateResourceGroupStmt struct {
+	ddlNode
+
+	IfNotExists             bool
+	ResourceGroupName       model.CIStr
+	ResourceGroupOptionList []*ResourceGroupOption
+}
+
+// Restore implements Node interface.
+func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE ")
+
+	ctx.WriteKeyWord("RESOURCE GROUP ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.ResourceGroupName.O)
+	for i, option := range n.ResourceGroupOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing CreatePlacementPolicy TableOption: [%v]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateResourceGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateResourceGroupStmt)
 	return v.Leave(n)
 }
 
@@ -2031,6 +2098,61 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 	return ctx.WriteWithSpecialComments(tidb.FeatureIDPlacement, fn)
 }
 
+// ResourceGroupOption is used for parsing resource group option.
+type ResourceGroupOption struct {
+	Tp        ResourceUnitType
+	StrValue  string
+	UintValue uint64
+	BoolValue bool
+}
+
+type ResourceUnitType int
+
+const (
+	// RU mode
+	ResourceRURate ResourceUnitType = iota
+	// Raw mode
+	ResourceUnitCPU
+	ResourceUnitIOReadBandwidth
+	ResourceUnitIOWriteBandwidth
+
+	// Options
+	ResourceBurstableOpiton
+)
+
+func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+		return nil
+	}
+	fn := func() error {
+		switch n.Tp {
+		case ResourceRURate:
+			ctx.WriteKeyWord("RU_PER_SEC ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+		case ResourceUnitCPU:
+			ctx.WriteKeyWord("CPU ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case ResourceUnitIOReadBandwidth:
+			ctx.WriteKeyWord("IO_READ_BANDWIDTH ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case ResourceUnitIOWriteBandwidth:
+			ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case ResourceBurstableOpiton:
+			ctx.WriteKeyWord("BURSTABLE")
+		default:
+			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
+		}
+		return nil
+	}
+	// WriteSpecialComment
+	return ctx.WriteWithSpecialComments(tidb.FeatureIDResourceGroup, fn)
+}
+
 type StatsOptionType int
 
 const (
@@ -2083,6 +2205,7 @@ const (
 	TableOptionEncryption
 	TableOptionTTL
 	TableOptionTTLEnable
+	TableOptionTTLJobInterval
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2439,6 +2562,13 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			} else {
 				ctx.WriteString("OFF")
 			}
+			return nil
+		})
+	case TableOptionTTLJobInterval:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("TTL_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
 			return nil
 		})
 	default:
@@ -3454,11 +3584,21 @@ func (n *AlterTableStmt) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore AlterTableStmt.Table")
 	}
-	var specs []*AlterTableSpec
+	specs := make([]*AlterTableSpec, 0, len(n.Specs))
 	for _, spec := range n.Specs {
-		if !(spec.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag()) {
-			specs = append(specs, spec)
+		if spec.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+			continue
 		}
+		if spec.Tp == AlterTableOption {
+			newOptions := tableOptionsWithRestoreTTLFlag(ctx.Flags, spec.Options)
+			if len(newOptions) == 0 {
+				continue
+			}
+			newSpec := *spec
+			newSpec.Options = newOptions
+			spec = &newSpec
+		}
+		specs = append(specs, spec)
 	}
 	for i, spec := range specs {
 		if i == 0 || spec.Tp == AlterTablePartition || spec.Tp == AlterTableRemovePartitioning || spec.Tp == AlterTableImportTablespace || spec.Tp == AlterTableDiscardTablespace {
@@ -4304,6 +4444,39 @@ func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// AlterResourceGroupStmt is a statement to alter placement policy option.
+type AlterResourceGroupStmt struct {
+	ddlNode
+
+	ResourceGroupName       model.CIStr
+	IfExists                bool
+	ResourceGroupOptionList []*ResourceGroupOption
+}
+
+func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER RESOURCE GROUP ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteName(n.ResourceGroupName.O)
+	for i, option := range n.ResourceGroupOptionList {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing AlterResourceStmt Options: [%v]", i)
+		}
+	}
+	return nil
+}
+
+func (n *AlterResourceGroupStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterResourceGroupStmt)
+	return v.Leave(n)
+}
+
 // AlterSequenceStmt is a statement to alter sequence option.
 type AlterSequenceStmt struct {
 	ddlNode
@@ -4357,4 +4530,26 @@ func restorePlacementStmtInSpecialComment(ctx *format.RestoreCtx, n DDLNode) err
 		ctx.Flags &= ^format.RestoreTiDBSpecialComment
 		return n.Restore(ctx)
 	})
+}
+
+func tableOptionsWithRestoreTTLFlag(flags format.RestoreFlags, options []*TableOption) []*TableOption {
+	if !flags.HasRestoreWithTTLEnableOff() {
+		return options
+	}
+
+	newOptions := make([]*TableOption, 0, len(options))
+	for _, opt := range options {
+		if opt.Tp == TableOptionTTLEnable {
+			continue
+		}
+
+		newOptions = append(newOptions, opt)
+		if opt.Tp == TableOptionTTL {
+			newOptions = append(newOptions, &TableOption{
+				Tp:        TableOptionTTLEnable,
+				BoolValue: false,
+			})
+		}
+	}
+	return newOptions
 }

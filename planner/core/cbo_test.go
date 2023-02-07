@@ -57,6 +57,34 @@ func loadTableStats(fileName string, dom *domain.Domain) error {
 	return nil
 }
 
+func TestExplainCostTrace(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustQuery("explain format='cost_trace' select * from t").Check(testkit.Rows(
+		`TableReader_5 10000.00 177906.67 ((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00 root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 2035000.00 scan(10000*logrowsize(32)*tikv_scan_factor(40.7)) cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery("explain analyze format='cost_trace' select * from t").CheckAt([]int{0, 1, 2, 3, 4}, [][]interface{}{
+		{"TableReader_5", "10000.00", "177906.67", "((scan(10000*logrowsize(32)*tikv_scan_factor(40.7))) + (net(10000*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00", "1"},
+		{"└─TableFullScan_4", "10000.00", "2035000.00", "scan(10000*logrowsize(32)*tikv_scan_factor(40.7))", "1"},
+	})
+
+	tk.MustExec("set tidb_cost_model_version=1")
+	tk.MustQuery("explain format='cost_trace' select * from t").Check(testkit.Rows(
+		// cost trace on model ver1 is not supported
+		`TableReader_5 10000.00 34418.00 N/A root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 435000.00 N/A cop[tikv] table:t keep order:false, stats:pseudo`,
+	))
+	tk.MustQuery("explain analyze format='cost_trace' select * from t").CheckAt([]int{0, 1, 2, 3, 4}, [][]interface{}{
+		{"TableReader_5", "10000.00", "34418.00", "N/A", "1"},
+		{"└─TableFullScan_4", "10000.00", "435000.00", "N/A", "1"},
+	})
+}
+
 func TestExplainAnalyze(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

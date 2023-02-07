@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
@@ -532,6 +533,7 @@ func TestFix31537(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec(`CREATE TABLE trade (
   t_id bigint(16) NOT NULL AUTO_INCREMENT,
   t_dts datetime NOT NULL,
@@ -1239,4 +1241,149 @@ func TestIssue33214(t *testing.T) {
 			break
 		}
 	}
+}
+
+func TestIssue982(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c int auto_increment, key(c)) auto_id_cache 1;")
+	tk.MustExec("insert into t values();")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "2"))
+}
+
+func TestIssue24627(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, sql := range []string{
+		"create table test(id float primary key clustered AUTO_INCREMENT, col1 int);",
+		"create table test(id float primary key nonclustered AUTO_INCREMENT, col1 int) AUTO_ID_CACHE 1;",
+	} {
+		tk.MustExec("drop table if exists test;")
+		tk.MustExec(sql)
+		tk.MustExec("replace into test(col1) values(1);")
+		tk.MustExec("replace into test(col1) values(2);")
+		tk.MustQuery("select * from test;").Check(testkit.Rows("1 1", "2 2"))
+		tk.MustExec("drop table test")
+	}
+
+	for _, sql := range []string{
+		"create table test2(id double primary key clustered AUTO_INCREMENT, col1 int);",
+		"create table test2(id double primary key nonclustered AUTO_INCREMENT, col1 int) AUTO_ID_CACHE 1;",
+	} {
+		tk.MustExec(sql)
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustExec("insert into test2(col1) values(1);")
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustExec("insert into test2(col1) values(1);")
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustExec("replace into test2(col1) values(1);")
+		tk.MustQuery("select * from test2").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1", "6 1"))
+		tk.MustExec("drop table test2")
+	}
+}
+
+func TestIssue39618(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`CREATE TABLE t1 (
+  c_int int(11) NOT NULL,
+  c_str varbinary(40) NOT NULL,
+  c_datetime datetime DEFAULT NULL,
+  c_timestamp timestamp NULL DEFAULT NULL,
+  c_double double DEFAULT NULL,
+  c_decimal decimal(12,6) DEFAULT NULL,
+  c_enum enum('blue','green','red','yellow','white','orange','purple') DEFAULT NULL,
+  PRIMARY KEY (c_int,c_str) /*T![clustered_index] CLUSTERED */,
+  KEY c_int_2 (c_int),
+  KEY c_decimal (c_decimal),
+  KEY c_datetime (c_datetime)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(c_int)
+(PARTITION p0 VALUES IN (1,5,9,13,17,21,25,29,33,37),
+ PARTITION p1 VALUES IN (2,6,10,14,18,22,26,30,34,38),
+ PARTITION p2 VALUES IN (3,7,11,15,19,23,27,31,35,39),
+ PARTITION p3 VALUES IN (4,8,12,16,20,24,28,32,36,40));`)
+	tk.MustExec("INSERT INTO t1 VALUES (3,'bold goldberg','2020-01-07 12:08:19','2020-06-19 08:13:35',0.941002,5.303000,'yellow'),(1,'crazy wescoff','2020-03-24 21:51:02','2020-06-19 08:13:35',47.565275,6.313000,'orange'),(5,'relaxed gagarin','2020-05-20 11:36:26','2020-06-19 08:13:35',38.948617,3.143000,'green'),(9,'gifted vaughan','2020-04-09 16:19:45','2020-06-19 08:13:35',95.922976,8.708000,'yellow'),(2,'focused taussig','2020-05-17 17:58:34','2020-06-19 08:13:35',4.137803,4.902000,'white'),(6,'fervent yonath','2020-05-26 03:55:25','2020-06-19 08:13:35',72.394272,6.491000,'white'),(18,'mystifying bhaskara','2020-02-19 10:41:48','2020-06-19 08:13:35',10.832397,9.707000,'red'),(4,'goofy saha','2020-03-11 13:24:31','2020-06-19 08:13:35',39.007216,2.446000,'blue'),(20,'mystifying bhaskara','2020-04-03 11:33:27','2020-06-19 08:13:35',85.190386,6.787000,'blue');")
+
+	tk.MustExec("DROP TABLE IF EXISTS t2;")
+	tk.MustExec(`CREATE TABLE t2 (
+  c_int int(11) NOT NULL,
+  c_str varbinary(40) NOT NULL,
+  c_datetime datetime DEFAULT NULL,
+  c_timestamp timestamp NULL DEFAULT NULL,
+  c_double double DEFAULT NULL,
+  c_decimal decimal(12,6) DEFAULT NULL,
+  c_enum enum('blue','green','red','yellow','white','orange','purple') DEFAULT NULL,
+  PRIMARY KEY (c_int,c_str) /*T![clustered_index] CLUSTERED */,
+  KEY c_int_2 (c_int),
+  KEY c_decimal (c_decimal),
+  KEY c_datetime (c_datetime)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(c_int)
+(PARTITION p0 VALUES IN (1,5,9,13,17,21,25,29,33,37),
+ PARTITION p1 VALUES IN (2,6,10,14,18,22,26,30,34,38),
+ PARTITION p2 VALUES IN (3,7,11,15,19,23,27,31,35,39),
+ PARTITION p3 VALUES IN (4,8,12,16,20,24,28,32,36,40));
+`)
+
+	tk.MustExec("INSERT INTO t2 VALUES (1,'crazy wescoff','2020-03-24 21:51:02','2020-04-01 12:11:56',47.565275,6.313000,'orange'),(1,'unruffled johnson','2020-06-30 03:42:58','2020-06-14 00:16:50',35.444084,1.090000,'red'),(5,'relaxed gagarin','2020-05-20 11:36:26','2020-02-19 12:25:48',38.948617,3.143000,'green'),(9,'eloquent archimedes','2020-02-16 04:20:21','2020-05-23 15:42:33',32.310878,5.855000,'orange'),(9,'gifted vaughan','2020-04-09 16:19:45','2020-05-15 01:42:16',95.922976,8.708000,'yellow'),(13,'dreamy benz','2020-04-27 17:43:44','2020-03-27 06:33:03',39.539233,4.823000,'red'),(3,'bold goldberg','2020-01-07 12:08:19','2020-03-10 18:37:09',0.941002,5.303000,'yellow'),(3,'youthful yonath','2020-01-12 17:10:39','2020-06-10 15:13:44',66.288511,6.046000,'white'),(7,'upbeat bhabha','2020-04-29 01:17:05','2020-03-11 22:58:43',23.316987,9.026000,'yellow'),(11,'quizzical ritchie','2020-05-16 08:21:36','2020-03-05 19:23:25',75.019379,0.260000,'purple'),(2,'dazzling kepler','2020-04-11 04:38:59','2020-05-06 04:42:32',78.798503,2.274000,'purple'),(2,'focused taussig','2020-05-17 17:58:34','2020-02-25 09:11:03',4.137803,4.902000,'white'),(2,'sharp ptolemy',NULL,'2020-05-17 18:04:19',NULL,5.573000,'purple'),(6,'fervent yonath','2020-05-26 03:55:25','2020-05-06 14:23:44',72.394272,6.491000,'white'),(10,'musing wu','2020-04-03 11:33:27','2020-05-24 06:11:56',85.190386,6.787000,'blue'),(8,'hopeful keller','2020-02-19 10:41:48','2020-04-19 17:10:36',10.832397,9.707000,'red'),(12,'exciting boyd',NULL,'2020-03-28 18:27:23',NULL,9.249000,'blue');")
+
+	tk.MustExec("set tidb_txn_assertion_level=strict;")
+	tk.MustExec("begin")
+	tk.MustExec("delete t1, t2 from t1, t2 where t1.c_enum in ('blue');")
+	tk.MustExec("commit")
+}
+
+func TestIssue40158(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (_id int PRIMARY KEY, c1 char, index (c1));")
+	tk.MustExec("insert into t1 values (1, null);")
+	tk.MustQuery("select * from t1 where c1 is null and _id < 1;").Check(testkit.Rows())
+}
+
+func TestIssue40596(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (
+  c1 double DEFAULT '1.335088259490289',
+  c2 set('mj','4s7ht','z','3i','b26','9','cg11','uvzcp','c','ns','fl9') NOT NULL DEFAULT 'mj,z,3i,9,cg11,c',
+  PRIMARY KEY (c2) /*T![clustered_index] CLUSTERED */,
+  KEY i1 (c1),
+  KEY i2 (c1),
+  KEY i3 (c1)
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;`)
+	tk.MustExec("INSERT INTO t1 VALUES (634.2783557491367,''),(2000.5041449792013,'4s7ht'),(634.2783557491367,'3i'),(634.2783557491367,'9'),(7803.173688589342,'uvzcp'),(634.2783557491367,'ns'),(634.2783557491367,'fl9');")
+	tk.MustExec(`CREATE TABLE t2 (
+  c3 decimal(56,16) DEFAULT '931359772706767457132645278260455518957.9866038319986886',
+  c4 set('3bqx','g','6op3','2g','jf','arkd3','y0b','jdy','1g','ff5z','224b') DEFAULT '3bqx,2g,ff5z,224b',
+  c5 smallint(6) NOT NULL DEFAULT '-25973',
+  c6 year(4) DEFAULT '2122',
+  c7 text DEFAULT NULL,
+  PRIMARY KEY (c5) /*T![clustered_index] CLUSTERED */,
+  KEY i4 (c6),
+  KEY i5 (c5)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT=''
+PARTITION BY HASH (c5) PARTITIONS 4;`)
+	tk.MustExec("INSERT INTO t2 VALUES (465.0000000000000000,'jdy',-8542,2008,'FgZXe');")
+	tk.MustExec("set @@sql_mode='';")
+	tk.MustExec("set tidb_partition_prune_mode=dynamic;")
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("analyze table t2;")
+
+	// No nil pointer panic
+	tk.MustQuery("select    /*+ inl_join( t1 , t2 ) */ avg(   t2.c5 ) as r0 , repeat( t2.c7 , t2.c5 ) as r1 , locate( t2.c7 , t2.c7 ) as r2 , unhex( t1.c1 ) as r3 from t1 right join t2 on t1.c2 = t2.c5 where not( t2.c5 in ( -7860 ,-13384 ,-12940 ) ) and not( t1.c2 between '4s7ht' and 'mj' );").Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
+	// Again, a simpler reproduce.
+	tk.MustQuery("select /*+ inl_join (t1, t2) */ t2.c5 from t1 right join t2 on t1.c2 = t2.c5 where not( t1.c2 between '4s7ht' and 'mj' );").Check(testkit.Rows())
 }
