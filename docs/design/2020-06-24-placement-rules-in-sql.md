@@ -414,7 +414,7 @@ If a table is imported when `tidb_placement_mode='IGNORE'`, and the placement po
 The default value for `tidb_placement_mode` is `STRICT`. The option is an enum, and in future we may add support for a `WARN` mode.
 
 
-#### survival preference
+#### Survival preference
 
 Some important data may need to store multiple copies across availability zones, so as to have high disaster recovery survivability, such as region-level survivability, `SURVIVAL_PREFERENCES` can provide survivability preference settings.
 
