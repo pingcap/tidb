@@ -187,6 +187,9 @@ type TxnCtxNeedToRestore struct {
 
 	// CachedTables is not nil if the transaction write on cached table.
 	CachedTables map[int64]interface{}
+
+	// InsertTTLRowsCount counts how many rows are inserted in this statement
+	InsertTTLRowsCount int
 }
 
 // TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
@@ -377,6 +380,7 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 		TableDeltaMap:        tableDeltaMap,
 		pessimisticLockCache: pessimisticLockCache,
 		CachedTables:         cachedTables,
+		InsertTTLRowsCount:   tc.InsertTTLRowsCount,
 	}
 }
 
@@ -385,6 +389,7 @@ func (tc *TransactionContext) RestoreBySavepoint(savepoint TxnCtxNeedToRestore) 
 	tc.TableDeltaMap = savepoint.TableDeltaMap
 	tc.pessimisticLockCache = savepoint.pessimisticLockCache
 	tc.CachedTables = savepoint.CachedTables
+	tc.InsertTTLRowsCount = savepoint.InsertTTLRowsCount
 }
 
 // AddSavepoint adds a new savepoint.
