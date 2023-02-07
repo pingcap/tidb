@@ -34,10 +34,14 @@ var _ pd.Client = new(pdClient)
 type pdClient struct {
 	*us.MockPD
 
-	serviceSafePoints map[string]uint64
-	gcSafePointMu     sync.Mutex
-	globalConfig      map[string]string
-	externalTimestamp atomic.Uint64
+	serviceSafePoints    map[string]uint64
+	gcSafePointMu        sync.Mutex
+	globalConfig         map[string]string
+	externalTimestamp    atomic.Uint64
+	resourceGroupManager struct {
+		sync.RWMutex
+		groups map[string]*rmpb.ResourceGroup
+	}
 }
 
 func newPDClient(pd *us.MockPD) *pdClient {
@@ -45,6 +49,12 @@ func newPDClient(pd *us.MockPD) *pdClient {
 		MockPD:            pd,
 		serviceSafePoints: make(map[string]uint64),
 		globalConfig:      make(map[string]string),
+		resourceGroupManager: struct {
+			sync.RWMutex
+			groups map[string]*rmpb.ResourceGroup
+		}{
+			groups: make(map[string]*rmpb.ResourceGroup),
+		},
 	}
 }
 
@@ -187,23 +197,44 @@ func (c *pdClient) UpdateKeyspaceState(ctx context.Context, id uint32, state key
 }
 
 func (c *pdClient) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
-	return nil, nil
+	c.resourceGroupManager.RLock()
+	defer c.resourceGroupManager.RUnlock()
+	groups := make([]*rmpb.ResourceGroup, 0, len(c.resourceGroupManager.groups))
+	for _, group := range c.resourceGroupManager.groups {
+		groups = append(groups, group)
+	}
+	return groups, nil
 }
 
-func (c *pdClient) GetResourceGroup(ctx context.Context, resourceGroupName string) (*rmpb.ResourceGroup, error) {
-	return nil, nil
+func (c *pdClient) GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
+	c.resourceGroupManager.RLock()
+	defer c.resourceGroupManager.RUnlock()
+	group, ok := c.resourceGroupManager.groups[name]
+	if !ok {
+		return nil, nil
+	}
+	return group, nil
 }
 
-func (c *pdClient) AddResourceGroup(ctx context.Context, metaGroup *rmpb.ResourceGroup) (string, error) {
-	return "", nil
+func (c *pdClient) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
+	c.resourceGroupManager.Lock()
+	defer c.resourceGroupManager.Unlock()
+	c.resourceGroupManager.groups[group.Name] = group
+	return "Success!", nil
 }
 
-func (c *pdClient) ModifyResourceGroup(ctx context.Context, metaGroup *rmpb.ResourceGroup) (string, error) {
-	return "", nil
+func (c *pdClient) ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
+	c.resourceGroupManager.Lock()
+	defer c.resourceGroupManager.Unlock()
+	c.resourceGroupManager.groups[group.Name] = group
+	return "Success!", nil
 }
 
-func (c *pdClient) DeleteResourceGroup(ctx context.Context, resourceGroupName string) (string, error) {
-	return "", nil
+func (c *pdClient) DeleteResourceGroup(ctx context.Context, name string) (string, error) {
+	c.resourceGroupManager.Lock()
+	defer c.resourceGroupManager.Unlock()
+	delete(c.resourceGroupManager.groups, name)
+	return "Success!", nil
 }
 
 func (c *pdClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
