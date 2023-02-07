@@ -252,109 +252,44 @@ func (s *partitionProcessor) findUsedKeyPartitions(ctx sessionctx.Context, tbl t
 	if err != nil {
 		return nil, nil, err
 	}
-	schema := expression.NewSchema(columns...)
-	partCols := make([]*expression.Column, len(partExpr.ColumnOffset))
-	colLen := make([]int, 0, len(partExpr.ColumnOffset))
-	for i, offset := range partExpr.ColumnOffset {
-		partCols[i] = schema.Columns[offset]
-		partCols[i].Index = i
-		colLen = append(colLen, partCols[i].RetType.GetFlen())
-	}
-
+	partCols, colLen := partExpr.GetPartColumns(columns)
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, nil, err
 	}
 	ranges := detachedResult.Ranges
 	used := make([]int, 0, len(ranges))
-	for _, r := range ranges {
-		if r.IsPointNullable(ctx) {
-			if !r.HighVal[0].IsNull() {
-				if len(r.HighVal) != len(partCols) {
-					used = []int{-1}
-					break
-				}
-			}
-			highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
-			highLowVals = append(highLowVals, r.HighVal...)
-			highLowVals = append(highLowVals, r.LowVal...)
-			idx, err := partExpr.LocateKeyPartition(ctx, pi, highLowVals, int64(pi.Num))
-			if err != nil {
-				// If we failed to get the point position, we can just skip and ignore it.
-				continue
-			}
-
-			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
-				continue
-			}
-			used = append(used, int(idx))
-		} else {
-			// processing hash partition pruning. eg:
-			// create table t2 (a int, b bigint, index (a), index (b)) partition by hash(a) partitions 10;
-			// desc select * from t2 where t2.a between 10 and 15;
-			// determine whether the partition key is int
-			/*
-				if col, ok := pe.(*expression.Column); ok && col.RetType.EvalType() == types.ETInt {
-					numPartitions := len(pi.Definitions)
-
-					posHigh, highIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
-					if err != nil {
-						return nil, nil, err
-					}
-
-					posLow, lowIsNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
-					if err != nil {
-						return nil, nil, err
-					}
-
-					// consider whether the range is closed or open
-					if r.LowExclude {
-						posLow++
-					}
-					if r.HighExclude {
-						posHigh--
-					}
-
-					var rangeScalar float64
-					if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
-						rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
-					} else {
-						rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
-					}
-
-					// if range is less than the number of partitions, there will be unused partitions we can prune out.
-					if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
-						for i := posLow; i <= posHigh; i++ {
-							idx := mathutil.Abs(i % int64(pi.Num))
-							if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
-								continue
-							}
-							used = append(used, int(idx))
-						}
-						continue
-					}
-
-					// issue:#22619
-					if col.RetType.GetType() == mysql.TypeBit {
-						// maximum number of partitions is 8192
-						if col.RetType.GetFlen() > 0 && col.RetType.GetFlen() < int(gomath.Log2(mysql.PartitionCountLimit)) {
-							// all possible hash values
-							maxUsedPartitions := 1 << col.RetType.GetFlen()
-							if maxUsedPartitions < numPartitions {
-								for i := 0; i < maxUsedPartitions; i++ {
-									used = append(used, i)
-								}
-								continue
-							}
-						}
+	if len(partExpr.ForKeyPruning.Cols) > 1 {
+		used = []int{FullRange}
+	} else {
+		for _, r := range ranges {
+			if r.IsPointNullable(ctx) {
+				if !r.HighVal[0].IsNull() {
+					if len(r.HighVal) != len(partCols) {
+						used = []int{-1}
+						break
 					}
 				}
+				highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
+				highLowVals = append(highLowVals, r.HighVal...)
+				highLowVals = append(highLowVals, r.LowVal...)
+				idx, err := partExpr.LocateKeyPartition(ctx, pi, partCols, highLowVals, int64(pi.Num))
+				if err != nil {
+					// If we failed to get the point position, we can just skip and ignore it.
+					continue
+				}
 
+				if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+					continue
+				}
+				used = append(used, int(idx))
+			} else {
 				used = []int{FullRange}
 				break
-			*/
+			}
 		}
 	}
+
 	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
 		return s.convertToIntSlice(or, pi, partitionNames), nil, nil

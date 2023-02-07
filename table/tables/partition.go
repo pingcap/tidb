@@ -157,30 +157,41 @@ type PartitionExpr struct {
 	*ForListPruning
 }
 
+func (pe *PartitionExpr) GetPartColumns(columns []*expression.Column) ([]*expression.Column, []int) {
+	schema := expression.NewSchema(columns...)
+	partCols := make([]*expression.Column, len(pe.ColumnOffset))
+	colLen := make([]int, 0, len(pe.ColumnOffset))
+	for i, offset := range pe.ColumnOffset {
+		partCols[i] = schema.Columns[offset]
+		partCols[i].Index = i
+		colLen = append(colLen, partCols[i].RetType.GetFlen())
+	}
+	return partCols, colLen
+}
+
 // TODO: supports linear hashing
 func (pe *PartitionExpr) LocateKeyPartition(ctx sessionctx.Context,
-	pi *model.PartitionInfo, r []types.Datum, pNum int64) (int, error) {
-	nr := int64(0)
-	for _, col := range pe.ForKeyPruning.Cols {
-		var data types.Datum
-		switch r[col.Index].Kind() {
-		case types.KindInt64, types.KindUint64:
-			data = r[col.Index]
-		default:
-			var err error
-			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLong))
-			if err != nil {
-				return 0, err
-			}
+	pi *model.PartitionInfo, cols []*expression.Column, r []types.Datum, pNum int64) (int, error) {
+	nr1 := uint64(1)
+	nr2 := uint64(4)
+	for _, col := range cols {
+		if r[col.Index].Kind() == types.KindNull {
+			nr1 ^= (nr1 << 1) | 1
+			continue
 		}
-		ret := data.GetInt64()
-		nr += ret
+		data, err := r[col.Index].ToBytes()
+		if err != nil {
+			return 0, err
+		}
+		nr1, nr2 = types.CalcBytesHash(data, nr1, nr2)
 	}
-	nr = nr % pNum
-	if nr < 0 {
-		nr = -nr
+	partId := (int)(nr1 & (uint64)(pi.HashMask))
+	if partId > int(pNum) {
+		newmask := ((pi.HashMask + 1) >> 1) - 1
+		partId = (int)(nr1 & (uint64)(newmask))
 	}
-	return int(nr), nil
+
+	return partId, nil
 }
 
 func initEvalBufferType(t *partitionedTable) {
@@ -552,7 +563,9 @@ func rangePartitionExprStrings(pi *model.PartitionInfo) []string {
 
 func generateKeyPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
-	ret := &PartitionExpr{}
+	ret := &PartitionExpr{
+		ForKeyPruning: &ForKeyPruning{},
+	}
 	_, partColumns, offset, err := extractPartitionExprColumns(ctx, pi, columns, names)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1221,7 +1234,7 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 
 // TODO: supports linear hashing
 func (t *partitionedTable) locateKeyPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
-	return t.partitionExpr.LocateKeyPartition(ctx, pi, r, int64(t.meta.Partition.Num))
+	return t.partitionExpr.LocateKeyPartition(ctx, pi, t.partitionExpr.Cols, r, int64(t.meta.Partition.Num))
 }
 
 // GetPartition returns a Table, which is actually a partition.

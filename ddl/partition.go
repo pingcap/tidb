@@ -462,11 +462,15 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
-
+	mask := uint64(1)
+	for mask < s.Num {
+		mask <<= 1
+	}
 	pi := &model.PartitionInfo{
-		Type:   s.Tp,
-		Enable: enable,
-		Num:    s.Num,
+		Type:     s.Tp,
+		Enable:   enable,
+		Num:      s.Num,
+		HashMask: mask - 1,
 	}
 	tbInfo.Partition = pi
 	if s.Expr != nil {
@@ -2860,8 +2864,9 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 	// include the /*!50100 or /*!50500 comments for TiDB.
 	// This also solves the issue with comments within comments that would happen for
 	// PLACEMENT POLICY options.
-	if partitionInfo.Type == model.PartitionTypeHash {
-		defaultPartitionDefinitions := true
+	defaultPartitionDefinitions := true
+	if partitionInfo.Type == model.PartitionTypeHash ||
+		partitionInfo.Type == model.PartitionTypeKey {
 		for i, def := range partitionInfo.Definitions {
 			if def.Name.O != fmt.Sprintf("p%d", i) {
 				defaultPartitionDefinitions = false
@@ -2874,15 +2879,32 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		}
 
 		if defaultPartitionDefinitions {
-			fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
+			if partitionInfo.Type == model.PartitionTypeHash {
+				fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
+			} else {
+				buf.WriteString("\nPARTITION BY KEY (")
+				for i, col := range partitionInfo.Columns {
+					buf.WriteString(stringutil.Escape(col.O, sqlMode))
+					if i < len(partitionInfo.Columns)-1 {
+						buf.WriteString(",")
+					}
+				}
+				buf.WriteString(")")
+				fmt.Fprintf(buf, " PARTITIONS %d", partitionInfo.Num)
+			}
 			return
 		}
 	}
 	// this if statement takes care of lists/range columns case
 	if len(partitionInfo.Columns) > 0 {
 		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
+		// || partitionInfo.Type == model.PartitionTypeKey
 		// Notice that MySQL uses two spaces between LIST and COLUMNS...
-		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
+		if partitionInfo.Type == model.PartitionTypeKey {
+			fmt.Fprintf(buf, "\nPARTITION BY %s (", partitionInfo.Type.String())
+		} else {
+			fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
+		}
 		for i, col := range partitionInfo.Columns {
 			buf.WriteString(stringutil.Escape(col.O, sqlMode))
 			if i < len(partitionInfo.Columns)-1 {

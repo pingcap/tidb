@@ -1193,6 +1193,7 @@ type PartitionInfo struct {
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	States              []PartitionState      `json:"states"`
 	Num                 uint64                `json:"num"`
+	HashMask            uint64                `json:"hash_mask"`
 }
 
 // Clone clones itself.

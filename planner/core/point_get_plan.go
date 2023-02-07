@@ -1778,7 +1778,11 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		if len(pi.Columns) == 1 {
 			for i, pair := range pairs {
 				if pi.Columns[0].L == pair.colName {
-					pos, err := partitionExpr.LocateKeyPartition(ctx, pi, []types.Datum{pair.value}, int64(pi.Num))
+					col := &expression.Column{}
+					*col = *partitionExpr.ForKeyPruning.Cols[0]
+					col.Index = 0
+					pos, err := partitionExpr.LocateKeyPartition(ctx, pi, []*expression.Column{col},
+						[]types.Datum{pair.value}, int64(pi.Num))
 					if err != nil {
 						return nil, 0, 0, false
 					}
@@ -1893,12 +1897,12 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 }
 
 // getHashPartitionColumnPos gets the hash partition column's position in the unique index.
-func getHashPartitionColumnPos(idx *model.IndexInfo, partitionColName *ast.ColumnName) int {
+func getHashPartitionColumnPos(idx *model.IndexInfo, partitionColName *model.CIStr) int {
 	if partitionColName == nil {
 		return 0
 	}
 	for i, idxCol := range idx.Columns {
-		if partitionColName.Name.L == idxCol.Name.L {
+		if partitionColName.L == idxCol.Name.L {
 			return i
 		}
 	}
@@ -1926,7 +1930,7 @@ func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.Part
 	return partitionExpr
 }
 
-func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *ast.ColumnName {
+func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *model.CIStr {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
 		return nil
@@ -1948,15 +1952,16 @@ func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInf
 		if len(pi.Columns) != 1 {
 			return nil
 		}
+
 		// used to judge wthether the key partition contains only one field
-		return &ast.ColumnName{}
+		return &pi.Columns[0]
 	}
 	expr := partitionExpr.OrigExpr
 	col, ok := expr.(*ast.ColumnNameExpr)
 	if !ok {
 		return nil
 	}
-	return col.Name
+	return &col.Name.Name
 }
 
 func findColNameByColID(cols []*model.ColumnInfo, col *expression.Column) *model.ColumnInfo {

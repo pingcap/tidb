@@ -226,7 +226,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				continue
 			}
 
-			physID, err := getPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos].GetInt64())
+			physID, err := getPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos], idxVals[e.partPos].GetInt64())
 			if err != nil {
 				continue
 			}
@@ -357,7 +357,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			tID = e.physIDs[i]
 		} else {
 			if handle.IsInt() {
-				tID, err = getPhysID(e.tblInfo, e.partExpr, handle.IntValue())
+				d := &types.Datum{}
+				d.SetInt64(handle.IntValue())
+				tID, err = getPhysID(e.tblInfo, e.partExpr, *d, handle.IntValue())
 				if err != nil {
 					continue
 				}
@@ -366,7 +368,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if err1 != nil {
 					return err1
 				}
-				tID, err = getPhysID(e.tblInfo, e.partExpr, d.GetInt64())
+				tID, err = getPhysID(e.tblInfo, e.partExpr, d, d.GetInt64())
 				if err != nil {
 					continue
 				}
@@ -527,7 +529,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, intVal int64) (int64, error) {
+func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum, intVal int64) (int64, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID, nil
@@ -545,7 +547,13 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 		if len(pi.Columns) > 1 {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		partIdx := mathutil.Abs(intVal % int64(pi.Num))
+		col := &expression.Column{}
+		*col = *partitionExpr.Cols[0]
+		col.Index = 0
+		partIdx, err := partitionExpr.LocateKeyPartition(nil, pi, []*expression.Column{col}, []types.Datum{d}, int64(pi.Num))
+		if err != nil {
+			return 0, errors.Errorf("unsupported partition type in BatchGet")
+		}
 		return pi.Definitions[partIdx].ID, nil
 	case model.PartitionTypeRange:
 		// we've check the type assertions in func TryFastPlan
