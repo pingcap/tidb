@@ -987,7 +987,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	}
 	needPushDown := len(cols) > 0
 	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
-		newTask, changed := p.pushTopNDownToDynamicPartition(copTask)
+		newTask, changed := p.pushPartialTopNDownToCop(copTask)
 		if changed {
 			return newTask
 		}
@@ -1011,11 +1011,11 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p, rootTask)
 }
 
-// pushTopNDownToDynamicPartition is a temp solution for partition table. It actually does the same thing as DataSource's isMatchProp.
+// pushPartialTopNDownToCop is a temp solution for partition table and index merge. It actually does the same thing as DataSource's isMatchProp.
 // We need to support a more enhanced read strategy in the execution phase. So that we can achieve Limit(TiDB)->Reader(TiDB)->Limit(TiKV/TiFlash)->Scan(TiKV/TiFlash).
 // Before that is done, we use this logic to provide a way to keep the order property when reading from TiKV, so that we can use the orderliness of index to speed up the query.
 // Here we can change the execution plan to TopN(TiDB)->Reader(TiDB)->Limit(TiKV)->Scan(TiKV).(TiFlash is not supported).
-func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bool) {
+func (p *PhysicalTopN) pushPartialTopNDownToCop(copTsk *copTask) (task, bool) {
 	if copTsk.getStoreType() != kv.TiKV {
 		return nil, false
 	}
@@ -1864,8 +1864,8 @@ func computePartialCursorOffset(name string) int {
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		// We should not push agg down across 
-		//  1. double read, since the data of second read is ordered by handle instead of index. The `extraHandleCol` is added 
+		// We should not push agg down across
+		//  1. double read, since the data of second read is ordered by handle instead of index. The `extraHandleCol` is added
 		//     if the double read needs to keep order. So we just use it to decided
 		//     whether the following plan is double read with order reserved.
 		//  2. the case that there's filters should be calcualted on TiDB side.
