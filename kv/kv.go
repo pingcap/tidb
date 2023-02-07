@@ -543,6 +543,13 @@ type Request struct {
 	FixedRowCountHint []int
 	// StoreBatchSize indicates the batch size of coprocessor in the same store.
 	StoreBatchSize int
+<<<<<<< HEAD
+=======
+	// ResourceGroupName is the name of the bind resource group.
+	ResourceGroupName string
+	// LimitSize indicates whether the request is scan and limit
+	LimitSize uint64
+>>>>>>> 98aff8c2119 (executor: disable paging for small limit (#41120))
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
