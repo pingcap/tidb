@@ -23,15 +23,15 @@ import (
 )
 
 type mockResourceGroupManager struct {
-	sync.Mutex
+	sync.RWMutex
 	groups map[string]*rmpb.ResourceGroup
 }
 
 var _ pd.ResourceManagerClient = (*mockResourceGroupManager)(nil)
 
 func (m *mockResourceGroupManager) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
-	m.Lock()
-	defer m.Unlock()
+	m.RLock()
+	defer m.RUnlock()
 	groups := make([]*rmpb.ResourceGroup, 0, len(m.groups))
 	for _, group := range m.groups {
 		groups = append(groups, group)
@@ -40,8 +40,8 @@ func (m *mockResourceGroupManager) ListResourceGroups(ctx context.Context) ([]*r
 }
 
 func (m *mockResourceGroupManager) GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
-	m.Lock()
-	defer m.Unlock()
+	m.RLock()
+	defer m.RUnlock()
 	group, ok := m.groups[name]
 	if !ok {
 		return nil, nil
