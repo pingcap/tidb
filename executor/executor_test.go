@@ -2114,6 +2114,8 @@ func TestIncorrectLimitArg(t *testing.T) {
 
 	tk.MustGetErrMsg(`execute stmt1 using @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
 	tk.MustGetErrMsg(`execute stmt2 using @b, @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
+	tk.MustGetErrMsg(`execute stmt2 using @a, @b;`, `[planner:1210]Incorrect arguments to LIMIT`)
+	tk.MustGetErrMsg(`execute stmt2 using @a, @a;`, `[planner:1210]Incorrect arguments to LIMIT`)
 }
 
 func TestExecutorLimit(t *testing.T) {
@@ -6395,4 +6397,135 @@ func TestIssue39211(t *testing.T) {
 	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("set @@tidb_enable_null_aware_anti_join=true;")
 	tk.MustQuery("select * from t where (a,b) not in (select a, b from s);").Check(testkit.Rows())
+}
+
+func TestPlanReplayerDumpTPCDS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table catalog_sales
+(
+    cs_sold_date_sk           int                       ,
+    cs_sold_time_sk           int                       ,
+    cs_ship_date_sk           int                       ,
+    cs_bill_customer_sk       int                       ,
+    cs_bill_cdemo_sk          int                       ,
+    cs_bill_hdemo_sk          int                       ,
+    cs_bill_addr_sk           int                       ,
+    cs_ship_customer_sk       int                       ,
+    cs_ship_cdemo_sk          int                       ,
+    cs_ship_hdemo_sk          int                       ,
+    cs_ship_addr_sk           int                       ,
+    cs_call_center_sk         int                       ,
+    cs_catalog_page_sk        int                       ,
+    cs_ship_mode_sk           int                       ,
+    cs_warehouse_sk           int                       ,
+    cs_item_sk                int               not null,
+    cs_promo_sk               int                       ,
+    cs_order_number           int               not null,
+    cs_quantity               int                       ,
+    cs_wholesale_cost         decimal(7,2)                  ,
+    cs_list_price             decimal(7,2)                  ,
+    cs_sales_price            decimal(7,2)                  ,
+    cs_ext_discount_amt       decimal(7,2)                  ,
+    cs_ext_sales_price        decimal(7,2)                  ,
+    cs_ext_wholesale_cost     decimal(7,2)                  ,
+    cs_ext_list_price         decimal(7,2)                  ,
+    cs_ext_tax                decimal(7,2)                  ,
+    cs_coupon_amt             decimal(7,2)                  ,
+    cs_ext_ship_cost          decimal(7,2)                  ,
+    cs_net_paid               decimal(7,2)                  ,
+    cs_net_paid_inc_tax       decimal(7,2)                  ,
+    cs_net_paid_inc_ship      decimal(7,2)                  ,
+    cs_net_paid_inc_ship_tax  decimal(7,2)                  ,
+    cs_net_profit             decimal(7,2)                  ,
+    primary key (cs_item_sk, cs_order_number)
+);`)
+	tk.MustExec(`create table store_sales
+(
+    ss_sold_date_sk           int                       ,
+    ss_sold_time_sk           int                       ,
+    ss_item_sk                int               not null,
+    ss_customer_sk            int                       ,
+    ss_cdemo_sk               int                       ,
+    ss_hdemo_sk               int                       ,
+    ss_addr_sk                int                       ,
+    ss_store_sk               int                       ,
+    ss_promo_sk               int                       ,
+    ss_ticket_number          int               not null,
+    ss_quantity               int                       ,
+    ss_wholesale_cost         decimal(7,2)                  ,
+    ss_list_price             decimal(7,2)                  ,
+    ss_sales_price            decimal(7,2)                  ,
+    ss_ext_discount_amt       decimal(7,2)                  ,
+    ss_ext_sales_price        decimal(7,2)                  ,
+    ss_ext_wholesale_cost     decimal(7,2)                  ,
+    ss_ext_list_price         decimal(7,2)                  ,
+    ss_ext_tax                decimal(7,2)                  ,
+    ss_coupon_amt             decimal(7,2)                  ,
+    ss_net_paid               decimal(7,2)                  ,
+    ss_net_paid_inc_tax       decimal(7,2)                  ,
+    ss_net_profit             decimal(7,2)                  ,
+    primary key (ss_item_sk, ss_ticket_number)
+);`)
+	tk.MustExec(`create table date_dim
+(
+    d_date_sk                 int               not null,
+    d_date_id                 char(16)              not null,
+    d_date                    date                          ,
+    d_month_seq               int                       ,
+    d_week_seq                int                       ,
+    d_quarter_seq             int                       ,
+    d_year                    int                       ,
+    d_dow                     int                       ,
+    d_moy                     int                       ,
+    d_dom                     int                       ,
+    d_qoy                     int                       ,
+    d_fy_year                 int                       ,
+    d_fy_quarter_seq          int                       ,
+    d_fy_week_seq             int                       ,
+    d_day_name                char(9)                       ,
+    d_quarter_name            char(6)                       ,
+    d_holiday                 char(1)                       ,
+    d_weekend                 char(1)                       ,
+    d_following_holiday       char(1)                       ,
+    d_first_dom               int                       ,
+    d_last_dom                int                       ,
+    d_same_day_ly             int                       ,
+    d_same_day_lq             int                       ,
+    d_current_day             char(1)                       ,
+    d_current_week            char(1)                       ,
+    d_current_month           char(1)                       ,
+    d_current_quarter         char(1)                       ,
+    d_current_year            char(1)                       ,
+    primary key (d_date_sk)
+);`)
+	tk.MustQuery(`plan replayer dump explain with ssci as (
+select ss_customer_sk customer_sk
+      ,ss_item_sk item_sk
+from store_sales,date_dim
+where ss_sold_date_sk = d_date_sk
+  and d_month_seq between 1212 and 1212 + 11
+group by ss_customer_sk
+        ,ss_item_sk),
+csci as(
+ select cs_bill_customer_sk customer_sk
+      ,cs_item_sk item_sk
+from catalog_sales,date_dim
+where cs_sold_date_sk = d_date_sk
+  and d_month_seq between 1212 and 1212 + 11
+group by cs_bill_customer_sk
+        ,cs_item_sk)
+ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null then 1 else 0 end) store_only
+      ,sum(case when ssci.customer_sk is null and csci.customer_sk is not null then 1 else 0 end) catalog_only
+      ,sum(case when ssci.customer_sk is not null and csci.customer_sk is not null then 1 else 0 end) store_and_catalog
+from ssci left join csci on (ssci.customer_sk=csci.customer_sk
+                               and ssci.item_sk = csci.item_sk)
+UNION
+ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null then 1 else 0 end) store_only
+      ,sum(case when ssci.customer_sk is null and csci.customer_sk is not null then 1 else 0 end) catalog_only
+      ,sum(case when ssci.customer_sk is not null and csci.customer_sk is not null then 1 else 0 end) store_and_catalog
+from ssci right join csci on (ssci.customer_sk=csci.customer_sk
+                               and ssci.item_sk = csci.item_sk)
+limit 100;`)
 }

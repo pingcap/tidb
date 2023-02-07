@@ -51,6 +51,25 @@ func TestSingleTableRead(t *testing.T) {
 	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(a) from t1 where a < 2 or b > 4").Check(testkit.Rows("6"))
 }
 
+func TestIndexMergePickAndExecTaskPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id").Check(testkit.Rows("1 1 1 1 1",
+		"5 5 5 5 5"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergePickAndExecTaskPanic", "panic(\"pickAndExecTaskPanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergePickAndExecTaskPanic"))
+	}()
+	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id")
+	require.Contains(t, err.Error(), "pickAndExecTaskPanic")
+}
+
 func TestJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -747,9 +766,9 @@ func TestIntersectionWorkerPanic(t *testing.T) {
 	require.Contains(t, res[1][0], "IndexMerge")
 
 	// Test panic in intersection.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionWorkerPanic", "panic"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionWorkerPanic", `panic("testIndexMergeIntersectionWorkerPanic")`))
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024")
-	require.Contains(t, err.Error(), "IndexMergeReaderExecutor")
+	require.Contains(t, err.Error(), "testIndexMergeIntersectionWorkerPanic")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeIntersectionWorkerPanic"))
 }
 
@@ -777,4 +796,88 @@ func TestIntersectionMemQuota(t *testing.T) {
 	tk.MustExec("set @@tidb_mem_quota_query = 4000")
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024")
 	require.Contains(t, err.Error(), "Out Of Memory Quota!")
+}
+
+func TestIndexMergePanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
+	tk.MustExec("insert into t1 values(1, 1, 1), (100, 100, 100)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly", "return(true)"))
+	tk.MustExec("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c1 < 100 or c2 < 100")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIndexMergeResultChCloseEarly"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3)) partition by hash(c1) partitions 10;")
+	insertStr := "insert into t1 values(0, 0, 0)"
+	for i := 1; i < 1000; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+
+	minV := 200
+	maxV := 1000
+	runSQL := func(fp string) {
+		var sql string
+		v1 := rand.Intn(maxV-minV) + minV
+		v2 := rand.Intn(maxV-minV) + minV
+		if !strings.Contains(fp, "Intersection") {
+			sql = fmt.Sprintf("select /*+ use_index_merge(t1) */ c1 from t1 where c1 < %d or c2 < %d;", v1, v2)
+		} else {
+			sql = fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c3 < %d and c2 < %d", v1, v2)
+		}
+		res := tk.MustQuery("explain " + sql).Rows()
+		require.Contains(t, res[1][0], "IndexMerge")
+		err := tk.QueryToErr(sql)
+		require.Contains(t, err.Error(), fp)
+	}
+
+	packagePath := "github.com/pingcap/tidb/executor/"
+	panicFPPaths := []string{
+		packagePath + "testIndexMergePanicPartialIndexWorker",
+		packagePath + "testIndexMergePanicPartialTableWorker",
+
+		packagePath + "testIndexMergePanicProcessWorkerUnion",
+		packagePath + "testIndexMergePanicProcessWorkerIntersection",
+		packagePath + "testIndexMergePanicPartitionTableIntersectionWorker",
+
+		packagePath + "testIndexMergePanicTableScanWorker",
+	}
+	for _, fp := range panicFPPaths {
+		fmt.Println("handling failpoint: ", fp)
+		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
+			// When mockSleepBeforeStartTableReader is enabled, will not read real data. This is to avoid leaking goroutines in coprocessor.
+			// But should disable mockSleepBeforeStartTableReader for testIndexMergePanicTableScanWorker.
+			// Because finalTableScanWorker need task.doneCh to pass error, so need partialIndexWorker/partialTableWorker runs normally.
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader", "return(1000)"))
+		}
+		for i := 0; i < 1000; i++ {
+			require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
+			runSQL(fp)
+			require.NoError(t, failpoint.Disable(fp))
+		}
+		if !strings.Contains(fp, "testIndexMergePanicTableScanWorker") {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepBeforeStartTableReader"))
+		}
+	}
+
+	errFPPaths := []string{
+		packagePath + "testIndexMergeErrorPartialIndexWorker",
+		packagePath + "testIndexMergeErrorPartialTableWorker",
+	}
+	for _, fp := range errFPPaths {
+		fmt.Println("handling failpoint: ", fp)
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`return("%s")`, fp)))
+		for i := 0; i < 100; i++ {
+			runSQL(fp)
+		}
+		require.NoError(t, failpoint.Disable(fp))
+	}
 }
