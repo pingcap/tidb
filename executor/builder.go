@@ -481,14 +481,25 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	return e
 }
 
-func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, f func(indexInfo *model.IndexInfo) []*model.ColumnInfo) []*model.ColumnInfo {
+func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, hasGenedCol bool) []*model.ColumnInfo {
 	var pkCols []*model.IndexColumn
 	if tblInfo.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		pkCols = pkIdx.Columns
 	}
 
-	columns := f(indexInfo)
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+len(pkCols))
+	if hasGenedCol {
+		columns = tblInfo.Columns
+	} else {
+		for _, idxCol := range indexInfo.Columns {
+			if tblInfo.PKIsHandle && tblInfo.GetPkColInfo().Offset == idxCol.Offset {
+				continue
+			}
+			columns = append(columns, tblInfo.Columns[idxCol.Offset])
+		}
+	}
+
 	if tblInfo.IsCommonHandle {
 		for _, c := range pkCols {
 			columns = append(columns, tblInfo.Columns[c.Offset])
@@ -523,26 +534,17 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
-	var containsGenedCol bool
-	cols := buildIdxColsConcatHandleCols(tblInfo, index.Meta(), func(indexInfo *model.IndexInfo) []*model.ColumnInfo {
-		columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+8)
-		for _, iCol := range indexInfo.Columns {
-			if tblInfo.Columns[iCol.Offset].IsGenerated() {
-				containsGenedCol = true
-				return tblInfo.Columns
-			}
-			if tblInfo.PKIsHandle && tblInfo.GetPkColInfo().Offset == iCol.Offset {
-				continue
-			}
-			columns = append(columns, tblInfo.Columns[iCol.Offset])
+	var hasGenedCol bool
+	for _, iCol := range index.Meta().Columns {
+		if tblInfo.Columns[iCol.Offset].IsGenerated() {
+			hasGenedCol = true
 		}
-
-		return columns
-	})
+	}
+	cols := buildIdxColsConcatHandleCols(tblInfo, index.Meta(), hasGenedCol)
 	e := &RecoverIndexExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		columns:          cols,
-		containsGenedCol: containsGenedCol,
+		containsGenedCol: hasGenedCol,
 		index:            index,
 		table:            t,
 		physicalID:       t.Meta().ID,
@@ -602,17 +604,11 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 	}
 	e := &CleanupIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		columns: buildIdxColsConcatHandleCols(tblInfo, index.Meta(), func(indexInfo *model.IndexInfo) []*model.ColumnInfo {
-			columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+8)
-			for _, idxCol := range indexInfo.Columns {
-				columns = append(columns, tblInfo.Columns[idxCol.Offset])
-			}
-			return columns
-		}),
-		index:      index,
-		table:      t,
-		physicalID: t.Meta().ID,
-		batchSize:  20000,
+		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta(), false),
+		index:        index,
+		table:        t,
+		physicalID:   t.Meta().ID,
+		batchSize:    20000,
 	}
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
