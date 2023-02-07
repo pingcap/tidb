@@ -401,8 +401,11 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		if testcase.compareWithSafeTS == 1 {
+			start := time.Now()
 			tk.MustContainErrMsg(testcase.sql,
 				"cannot set flashback timestamp after min-resolved-ts")
+			// When set `FlashbackGetMinSafeTimeTimeout` = 0, no retry for `getStoreGlobalMinSafeTS`.
+			require.Less(t, time.Since(start), time.Second)
 		} else {
 			tk.MustExec(testcase.sql)
 		}

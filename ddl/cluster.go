@@ -130,12 +130,18 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 
 	start := time.Now()
 	minSafeTime := getStoreGlobalMinSafeTS(sctx.GetStore())
+	ticker := time.NewTicker(time.Second)
 	for oracleFlashbackTS.After(minSafeTime) {
 		if time.Since(start) >= FlashbackGetMinSafeTimeTimeout {
 			return errors.Errorf("cannot set flashback timestamp after min-resolved-ts(%s)", minSafeTime)
 		}
-		time.Sleep(time.Second)
-		minSafeTime = getStoreGlobalMinSafeTS(sctx.GetStore())
+		select {
+		case <-ticker.C:
+			minSafeTime = getStoreGlobalMinSafeTS(sctx.GetStore())
+			break
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
