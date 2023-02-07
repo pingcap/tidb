@@ -1280,7 +1280,7 @@ func TestCreateBindingForPrepareToken(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, a int, key(a))")
 
-	sql := "select min(*) from t"
+	sql := "select min(1) from t"
 	prep := fmt.Sprintf("prepare stmt from '%s'", sql)
 	tk.MustExec(prep)
 	tk.MustExec("execute stmt")
