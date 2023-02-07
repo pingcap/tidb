@@ -262,9 +262,9 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			continue
 		}
 		if c.chkBuf != lastChunkBufPointer && lastChunkBufPointer != nil {
-				lastChunkSize := lastChunkBufPointer.MemoryUsage()
-				c.chkBufSizeForOneProbe += lastChunkSize
-				memDelta += lastChunkSize
+			lastChunkSize := lastChunkBufPointer.MemoryUsage()
+			c.chkBufSizeForOneProbe += lastChunkSize
+			memDelta += lastChunkSize
 		}
 		lastChunkBufPointer = c.chkBuf
 		if i&signalCheckpointForJoin == 0 {
