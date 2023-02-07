@@ -310,7 +310,7 @@ func (r *HistoryReader) scheduleTasks(
 	waitScanAllDone := scanWg.Wait
 
 	var parseWg sync.WaitGroup
-	parseWg.Add(concurrent)
+	parseWg.Add(concurrent) // finally all workers will become parse workers
 	parseDone := parseWg.Done
 	waitParseAllDone := parseWg.Wait
 
