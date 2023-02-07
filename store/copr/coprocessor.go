@@ -76,7 +76,6 @@ type CopClient struct {
 	kv.RequestTypeSupportedChecker
 	store           *Store
 	replicaReadSeed uint32
-	numcpu          int
 }
 
 // Send builds the request and gets the coprocessor iterator response.
@@ -198,7 +197,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	if req.FixedRowCountHint != nil {
 		var smallTasks int
-		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks, c.numcpu)
+		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks, c.store.numcpu)
 		if len(tasks)-smallTasks < it.concurrency {
 			it.concurrency = len(tasks) - smallTasks
 		}
