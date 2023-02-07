@@ -1737,13 +1737,16 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	tables []*metautil.Table,
 	recorder *tiflashrec.TiFlashRecorder,
 ) error {
-	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
 	// For TiDB 6.6, we do not support recover TiFlash replica while enabling API V2.
 	// TODO(iosmanthus): remove this after TiFlash support API V2.
 	if rc.GetDomain().Store().GetCodec().GetAPIVersion() == kvrpcpb.APIVersion_V2 {
 		log.Warn("TiFlash does not support API V2, reset replica count to 0")
-		tiFlashStoreCount = 0
+		for _, table := range tables {
+			table.Info.TiFlashReplica = nil
+		}
+		return nil
 	}
+	tiFlashStoreCount, err := rc.getTiFlashNodeCount(ctx)
 	if err != nil {
 		return err
 	}
