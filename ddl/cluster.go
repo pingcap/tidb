@@ -623,8 +623,8 @@ func splitRegionsByKeyRanges(d *ddlCtx, keyRanges []kv.KeyRange) {
 
 // A Flashback has 4 different stages.
 // 1. before lock flashbackClusterJobID, check clusterJobID and lock it.
-// 2. before flashback start, check timestamp, disable GC and close PD schedule.
-// 3. phase 1, get key ranges, lock all regions.
+// 2. before flashback start, check timestamp, disable GC and close PD schedule, get flashback key ranges.
+// 3. phase 1, lock flashback key ranges.
 // 4. phase 2, send flashback RPC, do flashback jobs.
 func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	inFlashbackTest := false
@@ -692,7 +692,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.Args[ttlJobEnableOffSet] = &ttlJobEnableValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
-	// Stage 2, check flashbackTS, close GC and PD schedule.
+	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
 		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
@@ -712,7 +712,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.Args[keyRangesOffset] = keyRanges
 		job.SchemaState = model.StateWriteOnly
 		return updateSchemaVersion(d, t, job)
-	// Stage 3, get key ranges and get locks.
+	// Stage 3, lock related key ranges.
 	case model.StateWriteOnly:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
