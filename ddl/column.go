@@ -1063,7 +1063,7 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 			}
 			workType := typeReorgPartitionWorker
 			if reorgInfo.Job.Type != model.ActionReorganizePartition {
-				workType = typeUpdateColumnWorker
+				// workType = typeUpdateColumnWorker
 				// TODO: Support Modify Column on partitioned table
 				// https://github.com/pingcap/tidb/issues/38297
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")

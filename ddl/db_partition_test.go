@@ -4850,6 +4850,8 @@ func TestReorganizeListPartition(t *testing.T) {
 
 	// Note: MySQL cannot reorganize two non-consecutive list partitions :)
 	// ERROR 1519 (HY000): When reorganizing a set of partitions they must be in consecutive order
+	// https://bugs.mysql.com/bug.php?id=106011
+	// https://bugs.mysql.com/bug.php?id=109939
 	tk.MustExec(`alter table t reorganize partition p1, p3 into (partition pa values in (45,23,15))`)
 	tk.MustExec(`admin check table t`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
