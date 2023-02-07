@@ -754,3 +754,21 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	// task[3] ["t"-"z"]
 	require.Equal(t, tasks[3].RowCountHint, 10)
 }
+
+func TestSmallTaskConcurrency(t *testing.T) {
+	originSmallTaskLimit := smallTaskConcurrencyLimit
+	defer func() {
+		smallTaskConcurrencyLimit = originSmallTaskLimit
+	}()
+	smallTaskConcurrencyLimit = 10
+	smallTaskCount := 1000
+	tasks := make([]*copTask, 0, smallTaskCount)
+	for i := 0; i < smallTaskCount; i++ {
+		tasks = append(tasks, &copTask{
+			RowCountHint: 1,
+		})
+	}
+	count, conc := smallTaskConcurrency(tasks)
+	require.Equal(t, smallTaskConcurrencyLimit, conc)
+	require.Equal(t, smallTaskCount, count)
+}
