@@ -47,7 +47,7 @@ func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config
 	adjustImportMemory(memRoot, cfg)
 	cfg.Checkpoint.Enable = true
 	if unique {
-		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRecord
+		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgErr
 	} else {
 		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 	}

@@ -4452,30 +4452,39 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
-		h := domain.GetDomain(b.ctx).StatsHandle()
-		tblStats := h.GetTableStats(tableInfo)
-		isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
-		globalStatsReady := tblStats.IsInitialized()
-		// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
-		usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
+		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
+		// otherwise we need to check global stats initialized for each partition table
+		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			b.optFlag = b.optFlag | flagPartitionProcessor
+		} else {
+			if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode {
+				b.optFlag = b.optFlag | flagPartitionProcessor
+			} else {
+				h := domain.GetDomain(b.ctx).StatsHandle()
+				tblStats := h.GetTableStats(tableInfo)
+				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
+				globalStatsReady := tblStats.IsInitialized()
+				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query
+				usePartitionProcessor := !isDynamicEnabled || !globalStatsReady
 
-		failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
-			if val.(bool) {
-				if isDynamicEnabled {
-					usePartitionProcessor = false
+				failpoint.Inject("forceDynamicPrune", func(val failpoint.Value) {
+					if val.(bool) {
+						if isDynamicEnabled {
+							usePartitionProcessor = false
+						}
+					}
+				})
+
+				if usePartitionProcessor {
+					b.optFlag = b.optFlag | flagPartitionProcessor
+					b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
+					if isDynamicEnabled {
+						b.ctx.GetSessionVars().StmtCtx.AppendWarning(
+							fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
+					}
 				}
 			}
-		})
-
-		if usePartitionProcessor {
-			b.optFlag = b.optFlag | flagPartitionProcessor
-			b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
-			if isDynamicEnabled {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(
-					fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
-			}
 		}
-
 		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
 		if len(tn.PartitionNames) > 0 {
