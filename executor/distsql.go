@@ -77,7 +77,7 @@ type lookupTableTask struct {
 	cursor  int
 
 	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
-	buildDone time.Time
+	buildDoneTime time.Time
 	doneCh    chan error
 
 	// indexOrder map is used to save the original index order for the handles.
