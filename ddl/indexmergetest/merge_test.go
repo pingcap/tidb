@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
@@ -649,7 +650,7 @@ func TestAddIndexMergeInsertToDeletedTempIndex(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("5 8"))
 }
 
-func TestAddIndexMergeDoubleDelete2(t *testing.T) {
+func TestAddIndexMergeReplaceDelete(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -687,4 +688,51 @@ func TestAddIndexMergeDoubleDelete2(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows())
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionMerging"))
+}
+
+func TestAddIndexMergeDeleteDifferentHandle(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, c char(10));")
+	tk.MustExec("insert into t values (1, 'a');")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	runInDeleteOnly := false
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() || runInDeleteOnly {
+			return
+		}
+		if job.SnapshotVer == 0 {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			_, err := tk1.Exec("insert into t values (2, 'a');")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("replace into t values (3, 'a');")
+			assert.NoError(t, err)
+			runInDeleteOnly = true
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	ddl.MockDMLExecution = func() {
+		// It is too late to remove the duplicated index value.
+		_, err := tk1.Exec("delete from t where id = 1;")
+		assert.NoError(t, err)
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+	tk.MustGetErrCode("alter table t add unique index idx(c);", errno.ErrDupEntry)
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 a"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecution"))
 }
