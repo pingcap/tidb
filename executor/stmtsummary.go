@@ -263,7 +263,8 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 	}
 	if isHistoryTable(r.table.Name.O) {
 		// history table should return all rows including mem and disk
-		history, err := stmtsummaryv2.NewHistoryReader(ctx, columns, instanceAddr, tz, user, priv, digests, timeRanges)
+		concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
+		history, err := stmtsummaryv2.NewHistoryReader(ctx, columns, instanceAddr, tz, user, priv, digests, timeRanges, concurrent)
 		if err != nil {
 			return nil, err
 		}

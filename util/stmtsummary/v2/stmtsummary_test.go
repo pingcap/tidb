@@ -44,6 +44,8 @@ func TestStmtWindow(t *testing.T) {
 
 func TestStmtSummary(t *testing.T) {
 	ss := NewStmtSummary4Test(3)
+	defer ss.Close()
+
 	ss.storage = &waitableMockStmtStorage{mockStmtStorage: ss.storage.(*mockStmtStorage)}
 	w := ss.window
 	ss.Add(GenerateStmtExecInfo4Test("digest1"))
@@ -54,15 +56,16 @@ func TestStmtSummary(t *testing.T) {
 	require.Equal(t, 3, w.lru.Size())
 	require.Equal(t, 2, w.evicted.count())
 
+	ss.storage.(*waitableMockStmtStorage).Add(1)
 	newEnd := w.begin.Add(time.Duration(ss.RefreshInterval()+1) * time.Second)
 	timeNow = func() time.Time {
 		return newEnd
 	}
-	ss.storage.(*waitableMockStmtStorage).Add(1)
-	ss.Add(GenerateStmtExecInfo4Test("digest6")) // trigger rotate
-	timeNow = time.Now
-	ss.Add(GenerateStmtExecInfo4Test("digest7"))
 	ss.storage.(*waitableMockStmtStorage).Wait()
+
+	timeNow = time.Now
+	ss.Add(GenerateStmtExecInfo4Test("digest6"))
+	ss.Add(GenerateStmtExecInfo4Test("digest7"))
 	w = ss.window
 	require.Equal(t, 2, w.lru.Size())
 	require.Equal(t, 0, w.evicted.count())

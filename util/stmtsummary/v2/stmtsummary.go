@@ -125,7 +125,12 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 
 // NewStmtSummary4Test creates a new StmtSummary for testing purposes.
 func NewStmtSummary4Test(maxStmtCount uint) *StmtSummary {
-	return &StmtSummary{
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ss := &StmtSummary{
+		ctx:    ctx,
+		cancel: cancel,
+
 		optEnabled:             atomic2.NewBool(defaultEnabled),
 		optEnableInternalQuery: atomic2.NewBool(defaultEnableInternalQuery),
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
@@ -134,6 +139,14 @@ func NewStmtSummary4Test(maxStmtCount uint) *StmtSummary {
 		window:                 newStmtWindow(timeNow(), maxStmtCount),
 		storage:                &mockStmtStorage{},
 	}
+
+	ss.closeWg.Add(1)
+	go func() {
+		defer ss.closeWg.Done()
+		ss.rotateLoop()
+	}()
+
+	return ss
 }
 
 // Enabled returns whether the StmtSummary is enabled.
@@ -328,15 +341,12 @@ func (s *StmtSummary) GetMoreThanCntBindableStmt(cnt int64) []*stmtsummary.Binda
 }
 
 func (s *StmtSummary) rotateLoop() {
-	ctx, cancel := context.WithCancel(s.ctx)
-	defer cancel()
-
 	tick := time.NewTicker(defaultRotateCheckInterval * time.Second)
 	defer tick.Stop()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-s.ctx.Done():
 			return
 		case <-tick.C:
 			now := timeNow()

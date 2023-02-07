@@ -16,7 +16,6 @@ package stmtsummary
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -39,9 +38,10 @@ import (
 )
 
 const (
-	logFileTimeFormat        = "2006-01-02T15-04-05.000" // depends on lumberjack.go#backupTimeFormat
-	maxLineSize              = 1073741824
-	parseStatementsBatchSize = 8
+	logFileTimeFormat = "2006-01-02T15-04-05.000" // depends on lumberjack.go#backupTimeFormat
+	maxLineSize       = 1073741824
+
+	batchScanSize = 64
 )
 
 // StmtTimeRange is the time range type used in the stmtsummary package.
@@ -159,40 +159,50 @@ func (r *MemReader) getTimeLocation() *time.Location {
 type HistoryReader struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
-	columns      []*model.ColumnInfo
 	instanceAddr string
 	timeLocation *time.Location
 
 	columnFactories []columnFactory
 	checker         *stmtChecker
 	files           *stmtFiles
-	taskList        chan stmtParseTask
-	wg              sync.WaitGroup
+
+	concurrent int
+	rowsCh     <-chan [][]types.Datum
+	errCh      <-chan error
 }
 
 // NewHistoryReader creates a HisroryReader from StmtSummary and other
 // necessary parameters. If timeRanges is present, only files within
 // the time range will be read.
-func NewHistoryReader(ctx context.Context,
+func NewHistoryReader(
+	ctx context.Context,
 	columns []*model.ColumnInfo,
 	instanceAddr string,
 	timeLocation *time.Location,
 	user *auth.UserIdentity,
 	hasProcessPriv bool,
 	digests set.StringSet,
-	timeRanges []*StmtTimeRange) (*HistoryReader, error) {
+	timeRanges []*StmtTimeRange,
+	concurrent int,
+) (*HistoryReader, error) {
 	files, err := newStmtFiles(ctx, timeRanges)
 	if err != nil {
 		return nil, err
 	}
+
+	if concurrent < 2 {
+		concurrent = 2
+	}
+	rowsCh := make(chan [][]types.Datum, concurrent)
+	errCh := make(chan error, concurrent)
 
 	ctx, cancel := context.WithCancel(ctx)
 	r := &HistoryReader{
 		ctx:    ctx,
 		cancel: cancel,
 
-		columns:         columns,
 		instanceAddr:    instanceAddr,
 		timeLocation:    timeLocation,
 		columnFactories: makeColumnFactories(columns),
@@ -202,14 +212,16 @@ func NewHistoryReader(ctx context.Context,
 			digests:        digests,
 			timeRanges:     timeRanges,
 		},
-		files:    files,
-		taskList: make(chan stmtParseTask, 1),
+		files:      files,
+		concurrent: concurrent,
+		rowsCh:     rowsCh,
+		errCh:      errCh,
 	}
 
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		r.fetchAndSendRows()
+		r.scheduleTasks(rowsCh, errCh)
 	}()
 	return r, nil
 }
@@ -219,29 +231,18 @@ func NewHistoryReader(ctx context.Context,
 // reading has been completed.
 func (r *HistoryReader) Rows() ([][]types.Datum, error) {
 	ctx := r.ctx
-	var task stmtParseTask
-	var ok bool
 	for {
 		select {
-		case task, ok = <-r.taskList:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-		if !ok {
-			return nil, nil
-		}
-		select {
-		case result, ok := <-task.resultCh:
+		case err := <-r.errCh:
+			return nil, err
+		case rows, ok := <-r.rowsCh:
 			if !ok {
 				return nil, nil
 			}
-			if result.err != nil {
-				return nil, result.err
-			}
-			if len(result.rows) == 0 {
+			if len(rows) == 0 {
 				continue
 			}
-			return result.rows, nil
+			return rows, nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -258,136 +259,123 @@ func (r *HistoryReader) Close() error {
 	return nil
 }
 
-func (r *HistoryReader) fetchAndSendRows() {
-	defer close(r.taskList)
-	ctx := r.ctx
-	file := r.files.next()
-	if file == nil {
+// 4 roles to handle the read task concurrently:
+//
+// |     ROLE     |    COUNT     |          DESCRIPTION               |
+// +--------------+--------------+------------------------------------+
+// | Scan Worker  | concurrent/2 | Scan files (I/O) first, then help  |
+// |              |              | parse workers to parse lines (CPU) |
+// +--------------+--------------+------------------------------------+
+// | Parse Worker | concurrent-  | Parse lines (CPU) to rows          |
+// |              | concurrent/2 |                                    |
+// +--------------+--------------+------------------------------------+
+// |   Manager    |      1       | Drive the whole process and notify |
+// |              |              | scan workers to switch role        |
+// +--------------+--------------+------------------------------------+
+// |   Monitor    |      1       | Cover failures and notify workers  |
+// |              |              | to exit                            |
+func (r *HistoryReader) scheduleTasks(
+	rowsCh chan<- [][]types.Datum,
+	errCh chan<- error,
+) {
+	if r.files == nil || len(r.files.files) == 0 {
+		close(rowsCh)
 		return
 	}
-	reader := bufio.NewReader(file)
-	for {
-		lines, err := r.readBatchLinesFromReader(reader)
-		if err != nil {
-			task := stmtParseTask{resultCh: make(chan stmtParseResult, 1)}
-			select {
-			case <-ctx.Done():
-				return
-			case r.taskList <- task:
-			}
-			select {
-			case task.resultCh <- stmtParseResult{err: err}:
-			default:
-				return
-			}
-		}
-		if len(lines) == 0 {
-			break
-		}
-		task := stmtParseTask{resultCh: make(chan stmtParseResult, 1)}
-		select {
-		case <-ctx.Done():
-			return
-		case r.taskList <- task:
-		}
-		rows := make([][]types.Datum, 0, len(lines))
-		for _, line := range lines {
-			if len(line) == 0 || len(bytes.TrimSpace(line)) == 0 {
-				continue
-			}
-			row, stop, err := r.parseAndCheckRow(line)
-			if err != nil {
+
+	ctx, cancel := context.WithCancel(r.ctx)
+	defer cancel()
+
+	scanWorker := &stmtScanWorker{
+		ctx:       ctx,
+		batchSize: batchScanSize,
+		checker:   r.checker,
+	}
+	parseWorker := &stmtParseWorker{
+		ctx:             ctx,
+		instanceAddr:    r.instanceAddr,
+		timeLocation:    r.timeLocation,
+		checker:         r.checker,
+		columnFactories: r.columnFactories,
+	}
+
+	concurrent := r.concurrent
+	filesCh := make(chan *os.File, concurrent)
+	linesCh := make(chan [][]byte, concurrent)
+	innerErrCh := make(chan error, concurrent)
+
+	var scanWg sync.WaitGroup
+	scanWg.Add(concurrent / 2)
+	scanDone := scanWg.Done
+	waitScanAllDone := scanWg.Wait
+
+	var parseWg sync.WaitGroup
+	parseWg.Add(concurrent) // finally all workers will become parse workers
+	parseDone := parseWg.Done
+	waitParseAllDone := parseWg.Wait
+
+	// Half of workers are scheduled to scan files and then parse lines.
+	for i := 0; i < concurrent/2; i++ {
+		go func() {
+			scanWorker.run(filesCh, linesCh, innerErrCh)
+			scanDone()
+
+			parseWorker.run(linesCh, rowsCh, innerErrCh)
+			parseDone()
+		}()
+	}
+
+	// Remaining workers are scheduled to parse lines.
+	for i := concurrent / 2; i < concurrent; i++ {
+		go func() {
+			parseWorker.run(linesCh, rowsCh, innerErrCh)
+			parseDone()
+		}()
+	}
+
+	// Manager drives the whole process
+	var mgrWg sync.WaitGroup
+	mgrWg.Add(1)
+	go func() {
+		defer mgrWg.Done()
+
+		func() {
+			for _, file := range r.files.files {
 				select {
-				case task.resultCh <- stmtParseResult{err: err}:
-				default:
-				}
-				return
-			}
-			if stop {
-				if len(rows) > 0 {
-					select {
-					case task.resultCh <- stmtParseResult{rows: rows}:
-					default:
-					}
-				} else {
-					close(task.resultCh)
-				}
-				return
-			}
-			if len(row) > 0 {
-				rows = append(rows, row)
-				select {
+				case filesCh <- file.file:
 				case <-ctx.Done():
 					return
-				default:
 				}
 			}
-		}
+		}()
+		// No scan tasks to be generating. Notify idle scan
+		// workers to become parse workers
+		close(filesCh)
+
+		// No parse tasks to be generating once all scan
+		// tasks are done. Notify idle parse workers to exit
+		waitScanAllDone()
+		close(linesCh)
+
+		// No rows to be generating once all parse tasks
+		// are done. Notify monitor to close rowsCh
+		waitParseAllDone()
+		cancel()
+	}()
+
+	// Monitor to cover failures and notify workers to exit
+	select {
+	case err := <-innerErrCh:
 		select {
-		case task.resultCh <- stmtParseResult{rows: rows}:
+		case errCh <- err:
 		default:
-			return
 		}
+		cancel() // notify workers to exit
+	case <-ctx.Done():
+		// notified by manager or parent ctx is canceled
 	}
-}
-
-func (r *HistoryReader) readBatchLinesFromReader(reader *bufio.Reader) ([][]byte, error) {
-	ctx := r.ctx
-	lines := make([][]byte, 0, parseStatementsBatchSize)
-	for n := 0; n < parseStatementsBatchSize; n++ {
-		if isCtxDone(ctx) {
-			return nil, ctx.Err()
-		}
-		line, err := readLine(reader)
-		if err != nil {
-			if err == io.EOF {
-				file := r.files.next()
-				if file == nil {
-					break
-				}
-				reader.Reset(file)
-				continue
-			}
-			return nil, err
-		}
-		lines = append(lines, line)
-	}
-	return lines, nil
-}
-
-// The second value returned indicates whether the file should end reading.
-func (r *HistoryReader) parseAndCheckRow(raw []byte) ([]types.Datum, bool, error) {
-	var record StmtRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
-		return nil, false, err
-	}
-	if !r.checker.isTimeValid(record.Begin, record.End) {
-		if r.checker.needStop(record.Begin) {
-			return nil, true, nil
-		}
-		return nil, false, nil
-	}
-	if !r.checker.isDigestValid(record.Digest) {
-		return nil, false, nil
-	}
-	if !r.checker.hasPrivilege(record.AuthUsers) {
-		return nil, false, nil
-	}
-	row := make([]types.Datum, len(r.columnFactories))
-	for n, factory := range r.columnFactories {
-		row[n] = types.NewDatum(factory(r, &record))
-	}
-	return row, false, nil
-}
-
-// getInstanceAddr implements columnInfo.
-func (r *HistoryReader) getInstanceAddr() string {
-	return r.instanceAddr
-}
-
-// getInstanceAddr implements columnInfo.
-func (r *HistoryReader) getTimeLocation() *time.Location {
-	return r.timeLocation
+	close(rowsCh) // task done
+	mgrWg.Wait()
 }
 
 type stmtChecker struct {
@@ -588,28 +576,249 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 	return &stmtFiles{files: files}, nil
 }
 
-func (f *stmtFiles) next() *os.File {
-	if f.id >= len(f.files) {
-		return nil
-	}
-	file := f.files[f.id].file
-	f.id++
-	return file
-}
-
 func (f *stmtFiles) close() {
 	for _, f := range f.files {
 		_ = f.close()
 	}
 }
 
-type stmtParseTask struct {
-	resultCh chan stmtParseResult
+type stmtScanWorker struct {
+	ctx       context.Context
+	batchSize int
+	checker   *stmtChecker
 }
 
-type stmtParseResult struct {
-	rows [][]types.Datum
-	err  error
+func (w *stmtScanWorker) run(
+	fileCh <-chan *os.File,
+	linesCh chan<- [][]byte,
+	errCh chan<- error,
+) {
+	for {
+		select {
+		case file, ok := <-fileCh:
+			if !ok {
+				return
+			}
+			w.handleFile(file, linesCh, errCh)
+		case <-w.ctx.Done():
+			return
+		}
+	}
+}
+
+func (w *stmtScanWorker) handleFile(
+	file *os.File,
+	linesCh chan<- [][]byte,
+	errCh chan<- error,
+) {
+	if file == nil {
+		return
+	}
+
+	reader := bufio.NewReader(file)
+	for {
+		if isCtxDone(w.ctx) {
+			return
+		}
+
+		lines, err := w.readlines(reader)
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			w.putErr(err, errCh)
+			return
+		}
+
+		w.putLines(lines, linesCh)
+	}
+}
+
+func (w *stmtScanWorker) putErr(
+	err error,
+	errCh chan<- error,
+) {
+	select {
+	case errCh <- err:
+	case <-w.ctx.Done():
+	}
+}
+
+func (w *stmtScanWorker) putLines(
+	lines [][]byte,
+	linesCh chan<- [][]byte,
+) {
+	select {
+	case linesCh <- lines:
+	case <-w.ctx.Done():
+	}
+}
+
+func (w *stmtScanWorker) readlines(reader *bufio.Reader) ([][]byte, error) {
+	firstLine, err := readLine(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	record, err := w.parse(firstLine)
+	if err != nil {
+		return nil, err
+	}
+
+	if w.needStop(record) {
+		// done because remaining lines in file
+		// are not in the time range
+		return nil, io.EOF
+	}
+
+	lines := make([][]byte, 0, w.batchSize)
+	lines = append(lines, firstLine)
+
+	newLines, err := readLines(reader, w.batchSize-1)
+	if err == io.EOF {
+		return lines, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	lines = append(lines, newLines...)
+	return lines, nil
+}
+
+func (*stmtScanWorker) parse(raw []byte) (*stmtTinyRecord, error) {
+	var record stmtTinyRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+func (w *stmtScanWorker) needStop(record *stmtTinyRecord) bool {
+	return w.checker.needStop(record.Begin)
+}
+
+type stmtParseWorker struct {
+	ctx             context.Context
+	instanceAddr    string
+	timeLocation    *time.Location
+	checker         *stmtChecker
+	columnFactories []columnFactory
+}
+
+func (w *stmtParseWorker) run(
+	linesCh <-chan [][]byte,
+	rowsCh chan<- [][]types.Datum,
+	errCh chan<- error,
+) {
+	for {
+		select {
+		case lines, ok := <-linesCh:
+			if !ok {
+				return
+			}
+			w.handleLines(lines, rowsCh, errCh)
+		case <-w.ctx.Done():
+			return
+		}
+	}
+}
+
+func (w *stmtParseWorker) handleLines(
+	lines [][]byte,
+	rowsCh chan<- [][]types.Datum,
+	errCh chan<- error,
+) {
+	if len(lines) == 0 {
+		return
+	}
+
+	rows := make([][]types.Datum, 0, len(lines))
+	for _, line := range lines {
+		record, err := w.parse(line)
+		if err != nil {
+			w.putErr(err, errCh)
+			return
+		}
+
+		if w.needStop(record) {
+			break
+		}
+
+		if !w.matchConds(record) {
+			continue
+		}
+
+		row := w.buildRow(record)
+		rows = append(rows, row)
+	}
+
+	if len(rows) > 0 {
+		w.putRows(rows, rowsCh)
+	}
+}
+
+func (w *stmtParseWorker) putErr(
+	err error,
+	errCh chan<- error,
+) {
+	select {
+	case errCh <- err:
+	case <-w.ctx.Done():
+	}
+}
+
+func (w *stmtParseWorker) putRows(
+	rows [][]types.Datum,
+	rowsCh chan<- [][]types.Datum,
+) {
+	select {
+	case rowsCh <- rows:
+	case <-w.ctx.Done():
+	}
+}
+
+func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, error) {
+	var record StmtRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+func (w *stmtParseWorker) needStop(record *StmtRecord) bool {
+	return w.checker.needStop(record.Begin)
+}
+
+func (w *stmtParseWorker) matchConds(record *StmtRecord) bool {
+	if !w.checker.isTimeValid(record.Begin, record.End) {
+		return false
+	}
+	if !w.checker.isDigestValid(record.Digest) {
+		return false
+	}
+	if !w.checker.hasPrivilege(record.AuthUsers) {
+		return false
+	}
+	return true
+}
+
+func (w *stmtParseWorker) buildRow(record *StmtRecord) []types.Datum {
+	row := make([]types.Datum, len(w.columnFactories))
+	for n, factory := range w.columnFactories {
+		row[n] = types.NewDatum(factory(w, record))
+	}
+	return row
+}
+
+// getInstanceAddr implements columnInfo.
+func (w *stmtParseWorker) getInstanceAddr() string {
+	return w.instanceAddr
+}
+
+// getInstanceAddr implements columnInfo.
+func (w *stmtParseWorker) getTimeLocation() *time.Location {
+	return w.timeLocation
 }
 
 func isCtxDone(ctx context.Context) bool {
@@ -648,6 +857,21 @@ func readLine(reader *bufio.Reader) ([]byte, error) {
 		}
 	}
 	return resByte, err
+}
+
+func readLines(reader *bufio.Reader, count int) ([][]byte, error) {
+	lines := make([][]byte, 0, count)
+	for i := 0; i < count; i++ {
+		line, err := readLine(reader)
+		if err == io.EOF && len(lines) > 0 {
+			return lines, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, nil
 }
 
 func timeRangeOverlap(aBegin, aEnd, bBegin, bEnd int64) bool {

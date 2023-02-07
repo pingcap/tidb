@@ -116,14 +116,9 @@ func TestStmtFiles(t *testing.T) {
 		files, err := newStmtFiles(context.Background(), nil)
 		require.NoError(t, err)
 		defer files.close()
-		f := files.next()
-		require.NotNil(t, f)
-		require.Equal(t, filename1, f.Name())
-		f = files.next()
-		require.NotNil(t, f)
-		require.Equal(t, filename2, f.Name())
-		f = files.next()
-		require.Nil(t, f)
+		require.Len(t, files.files, 2)
+		require.Equal(t, filename1, files.files[0].file.Name())
+		require.Equal(t, filename2, files.files[1].file.Name())
 	}()
 
 	func() {
@@ -132,14 +127,9 @@ func TestStmtFiles(t *testing.T) {
 		})
 		require.NoError(t, err)
 		defer files.close()
-		f := files.next()
-		require.NotNil(t, f)
-		require.Equal(t, filename1, f.Name())
-		f = files.next()
-		require.NotNil(t, f)
-		require.Equal(t, filename2, f.Name())
-		f = files.next()
-		require.Nil(t, f)
+		require.Len(t, files.files, 2)
+		require.Equal(t, filename1, files.files[0].file.Name())
+		require.Equal(t, filename2, files.files[1].file.Name())
 	}()
 
 	func() {
@@ -148,14 +138,9 @@ func TestStmtFiles(t *testing.T) {
 		})
 		require.NoError(t, err)
 		defer files.close()
-		f := files.next()
-		require.NotNil(t, f)
-		require.Equal(t, filename1, f.Name())
-		f = files.next()
-		require.NotNil(t, f)
-		require.Equal(t, filename2, f.Name())
-		f = files.next()
-		require.Nil(t, f)
+		require.Len(t, files.files, 2)
+		require.Equal(t, filename1, files.files[0].file.Name())
+		require.Equal(t, filename2, files.files[1].file.Name())
 	}()
 
 	func() {
@@ -164,11 +149,8 @@ func TestStmtFiles(t *testing.T) {
 		})
 		require.NoError(t, err)
 		defer files.close()
-		f := files.next()
-		require.NotNil(t, f)
-		require.Equal(t, filename1, f.Name())
-		f = files.next()
-		require.Nil(t, f)
+		require.Len(t, files.files, 1)
+		require.Equal(t, filename1, files.files[0].file.Name())
 	}()
 
 	func() {
@@ -177,8 +159,7 @@ func TestStmtFiles(t *testing.T) {
 		})
 		require.NoError(t, err)
 		defer files.close()
-		f := files.next()
-		require.Nil(t, f)
+		require.Empty(t, files.files)
 	}()
 
 	func() {
@@ -187,11 +168,8 @@ func TestStmtFiles(t *testing.T) {
 		})
 		require.NoError(t, err)
 		defer files.close()
-		f := files.next()
-		require.NotNil(t, f)
-		require.Equal(t, filename2, f.Name())
-		f = files.next()
-		require.Nil(t, f)
+		require.Len(t, files.files, 1)
+		require.Equal(t, filename2, files.files[0].file.Name())
 	}()
 }
 
@@ -246,6 +224,8 @@ func TestMemReader(t *testing.T) {
 	}
 
 	ss := NewStmtSummary4Test(3)
+	defer ss.Close()
+
 	ss.Add(GenerateStmtExecInfo4Test("digest1"))
 	ss.Add(GenerateStmtExecInfo4Test("digest1"))
 	ss.Add(GenerateStmtExecInfo4Test("digest2"))
@@ -298,7 +278,7 @@ func TestHistoryReader(t *testing.T) {
 	}
 
 	func() {
-		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, nil)
+		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, nil, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
@@ -309,7 +289,7 @@ func TestHistoryReader(t *testing.T) {
 	}()
 
 	func() {
-		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, set.NewStringSet("digest2"), nil)
+		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, set.NewStringSet("digest2"), nil, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
@@ -322,7 +302,7 @@ func TestHistoryReader(t *testing.T) {
 	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 0, End: 1672128520 - 1},
-		})
+		}, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
@@ -332,7 +312,7 @@ func TestHistoryReader(t *testing.T) {
 	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 0, End: 1672129270 - 1},
-		})
+		}, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
@@ -345,7 +325,7 @@ func TestHistoryReader(t *testing.T) {
 	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 0, End: 1672129270},
-		})
+		}, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
@@ -358,7 +338,7 @@ func TestHistoryReader(t *testing.T) {
 	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 0, End: 1672129380},
-		})
+		}, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
@@ -371,7 +351,7 @@ func TestHistoryReader(t *testing.T) {
 	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 1672129270, End: 1672129380},
-		})
+		}, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
@@ -384,7 +364,7 @@ func TestHistoryReader(t *testing.T) {
 	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 1672129390, End: 0},
-		})
+		}, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
@@ -397,7 +377,7 @@ func TestHistoryReader(t *testing.T) {
 	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 1672129391, End: 0},
-		})
+		}, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
@@ -407,7 +387,7 @@ func TestHistoryReader(t *testing.T) {
 	func() {
 		reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
 			{Begin: 0, End: 0},
-		})
+		}, 2)
 		require.NoError(t, err)
 		defer reader.Close()
 		rows := readAllRows(t, reader)
