@@ -7615,8 +7615,8 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	return false
 }
 
-// CreateResourceGroup implements the DDL interface, creates a resource group.
-func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
+// AddResourceGroup implements the DDL interface, creates a resource group.
+func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupInfo := &model.ResourceGroupInfo{ResourceGroupSettings: &model.ResourceGroupSettings{}}
 	groupName := stmt.ResourceGroupName
 	groupInfo.Name = groupName
