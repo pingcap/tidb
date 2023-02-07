@@ -158,7 +158,8 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 				// We never commit the untouched key values to the storage. Skip this check.
 				continue
 			}
-			tempIdxVal, err := tablecodec.DecodeTempIndexValue(m.value, false)
+			var tempIdxVal tablecodec.TempIndexValue
+			tempIdxVal, err = tablecodec.DecodeTempIndexValue(m.value, false)
 			if err != nil {
 				return err
 			}
