@@ -99,7 +99,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, expli
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
 			terror.Log(err)
 		} else {
-			value, err = types.ParseTime(sc, x, tp, fsp, nil)
+			value, err = types.ParseTime(sc, x, tp, fsp, explicitTz)
 			if err != nil {
 				return d, err
 			}
