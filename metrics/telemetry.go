@@ -169,6 +169,27 @@ var (
 			Name:      "compact_partition_usage",
 			Help:      "Counter of compact table partition",
 		})
+	TelemetryStoreBatchedQueryCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "store_batched_query",
+			Help:      "Counter of queries which use store batched coprocessor tasks",
+		})
+	TelemetryStoreBatchedCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "store_batched",
+			Help:      "Counter of store batched coprocessor tasks",
+		})
+	TelemetryStoreBatchedFallbackCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "store_batched_fallback",
+			Help:      "Counter of store batched fallback coprocessor tasks",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -420,5 +441,31 @@ func (i IndexMergeUsageCounter) Sub(rhs IndexMergeUsageCounter) IndexMergeUsageC
 func GetIndexMergeCounter() IndexMergeUsageCounter {
 	return IndexMergeUsageCounter{
 		IndexMergeUsed: readCounter(TelemetryIndexMergeUsage),
+	}
+}
+
+// StoreBatchCoprCounter records the usages of batch copr statements.
+type StoreBatchCoprCounter struct {
+	BatchSize            int   `json:"batch_size"`
+	BatchedQuery         int64 `json:"query"`
+	BatchedCount         int64 `json:"batched"`
+	BatchedFallbackCount int64 `json:"batched_fallback"`
+}
+
+// Sub returns the difference of two counters.
+func (n StoreBatchCoprCounter) Sub(rhs StoreBatchCoprCounter) StoreBatchCoprCounter {
+	return StoreBatchCoprCounter{
+		BatchedQuery:         n.BatchedQuery - rhs.BatchedQuery,
+		BatchedCount:         n.BatchedCount - rhs.BatchedCount,
+		BatchedFallbackCount: n.BatchedFallbackCount - rhs.BatchedFallbackCount,
+	}
+}
+
+// GetStoreBatchCoprCounter gets the IndexMerge usage counter.
+func GetStoreBatchCoprCounter() StoreBatchCoprCounter {
+	return StoreBatchCoprCounter{
+		BatchedQuery:         readCounter(TelemetryStoreBatchedQueryCnt),
+		BatchedCount:         readCounter(TelemetryStoreBatchedCnt),
+		BatchedFallbackCount: readCounter(TelemetryStoreBatchedFallbackCnt),
 	}
 }

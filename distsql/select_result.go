@@ -54,6 +54,11 @@ var (
 )
 
 var (
+	telemetryStoreBatchedCnt         = metrics.TelemetryStoreBatchedCnt
+	telemetryStoreBatchedFallbackCnt = metrics.TelemetryStoreBatchedFallbackCnt
+)
+
+var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*serialSelectResults)(nil)
 )
@@ -462,8 +467,10 @@ func (r *selectResult) Close() error {
 	if r.stats != nil {
 		defer func() {
 			if ci, ok := r.resp.(copr.CopInfo); ok {
-				r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = ci.GetStoreBatchInfo()
 				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
+				r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = ci.GetStoreBatchInfo()
+				telemetryStoreBatchedCnt.Add(float64(r.stats.storeBatchedNum))
+				telemetryStoreBatchedFallbackCnt.Add(float64(r.stats.storeBatchedFallbackNum))
 			}
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 		}()
