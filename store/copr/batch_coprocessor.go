@@ -706,7 +706,9 @@ func buildBatchCopTasksConsistentHash(
 			zap.Int("retryNum", retryNum),
 			zap.Duration("SplitKeyRangesByLocations", splitKeyElapsed),
 			zap.Duration("fetchTopo", fetchTopoElapsed),
-			zap.Int("range len", rangesLen))
+			zap.Int("range len", rangesLen),
+			zap.Int("copTaskNum", len(tasks)),
+			zap.Int("batchCopTaskNum", len(res)))
 	}
 	failpointCheckForConsistentHash(res)
 	return res, nil
@@ -1207,6 +1209,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	const cmdType = tikvrpc.CmdBatchCop
 	var retryNum int
 	var rangesLen int
+	var copTaskNum int
 	var splitKeyElapsed time.Duration
 	var getStoreElapsed time.Duration
 	cache := kvStore.GetRegionCache()
@@ -1264,6 +1267,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		if len(rpcCtxs) != len(tasks) {
 			return nil, errors.Errorf("length should be equal, len(rpcCtxs): %d, len(tasks): %d", len(rpcCtxs), len(tasks))
 		}
+		copTaskNum = len(tasks)
 		taskMap := make(map[string]*batchCopTask)
 		for i, rpcCtx := range rpcCtxs {
 			regionInfo := RegionInfo{
@@ -1303,12 +1307,14 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	}
 
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		logutil.BgLogger().Warn("buildBatchCopTasksConsistentHash takes too much time",
+		logutil.BgLogger().Warn("buildBatchCopTasksConsistentHashForPD takes too much time",
 			zap.Duration("total elapsed", elapsed),
 			zap.Int("retryNum", retryNum),
 			zap.Duration("splitKeyElapsed", splitKeyElapsed),
 			zap.Duration("getStoreElapsed", getStoreElapsed),
-			zap.Int("range len", rangesLen))
+			zap.Int("range len", rangesLen),
+			zap.Int("copTaskNum", copTaskNum),
+			zap.Int("batchCopTaskNum", len(res)))
 	}
 	failpointCheckForConsistentHash(res)
 	return res, nil
