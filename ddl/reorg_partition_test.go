@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
-	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -279,10 +278,10 @@ func TestReorganizeRangePartition(t *testing.T) {
 	tk.MustExec(`insert into t2 select * from t`)
 	// Not allowed to change the start range!
 	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (20), partition p2b values less than (36))`,
-		mysql.ErrRangeNotIncreasing)
+		errno.ErrRangeNotIncreasing)
 	// Not allowed to change the end range!
-	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (36))`, mysql.ErrRangeNotIncreasing)
-	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (34))`, mysql.ErrRangeNotIncreasing)
+	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (36))`, errno.ErrRangeNotIncreasing)
+	tk.MustGetErrCode(`alter table t2 reorganize partition p2 into (partition p2a values less than (30), partition p2b values less than (34))`, errno.ErrRangeNotIncreasing)
 	// Also not allowed to change from MAXVALUE to something else IF there are values in the removed range!
 	tk.MustContainErrMsg(`alter table t2 reorganize partition pMax into (partition p2b values less than (50))`, "[table:1526]Table has no partition for value 56")
 	tk.MustQuery(`show create table t2`).Check(testkit.Rows("" +
@@ -587,7 +586,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 	wait <- true
 	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
-	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, mysql.ErrDupEntry)
+	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, errno.ErrDupEntry)
 	tk.MustExec(`admin check table t`)
 	wait <- true
 	require.NoError(t, <-alterErr)
@@ -728,7 +727,7 @@ func TestReorgPartitionFailInject(t *testing.T) {
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 	wait <- true
 	tk.MustExec(`insert into t values (14, "14", 14),(15, "15",15)`)
-	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, mysql.ErrDupEntry)
+	tk.MustGetErrCode(`insert into t values (11, "11", 11),(12,"duplicate PK 💥", 13)`, errno.ErrDupEntry)
 	tk.MustExec(`admin check table t`)
 	wait <- true
 	require.NoError(t, <-alterErr)
