@@ -279,6 +279,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			matchedPtrs = append(matchedPtrs, ptr)
 		}
 	}
+	c.memTracker.Consume(memDelta)
 	return matched, matchedPtrs, err
 }
 
