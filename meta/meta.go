@@ -539,8 +539,8 @@ func (m *Meta) UpdatePolicy(policy *model.PolicyInfo) error {
 	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
-// CreateResourceGroup creates a resource group.
-func (m *Meta) CreateResourceGroup(group *model.ResourceGroupInfo) error {
+// AddResourceGroup creates a resource group.
+func (m *Meta) AddResourceGroup(group *model.ResourceGroupInfo) error {
 	if group.ID == 0 {
 		return errors.New("group.ID is invalid")
 	}
@@ -574,10 +574,7 @@ func (m *Meta) UpdateResourceGroup(group *model.ResourceGroupInfo) error {
 func (m *Meta) DropResourceGroup(groupID int64) error {
 	// Check if group exists.
 	groupKey := m.resourceGroupKey(groupID)
-	if err := m.txn.HClear(groupKey); err != nil {
-		return errors.Trace(err)
-	}
-	if err := m.txn.HDel(mPolicies, groupKey); err != nil {
+	if err := m.txn.HDel(mResourceGroups, groupKey); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
