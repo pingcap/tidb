@@ -259,8 +259,15 @@ func (r *HistoryReader) Close() error {
 	return nil
 }
 
-// 4 roles to handle the read task concurrently:
+// 4 roles to handle the read task in pipeline:
 //
+// ## Pipeline
+// .           +--------------+             +---------------+
+// == files => | scan workers | == lines => | parse workers | == rows =>
+// . filesCh   +--------------+   linesCh   +---------------+   rowsCh
+//
+// ## Roles
+// +--------------+--------------+------------------------------------+
 // |     ROLE     |    COUNT     |          DESCRIPTION               |
 // +--------------+--------------+------------------------------------+
 // | Scan Worker  | concurrent/2 | Scan files (I/O) first, then help  |
@@ -274,6 +281,7 @@ func (r *HistoryReader) Close() error {
 // +--------------+--------------+------------------------------------+
 // |   Monitor    |      1       | Cover failures and notify workers  |
 // |              |              | to exit                            |
+// +--------------+--------------+------------------------------------+
 func (r *HistoryReader) scheduleTasks(
 	rowsCh chan<- [][]types.Datum,
 	errCh chan<- error,
