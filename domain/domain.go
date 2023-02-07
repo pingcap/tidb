@@ -508,17 +508,15 @@ func (do *Domain) Reload() error {
 		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
 			// use the lastest available version to create domain
 			version -= 1
-			start := time.Now()
 			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
-			metrics.LoadSchemaDuration.Observe(time.Since(start).Seconds())
 		}
 		if err != nil {
+			metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 			metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
 			return err
 		}
-	} else {
-		metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	}
+	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
 	// only update if it is not from cache
