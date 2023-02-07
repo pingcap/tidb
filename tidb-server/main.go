@@ -205,7 +205,7 @@ func main() {
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
+	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
 		clusterID, err := config.GetAutoScalerClusterID()
 		terror.MustNil(err)
 
@@ -478,7 +478,6 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Port = uint(p)
 	}
 	if actualFlags[nmCors] {
-		fmt.Println(cors)
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {

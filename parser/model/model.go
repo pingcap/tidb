@@ -1850,6 +1850,7 @@ type ResourceGroupSettings struct {
 	CPULimiter       string `json:"cpu_limit"`
 	IOReadBandwidth  string `json:"io_read_bandwidth"`
 	IOWriteBandwidth string `json:"io_write_bandwidth"`
+	BurstLimit       int64  `json:"burst_limit"`
 }
 
 func (p *ResourceGroupSettings) String() string {
@@ -1866,6 +1867,10 @@ func (p *ResourceGroupSettings) String() string {
 	if len(p.IOWriteBandwidth) > 0 {
 		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth)
 	}
+	// Once burst limit is negative, meaning allow burst with unlimit.
+	if p.BurstLimit < 0 {
+		writeSettingItemToBuilder(sb, "BURSTABLE")
+	}
 	return sb.String()
 }
 
@@ -1875,7 +1880,7 @@ func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
 	return &cloned
 }
 
-// ResourceGroupInfo is the struct to store the placement policy.
+// ResourceGroupInfo is the struct to store the resource group.
 type ResourceGroupInfo struct {
 	*ResourceGroupSettings
 	ID    int64       `json:"id"`

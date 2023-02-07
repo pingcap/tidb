@@ -99,7 +99,7 @@ func TestParallelLockNewJob(t *testing.T) {
 					successCounter.Add(1)
 					successJob = job
 				} else {
-					logutil.BgLogger().Error("lock new job with error", zap.Error(err))
+					logutil.BgLogger().Info("lock new job with error", zap.Error(err))
 				}
 				wg.Done()
 			}()
@@ -261,6 +261,46 @@ func TestTriggerTTLJob(t *testing.T) {
 
 	waitTTLJobFinished(t, tk, tblID)
 	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
+}
+
+func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/ttl/ttlworker/task-manager-loop-interval", fmt.Sprintf("return(%d)", time.Second))
+	defer failpoint.Disable("github.com/pingcap/tidb/ttl/ttlworker/task-manager-loop-interval")
+
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.time_zone='Asia/Shanghai'")
+	tk.MustExec("set @@time_zone='Asia/Shanghai'")
+
+	tk.MustExec("create table t1(id int primary key, t datetime) TTL=`t` + INTERVAL 1 DAY TTL_ENABLE='OFF'")
+	tbl1, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblID1 := tbl1.Meta().ID
+	tk.MustExec("insert into t1 values(1, NOW()), (2, NOW() - INTERVAL 31 HOUR), (3, NOW() - INTERVAL 33 HOUR)")
+
+	tk.MustExec("create table t2(id int primary key, t timestamp) TTL=`t` + INTERVAL 1 DAY TTL_ENABLE='OFF'")
+	tbl2, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tblID2 := tbl2.Meta().ID
+	tk.MustExec("insert into t2 values(1, NOW()), (2, NOW() - INTERVAL 31 HOUR), (3, NOW() - INTERVAL 33 HOUR)")
+
+	tk.MustExec("set @@global.time_zone='UTC'")
+	tk.MustExec("set @@time_zone='UTC'")
+	tk.MustExec("alter table t1 TTL_ENABLE='ON'")
+	tk.MustExec("alter table t2 TTL_ENABLE='ON'")
+
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Minute)
+	defer cancel()
+	cli := do.TTLJobManager().GetCommandCli()
+	_, _ = client.TriggerNewTTLJob(ctx, cli, "test", "t1")
+	_, _ = client.TriggerNewTTLJob(ctx, cli, "test", "t2")
+
+	waitTTLJobFinished(t, tk, tblID1)
+	tk.MustQuery("select id from t1 order by id asc").Check(testkit.Rows("1", "2"))
+
+	waitTTLJobFinished(t, tk, tblID2)
+	tk.MustQuery("select id from t2 order by id asc").Check(testkit.Rows("1"))
 }
 
 func waitTTLJobFinished(t *testing.T, tk *testkit.TestKit, tableID int64) {
