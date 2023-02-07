@@ -1596,35 +1596,27 @@ ResourceGroupOptionList:
 	{
 		$$ = []*ast.ResourceGroupOption{$1.(*ast.ResourceGroupOption)}
 	}
-|	ResourceGroupOptionList DirectResourceGroupOption
+|	DirectResourceGroupOption "BURSTABLE"
 	{
-		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
+		$$ = append([]*ast.ResourceGroupOption{$1.(*ast.ResourceGroupOption)}, &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true})
 	}
-|	ResourceGroupOptionList ',' DirectResourceGroupOption
+|	DirectResourceGroupOption ',' "BURSTABLE"
 	{
-		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
+		$$ = append([]*ast.ResourceGroupOption{$1.(*ast.ResourceGroupOption)}, &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true})
 	}
+|	"BURSTABLE" DirectResourceGroupOption
+    {
+    	$$ = append([]*ast.ResourceGroupOption{$2.(*ast.ResourceGroupOption)}, &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true})
+    }
+|	"BURSTABLE" ',' DirectResourceGroupOption
+    {
+    	$$ = append([]*ast.ResourceGroupOption{$3.(*ast.ResourceGroupOption)}, &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true})
+    }
 
 DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
-	}
-|	"CPU" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitCPU, StrValue: $3}
-	}
-|	"IO_READ_BANDWIDTH" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadBandwidth, StrValue: $3}
-	}
-|	"IO_WRITE_BANDWIDTH" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteBandwidth, StrValue: $3}
-	}
-|	"BURSTABLE"
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
 	}
 
 PlacementOptionList:
