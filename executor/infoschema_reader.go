@@ -3390,7 +3390,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 }
 
 func (e *memtableRetriever) setDataFromResourceGroups() error {
-	resourceGroups, err := infosync.GetAllResourceGroups(context.TODO())
+	resourceGroups, err := infosync.ListResourceGroups(context.TODO())
 	if err != nil {
 		return errors.Errorf("failed to access resource group manager, error message is %s", err.Error())
 	}

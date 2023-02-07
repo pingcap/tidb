@@ -131,7 +131,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
 	tk.MustContainErrMsg("create resource group x RU_PER_SEC=1000, CPU='8000m';", resourcegroup.ErrInvalidResourceGroupDuplicatedMode.Error())
-	groups, err := infosync.GetAllResourceGroups(context.TODO())
+	groups, err := infosync.ListResourceGroups(context.TODO())
 	require.Equal(t, 0, len(groups))
 	require.NoError(t, err)
 

@@ -48,11 +48,11 @@ func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.StateNone:
 		// none -> public
 		groupInfo.State = model.StatePublic
-		err := t.CreateResourceGroup(groupInfo)
+		err := t.AddResourceGroup(groupInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = infosync.CreateResourceGroup(context.TODO(), protoGroup)
+		err = infosync.AddResourceGroup(context.TODO(), protoGroup)
 		if err != nil {
 			logutil.BgLogger().Warn("create resource group failed", zap.Error(err))
 			return ver, errors.Trace(err)
