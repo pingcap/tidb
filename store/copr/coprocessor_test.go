@@ -514,8 +514,6 @@ func TestBuildPagingTasks(t *testing.T) {
 	req := &kv.Request{}
 	req.Paging.Enable = true
 	req.Paging.MinPagingSize = paging.MinPagingSize
-	flashReq := &kv.Request{}
-	flashReq.StoreType = kv.TiFlash
 	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
@@ -523,6 +521,37 @@ func TestBuildPagingTasks(t *testing.T) {
 	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
 	require.True(t, tasks[0].paging)
 	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
+}
+
+func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{}
+	req.Paging.Enable = true
+	req.Paging.MinPagingSize = paging.MinPagingSize
+	req.LimitSize = 1
+	tasks, err := buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
+	require.False(t, tasks[0].paging)
+	require.Equal(t, tasks[0].pagingSize, uint64(0))
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {

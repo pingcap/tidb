@@ -676,6 +676,7 @@ func TestScanLimitConcurrency(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 			require.Equal(t, tt.concurrency, actual.Concurrency)
+			require.Equal(t, actual.LimitSize, tt.limit)
 		})
 	}
 }
