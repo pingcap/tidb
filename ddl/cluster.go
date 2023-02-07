@@ -165,7 +165,8 @@ func isFlashbackSupportedDDLAction(action model.ActionType) bool {
 	switch action {
 	case model.ActionSetTiFlashReplica, model.ActionUpdateTiFlashReplicaStatus, model.ActionAlterPlacementPolicy,
 		model.ActionAlterTablePlacement, model.ActionAlterTablePartitionPlacement, model.ActionCreatePlacementPolicy,
-		model.ActionDropPlacementPolicy, model.ActionModifySchemaDefaultPlacement:
+		model.ActionDropPlacementPolicy, model.ActionModifySchemaDefaultPlacement,
+		model.ActionAlterTableAttributes, model.ActionAlterTablePartitionAttributes:
 		return false
 	default:
 		return true

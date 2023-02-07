@@ -10,7 +10,10 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/resourcemanager/pooltask",
     visibility = ["//visibility:public"],
-    deps = ["@org_uber_go_atomic//:atomic"],
+    deps = [
+        "//util/channel",
+        "@org_uber_go_atomic//:atomic",
+    ],
 )
 
 go_test(
