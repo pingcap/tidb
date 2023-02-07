@@ -92,6 +92,7 @@ SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER
 default_collate_name	maxlen
 ascii_bin	1
 binary	1
+gb18030_chinese_ci	4
 gbk_chinese_ci	2
 latin1_bin	1
 utf8_bin	3
@@ -100,6 +101,8 @@ SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER 
 character_set_name	id	sortlen
 ascii	65	1
 binary	63	1
+gb18030	249	1
+gb18030	248	1
 gbk	87	1
 gbk	28	1
 latin1	47	1
@@ -116,6 +119,7 @@ show charset;
 Charset	Description	Default collation	Maxlen
 ascii	US ASCII	ascii_bin	1
 binary	binary	binary	1
+gb18030	China National Standard GB18030	gb18030_chinese_ci	4
 gbk	Chinese Internal Code Specification	gbk_chinese_ci	2
 latin1	Latin1	latin1_bin	1
 utf8	UTF-8 Unicode	utf8_bin	3
@@ -124,6 +128,8 @@ show collation;
 Collation	Charset	Id	Default	Compiled	Sortlen
 ascii_bin	ascii	65	Yes	Yes	1
 binary	binary	63	Yes	Yes	1
+gb18030_bin	gb18030	249		Yes	1
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1
 gbk_bin	gbk	87		Yes	1
 gbk_chinese_ci	gbk	28	Yes	Yes	1
 latin1_bin	latin1	47	Yes	Yes	1

@@ -15,9 +15,10 @@ package charset
 
 import (
 	"bytes"
+	"unicode/utf8"
+
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
-	"unicode/utf8"
 )
 
 // EncodingGB18030Impl is the instance of encodingGB18030
