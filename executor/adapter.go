@@ -87,10 +87,16 @@ var (
 	dmlFirstAttemptDuration             = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("dml", "first-attempt")
 	dmlRetryDuration                    = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("dml", "retry")
 
-	AggressiveLockingTxnUsedCount       = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingTxnUsed)
-	AggressiveLockingStmtUsedCount      = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtUsed)
-	AggressiveLockingTxnEffectiveCount  = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingTxnEffective)
-	AggressiveLockingStmtEffectiveCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtEffective)
+	// aggressiveLockingTxnUsedCount counts transactions where at least one statement has aggressive locking enabled.
+	aggressiveLockingTxnUsedCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingTxnUsed)
+	// aggressiveLockingStmtUsedCount counts statements that have aggressive locking enabled.
+	aggressiveLockingStmtUsedCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtUsed)
+	// aggressiveLockingTxnUsedCount counts transactions where at least one statement has aggressive locking enabled,
+	// and it takes effect (which is determined according to whether lock-with-conflict has occurred during execution).
+	aggressiveLockingTxnEffectiveCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingTxnEffective)
+	// aggressiveLockingTxnUsedCount counts statements where at least one statement has aggressive locking enabled,
+	// and it takes effect (which is determined according to whether lock-with-conflict has occurred during execution).
+	aggressiveLockingStmtEffectiveCount = metrics.AggressiveLockingUsageCount.WithLabelValues(metrics.LblAggressiveLockingStmtEffective)
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -1491,22 +1497,22 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// Update aggressive locking related counters by stmt
 	if execDetail.LockKeysDetail != nil {
 		if execDetail.LockKeysDetail.AggressiveLockNewCount > 0 || execDetail.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-			AggressiveLockingStmtUsedCount.Inc()
+			aggressiveLockingStmtUsedCount.Inc()
 			// If this statement is finished when some of the keys are locked with conflict in the last retry, or
 			// some of the keys are derived from the previous retry, we consider the optimization of aggressive locking
 			// takes effect on this statement.
 			if execDetail.LockKeysDetail.LockedWithConflictCount > 0 || execDetail.LockKeysDetail.AggressiveLockDerivedCount > 0 {
-				AggressiveLockingStmtEffectiveCount.Inc()
+				aggressiveLockingStmtEffectiveCount.Inc()
 			}
 		}
 	}
 	// If the transaction is committed, update aggressive locking related counters by txn
 	if execDetail.CommitDetail != nil {
 		if sessVars.TxnCtx.AggressiveLockingUsed {
-			AggressiveLockingTxnUsedCount.Inc()
+			aggressiveLockingTxnUsedCount.Inc()
 		}
 		if sessVars.TxnCtx.AggressiveLockingEffective {
-			AggressiveLockingTxnEffectiveCount.Inc()
+			aggressiveLockingTxnEffectiveCount.Inc()
 		}
 	}
 }

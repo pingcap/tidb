@@ -238,7 +238,12 @@ type TxnCtxNoNeedToRestore struct {
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
 
-	AggressiveLockingUsed      bool
+	// AggressiveLockingUsed marking whether at least one of the statements in the transaction was executed in
+	// aggressive locking mode.
+	AggressiveLockingUsed bool
+	// AggressiveLockingEffective marking whether at least one of the statements in the transaction was executed in
+	// aggressive locking mode, and it takes effect (which is determined according to whether lock-with-conflict
+	// has occurred during execution of any statement).
 	AggressiveLockingEffective bool
 }
 

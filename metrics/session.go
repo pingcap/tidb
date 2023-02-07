@@ -192,7 +192,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "transaction_aggressive_locking_usage",
-			Help:      "The counter of statements and transactions that aggressive locking is used or takes effect",
+			Help:      "The counter of statements and transactions in which aggressive locking is used or takes effect",
 		}, []string{LblType})
 )
 
