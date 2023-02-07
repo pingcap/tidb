@@ -411,7 +411,7 @@ var (
 // needDumpStatsDelta checks whether to dump stats delta.
 // 1. If the table doesn't exist or is a mem table or system table, then return false.
 // 2. If the mode is DumpAll, then return true.
-// 3. If the stats delta haven't been dumped in the last hour, then return true.
+// 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
 func (h *Handle) needDumpStatsDelta(is infoschema.InfoSchema, mode dumpMode, id int64, item variable.TableDelta, currentTime time.Time) bool {
 	tbl, ok := h.getTableByPhysicalID(is, id)
