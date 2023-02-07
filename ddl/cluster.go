@@ -688,9 +688,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			job.SchemaState = model.StateWriteReorganization
 			return updateSchemaVersion(d, t, job)
 		}
-		if err = t.SetFlashbackClusterStartTS(startTS); err != nil {
-			return ver, errors.Trace(err)
-		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
 		splitRegionsByKeyRanges(d, keyRanges)
 		totalRegions.Store(0)
@@ -739,10 +736,6 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				logutil.BgLogger().Warn("[ddl] Get error when do flashback", zap.Error(err))
 				return ver, errors.Trace(err)
 			}
-		}
-
-		if err = t.SetFlashbackClusterStartTS(0); err != nil {
-			return ver, err
 		}
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionFlashbackCluster})
 		job.State = model.JobStateDone

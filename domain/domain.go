@@ -471,6 +471,18 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 
+func getFlashbackStartTSFromErrorMsg(err error) uint64 {
+	slices := strings.Split(err.Error(), "is in flashback progress, FlashbackStartTS is ")
+	if len(slices) != 2 {
+		return 0
+	}
+	version, err := strconv.ParseUint(slices[1], 10, 0)
+	if err != nil {
+		return 0
+	}
+	return version
+}
+
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
@@ -490,21 +502,19 @@ func (do *Domain) Reload() error {
 		return err
 	}
 
-	m := meta.NewSnapshotMeta(do.store.GetSnapshot(ver))
-	version, err := m.GetFlashbackClusterStartTS()
-	// While the flashback was in progress, we couldn't read schema by currentTS.
-	// So use snapshot read to get the schema info.
-	if version == 0 || err != nil {
-		version = ver.Ver
-	} else {
-		version = version - 1
-	}
-
+	version := ver.Ver
 	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version)
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
-		return err
+		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
+			start := time.Now()
+			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
+			metrics.LoadSchemaDuration.Observe(time.Since(start).Seconds())
+		}
+		if err != nil {
+			metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
+			return err
+		}
 	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
