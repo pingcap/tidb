@@ -600,9 +600,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		lastVersion = version
-		h.mu.Lock()
 		table, ok := h.getTableByPhysicalID(is, physicalID)
-		h.mu.Unlock()
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			deletedTableIDs = append(deletedTableIDs, physicalID)
@@ -670,9 +668,7 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	physicalID int64, isIndex int, histIDs []int64,
 	tablePartitionStats map[int64]*statistics.Table) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
-	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
-	h.mu.Unlock()
 	if !ok {
 		err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
 		return
@@ -742,9 +738,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
-		h.mu.Lock()
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
-		h.mu.Unlock()
 		if !ok {
 			err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
 			return

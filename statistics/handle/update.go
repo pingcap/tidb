@@ -684,9 +684,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 OUTER:
 	for _, fbs := range feedback.Feedbacks {
 		for _, fb := range fbs {
-			h.mu.Lock()
 			table, ok := h.getTableByPhysicalID(is, fb.PhysicalID)
-			h.mu.Unlock()
 			if !ok {
 				continue
 			}
@@ -829,9 +827,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 			err = errors.Trace(h.deleteOutdatedFeedback(physicalTableID, histID, isIndex))
 		}
 	}()
-	h.mu.Lock()
 	table, ok := h.getTableByPhysicalID(is, physicalTableID)
-	h.mu.Unlock()
 	// The table has been deleted.
 	if !ok {
 		return nil
