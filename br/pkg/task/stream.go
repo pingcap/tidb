@@ -1045,7 +1045,11 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig) error {
 		return err
 	}
 	cli := streamhelper.NewMetaDataClient(etcdCLI)
-	defer cli.Close()
+	defer func() {
+		if err := cli.Close(); err != nil {
+			log.Error("failed to close the etcd client", zap.Error(err))
+		}
+	}()
 	tasks, err := cli.GetAllTasks(ctx)
 	if err != nil {
 		return err
