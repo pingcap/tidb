@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -68,7 +69,8 @@ type allTableData struct {
 // Checks that there are no accessible data after an existing table
 // assumes that tableIDs are only increasing.
 // To be used during failure testing of ALTER, to make sure cleanup is done.
-func noNewTablesAfter(t *testing.T, ctx sessionctx.Context, tbl table.Table) {
+func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, tbl table.Table) {
+	waitForGC := tk.MustQuery(`select start_key, end_key from mysql.gc_delete_range`).Rows()
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -89,11 +91,28 @@ func noNewTablesAfter(t *testing.T, ctx sessionctx.Context, tbl table.Table) {
 	prefix := tablecodec.EncodeTablePrefix(tblID + 1)
 	it, err := txn.Iter(prefix, nil)
 	require.NoError(t, err)
-	if it.Valid() {
+ROW:
+	for it.Valid() {
+		for _, rowGC := range waitForGC {
+			// OK if queued for range delete / GC
+			hexString := fmt.Sprintf("%v", rowGC[0])
+			start, err := hex.DecodeString(hexString)
+			require.NoError(t, err)
+			hexString = fmt.Sprintf("%v", rowGC[1])
+			end, err := hex.DecodeString(hexString)
+			require.NoError(t, err)
+			if bytes.Compare(start, it.Key()) >= 0 && bytes.Compare(it.Key(), end) < 0 {
+				it.Close()
+				it, err = txn.Iter(end, nil)
+				require.NoError(t, err)
+				continue ROW
+			}
+		}
 		foundTblID := tablecodec.DecodeTableID(it.Key())
 		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
 		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
 		require.False(t, it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00, "Found table data after highest physical Table ID %d < %d", tblID, foundTblID)
+		break
 	}
 }
 
@@ -5359,7 +5378,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
-	noNewTablesAfter(t, ctx, tbl)
+	noNewTablesAfter(t, tk, ctx, tbl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/reorgPartitionAfterDataCopy", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/ddl/reorgPartitionAfterDataCopy")
@@ -5381,14 +5400,9 @@ func TestReorgPartitionRollback(t *testing.T) {
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 
-	// TODO: How to test these, without sleeping in test?
-	//tk.MustQuery(`select * from mysql.gc_delete_range_done`).Sort().Check(testkit.Rows())
-	//time.Sleep(1 * time.Second)
-	//tk.MustQuery(`select * from mysql.gc_delete_range`).Sort().Check(testkit.Rows())
-
 	tbl, err = is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
 	require.NoError(t, err)
-	noNewTablesAfter(t, ctx, tbl)
+	noNewTablesAfter(t, tk, ctx, tbl)
 }
 
 func TestReorgPartitionData(t *testing.T) {
