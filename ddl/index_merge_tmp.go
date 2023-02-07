@@ -209,7 +209,7 @@ func (*mergeIndexWorker) String() string {
 	return typeAddIndexMergeTmpWorker.String()
 }
 
-func (*mergeIndexWorker) GetTask() (*BackfillJob, error) {
+func (*mergeIndexWorker) GetTasks() ([]*BackfillJob, error) {
 	panic("[ddl] merge index worker GetTask function doesn't implement")
 }
 
