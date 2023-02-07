@@ -92,9 +92,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 
 	injectSafeTS := oracle.GoTimeToTS(time.Now().Add(10 * time.Second))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	oldValue := map[string]interface{}{
@@ -131,8 +129,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	require.EqualValues(t, finishValue["merge-schedule-limit"], 1)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 }
 
 func TestAddDDLDuringFlashback(t *testing.T) {
@@ -147,9 +144,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 
 	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
@@ -169,8 +164,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 
 	dom.DDL().SetHook(originHook)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 }
 
 func TestGlobalVariablesOnFlashback(t *testing.T) {
@@ -185,9 +179,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 
 	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
@@ -239,8 +231,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 
 	dom.DDL().SetHook(originHook)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 }
 
 func TestCancelFlashbackCluster(t *testing.T) {
@@ -252,9 +243,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 
 	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
-	require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
@@ -280,6 +269,5 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	dom.DDL().SetHook(originHook)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 }

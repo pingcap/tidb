@@ -442,6 +442,44 @@ func TestTiFlashDropPartition(t *testing.T) {
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 }
 
+<<<<<<< HEAD:ddl/ddl_tiflash_test.go
+=======
+func TestTiFlashFlashbackCluster(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+
+	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
+	tk.MustExec("alter table t set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
+	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "t")
+
+	injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+
+	ChangeGCSafePoint(tk, time.Now().Add(-10*time.Second), "true", "10m0s")
+	defer func() {
+		ChangeGCSafePoint(tk, time.Now(), "true", "10m0s")
+	}()
+
+	errorMsg := fmt.Sprintf("[ddl:-1]Detected unsupported DDL job type(%s) during [%s, now), can't do flashback",
+		model.ActionSetTiFlashReplica.String(), oracle.GetTimeFromTS(ts).String())
+	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)), errorMsg)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
+}
+
+>>>>>>> c996d6437fe (flashback: retry `getStoreGlobalMinSafeTS` during execute flashback (#41100)):ddl/tiflashtest/ddl_tiflash_test.go
 func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, table string) {
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	require.NoError(t, err)
