@@ -128,7 +128,7 @@ func TestResourceGroup(t *testing.T) {
 			RURate: 100,
 		},
 	}
-	require.NoError(t, m.CreateResourceGroup(rg))
+	require.NoError(t, m.AddResourceGroup(rg))
 	checkResourceGroup(100)
 
 	rg.RURate = 200
