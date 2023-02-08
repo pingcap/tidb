@@ -46,7 +46,7 @@ func TestUptime(t *testing.T) {
 	}()
 	require.NoError(t, err)
 
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), true)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), true)
 	require.NoError(t, err)
 
 	tidbdrv := NewTiDBDriver(store)

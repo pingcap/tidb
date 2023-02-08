@@ -528,7 +528,6 @@ import (
 	recover               "RECOVER"
 	redundant             "REDUNDANT"
 	reload                "RELOAD"
-	remote                "REMOTE"
 	remove                "REMOVE"
 	reorganize            "REORGANIZE"
 	repair                "REPAIR"
@@ -1117,7 +1116,6 @@ import (
 	LoadDataSetList                        "Load data specifications"
 	LoadDataSetItem                        "Single load data specification"
 	LocalOpt                               "Local opt"
-	LocationOpt                            "Data file location of LOAD DATA"
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	MaxValPartOpt                          "MAXVALUE partition option"
@@ -1601,10 +1599,18 @@ ResourceGroupOptionList:
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
 		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+            return 1
+		}
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp {
+        	yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+            return 1
+        }
 	}
 
 DirectResourceGroupOption:
@@ -1612,22 +1618,10 @@ DirectResourceGroupOption:
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
 	}
-|	"CPU" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitCPU, StrValue: $3}
-	}
-|	"IO_READ_BANDWIDTH" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOReadBandwidth, StrValue: $3}
-	}
-|	"IO_WRITE_BANDWIDTH" EqOpt stringLit
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceUnitIOWriteBandwidth, StrValue: $3}
-	}
 |	"BURSTABLE"
-	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
-	}
+    {
+    	$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+    }
 
 PlacementOptionList:
 	DirectPlacementOption
@@ -6227,7 +6221,6 @@ UnReservedKeyword:
 |	"QUICK"
 |	"REBUILD"
 |	"REDUNDANT"
-|	"REMOTE"
 |	"REORGANIZE"
 |	"RESOURCE"
 |	"RESTART"
@@ -13769,17 +13762,18 @@ RevokeRoleStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocationOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
 	{
 		x := &ast.LoadDataStmt{
-			FileLocRef:         $3.(ast.FileLocRefTp),
+			FileLocRef:         ast.FileLocServerOrRemote,
 			Path:               $5,
 			OnDuplicate:        $6.(ast.OnDuplicateKeyHandlingType),
 			Table:              $9.(*ast.TableName),
 			ColumnsAndUserVars: $14.([]*ast.ColumnNameOrUserVar),
 			IgnoreLines:        $13.(uint64),
 		}
-		if x.FileLocRef == ast.FileLocClient {
+		if $3 != nil {
+			x.FileLocRef = ast.FileLocClient
 			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
 			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
 			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
@@ -13826,19 +13820,6 @@ LocalOpt:
 |	"LOCAL"
 	{
 		$$ = $1
-	}
-
-LocationOpt:
-	{
-		$$ = ast.FileLocServer
-	}
-|	"LOCAL"
-	{
-		$$ = ast.FileLocClient
-	}
-|	"REMOTE"
-	{
-		$$ = ast.FileLocRemote
 	}
 
 Fields:

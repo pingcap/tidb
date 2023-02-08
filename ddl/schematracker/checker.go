@@ -433,9 +433,9 @@ func (d Checker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPla
 	panic("implement me")
 }
 
-// CreateResourceGroup implements the DDL interface.
+// AddResourceGroup implements the DDL interface.
 // ResourceGroup do not affect the transaction.
-func (d Checker) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error {
+func (d Checker) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error {
 	return nil
 }
 
