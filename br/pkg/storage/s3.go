@@ -140,6 +140,7 @@ type S3BackendOptions struct {
 	ACL                   string `json:"acl" toml:"acl"`
 	AccessKey             string `json:"access-key" toml:"access-key"`
 	SecretAccessKey       string `json:"secret-access-key" toml:"secret-access-key"`
+	SessionToken          string `json:"session-token" toml:"session-token"`
 	Provider              string `json:"provider" toml:"provider"`
 	ForcePathStyle        bool   `json:"force-path-style" toml:"force-path-style"`
 	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
@@ -184,6 +185,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.Acl = options.ACL
 	s3.AccessKey = options.AccessKey
 	s3.SecretAccessKey = options.SecretAccessKey
+	s3.SessionToken = options.SessionToken
 	s3.ForcePathStyle = options.ForcePathStyle
 	s3.RoleArn = options.RoleARN
 	s3.ExternalId = options.ExternalID
@@ -262,7 +264,7 @@ func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
 // auto access without ak / sk.
 func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, ""), nil
+		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken), nil
 	}
 	endpoint := qs.Endpoint
 	// if endpoint is empty,return no error and run default(aws) follow.
@@ -330,6 +332,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		// Clear the credentials if exists so that they will not be sent to TiKV
 		backend.AccessKey = ""
 		backend.SecretAccessKey = ""
+		backend.SessionToken = ""
 	} else if ses.Config.Credentials != nil {
 		if qs.AccessKey == "" || qs.SecretAccessKey == "" {
 			v, cerr := ses.Config.Credentials.Get()
@@ -338,6 +341,7 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 			}
 			backend.AccessKey = v.AccessKeyID
 			backend.SecretAccessKey = v.SecretAccessKey
+			backend.SessionToken = v.SessionToken
 		}
 	}
 
