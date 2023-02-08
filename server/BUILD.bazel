@@ -162,6 +162,7 @@ go_test(
         "//expression",
         "//extension",
         "//infoschema",
+        "//keyspace",
         "//kv",
         "//meta",
         "//metrics",
