@@ -54,8 +54,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tidb/util/stmtsummary"
-	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -1350,9 +1348,6 @@ type SessionVars struct {
 	// EnableIndexJoinInnerSideMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableIndexJoinInnerSideMultiPattern bool
-
-	// StmtSummary collects statements summary for the current session.
-	StmtSummary *stmtSummary
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -1746,7 +1741,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
-		StmtSummary:                   newStmtSummary(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -3279,142 +3273,4 @@ func (lst *protectedTSList) Size() (size int) {
 	size = len(lst.items)
 	lst.Unlock()
 	return
-}
-
-// stmtSummary is an adapter to redirect executions to instances of different types of statement summary.
-type stmtSummary struct {
-	// EnablePersistent indicates whether to enable the persistence
-	// of statements summary in the current session.
-	EnablePersistent bool
-	// StmtSummaryV2 refers to the global StmtSummary instance that will be used when
-	// EnablePersistent is true.
-	StmtSummaryV2 *stmtsummaryv2.StmtSummary
-}
-
-func newStmtSummary() *stmtSummary {
-	return &stmtSummary{
-		EnablePersistent: config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent,
-		StmtSummaryV2:    stmtsummaryv2.GlobalStmtSummary,
-	}
-}
-
-func (s *stmtSummary) Add(stmtExecInfo *stmtsummary.StmtExecInfo) {
-	if !s.ensureInit() {
-		return
-	}
-
-	if s.EnablePersistent {
-		s.StmtSummaryV2.Add(stmtExecInfo)
-	} else {
-		stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
-	}
-}
-
-func (s *stmtSummary) Enabled() bool {
-	if !s.ensureInit() {
-		return false
-	}
-
-	if s.EnablePersistent {
-		return s.StmtSummaryV2.Enabled()
-	}
-	return stmtsummary.StmtSummaryByDigestMap.Enabled()
-}
-
-func (s *stmtSummary) EnabledInternal() bool {
-	if !s.ensureInit() {
-		return false
-	}
-
-	if s.EnablePersistent {
-		return s.StmtSummaryV2.EnableInternalQuery()
-	}
-	return stmtsummary.StmtSummaryByDigestMap.EnabledInternal()
-}
-
-func (s *stmtSummary) SetEnabled(v bool) error {
-	if !s.ensureInit() {
-		return nil
-	}
-
-	if s.EnablePersistent {
-		return s.StmtSummaryV2.SetEnabled(v)
-	}
-	return stmtsummary.StmtSummaryByDigestMap.SetEnabled(v)
-}
-
-func (s *stmtSummary) SetEnableInternalQuery(v bool) error {
-	if !s.ensureInit() {
-		return nil
-	}
-
-	if s.EnablePersistent {
-		return s.StmtSummaryV2.SetEnableInternalQuery(v)
-	}
-	return stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(v)
-}
-
-func (s *stmtSummary) SetRefreshInterval(v int64) error {
-	if !s.ensureInit() {
-		return nil
-	}
-
-	if s.EnablePersistent {
-		return s.StmtSummaryV2.SetRefreshInterval(uint32(v))
-	}
-	return stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(v)
-}
-
-func (s *stmtSummary) SetHistorySize(v int) error {
-	if !s.ensureInit() {
-		return nil
-	}
-
-	if s.EnablePersistent {
-		return nil // not support
-	}
-	return stmtsummary.StmtSummaryByDigestMap.SetHistorySize(v)
-}
-
-func (s *stmtSummary) SetMaxStmtCount(v int) error {
-	if !s.ensureInit() {
-		return nil
-	}
-
-	if s.EnablePersistent {
-		return s.StmtSummaryV2.SetMaxStmtCount(uint32(v))
-	}
-	return stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(uint(v))
-}
-
-func (s *stmtSummary) SetMaxSQLLength(v int) error {
-	if !s.ensureInit() {
-		return nil
-	}
-
-	if s.EnablePersistent {
-		return s.StmtSummaryV2.SetMaxSQLLength(uint32(v))
-	}
-	return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(v)
-}
-
-func (s *stmtSummary) GetBindableStmts(frequency int64) []*stmtsummary.BindableStmt {
-	if !s.ensureInit() {
-		return nil
-	}
-
-	if s.EnablePersistent {
-		return s.StmtSummaryV2.GetMoreThanCntBindableStmt(frequency)
-	}
-	return stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(frequency)
-}
-
-// ensureInit initials StmtSummaryV2 in case it is nil, or
-// return false if the initialization fails.
-func (s *stmtSummary) ensureInit() bool {
-	if s.EnablePersistent && s.StmtSummaryV2 == nil {
-		s.StmtSummaryV2 = stmtsummaryv2.GlobalStmtSummary
-		return s.StmtSummaryV2 != nil
-	}
-	return true
 }

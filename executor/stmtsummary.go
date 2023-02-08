@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -47,13 +48,11 @@ func buildStmtSummaryRetriever(
 	}
 
 	var retriever memTableRetriever
-
-	ss := ctx.GetSessionVars().StmtSummary
 	if extractor.SkipRequest {
 		retriever = &dummyRetriever{}
-	} else if ss.EnablePersistent {
+	} else if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
 		retriever = &stmtSummaryRetrieverV2{
-			stmtSummary: ss.StmtSummaryV2,
+			stmtSummary: stmtsummaryv2.GlobalStmtSummary,
 			table:       table,
 			columns:     columns,
 			digests:     extractor.Digests,

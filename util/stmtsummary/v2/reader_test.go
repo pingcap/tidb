@@ -17,15 +17,14 @@ package stmtsummary
 import (
 	"bufio"
 	"context"
-	"io"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/stretchr/testify/require"
 )
@@ -38,24 +37,6 @@ func TestTimeRangeOverlap(t *testing.T) {
 	require.True(t, timeRangeOverlap(2, 4, 1, 3))
 	require.True(t, timeRangeOverlap(1, 0, 3, 4))
 	require.True(t, timeRangeOverlap(1, 0, 2, 0))
-}
-
-func TestReadLine(t *testing.T) {
-	reader := bufio.NewReader(strings.NewReader(`line1
-line2
-line3`))
-	line, err := readLine(reader)
-	require.NoError(t, err)
-	require.Equal(t, "line1", string(line))
-	line, err = readLine(reader)
-	require.NoError(t, err)
-	require.Equal(t, "line2", string(line))
-	line, err = readLine(reader)
-	require.NoError(t, err)
-	require.Equal(t, "line3", string(line))
-	line, err = readLine(reader)
-	require.Equal(t, io.EOF, err)
-	require.Len(t, line, 0)
 }
 
 func TestStmtFile(t *testing.T) {
@@ -81,7 +62,7 @@ func TestStmtFile(t *testing.T) {
 	require.Equal(t, int64(1672129280), f.end) // 2022-12-27T16-21-20.245 == 1672129280
 
 	// Check if seek 0.
-	firstLine, err := readLine(bufio.NewReader(f.file))
+	firstLine, err := util.ReadLine(bufio.NewReader(f.file), maxLineSize)
 	require.NoError(t, err)
 	require.Equal(t, `{"begin":1,"end":2}`, string(firstLine))
 }

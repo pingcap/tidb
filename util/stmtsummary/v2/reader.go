@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -844,47 +844,11 @@ func isCtxDone(ctx context.Context) bool {
 }
 
 func readLine(reader *bufio.Reader) ([]byte, error) {
-	var resByte []byte
-	lineByte, isPrefix, err := reader.ReadLine()
-	if isPrefix {
-		// Need to read more data.
-		resByte = make([]byte, len(lineByte), len(lineByte)*2)
-	} else {
-		resByte = make([]byte, len(lineByte))
-	}
-	// Use copy here to avoid shallow copy problem.
-	copy(resByte, lineByte)
-	if err != nil {
-		return resByte, err
-	}
-	var tempLine []byte
-	for isPrefix {
-		tempLine, isPrefix, err = reader.ReadLine()
-		resByte = append(resByte, tempLine...) // nozero
-		// Use the max value of max_allowed_packet to check the single line length.
-		if len(resByte) > maxLineSize {
-			return resByte, errors.Errorf("single line length exceeds limit: %v", maxLineSize)
-		}
-		if err != nil {
-			return resByte, err
-		}
-	}
-	return resByte, err
+	return util.ReadLine(reader, maxLineSize)
 }
 
 func readLines(reader *bufio.Reader, count int) ([][]byte, error) {
-	lines := make([][]byte, 0, count)
-	for i := 0; i < count; i++ {
-		line, err := readLine(reader)
-		if err == io.EOF && len(lines) > 0 {
-			return lines, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		lines = append(lines, line)
-	}
-	return lines, nil
+	return util.ReadLines(reader, count, maxLineSize)
 }
 
 func timeRangeOverlap(aBegin, aEnd, bBegin, bEnd int64) bool {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
@@ -240,17 +241,6 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 	if s.closed.Load() {
 		return
 	}
-	if !s.Enabled() {
-		// StmtSummary is not enabled.
-		return
-	}
-	if info.IsInternal && !s.EnableInternalQuery() {
-		// StmtSummary does not enable internal query statistics
-		// and this record is an internal query.
-		return
-	}
-
-	/* Finally, add info to the current statistics window. */
 
 	k := &stmtKey{
 		schemaName: info.SchemaName,
@@ -260,6 +250,7 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 	}
 	k.Hash() // Calculate hash value in advance, to reduce the time holding the window lock.
 
+	// Add info to the current statistics window.
 	s.windowLock.Lock()
 	var record *lockedStmtRecord
 	if v, ok := s.window.lru.Get(k); ok {
@@ -501,4 +492,89 @@ type mockStmtStorage struct {
 
 func (s *mockStmtStorage) persist(w *stmtWindow, _ time.Time) {
 	s.windows = append(s.windows, w)
+}
+
+/* Public proxy functions between v1 and v2 */
+
+// Add wraps GlobalStmtSummary.Add and stmtsummary.StmtSummaryByDigestMap.AddStatement.
+func Add(stmtExecInfo *stmtsummary.StmtExecInfo) {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		GlobalStmtSummary.Add(stmtExecInfo)
+	} else {
+		stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
+	}
+}
+
+// Enabled wraps GlobalStmtSummary.Enabled and stmtsummary.StmtSummaryByDigestMap.Enabled.
+func Enabled() bool {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return GlobalStmtSummary.Enabled()
+	}
+	return stmtsummary.StmtSummaryByDigestMap.Enabled()
+}
+
+// EnabledInternal wraps GlobalStmtSummary.EnableInternalQuery and stmtsummary.StmtSummaryByDigestMap.EnabledInternal.
+func EnabledInternal() bool {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return GlobalStmtSummary.EnableInternalQuery()
+	}
+	return stmtsummary.StmtSummaryByDigestMap.EnabledInternal()
+}
+
+// SetEnabled wraps GlobalStmtSummary.SetEnabled and stmtsummary.StmtSummaryByDigestMap.SetEnabled.
+func SetEnabled(v bool) error {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return GlobalStmtSummary.SetEnabled(v)
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetEnabled(v)
+}
+
+// SetEnableInternalQuery wraps GlobalStmtSummary.SetEnableInternalQuery and
+// stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery.
+func SetEnableInternalQuery(v bool) error {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return GlobalStmtSummary.SetEnableInternalQuery(v)
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetEnabledInternalQuery(v)
+}
+
+// SetRefreshInterval wraps GlobalStmtSummary.SetRefreshInterval and stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval.
+func SetRefreshInterval(v int64) error {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return GlobalStmtSummary.SetRefreshInterval(uint32(v))
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetRefreshInterval(v)
+}
+
+// SetHistorySize wraps stmtsummary.StmtSummaryByDigestMap.SetHistorySize.
+func SetHistorySize(v int) error {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return nil // not support
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetHistorySize(v)
+}
+
+// SetMaxStmtCount wraps GlobalStmtSummary.SetMaxStmtCount and stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount.
+func SetMaxStmtCount(v int) error {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return GlobalStmtSummary.SetMaxStmtCount(uint32(v))
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(uint(v))
+}
+
+// SetMaxSQLLength wraps GlobalStmtSummary.SetMaxSQLLength and stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength.
+func SetMaxSQLLength(v int) error {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return GlobalStmtSummary.SetMaxSQLLength(uint32(v))
+	}
+	return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(v)
+}
+
+// GetMoreThanCntBindableStmt wraps GlobalStmtSummary.GetMoreThanCntBindableStmt and
+// stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt.
+func GetMoreThanCntBindableStmt(frequency int64) []*stmtsummary.BindableStmt {
+	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
+		return GlobalStmtSummary.GetMoreThanCntBindableStmt(frequency)
+	}
+	return stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(frequency)
 }

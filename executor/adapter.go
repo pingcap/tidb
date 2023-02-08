@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -1802,10 +1803,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		userString = sessVars.User.Username
 	}
 
-	enabled := sessVars.StmtSummary.Enabled()
-	enabledInternalQuery := sessVars.StmtSummary.EnabledInternal()
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
-	if !enabled || ((sessVars.InRestrictedSQL || len(userString) == 0) && !enabledInternalQuery) {
+	if !stmtsummaryv2.Enabled() || ((sessVars.InRestrictedSQL || len(userString) == 0) && !stmtsummaryv2.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
 		return
 	}
@@ -1922,7 +1921,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
-	sessVars.StmtSummary.Add(stmtExecInfo)
+	stmtsummaryv2.Add(stmtExecInfo)
 }
 
 // GetTextToLog return the query text to log.

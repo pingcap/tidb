@@ -201,6 +201,7 @@ func main() {
 	}
 	setupLog()
 	setupExtensions()
+	setupStmtSummary()
 
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
@@ -255,7 +256,6 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL()
-	setupStmtSummary()
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()

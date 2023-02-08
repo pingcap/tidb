@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -30,10 +31,11 @@ import (
 )
 
 func TestStmtSummaryTable(t *testing.T) {
-	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
-	defer stmtSummary.Close()
+	setupStmtSummary()
+	defer closeStmtSummary()
+
 	store := testkit.CreateMockStore(t)
-	tk := newTestKitWithRoot(t, store, stmtSummary)
+	tk := newTestKitWithRoot(t, store)
 
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
@@ -49,7 +51,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
 
 	// Create a new session to test.
-	tk = newTestKitWithRoot(t, store, stmtSummary)
+	tk = newTestKitWithRoot(t, store)
 
 	// Test INSERT
 	tk.MustExec("insert into t values(1, 'a')")
@@ -145,7 +147,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("0"))
 
 	// Create a new session to test
-	tk = newTestKitWithRoot(t, store, stmtSummary)
+	tk = newTestKitWithRoot(t, store)
 
 	// This statement shouldn't be summarized.
 	tk.MustQuery("select * from t where a=2")
@@ -190,7 +192,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
 
 	// Create a new session to test.
-	tk = newTestKitWithRoot(t, store, stmtSummary)
+	tk = newTestKitWithRoot(t, store)
 
 	// Statement summary is disabled.
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -204,10 +206,11 @@ func TestStmtSummaryTable(t *testing.T) {
 }
 
 func TestStmtSummaryTablePrivilege(t *testing.T) {
-	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
-	defer stmtSummary.Close()
+	setupStmtSummary()
+	defer closeStmtSummary()
+
 	store := testkit.CreateMockStore(t)
-	tk := newTestKitWithRoot(t, store, stmtSummary)
+	tk := newTestKitWithRoot(t, store)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -228,7 +231,7 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 	result = tk.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	require.Equal(t, 1, len(result.Rows()))
 
-	tk1 := newTestKit(t, store, stmtSummary)
+	tk1 := newTestKit(t, store)
 	tk1.Session().Auth(&auth.UserIdentity{
 		Username:     "test_user",
 		Hostname:     "localhost",
@@ -257,11 +260,11 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 }
 
 func TestCapturePrivilege(t *testing.T) {
-	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
-	defer stmtSummary.Close()
+	setupStmtSummary()
+	defer closeStmtSummary()
+
 	store := testkit.CreateMockStore(t)
-	tk := newTestKitWithRoot(t, store, stmtSummary)
-	enableStmtSummaryV2InBindHandle(t, store, stmtSummary)
+	tk := newTestKitWithRoot(t, store)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -286,7 +289,7 @@ func TestCapturePrivilege(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 
-	tk1 := newTestKit(t, store, stmtSummary)
+	tk1 := newTestKit(t, store)
 	tk1.Session().Auth(&auth.UserIdentity{
 		Username:     "test_user",
 		Hostname:     "localhost",
@@ -310,10 +313,11 @@ func TestCapturePrivilege(t *testing.T) {
 }
 
 func TestStmtSummaryErrorCount(t *testing.T) {
-	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
-	defer stmtSummary.Close()
+	setupStmtSummary()
+	defer closeStmtSummary()
+
 	store := testkit.CreateMockStore(t)
-	tk := newTestKitWithRoot(t, store, stmtSummary)
+	tk := newTestKitWithRoot(t, store)
 
 	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
@@ -335,10 +339,11 @@ func TestStmtSummaryErrorCount(t *testing.T) {
 }
 
 func TestStmtSummaryPreparedStatements(t *testing.T) {
-	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
-	defer stmtSummary.Close()
+	setupStmtSummary()
+	defer closeStmtSummary()
+
 	store := testkit.CreateMockStore(t)
-	tk := newTestKitWithRoot(t, store, stmtSummary)
+	tk := newTestKitWithRoot(t, store)
 
 	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
@@ -358,10 +363,11 @@ func TestStmtSummaryPreparedStatements(t *testing.T) {
 }
 
 func TestStmtSummarySensitiveQuery(t *testing.T) {
-	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
-	defer stmtSummary.Close()
+	setupStmtSummary()
+	defer closeStmtSummary()
+
 	store := testkit.CreateMockStore(t)
-	tk := newTestKitWithRoot(t, store, stmtSummary)
+	tk := newTestKitWithRoot(t, store)
 
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
@@ -381,10 +387,11 @@ func TestStmtSummarySensitiveQuery(t *testing.T) {
 }
 
 func TestStmtSummaryTableOther(t *testing.T) {
-	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
-	defer stmtSummary.Close()
+	setupStmtSummary()
+	defer closeStmtSummary()
+
 	store := testkit.CreateMockStore(t)
-	tk := newTestKitWithRoot(t, store, stmtSummary)
+	tk := newTestKitWithRoot(t, store)
 
 	tk.MustExec("set global tidb_enable_stmt_summary=0")
 	tk.MustExec("set global tidb_enable_stmt_summary=1")
@@ -414,10 +421,11 @@ func TestStmtSummaryTableOther(t *testing.T) {
 }
 
 func TestStmtSummaryHistoryTableOther(t *testing.T) {
-	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
-	defer stmtSummary.Close()
+	setupStmtSummary()
+	defer closeStmtSummary()
+
 	store := testkit.CreateMockStore(t)
-	tk := newTestKitWithRoot(t, store, stmtSummary)
+	tk := newTestKitWithRoot(t, store)
 
 	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
 	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
@@ -448,12 +456,13 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 }
 
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
-	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(3000)
-	defer stmtSummary.Close()
+	setupStmtSummary()
+	defer closeStmtSummary()
+
 	store := testkit.CreateMockStore(t)
 	tmp := testkit.NewTestKit(t, store)
 	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
-	tk := newTestKitWithPlanCache(t, store, stmtSummary)
+	tk := newTestKitWithPlanCache(t, store)
 
 	// Clear summaries.
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
@@ -472,40 +481,43 @@ func TestPerformanceSchemaforPlanCache(t *testing.T) {
 		testkit.Rows("3 1"))
 }
 
-func newTestKit(t *testing.T, store kv.Storage, stmtSummary *stmtsummaryv2.StmtSummary) *testkit.TestKit {
+func newTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().StmtSummary.EnablePersistent = true
-	tk.Session().GetSessionVars().StmtSummary.StmtSummaryV2 = stmtSummary
 	tk.MustExec("use test")
 	return tk
 }
 
-func newTestKitWithRoot(t *testing.T, store kv.Storage, stmtSummary *stmtsummaryv2.StmtSummary) *testkit.TestKit {
-	tk := newTestKit(t, store, stmtSummary)
+func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
+	tk := newTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
 }
 
-func newTestKitWithPlanCache(t *testing.T, store kv.Storage, stmtSummary *stmtsummaryv2.StmtSummary) *testkit.TestKit {
+func newTestKitWithPlanCache(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: plannercore.NewLRUPlanCache(100, 0.1, math.MaxUint64, tk.Session()),
 	})
 	require.NoError(t, err)
-	tk.Session().GetSessionVars().StmtSummary.EnablePersistent = true
-	tk.Session().GetSessionVars().StmtSummary.StmtSummaryV2 = stmtSummary
 	tk.SetSession(se)
 	tk.RefreshConnectionID()
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	return tk
 }
 
-func enableStmtSummaryV2InBindHandle(t *testing.T, store kv.Storage, stmtSummary *stmtsummaryv2.StmtSummary) {
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
-	ss, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	ss.GetSessionVars().StmtSummary.EnablePersistent = true
-	ss.GetSessionVars().StmtSummary.StmtSummaryV2 = stmtSummary
-	dom.BindHandle().Reset(ss)
+func setupStmtSummary() {
+	stmtsummaryv2.Setup(&stmtsummaryv2.Config{
+		Filename: "tidb-statements.log",
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryEnablePersistent = true
+	})
+}
+
+func closeStmtSummary() {
+	stmtsummaryv2.GlobalStmtSummary.Close()
+	stmtsummaryv2.GlobalStmtSummary = nil
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryEnablePersistent = false
+	})
 }

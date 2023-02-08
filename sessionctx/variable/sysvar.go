@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -667,28 +668,28 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBScatterRegion, Value: BoolToOnOff(DefTiDBScatterRegion), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			return s.StmtSummary.SetEnabled(TiDBOptOn(val))
+			return stmtsummaryv2.SetEnabled(TiDBOptOn(val))
 		}},
 	{Scope: ScopeGlobal, Name: TiDBStmtSummaryInternalQuery, Value: BoolToOnOff(DefTiDBStmtSummaryInternalQuery), Type: TypeBool, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			return s.StmtSummary.SetEnableInternalQuery(TiDBOptOn(val))
+			return stmtsummaryv2.SetEnableInternalQuery(TiDBOptOn(val))
 		}},
 	{Scope: ScopeGlobal, Name: TiDBStmtSummaryRefreshInterval, Value: strconv.Itoa(DefTiDBStmtSummaryRefreshInterval), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			// convert val to int64
-			return s.StmtSummary.SetRefreshInterval(TidbOptInt64(val, DefTiDBStmtSummaryRefreshInterval))
+			return stmtsummaryv2.SetRefreshInterval(TidbOptInt64(val, DefTiDBStmtSummaryRefreshInterval))
 		}},
 	{Scope: ScopeGlobal, Name: TiDBStmtSummaryHistorySize, Value: strconv.Itoa(DefTiDBStmtSummaryHistorySize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxUint8, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			return s.StmtSummary.SetHistorySize(TidbOptInt(val, DefTiDBStmtSummaryHistorySize))
+			return stmtsummaryv2.SetHistorySize(TidbOptInt(val, DefTiDBStmtSummaryHistorySize))
 		}},
 	{Scope: ScopeGlobal, Name: TiDBStmtSummaryMaxStmtCount, Value: strconv.Itoa(DefTiDBStmtSummaryMaxStmtCount), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt16, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			return s.StmtSummary.SetMaxStmtCount(TidbOptInt(val, DefTiDBStmtSummaryMaxStmtCount))
+			return stmtsummaryv2.SetMaxStmtCount(TidbOptInt(val, DefTiDBStmtSummaryMaxStmtCount))
 		}},
 	{Scope: ScopeGlobal, Name: TiDBStmtSummaryMaxSQLLength, Value: strconv.Itoa(DefTiDBStmtSummaryMaxSQLLength), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			return s.StmtSummary.SetMaxSQLLength(TidbOptInt(val, DefTiDBStmtSummaryMaxSQLLength))
+			return stmtsummaryv2.SetMaxSQLLength(TidbOptInt(val, DefTiDBStmtSummaryMaxSQLLength))
 		}},
 	{Scope: ScopeGlobal, Name: TiDBCapturePlanBaseline, Value: DefTiDBCapturePlanBaseline, Type: TypeBool, AllowEmptyAll: true},
 	{Scope: ScopeGlobal, Name: TiDBEvolvePlanTaskMaxTime, Value: strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
