@@ -2025,6 +2025,7 @@ const (
 	PlacementOptionLearnerConstraints
 	PlacementOptionFollowerConstraints
 	PlacementOptionVoterConstraints
+	PlacementOptionSurvivalPreferences
 	PlacementOptionPolicy
 )
 
@@ -2089,6 +2090,10 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT POLICY ")
 			ctx.WritePlain("= ")
 			ctx.WriteName(n.StrValue)
+		case PlacementOptionSurvivalPreferences:
+			ctx.WriteKeyWord("SURVIVAL_PREFERENCES ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
 		default:
 			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
 		}
@@ -2103,6 +2108,7 @@ type ResourceGroupOption struct {
 	Tp        ResourceUnitType
 	StrValue  string
 	UintValue uint64
+	BoolValue bool
 }
 
 type ResourceUnitType int
@@ -2114,6 +2120,9 @@ const (
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
 	ResourceUnitIOWriteBandwidth
+
+	// Options
+	ResourceBurstableOpiton
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -2138,6 +2147,8 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
+		case ResourceBurstableOpiton:
+			ctx.WriteKeyWord("BURSTABLE")
 		default:
 			return errors.Errorf("invalid PlacementOption: %d", n.Tp)
 		}

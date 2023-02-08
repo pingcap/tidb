@@ -1319,6 +1319,37 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	require.Contains(t, err.Error(), "[util:1815]Internal : get tiflash_compute topology failed")
 }
 
+// todo: remove this after AutoScaler is stable.
+func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = true
+		conf.UseAutoScaler = false
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+		conf.UseAutoScaler = true
+	})
+
+	// Setting globalTopoFetcher to nil to can make sure cannot fetch topo from AutoScaler.
+	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.InvalidASStr, "", "", false)
+	require.Contains(t, err.Error(), "unexpected topo fetch type. expect: mock or aws or gcp, got invalid")
+
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+
+	err = tk.ExecToErr("select * from t;")
+	// This error message means we use PD instead of AutoScaler.
+	require.Contains(t, err.Error(), "tiflash_compute node is unavailable")
+}
+
 func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DisaggregatedTiFlash = true
@@ -1370,4 +1401,27 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 		"    └─Selection_21 3323.33 mpp[tiflash]  lt(test.t1.c1, 2)",
 		"      └─TableFullScan_20 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"))
 	// tk.MustQuery("select * from t1 where c1 < 2").Check(testkit.Rows("1 1"))
+}
+
+func TestMPPMemoryTracker(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_mem_quota_query = 1 << 30")
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("set tidb_enforce_mpp = on;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/testMPPOOMPanic", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/testMPPOOMPanic"))
+	}()
+	err = tk.QueryToErr("select * from t")
+	require.NotNil(t, err)
+	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 }

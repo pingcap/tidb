@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -185,7 +186,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.ClusterTableMemoryUsageOpsHistory:
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
 		case infoschema.TableResourceGroups:
-			err = e.setDataFromResourceGroups(sctx)
+			err = e.setDataFromResourceGroups()
 		}
 		if err != nil {
 			return nil, err
@@ -3388,17 +3389,37 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromResourceGroups(sctx sessionctx.Context) error {
-	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	resourceGroups := is.AllResourceGroups()
+func (e *memtableRetriever) setDataFromResourceGroups() error {
+	resourceGroups, err := infosync.ListResourceGroups(context.TODO())
+	if err != nil {
+		return errors.Errorf("failed to access resource group manager, error message is %s", err.Error())
+	}
 	rows := make([][]types.Datum, 0, len(resourceGroups))
 	for _, group := range resourceGroups {
-		row := types.MakeDatums(
-			group.ID,
-			group.Name.O,
-			group.RURate,
-		)
-		rows = append(rows, row)
+		//mode := ""
+		burstable := "NO"
+		switch group.Mode {
+		case rmpb.GroupMode_RUMode:
+			if group.RUSettings.RU.Settings.BurstLimit < 0 {
+				burstable = "YES"
+			}
+			row := types.MakeDatums(
+				group.Name,
+				group.RUSettings.RU.Settings.FillRate,
+				uint64(group.RUSettings.RU.Tokens),
+				burstable,
+			)
+			rows = append(rows, row)
+		default:
+			//mode = "UNKNOWN_MODE"
+			row := types.MakeDatums(
+				group.Name,
+				nil,
+				nil,
+				nil,
+			)
+			rows = append(rows, row)
+		}
 	}
 	e.rows = rows
 	return nil
