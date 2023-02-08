@@ -83,9 +83,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 			return errors.Trace(err)
 		}
 	}
-	h.mu.Lock()
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
-	h.mu.Unlock()
 	if !ok {
 		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
 		return errors.Trace(h.DeleteTableStatsFromKV([]int64{physicalID}))
