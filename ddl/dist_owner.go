@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,7 +34,10 @@ import (
 )
 
 // CheckBackfillJobFinishInterval is export for test.
-var CheckBackfillJobFinishInterval = 300 * time.Millisecond
+var (
+	CheckBackfillJobFinishInterval = 300 * time.Millisecond
+	telemetryDistReorgUsage        = metrics.TelemetryDistReorgCnt
+)
 
 func initDistReorg(reorgMeta *model.DDLReorgMeta, store kv.Storage, schemaID int64, tblInfo *model.TableInfo) error {
 	tbl, err := getTable(store, schemaID, tblInfo)
@@ -47,6 +51,9 @@ func initDistReorg(reorgMeta *model.DDLReorgMeta, store kv.Storage, schemaID int
 		isDistReorg = false
 	}
 	reorgMeta.IsDistReorg = isDistReorg
+	if isDistReorg {
+		metrics.TelemetryDistReorgCnt.Inc()
+	}
 	return nil
 }
 

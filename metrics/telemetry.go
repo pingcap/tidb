@@ -169,6 +169,13 @@ var (
 			Name:      "compact_partition_usage",
 			Help:      "Counter of compact table partition",
 		})
+	TelemetryDistReorgCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "Distributed_reorg_count",
+			Help:      "Counter of usage of distributed reorg DDL tasks count",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -386,6 +393,7 @@ type DDLUsageCounter struct {
 	AddIndexIngestUsed   int64 `json:"add_index_ingest_used"`
 	MetadataLockUsed     bool  `json:"metadata_lock_used"`
 	FlashbackClusterUsed int64 `json:"flashback_cluster_used"`
+	DistReorgUsed        int64 `json:"dist_reorg_used"`
 }
 
 // Sub returns the difference of two counters.
@@ -393,6 +401,7 @@ func (a DDLUsageCounter) Sub(rhs DDLUsageCounter) DDLUsageCounter {
 	return DDLUsageCounter{
 		AddIndexIngestUsed:   a.AddIndexIngestUsed - rhs.AddIndexIngestUsed,
 		FlashbackClusterUsed: a.FlashbackClusterUsed - rhs.FlashbackClusterUsed,
+		DistReorgUsed:        a.DistReorgUsed - rhs.DistReorgUsed,
 	}
 }
 
@@ -401,6 +410,7 @@ func GetDDLUsageCounter() DDLUsageCounter {
 	return DDLUsageCounter{
 		AddIndexIngestUsed:   readCounter(TelemetryAddIndexIngestCnt),
 		FlashbackClusterUsed: readCounter(TelemetryFlashbackClusterCnt),
+		DistReorgUsed:        readCounter(TelemetryDistReorgCnt),
 	}
 }
 
