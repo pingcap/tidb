@@ -259,34 +259,76 @@ func (s *partitionProcessor) findUsedKeyPartitions(ctx sessionctx.Context, tbl t
 	}
 	ranges := detachedResult.Ranges
 	used := make([]int, 0, len(ranges))
-	if len(partExpr.ForKeyPruning.Cols) > 1 {
-		used = []int{FullRange}
-	} else {
-		for _, r := range ranges {
-			if r.IsPointNullable(ctx) {
-				if !r.HighVal[0].IsNull() {
-					if len(r.HighVal) != len(partCols) {
-						used = []int{-1}
-						break
-					}
+
+	for _, r := range ranges {
+		if r.IsPointNullable(ctx) {
+			if !r.HighVal[0].IsNull() {
+				if len(r.HighVal) != len(partCols) {
+					used = []int{-1}
+					break
 				}
-				highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
-				highLowVals = append(highLowVals, r.HighVal...)
-				highLowVals = append(highLowVals, r.LowVal...)
-				idx, err := partExpr.LocateKeyPartition(ctx, pi, partCols, highLowVals, int64(pi.Num))
+			}
+			highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
+			highLowVals = append(highLowVals, r.HighVal...)
+			highLowVals = append(highLowVals, r.LowVal...)
+			idx, err := partExpr.LocateKeyPartition(ctx, pi, partCols, highLowVals, int64(pi.Num))
+			if err != nil {
+				// If we failed to get the point position, we can just skip and ignore it.
+				continue
+			}
+
+			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+				continue
+			}
+			used = append(used, int(idx))
+		} else {
+			if len(partCols) == 1 && partCols[0].RetType.EvalType() == types.ETInt {
+				col := partCols[0]
+				posHigh, highIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 				if err != nil {
-					// If we failed to get the point position, we can just skip and ignore it.
-					continue
+					return nil, nil, err
 				}
 
-				if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+				posLow, lowIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+				if err != nil {
+					return nil, nil, err
+				}
+
+				// consider whether the range is closed or open
+				if r.LowExclude {
+					posLow++
+				}
+				if r.HighExclude {
+					posHigh--
+				}
+
+				var rangeScalar float64
+				if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
+				} else {
+					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+				}
+
+				// if range is less than the number of partitions, there will be unused partitions we can prune out.
+				if rangeScalar < float64(pi.Num) && !highIsNull && !lowIsNull {
+					for i := posLow; i <= posHigh; i++ {
+						d := types.Datum{}
+						d.SetInt64(i)
+						idx, err := partExpr.LocateKeyPartition(ctx, pi, partCols, []types.Datum{d}, int64(pi.Num))
+						if err != nil {
+							// If we failed to get the point position, we can just skip and ignore it.
+							continue
+						}
+						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+							continue
+						}
+						used = append(used, int(idx))
+					}
 					continue
 				}
-				used = append(used, int(idx))
-			} else {
-				used = []int{FullRange}
-				break
 			}
+			used = []int{FullRange}
+			break
 		}
 	}
 

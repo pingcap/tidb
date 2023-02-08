@@ -185,13 +185,15 @@ func (pe *PartitionExpr) LocateKeyPartition(ctx sessionctx.Context,
 		}
 		nr1, nr2 = types.CalcBytesHash(data, nr1, nr2)
 	}
+	// partId := nr1 % pi.Num
+
 	partId := (int)(nr1 & (uint64)(pi.HashMask))
 	if partId > int(pNum) {
 		newmask := ((pi.HashMask + 1) >> 1) - 1
 		partId = (int)(nr1 & (uint64)(newmask))
 	}
 
-	return partId, nil
+	return int(partId), nil
 }
 
 func initEvalBufferType(t *partitionedTable) {

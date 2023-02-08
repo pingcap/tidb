@@ -2868,7 +2868,22 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 	return checkListPartitionValue(ctx, tbInfo)
 }
 
-func isColTypeAllowedAsPartitioningCol(fieldType types.FieldType) bool {
+func isValidKeyPartitionColType(fieldType types.FieldType) bool {
+	switch fieldType.GetType() {
+	case mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeJSON, mysql.TypeGeometry:
+		return false
+	default:
+		return true
+	}
+	return true
+}
+
+func isColTypeAllowedAsPartitioningCol(partType model.PartitionType, fieldType types.FieldType) bool {
+	// For key partition, the permitted partition field types can be all field types except
+	// BLOB, JSON, Geometry
+	if partType == model.PartitionTypeKey {
+		return isValidKeyPartitionColType(fieldType)
+	}
 	// The permitted data types are shown in the following list:
 	// All integer types
 	// DATE and DATETIME
@@ -2891,7 +2906,7 @@ func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 		if colInfo == nil {
 			return errors.Trace(dbterror.ErrFieldNotFoundPart)
 		}
-		if !isColTypeAllowedAsPartitioningCol(colInfo.FieldType) {
+		if !isColTypeAllowedAsPartitioningCol(tbInfo.Partition.Type, colInfo.FieldType) {
 			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.O)
 		}
 	}
@@ -4775,7 +4790,7 @@ func GetModifiableColumnJob(
 			if col.Name.L != newCol.Name.L {
 				return nil, dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 			}
-			if !isColTypeAllowedAsPartitioningCol(newCol.FieldType) {
+			if !isColTypeAllowedAsPartitioningCol(t.Meta().Partition.Type, newCol.FieldType) {
 				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
 			}
 			pi := pt.Meta().GetPartitionInfo()
