@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -192,6 +193,7 @@ func GlobalInfoSyncerInit(
 	serverIDGetter func() uint64,
 	etcdCli, unprefixedEtcdCli *clientv3.Client,
 	pdCli pd.Client,
+	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 ) (*InfoSyncer, error) {
 	is := &InfoSyncer{
@@ -208,7 +210,7 @@ func GlobalInfoSyncerInit(
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
 	is.scheduleManager = initScheduleManager(etcdCli)
-	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli)
+	is.tiflashReplicaManager = initTiFlashReplicaManager(etcdCli, codec)
 	is.resourceGroupManager = initResourceGroupManager(pdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -261,13 +263,13 @@ func initResourceGroupManager(pdCli pd.Client) pd.ResourceManagerClient {
 	return pdCli
 }
 
-func initTiFlashReplicaManager(etcdCli *clientv3.Client) TiFlashReplicaManager {
+func initTiFlashReplicaManager(etcdCli *clientv3.Client, codec tikv.Codec) TiFlashReplicaManager {
 	if etcdCli == nil {
 		m := mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return &m
 	}
 	logutil.BgLogger().Warn("init TiFlashReplicaManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
-	return &TiFlashReplicaManagerCtx{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]float64)}
+	return &TiFlashReplicaManagerCtx{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
 func initScheduleManager(etcdCli *clientv3.Client) ScheduleManager {
