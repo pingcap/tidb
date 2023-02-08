@@ -882,12 +882,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateMerging:
-		failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
-			//nolint:forcetypeassert
-			if val.(bool) && MockDMLExecutionStateMerging != nil {
-				MockDMLExecutionStateMerging()
-			}
-		})
 		done, ver, err = runReorgJobAndHandleErr(w, d, t, job, tbl, indexInfo, true)
 		if !done {
 			return false, ver, err
@@ -968,6 +962,15 @@ func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *m
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
+
+	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && indexInfo.BackfillState == model.BackfillStateMerging &&
+			MockDMLExecutionStateMerging != nil {
+			MockDMLExecutionStateMerging()
+		}
+	})
+
 	sctx, err1 := w.sessPool.get()
 	if err1 != nil {
 		err = err1

@@ -569,8 +569,9 @@ func TestAddIndexMergeInsertOnMerging(t *testing.T) {
 		assert.Error(t, err) // [kv:1062]Duplicate entry '5' for key 't.idx'
 		_, err = tk1.Exec("insert into t values (5, 8) on duplicate key update a = 6;")
 		assert.NoError(t, err) // The row should be normally updated to (6, 5).
+		ddl.MockDMLExecutionStateMerging = nil
 	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateMerging", "1*return(true)->return(false)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateMerging", "return(true)"))
 	tk.MustExec("alter table t add unique index idx(a);")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("6 5"))
@@ -596,9 +597,10 @@ func TestAddIndexMergeReplaceOnMerging(t *testing.T) {
 	ddl.MockDMLExecutionStateMerging = func() {
 		_, err := tk1.Exec("replace into t values (5, 8);")
 		assert.NoError(t, err)
+		ddl.MockDMLExecutionStateMerging = nil
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecution", "1*return(true)->return(false)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateMerging", "1*return(true)->return(false)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateMerging", "return(true)"))
 	tk.MustExec("alter table t add unique index idx(a);")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("5 8"))
