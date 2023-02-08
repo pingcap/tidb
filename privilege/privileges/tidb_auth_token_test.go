@@ -257,6 +257,7 @@ func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]interface{}) 
 
 func TestAuthTokenClaims(t *testing.T) {
 	var jwksImpl JWKSImpl
+	var defaultTokenLife int64 = 15
 	now := time.Now()
 	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(nil, nil, path[0], time.Hour), path[0])
 	claims := map[string]interface{}{
@@ -322,7 +323,7 @@ func TestAuthTokenClaims(t *testing.T) {
 	require.ErrorContains(t, err, "iat: abc is not a value of time.Time")
 	time.Sleep(2 * time.Second)
 	verifiedClaims[jwtRepo.IssuedAtKey] = now
-	err = checkAuthTokenClaims(verifiedClaims, record, time.Second)
+	err = checkAuthTokenClaims(verifiedClaims, record, 1)
 	require.ErrorContains(t, err, "the token has been out of its life time")
 	verifiedClaims[jwtRepo.IssuedAtKey] = now.Add(time.Hour)
 	err = checkAuthTokenClaims(verifiedClaims, record, defaultTokenLife)

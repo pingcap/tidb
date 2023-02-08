@@ -343,7 +343,7 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 	return
 }
 
-func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife time.Duration) error {
+func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife int64) error {
 	if sub, ok := claims[jwtRepo.SubjectKey]; !ok {
 		return errors.New("lack 'sub'")
 	} else if sub != record.User {
@@ -362,7 +362,7 @@ func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tok
 		return errors.New("lack 'iat'")
 	} else if iat, ok := val.(time.Time); !ok {
 		return fmt.Errorf("iat: %v is not a value of time.Time", val)
-	} else if now.After(iat.Add(tokenLife)) {
+	} else if tokenLife > 0 && now.After(iat.Add(time.Duration(tokenLife)*time.Minute)) {
 		return errors.New("the token has been out of its life time")
 	} else if now.Before(iat) {
 		return errors.New("the token is issued at a future time")
@@ -563,8 +563,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
-		tokenLifetime := time.Duration(variable.AuthTokenLifetime.Load()) * time.Minute
-		if err = checkAuthTokenClaims(claims, record, tokenLifetime); err != nil {
+		if err = checkAuthTokenClaims(claims, record, variable.AuthTokenLifetime.Load()); err != nil {
 			logutil.BgLogger().Error("check claims failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
