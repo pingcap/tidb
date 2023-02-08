@@ -1979,7 +1979,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-// explicitTz is used to handle a data race of timeZone, refer to https://github.com/pingcap/tidb/issues/40710. It only works for timestamp now, be careful to used it!
+// explicitTz is used to handle a data race of timeZone, refer to https://github.com/pingcap/tidb/issues/40710. It only works for timestamp now, be careful to use it!
 func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, explicitTz *gotime.Location) (Time, error) {
 	return parseTime(sc, str, tp, fsp, false, explicitTz)
 }
