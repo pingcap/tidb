@@ -116,6 +116,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		backoffSleep:       map[string]time.Duration{"RegionMiss": time.Millisecond},
 		totalProcessTime:   time.Second,
 		totalWaitTime:      time.Second,
+		totalTikvWallTime:  time.Second * 2,
 		rpcStat:            tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency: 15,
 	}
@@ -124,7 +125,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	stmtStats.RegisterStats(1, s1)
 	stmtStats.RegisterStats(1, &s2)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
+	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, tikv_wall: 4s, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
@@ -135,20 +136,21 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	}
 	stmtStats.RegisterStats(2, s1)
 	stats = stmtStats.GetRootStats(2)
-	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}, backoff{RegionMiss: 1ms}"
+	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, tikv_wall: 2s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
 
 	s1 = &selectResultRuntimeStats{
-		copRespTime:      []time.Duration{time.Second},
-		procKeys:         []int64{100},
-		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
-		totalProcessTime: time.Second,
-		totalWaitTime:    time.Second,
-		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+		copRespTime:       []time.Duration{time.Second},
+		procKeys:          []int64{100},
+		backoffSleep:      map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime:  time.Second,
+		totalWaitTime:     time.Second,
+		totalTikvWallTime: time.Second * 2,
+		rpcStat:           tikv.NewRegionRequestRuntimeStats(),
 	}
-	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, tikv_wall: 2s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, s1.String())
 }
 

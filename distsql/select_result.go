@@ -367,8 +367,13 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
-	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
+	if len(r.copPlanIDs) > 0 {
+		if copStats.ScanDetail != nil {
+			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1],
+				r.storeType.Name(), copStats.ScanDetail)
+		}
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordTimeDetail(r.copPlanIDs[len(r.copPlanIDs)-1],
+			r.storeType.Name(), &copStats.TimeDetail)
 	}
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
@@ -472,6 +477,7 @@ type selectResultRuntimeStats struct {
 	backoffSleep       map[string]time.Duration
 	totalProcessTime   time.Duration
 	totalWaitTime      time.Duration
+	totalTikvWallTime  time.Duration
 	rpcStat            tikv.RegionRequestRuntimeStats
 	distSQLConcurrency int
 	CoprCacheHitNum    int64
@@ -487,6 +493,7 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
+	s.totalTikvWallTime += copStats.TimeDetail.TotalRPCWallTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
@@ -509,6 +516,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
+	newRs.totalTikvWallTime = s.totalTikvWallTime
 	maps.Copy(newRs.rpcStat.Stats, s.rpcStat.Stats)
 	return &newRs
 }
@@ -526,6 +534,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime
+	s.totalTikvWallTime += other.totalTikvWallTime
 	s.rpcStat.Merge(other.rpcStat)
 	s.CoprCacheHitNum += other.CoprCacheHitNum
 }
@@ -563,10 +572,14 @@ func (s *selectResultRuntimeStats) String() string {
 		if s.totalProcessTime > 0 {
 			buf.WriteString(", tot_proc: ")
 			buf.WriteString(execdetails.FormatDuration(s.totalProcessTime))
-			if s.totalWaitTime > 0 {
-				buf.WriteString(", tot_wait: ")
-				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
-			}
+		}
+		if s.totalWaitTime > 0 {
+			buf.WriteString(", tot_wait: ")
+			buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
+		}
+		if s.totalTikvWallTime > 0 {
+			buf.WriteString(", tikv_wall: ")
+			buf.WriteString(execdetails.FormatDuration(s.totalTikvWallTime))
 		}
 		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
 		if copRPC != nil && copRPC.Count > 0 {

@@ -382,6 +382,7 @@ type CopRuntimeStats struct {
 	// executed on each instance.
 	stats      map[string]*basicCopRuntimeStats
 	scanDetail *util.ScanDetail
+	timeDetail util.TimeDetail
 	// do not use kv.StoreType because it will meet cycle import error
 	storeType string
 	sync.Mutex
@@ -472,6 +473,13 @@ func (crs *CopRuntimeStats) String() string {
 			}
 		} else {
 			buf.WriteString("}")
+		}
+	}
+	if !isTiFlashCop {
+		detail := crs.timeDetail.String()
+		if detail != "" {
+			buf.WriteString(", ")
+			buf.WriteString(detail)
 		}
 	}
 	if !isTiFlashCop && crs.scanDetail != nil {
@@ -825,6 +833,15 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, addres
 func (e *RuntimeStatsColl) RecordScanDetail(planID int, storeType string, detail *util.ScanDetail) {
 	copStats := e.GetOrCreateCopStats(planID, storeType)
 	copStats.scanDetail.Merge(detail)
+}
+
+// RecordTimeDetail records a specific cop tasks's time detail.
+func (e *RuntimeStatsColl) RecordTimeDetail(planID int, storeType string, timedetail *util.TimeDetail) {
+	copStats := e.GetOrCreateCopStats(planID, storeType)
+	copStats.timeDetail.ProcessTime += timedetail.ProcessTime
+	copStats.timeDetail.WaitTime += timedetail.WaitTime
+	copStats.timeDetail.KvReadWallTimeMs += timedetail.KvReadWallTimeMs
+	copStats.timeDetail.TotalRPCWallTime += timedetail.TotalRPCWallTime
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
