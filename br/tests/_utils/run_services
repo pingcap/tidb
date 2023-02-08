@@ -191,7 +191,7 @@ start_services_impl() {
     TIDB_CONFIG="tests/config/tidb.toml"
     TIKV_CONFIG="tests/config/tikv.toml"
     PD_CONFIG="tests/config/pd.toml"
-    RUN_TIFLASH=false
+    RUN_TIFLASH=true
 
     while [[ $# -gt 0 ]]
     do

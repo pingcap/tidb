@@ -68,9 +68,6 @@ if [ "$table_count" -ne "2" ];then
 fi
 
 meta_count=$(run_sql "SHOW STATS_META where Row_count > 0;")
-echo "sdfasdfasfd-----"
-echo $meta_count
-
 if [ "$meta_count" -ne "2" ];then
     echo "TEST: [$TEST_NAME] failed!"
     exit 1
