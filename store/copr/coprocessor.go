@@ -26,7 +26,6 @@ import (
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/metrics"
@@ -70,6 +70,7 @@ const (
 	copNextMaxBackoff      = 20000
 	CopSmallTaskRow        = 32 // 32 is the initial batch size of TiKV
 	smallTaskSigma         = 0.5
+	smallConcPerCore       = 20
 )
 
 // CopClient is coprocessor client.
@@ -200,7 +201,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	if tryRowHint {
 		var smallTasks int
-		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks)
+		smallTasks, it.smallTaskConcurrency = smallTaskConcurrency(tasks, c.store.numcpu)
 		if len(tasks)-smallTasks < it.concurrency {
 			it.concurrency = len(tasks) - smallTasks
 		}
@@ -402,7 +403,13 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			}
 			i = nextI
 			if req.Paging.Enable {
-				pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
+				if req.LimitSize != 0 && req.LimitSize < pagingSize {
+					// disable paging for small limit.
+					task.paging = false
+					task.pagingSize = 0
+				} else {
+					pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
+				}
 			}
 		}
 	}
@@ -419,11 +426,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			zap.Int("task len", len(tasks)))
 	}
 	if elapsed > time.Millisecond {
-		ctx := bo.GetCtx()
-		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-			span1 := span.Tracer().StartSpan("copr.buildCopTasks", opentracing.ChildOf(span.Context()), opentracing.StartTime(start))
-			defer span1.Finish()
-		}
+		defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
 	}
 	metrics.TxnRegionsNumHistogramWithCoprocessor.Observe(float64(builder.regionNum()))
 	return tasks, nil
@@ -578,7 +581,7 @@ func isSmallTask(task *copTask) bool {
 
 // smallTaskConcurrency counts the small tasks of tasks,
 // then returns the task count and extra concurrency for small tasks.
-func smallTaskConcurrency(tasks []*copTask) (int, int) {
+func smallTaskConcurrency(tasks []*copTask, numcpu int) (int, int) {
 	res := 0
 	for _, task := range tasks {
 		if isSmallTask(task) {
@@ -590,8 +593,15 @@ func smallTaskConcurrency(tasks []*copTask) (int, int) {
 	}
 	// Calculate the extra concurrency for small tasks
 	// extra concurrency = tasks / (1 + sigma * sqrt(log(tasks ^ 2)))
-	extraConc := float64(res) / (1 + smallTaskSigma*math.Sqrt(2*math.Log(float64(res))))
-	return res, int(extraConc)
+	extraConc := int(float64(res) / (1 + smallTaskSigma*math.Sqrt(2*math.Log(float64(res)))))
+	if numcpu <= 0 {
+		numcpu = 1
+	}
+	smallTaskConcurrencyLimit := smallConcPerCore * numcpu
+	if extraConc > smallTaskConcurrencyLimit {
+		extraConc = smallTaskConcurrencyLimit
+	}
+	return res, extraConc
 }
 
 type copIterator struct {

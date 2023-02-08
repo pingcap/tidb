@@ -84,7 +84,6 @@ const (
 	// When setting the placement policy with "PLACEMENT POLICY `default`",
 	// it means to remove placement policy from the specified object.
 	defaultPlacementPolicyName        = "default"
-	defaultResourceGroupName          = "default"
 	tiflashCheckPendingTablesWaitTime = 3000 * time.Millisecond
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
@@ -7614,8 +7613,8 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	return false
 }
 
-// CreateResourceGroup implements the DDL interface, creates a resource group.
-func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
+// AddResourceGroup implements the DDL interface, creates a resource group.
+func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupInfo := &model.ResourceGroupInfo{ResourceGroupSettings: &model.ResourceGroupSettings{}}
 	groupName := stmt.ResourceGroupName
 	groupInfo.Name = groupName
@@ -7635,7 +7634,7 @@ func (d *ddl) CreateResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResour
 		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
 	}
 
-	if groupName.L == defaultResourceGroupName {
+	if groupName.L == variable.DefaultResourceGroupName {
 		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(groupName))
 	}
 

@@ -21,7 +21,7 @@ require (
 	github.com/charithe/durationcheck v0.0.9
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
-	github.com/cloudfoundry/gosigar v1.3.4
+	github.com/cloudfoundry/gosigar v1.3.6
 	github.com/cockroachdb/errors v1.8.1
 	github.com/cockroachdb/pebble v0.0.0-20210719141320-8c3bd06debb5
 	github.com/coocood/freecache v1.2.1
@@ -69,9 +69,9 @@ require (
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
-	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
+	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20230201112839-2b853bed8125
+	github.com/pingcap/kvproto v0.0.0-20230206112125-0561adc37543
 	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -92,9 +92,8 @@ require (
 	github.com/stretchr/testify v1.8.1
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.5-0.20230202101145-8fd09cd88cce
-	github.com/tikv/pd v1.1.0-beta.0.20230202094356-18df271ce57f
-	github.com/tikv/pd/client v0.0.0-20230202094356-18df271ce57f
+	github.com/tikv/client-go/v2 v2.0.6-0.20230207090754-29dfcc272912
+	github.com/tikv/pd/client v0.0.0-20230206191557-2a7c8d4c9676
 	github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -117,13 +116,13 @@ require (
 	golang.org/x/net v0.5.0
 	golang.org/x/oauth2 v0.3.0
 	golang.org/x/sync v0.1.0
-	golang.org/x/sys v0.4.0
+	golang.org/x/sys v0.5.0
 	golang.org/x/term v0.4.0
 	golang.org/x/text v0.6.0
 	golang.org/x/time v0.3.0
 	golang.org/x/tools v0.5.0
 	google.golang.org/api v0.103.0
-	google.golang.org/grpc v1.51.0
+	google.golang.org/grpc v1.52.3
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.4.0
 	k8s.io/apimachinery v0.26.0
@@ -135,7 +134,7 @@ require (
 	cloud.google.com/go v0.105.0 // indirect
 	cloud.google.com/go/compute v1.13.0 // indirect
 	cloud.google.com/go/compute/metadata v0.2.1 // indirect
-	cloud.google.com/go/iam v0.7.0 // indirect
+	cloud.google.com/go/iam v0.8.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v0.8.1 // indirect
 	github.com/DataDog/zstd v1.4.5 // indirect
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2 // indirect
@@ -264,10 +263,10 @@ require (
 	golang.org/x/mod v0.7.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20221202195650-67e5cbc046fd // indirect
+	google.golang.org/genproto v0.0.0-20230202175211-008b39050e57 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
