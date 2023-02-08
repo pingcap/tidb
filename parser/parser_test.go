@@ -99,6 +99,7 @@ func TestSimple(t *testing.T) {
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "p", "shard_row_id_bits", "pre_split_regions",
 		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop", "preserve", "placement", "attributes", "attribute", "resource",
+		"burstable",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -666,7 +667,7 @@ func TestDMLStmt(t *testing.T) {
 		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' IGNORE INTO TABLE `t1` FIELDS TERMINATED BY ','"},
 		{"LOAD DATA LOCAL INFILE '/tmp/t.csv' REPLACE INTO TABLE t1 FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';", true, "LOAD DATA LOCAL INFILE '/tmp/t.csv' REPLACE INTO TABLE `t1` FIELDS TERMINATED BY ','"},
 
-		{"load data remote infile 's3://bucket-name/t.csv' into table t", true, "LOAD DATA REMOTE INFILE 's3://bucket-name/t.csv' INTO TABLE `t`"},
+		{"load data infile 's3://bucket-name/t.csv' into table t", true, "LOAD DATA INFILE 's3://bucket-name/t.csv' INTO TABLE `t`"},
 
 		// select for update/share
 		{"select * from t for update", true, "SELECT * FROM `t` FOR UPDATE"},
@@ -2509,6 +2510,7 @@ func TestDDL(t *testing.T) {
 		{`create table t (c int) follower_constraints="ww";`, false, ""},
 		{`create table t (c int) voter_constraints="ww";`, false, ""},
 		{`create table t (c int) learner_constraints="ww";`, false, ""},
+		{`create table t (c int) survival_preference="ww";`, false, ""},
 		{`create table t (c int) /*T![placement] primary_region="us" */;`, false, ""},
 		{`create table t (c int) /*T![placement] regions="us,3" */;`, false, ""},
 		{`create table t (c int) /*T![placement] followers="us,3 */";`, false, ""},
@@ -3644,18 +3646,25 @@ func TestDDL(t *testing.T) {
 		{"alter placement policy x placement policy y", false, ""},
 
 		// for create resource group
-		{"create resource group x cpu ='8c'", true, "CREATE RESOURCE GROUP `x` CPU = '8c'"},
+		{"create resource group x cpu ='8c'", false, ""},
 		{"create resource group x region ='us, 3'", false, ""},
-		{"create resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", true, "CREATE RESOURCE GROUP `x` CPU = '8c' IO_READ_BANDWIDTH = '2GB/s' IO_WRITE_BANDWIDTH = '200MB/s'"},
+		{"create resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"create resource group x ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 2000"},
 		{"create resource group x ru_per_sec=200000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 200000"},
 		{"create resource group x followers=0", false, ""},
+		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000 BURSTABLE"},
+		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 2000"},
+		{"create resource group x ru_per_sec=3000 burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 3000 BURSTABLE"},
+		{"create resource group x burstable ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 4000"},
 
-		{"alter resource group x cpu ='8c'", true, "ALTER RESOURCE GROUP `x` CPU = '8c'"},
+		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
-		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", true, "ALTER RESOURCE GROUP `x` CPU = '8c' IO_READ_BANDWIDTH = '2GB/s' IO_WRITE_BANDWIDTH = '200MB/s'"},
-		{"alter resource group x ru_per_sec=2000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000"},
-		{"alter resource group x ru_per_sec=200000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000"},
+		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
+		{"alter resource group x ru_per_sec=1000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000 BURSTABLE"},
+		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE RU_PER_SEC = 4000"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000 BURSTABLE"},
 		{"alter resource group x followers=0", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},

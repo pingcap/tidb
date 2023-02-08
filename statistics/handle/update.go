@@ -408,22 +408,35 @@ var (
 	dumpStatsMaxDuration = time.Hour
 )
 
-// needDumpStatsDelta returns true when only updates a small portion of the table and the time since last update
-// do not exceed one hour.
-func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTime time.Time) bool {
+// needDumpStatsDelta checks whether to dump stats delta.
+// 1. If the table doesn't exist or is a mem table or system table, then return false.
+// 2. If the mode is DumpAll, then return true.
+// 3. If the stats delta haven't been dumped in the past hour, then return true.
+// 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
+func (h *Handle) needDumpStatsDelta(is infoschema.InfoSchema, mode dumpMode, id int64, item variable.TableDelta, currentTime time.Time) bool {
+	tbl, ok := h.getTableByPhysicalID(is, id)
+	if !ok {
+		return false
+	}
+	dbInfo, ok := is.SchemaByTable(tbl.Meta())
+	if !ok {
+		return false
+	}
+	if util.IsMemOrSysDB(dbInfo.Name.L) {
+		return false
+	}
+	if mode == DumpAll {
+		return true
+	}
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
-	}
-	tbl, ok := h.statsCache.Load().(statsCache).Get(id)
-	if !ok {
-		// No need to dump if the stats is invalid.
-		return false
 	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
 		// Dump the stats to kv at least once an hour.
 		return true
 	}
-	if tbl.Count == 0 || float64(item.Count)/float64(tbl.Count) > DumpStatsDeltaRatio {
+	statsTbl := h.GetPartitionStats(tbl.Meta(), id)
+	if statsTbl.Pseudo || statsTbl.Count == 0 || float64(item.Count)/float64(statsTbl.Count) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
 	}
@@ -492,9 +505,15 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 		h.globalMap.data = deltaMap
 		h.globalMap.Unlock()
 	}()
+	// TODO: pass in do.InfoSchema() to DumpStatsDeltaToKV.
+	is := func() infoschema.InfoSchema {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.mu.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	}()
 	currentTime := time.Now()
 	for id, item := range deltaMap {
-		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
+		if !h.needDumpStatsDelta(is, mode, id, item, currentTime) {
 			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
@@ -558,9 +577,13 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 			}
 		} else {
 			if delta.Delta < 0 {
-				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+					"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)", startTS, id, delta.Count, -delta.Delta, -delta.Delta)
 			} else {
-				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
+				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+					"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS, id, delta.Count, delta.Delta)
 			}
 		}
 		statsVer = startTS
@@ -680,9 +703,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 OUTER:
 	for _, fbs := range feedback.Feedbacks {
 		for _, fb := range fbs {
-			h.mu.Lock()
 			table, ok := h.getTableByPhysicalID(is, fb.PhysicalID)
-			h.mu.Unlock()
 			if !ok {
 				continue
 			}
@@ -825,9 +846,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 			err = errors.Trace(h.deleteOutdatedFeedback(physicalTableID, histID, isIndex))
 		}
 	}()
-	h.mu.Lock()
 	table, ok := h.getTableByPhysicalID(is, physicalTableID)
-	h.mu.Unlock()
 	// The table has been deleted.
 	if !ok {
 		return nil
