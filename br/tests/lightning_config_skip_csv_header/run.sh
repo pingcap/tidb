@@ -26,6 +26,7 @@ run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
 
 console_output_file="/tmp/${TEST_NAME}.out"
 
+echo "Use config that causes errors"
 run_lightning --backend tidb --config "${mydir}/err_config.toml" 2>&1 | tee "${console_output_file}"
 if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
     echo "The lightning import doesn't fail as expected" >&2
@@ -35,9 +36,20 @@ fi
 grep -q "Lightning:Restore:ErrUnknownColumns" "${console_output_file}"
 
 # import a second time
+echo "Use default config that causes errors"
+run_lightning --backend tidb --config "${mydir}/err_default_config.toml" 2>&1 | tee "${console_output_file}"
+if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
+    echo "The lightning import doesn't fail as expected" >&2
+    exit 1
+fi
+
+grep -q "Lightning:Restore:ErrUnknownColumns" "${console_output_file}"
+
+# import a thrid time
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
 
+echo "Use config that can sucessfully import the data"
 run_lightning --backend tidb --config "${mydir}/normal_config.toml"
 
 run_sql 'SELECT * FROM mytest.testtbl'

@@ -607,7 +607,7 @@ func (parser *CSVParser) ReadColumns() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if parser.cfg.SkipHeader {
+	if !parser.cfg.HeaderSchemaMatch {
 		return nil
 	}
 	parser.columns = make([]string, 0, len(columns))

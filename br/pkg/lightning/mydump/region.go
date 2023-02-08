@@ -404,7 +404,7 @@ func SplitLargeFile(
 		if err = parser.ReadColumns(); err != nil {
 			return 0, nil, nil, err
 		}
-		if !cfg.Mydumper.CSV.SkipHeader {
+		if cfg.Mydumper.CSV.HeaderSchemaMatch {
 			columns = parser.Columns()
 		}
 		startOffset, _ = parser.Pos()

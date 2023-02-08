@@ -3,7 +3,7 @@ check-requirements=true
 
 [mydumper.csv]
 header = true
-skip-header = false
+header-schema-match = true
 
 [tikv-importer]
 duplicate-resolution = 'remove'
