@@ -29,7 +29,6 @@ go_library(
         "//distsql",
         "//kv",
         "//meta",
-        "//meta/autoid",
         "//parser/model",
         "//statistics/handle",
         "//util",

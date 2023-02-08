@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -561,24 +560,21 @@ func BuildBackupRangeAndSchema(
 				zap.String("table", tableInfo.Name.O),
 			)
 
-			tblVer := autoid.AllocOptionTableInfoVersion(tableInfo.Version)
-			idAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.RowIDAllocType, tblVer)
-			seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.SequenceType, tblVer)
-			randAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.AutoRandomType, tblVer)
+			autoIDAccess := m.GetAutoIDAccessors(dbInfo.ID, tableInfo.ID)
 
 			var globalAutoID int64
 			switch {
 			case tableInfo.IsSequence():
-				globalAutoID, err = seqAlloc.NextGlobalAutoID()
+				globalAutoID, err = autoIDAccess.SequenceCycle().Get()
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
-				globalAutoID, err = idAlloc.NextGlobalAutoID()
+				globalAutoID, err = autoIDAccess.RowID().Get()
 			}
 			if err != nil {
 				return nil, nil, nil, errors.Trace(err)
 			}
-			tableInfo.AutoIncID = globalAutoID
+			tableInfo.AutoIncID = globalAutoID + 1
 			if !isFullBackup {
 				// according to https://github.com/pingcap/tidb/issues/32290.
 				// ignore placement policy when not in full backup
@@ -591,11 +587,11 @@ func BuildBackupRangeAndSchema(
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
-				globalAutoRandID, err = randAlloc.NextGlobalAutoID()
+				globalAutoRandID, err = autoIDAccess.RandomID().Get()
 				if err != nil {
 					return nil, nil, nil, errors.Trace(err)
 				}
-				tableInfo.AutoRandID = globalAutoRandID
+				tableInfo.AutoRandID = globalAutoRandID + 1
 				logger.Debug("change table AutoRandID",
 					zap.Int64("AutoRandID", globalAutoRandID))
 			}
