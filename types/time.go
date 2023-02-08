@@ -2005,7 +2005,7 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFlo
 	}
 
 	t.SetType(tp)
-	if err = t.check(sc, nil); err != nil {
+	if err = t.check(sc, explicitTz); err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
