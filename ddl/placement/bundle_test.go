@@ -887,6 +887,9 @@ func TestTidy(t *testing.T) {
 	bundle.Rules = append(bundle.Rules, rules3...)
 	bundle.Rules = append(bundle.Rules, rules4...)
 
+	for _, r := range bundle.Rules {
+		r.LocationLabels = []string{"zone", "host"}
+	}
 	chkfunc := func() {
 		require.NoError(t, err)
 		require.Len(t, bundle.Rules, 3)
@@ -901,6 +904,7 @@ func TestTidy(t *testing.T) {
 				Values: []string{EngineLabelTiFlash},
 			},
 		}, bundle.Rules[2].Constraints)
+		require.Equal(t, []string{"zone", "host"}, bundle.Rules[2].LocationLabels)
 	}
 	err = bundle.Tidy()
 	chkfunc()
