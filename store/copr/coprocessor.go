@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
+	"github.com/pingcap/tidb/util/bytespool"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -1322,17 +1324,26 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.New("Internal error: received illegal TiKV response")
 		}
 		// Cache hit and is valid: use cached data as response data and we don't update the cache.
-		data := make([]byte, len(cacheValue.Data))
+		data, _ := bytespool.SmallPool.Get(len(cacheValue.Data), true)
+		runtime.SetFinalizer(&data, func(c *[]byte) {
+			bytespool.SmallPool.Put(*c)
+		})
 		copy(data, cacheValue.Data)
 		resp.pbResp.Data = data
 		if worker.req.Paging.Enable {
 			var start, end []byte
 			if cacheValue.PageStart != nil {
-				start = make([]byte, len(cacheValue.PageStart))
+				start, _ = bytespool.SmallPool.Get(len(cacheValue.PageStart), true)
+				runtime.SetFinalizer(&start, func(c *[]byte) {
+					bytespool.SmallPool.Put(*c)
+				})
 				copy(start, cacheValue.PageStart)
 			}
 			if cacheValue.PageEnd != nil {
-				end = make([]byte, len(cacheValue.PageEnd))
+				end, _ = bytespool.SmallPool.Get(len(cacheValue.PageEnd), true)
+				runtime.SetFinalizer(&end, func(c *[]byte) {
+					bytespool.SmallPool.Put(*c)
+				})
 				copy(end, cacheValue.PageEnd)
 			}
 			// When paging protocol is used, the response key range is part of the cache data.
@@ -1352,7 +1363,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 			if resp.detail != nil {
 				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, task.pagingTaskIdx) {
-					data := make([]byte, len(resp.pbResp.Data))
+					data, _ := bytespool.SmallPool.Get(len(resp.pbResp.Data), true)
+					runtime.SetFinalizer(&data, func(c *[]byte) {
+						bytespool.SmallPool.Put(*c)
+					})
 					copy(data, resp.pbResp.Data)
 
 					newCacheValue := coprCacheValue{

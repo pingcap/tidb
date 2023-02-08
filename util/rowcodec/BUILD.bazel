@@ -18,6 +18,7 @@ go_library(
         "//parser/types",
         "//sessionctx/stmtctx",
         "//types",
+        "//util/bytespool",
         "//util/chunk",
         "//util/codec",
         "@com_github_pingcap_errors//:errors",

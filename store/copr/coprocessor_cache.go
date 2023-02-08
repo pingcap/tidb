@@ -19,12 +19,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"runtime"
 	"time"
 	"unsafe"
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/tidb/util/bytespool"
 	"github.com/tikv/client-go/v2/config"
 )
 
@@ -116,8 +118,10 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 		totalLength++
 	}
 
-	key := make([]byte, totalLength)
-
+	key, _ := bytespool.SmallPool.Get(totalLength, true)
+	runtime.SetFinalizer(&key, func(c *[]byte) {
+		bytespool.SmallPool.Put(*c)
+	})
 	// 1 byte Tp
 	key[0] = uint8(copReq.Tp)
 	dest := 1
