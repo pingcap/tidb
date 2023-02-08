@@ -827,16 +827,13 @@ func getSnapshot(db *sql.Conn) (string, error) {
 	return str[snapshotFieldIndex], nil
 }
 
-func isUnknownSystemVariableErr(err error, ignorableSnapshot bool) bool {
-	errStr := err.Error()
-	return strings.Contains(err.Error(), "Unknown system variable") ||
-		(ignorableSnapshot && strings.Contains(errStr, "can not get 'tikv_gc_safe_point'"))
+func isUnknownSystemVariableErr(err error) bool {
+	return strings.Contains(err.Error(), "Unknown system variable")
 }
 
 // resetDBWithSessionParams will return a new sql.DB as a replacement for input `db` with new session parameters.
 // If returned error is nil, the input `db` will be closed.
-func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Config,
-	params map[string]interface{}, ignorableSnapshot bool) (*sql.DB, error) {
+func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Config, params map[string]interface{}) (*sql.DB, error) {
 	support := make(map[string]interface{})
 	for k, v := range params {
 		var pv interface{}
@@ -854,7 +851,7 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 		s := fmt.Sprintf("SET SESSION %s = ?", k)
 		_, err := db.ExecContext(tctx, s, pv)
 		if err != nil {
-			if isUnknownSystemVariableErr(err, ignorableSnapshot) {
+			if isUnknownSystemVariableErr(err) {
 				tctx.L().Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
 				delete(params, k)
 				continue
@@ -880,9 +877,6 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 		}
 		cfg.Params[k] = s
 	}
-	failpoint.Inject("SkipResetDB", func(_ failpoint.Value) {
-		failpoint.Return(db, nil)
-	})
 
 	db.Close()
 	c, err := mysql.NewConnector(cfg)

@@ -10,9 +10,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
-	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/parser"
@@ -290,59 +288,4 @@ func TestSetDefaultSessionParams(t *testing.T) {
 		setDefaultSessionParams(testCase.si, testCase.sessionParams)
 		require.Equal(t, testCase.expectedParams, testCase.sessionParams)
 	}
-}
-
-func TestSetSessionParams(t *testing.T) {
-	// case 1: fail to set tidb_snapshot when fail to checkTiDBHasKV, shouldn't return an error
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
-
-	mock.ExpectQuery("SELECT @@tidb_config").
-		WillReturnError(errors.New("mock error"))
-	mock.ExpectQuery("SELECT COUNT\\(1\\) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'").
-		WillReturnError(errors.New("mock error"))
-	tikvErr := &mysql.MySQLError{
-		Number:  1105,
-		Message: "can not get 'tikv_gc_safe_point'",
-	}
-	mock.ExpectExec("SET SESSION tidb_snapshot").
-		WillReturnError(tikvErr)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/SkipResetDB", "return(true)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/SkipResetDB=return(true)")
-
-	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
-
-	conf := DefaultConfig()
-	conf.ServerInfo = version.ServerInfo{
-		ServerType: version.ServerTypeTiDB,
-		HasTiKV:    false,
-	}
-	conf.Snapshot = "439153276059648000"
-	conf.Consistency = ConsistencyTypeSnapshot
-	d := &Dumper{
-		tctx:      tctx,
-		conf:      conf,
-		cancelCtx: cancel,
-		dbHandle:  db,
-	}
-	err = setSessionParam(d)
-	require.NoError(t, err)
-
-	// case 2: fail to set tidb_snapshot when succeed to checkTiDBHasKV, should return an error
-	mock.ExpectQuery("SELECT @@tidb_config").
-		WillReturnError(errors.New("mock error"))
-	mock.ExpectQuery("SELECT COUNT\\(1\\) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'").
-		WillReturnRows(sqlmock.NewRows([]string{"COUNT(1)"}).AddRow(1))
-	mock.ExpectExec("SET SESSION tidb_snapshot").
-		WillReturnError(tikvErr)
-	mock.ExpectClose()
-	mock.ExpectClose()
-
-	err = setSessionParam(d)
-	require.True(t, errors.Cause(err) == tikvErr)
 }
