@@ -155,7 +155,8 @@ func TestPlacementPolicy(t *testing.T) {
 		"LEARNERS=1 " +
 		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
 		"FOLLOWERS=3 " +
-		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
+		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"" +
+		"SURVIVAL_PREFERENCES=\"[region, zone]\"")
 
 	checkFunc := func(policyInfo *model.PolicyInfo) {
 		require.Equal(t, true, policyInfo.ID != 0)
@@ -168,6 +169,7 @@ func TestPlacementPolicy(t *testing.T) {
 		require.Equal(t, "[+region=cn-west-1]", policyInfo.LearnerConstraints)
 		require.Equal(t, model.StatePublic, policyInfo.State)
 		require.Equal(t, "", policyInfo.Schedule)
+		require.Equal(t, "[region, zone]", policyInfo.SurvivalPreferences)
 	}
 
 	// Check the policy is correctly reloaded in the information schema.
@@ -590,11 +592,16 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	tk.MustExec("create placement policy x " +
 		"FOLLOWERS=2 " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
+	tk.MustExec("create placement policy z " +
+		"FOLLOWERS=1 " +
+		"SURVIVAL_PREFERENCES=\"[region, zone]\"")
 	tk.MustExec("create placement policy y " +
 		"FOLLOWERS=3 " +
 		"CONSTRAINTS=\"[+region=bj]\" ")
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
+	tk.MustExec("create table tt(a int)" +
+		"PLACEMENT POLICY=\"z\"")
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t x`))
 	tk.MustExec("create table t_range_p(id int) placement policy x partition by range(id) (" +
 		"PARTITION p0 VALUES LESS THAN (100)," +
@@ -617,7 +624,18 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	require.Equal(t, "y", policyY.Name.L)
 	require.Equal(t, true, policyY.ID != 0)
 
-	tbl := external.GetTableByName(t, tk, "test", "t")
+	policyZ := testGetPolicyByName(t, tk.Session(), "z", true)
+	require.Equal(t, "z", policyZ.Name.L)
+	require.Equal(t, true, policyZ.ID != 0)
+	require.Equal(t, "[region, zone]", policyZ.SurvivalPreferences)
+
+	tbl := external.GetTableByName(t, tk, "test", "tt")
+	require.NotNil(t, tbl)
+	require.NotNil(t, tbl.Meta().PlacementPolicyRef)
+	require.Equal(t, "z", tbl.Meta().PlacementPolicyRef.Name.L)
+	require.Equal(t, policyZ.ID, tbl.Meta().PlacementPolicyRef.ID)
+
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.NotNil(t, tbl.Meta().PlacementPolicyRef)
 	require.Equal(t, "x", tbl.Meta().PlacementPolicyRef.Name.L)
