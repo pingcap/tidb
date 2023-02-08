@@ -65,7 +65,6 @@ type Dumper struct {
 	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
-	specifiedSnapshot             bool
 
 	speedRecorder *SpeedRecorder
 }
@@ -1469,7 +1468,6 @@ func tidbGetSnapshot(d *Dumper) error {
 	consistency := conf.Consistency
 	pool, tctx := d.dbHandle, d.tctx
 	snapshotConsistency := consistency == "snapshot"
-	d.specifiedSnapshot = conf.Snapshot != ""
 	if conf.Snapshot == "" && (doPdGC || snapshotConsistency) {
 		conn, err := pool.Conn(tctx)
 		if err != nil {

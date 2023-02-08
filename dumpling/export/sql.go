@@ -853,7 +853,6 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 		if err != nil {
 			if isUnknownSystemVariableErr(err) {
 				tctx.L().Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
-				delete(params, k)
 				continue
 			}
 			return nil, errors.Trace(err)
