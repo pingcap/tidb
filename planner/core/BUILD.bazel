@@ -157,7 +157,7 @@ go_library(
 
 go_test(
     name = "core_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "binary_plan_test.go",
         "cbo_test.go",
@@ -199,6 +199,7 @@ go_test(
         "plan_to_pb_test.go",
         "planbuilder_test.go",
         "point_get_plan_test.go",
+        "predicate_simplification_test.go",
         "prepare_test.go",
         "preprocess_test.go",
         "rule_inject_extra_projection_test.go",

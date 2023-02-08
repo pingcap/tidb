@@ -74,49 +74,13 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 	})
 
 	tests = append(tests, TestCase{
-		name: "normal case: native case 1",
-		input: &model.ResourceGroupSettings{
-			CPULimiter:       "8000m",
-			IOReadBandwidth:  "3000M",
-			IOWriteBandwidth: "1500M",
-		},
-		output: &rmpb.ResourceGroup{
-			Name: groupName,
-			Mode: rmpb.GroupMode_RawMode,
-			RawResourceSettings: &rmpb.GroupRawResourceSettings{
-				Cpu:     &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 8000}},
-				IoRead:  &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 3000000000}},
-				IoWrite: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 1500000000}},
-			},
-		},
-	})
-
-	tests = append(tests, TestCase{
-		name: "normal case: native case 2",
-		input: &model.ResourceGroupSettings{
-			CPULimiter:       "8",
-			IOReadBandwidth:  "3000Mi",
-			IOWriteBandwidth: "3000Mi",
-		},
-		output: &rmpb.ResourceGroup{
-			Name: groupName,
-			Mode: rmpb.GroupMode_RawMode,
-			RawResourceSettings: &rmpb.GroupRawResourceSettings{
-				Cpu:     &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 8000}},
-				IoRead:  &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 3145728000}},
-				IoWrite: &rmpb.TokenBucket{Settings: &rmpb.TokenLimitSettings{FillRate: 3145728000}},
-			},
-		},
-	})
-
-	tests = append(tests, TestCase{
 		name: "error case: native case 1",
 		input: &model.ResourceGroupSettings{
 			CPULimiter:       "8",
 			IOReadBandwidth:  "3000MB/s",
 			IOWriteBandwidth: "3000Mi",
 		},
-		err: ErrInvalidResourceGroupFormat,
+		err: ErrUnknownResourceGroupMode,
 	})
 
 	tests = append(tests, TestCase{
@@ -126,7 +90,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 			IOReadBandwidth:  "3000Mi",
 			IOWriteBandwidth: "3000Mi",
 		},
-		err: ErrInvalidResourceGroupFormat,
+		err: ErrUnknownResourceGroupMode,
 	})
 
 	tests = append(tests, TestCase{
@@ -136,7 +100,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 			IOReadBandwidth:  "3000G",
 			IOWriteBandwidth: "3000MB",
 		},
-		err: ErrInvalidResourceGroupFormat,
+		err: ErrUnknownResourceGroupMode,
 	})
 
 	tests = append(tests, TestCase{

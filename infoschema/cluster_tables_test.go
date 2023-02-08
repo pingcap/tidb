@@ -816,42 +816,62 @@ func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 }
 
 func TestMDLView(t *testing.T) {
-	// setup suite
-	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
-	s.startTime = time.Now()
-	defer s.httpServer.Close()
+	testCases := []struct {
+		name        string
+		createTable string
+		ddl         string
+		queryInTxn  []string
+		sqlDigest   string
+	}{
+		{"add column", "create table t(a int)", "alter table test.t add column b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"change column in 1 step", "create table t(a int)", "alter table test.t change column a b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+	}
+	for _, c := range testCases {
+		t.Run(c.name, func(t *testing.T) {
+			// setup suite
+			s := new(clusterTablesSuite)
+			s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+			s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+			s.startTime = time.Now()
+			defer s.httpServer.Close()
 
-	tk := s.newTestKitWithRoot(t)
-	tkDDL := s.newTestKitWithRoot(t)
-	tk3 := s.newTestKitWithRoot(t)
-	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_metadata_lock=1")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values(1);")
+			tk := s.newTestKitWithRoot(t)
+			tkDDL := s.newTestKitWithRoot(t)
+			tk3 := s.newTestKitWithRoot(t)
+			tk.MustExec("use test")
+			tk.MustExec("set global tidb_enable_metadata_lock=1")
+			tk.MustExec(c.createTable)
 
-	tk.MustExec("begin")
-	tk.MustQuery("select 1;")
-	tk.MustQuery("select * from t;")
+			tk.MustExec("begin")
+			for _, q := range c.queryInTxn {
+				tk.MustQuery(q)
+			}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		tkDDL.MustExec("alter table test.t add column b int;")
-		wg.Done()
-	}()
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				tkDDL.MustExec(c.ddl)
+				wg.Done()
+			}()
 
-	time.Sleep(200 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
 
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", tk3.Session().GetSessionManager())
-	defer s.rpcserver.Stop()
+			s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", tk3.Session().GetSessionManager())
+			defer s.rpcserver.Stop()
 
-	tk3.MustQuery("select DB_NAME, QUERY, SQL_DIGESTS from mysql.tidb_mdl_view").Check(testkit.Rows("test alter table test.t add column b int; [\"begin\",\"select ? ;\",\"select * from `t` ;\"]"))
+			tk3.MustQuery("select DB_NAME, QUERY, SQL_DIGESTS from mysql.tidb_mdl_view").Check(testkit.Rows(
+				strings.Join([]string{
+					"test",
+					c.ddl,
+					c.sqlDigest,
+				}, " "),
+			))
 
-	tk.MustExec("commit")
+			tk.MustExec("commit")
 
-	wg.Wait()
+			wg.Wait()
+		})
+	}
 }
 
 func TestCreateBindingFromHistory(t *testing.T) {

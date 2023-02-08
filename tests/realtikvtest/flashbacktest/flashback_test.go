@@ -17,15 +17,20 @@ package flashbacktest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -76,9 +81,7 @@ func TestFlashback(t *testing.T) {
 		require.NoError(t, err)
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
 		tk.MustExec("insert t values (4), (5), (6)")
@@ -88,8 +91,7 @@ func TestFlashback(t *testing.T) {
 		require.Equal(t, tk.MustQuery("select max(a) from t").Rows()[0][0], "3")
 		require.Equal(t, tk.MustQuery("select max(a) from t use index(i)").Rows()[0][0], "3")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }
 
@@ -114,9 +116,7 @@ func TestPrepareFlashbackFailed(t *testing.T) {
 		require.NoError(t, err)
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockPrepareMeetsEpochNotMatch", `return(true)`))
 
@@ -132,8 +132,7 @@ func TestPrepareFlashbackFailed(t *testing.T) {
 		require.NoError(t, job.Decode([]byte(jobMeta)))
 		require.Equal(t, job.ErrorCount, int64(0))
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockPrepareMeetsEpochNotMatch"))
 	}
 }
@@ -166,9 +165,7 @@ func TestFlashbackAddDropIndex(t *testing.T) {
 		require.Greater(t, tk.MustQuery("select count(*) from mysql.gc_delete_range").Rows()[0][0], prevGCCount)
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
 		tk.MustExec("insert t values (4), (5), (6)")
@@ -179,8 +176,7 @@ func TestFlashbackAddDropIndex(t *testing.T) {
 		tk.MustGetErrCode("select max(a) from t use index(k)", errno.ErrKeyDoesNotExist)
 		require.Equal(t, tk.MustQuery("select count(*) from mysql.gc_delete_range").Rows()[0][0], prevGCCount)
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }
 
@@ -214,9 +210,7 @@ func TestFlashbackAddDropModifyColumn(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
 		tk.MustExec("insert t values (4, 4), (5, 5), (6, 6)")
@@ -230,8 +224,7 @@ func TestFlashbackAddDropModifyColumn(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 		require.Equal(t, tk.MustQuery("select max(b) from t").Rows()[0][0], "3")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }
 
@@ -270,9 +263,7 @@ func TestFlashbackBasicRenameDropCreateTable(t *testing.T) {
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
@@ -282,8 +273,7 @@ func TestFlashbackBasicRenameDropCreateTable(t *testing.T) {
 		require.Equal(t, tk.MustQuery("select max(a) from t1").Rows()[0][0], "6")
 		require.Equal(t, tk.MustQuery("select count(*) from mysql.gc_delete_range").Rows()[0][0], prevGCCount)
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }
 
@@ -311,17 +301,14 @@ func TestFlashbackCreateDropTableWithData(t *testing.T) {
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
 		tk.MustExec("admin check table t")
 		require.Equal(t, tk.MustQuery("select count(a) from t").Rows()[0][0], "0")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }
 
@@ -353,9 +340,7 @@ func TestFlashbackCreateDropSchema(t *testing.T) {
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
@@ -365,8 +350,7 @@ func TestFlashbackCreateDropSchema(t *testing.T) {
 		tk.MustGetErrCode("use test1", errno.ErrBadDB)
 		tk.MustGetErrCode("use test2", errno.ErrBadDB)
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }
 
@@ -395,9 +379,7 @@ func TestFlashbackAutoID(t *testing.T) {
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
@@ -408,8 +390,7 @@ func TestFlashbackAutoID(t *testing.T) {
 		res = tk.MustQuery("select max(a) from t").Rows()
 		require.Equal(t, res[0][0], "101")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }
 
@@ -438,9 +419,7 @@ func TestFlashbackSequence(t *testing.T) {
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
@@ -448,8 +427,7 @@ func TestFlashbackSequence(t *testing.T) {
 		res = tk.MustQuery("select nextval(seq)").Rows()
 		require.Equal(t, res[0][0], "101")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }
 
@@ -485,9 +463,7 @@ func TestFlashbackPartitionTable(t *testing.T) {
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
@@ -502,8 +478,7 @@ func TestFlashbackPartitionTable(t *testing.T) {
 		require.Equal(t, res[0][1], "-1")
 		require.Equal(t, res[0][2], "102")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
 	}
 }
 
@@ -529,9 +504,7 @@ func TestFlashbackTmpTable(t *testing.T) {
 
 		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
@@ -547,15 +520,80 @@ func TestFlashbackTmpTable(t *testing.T) {
 
 		injectSafeTS = oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
 
-		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
-			fmt.Sprintf("return(%v)", injectSafeTS)))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectSafeTS",
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
 
 		tk.MustGetErrCode("select * from t", errno.ErrNoSuchTable)
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/expression/injectSafeTS"))
-		require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
+	}
+}
+
+func TestFlashbackInProcessErrorMsg(t *testing.T) {
+	if *realtikvtest.WithRealTiKV {
+		store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+
+		originHook := dom.DDL().GetHook()
+
+		tk := testkit.NewTestKit(t, store)
+		timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+		defer resetGC()
+
+		tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int)")
+
+		time.Sleep(1 * time.Second)
+		ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+
+		// do some ddl and dml
+		tk.MustExec("alter table t add index k(a)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		injectSafeTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100 * time.Second))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", injectSafeTS)))
+
+		hook := newTestCallBack(t, dom)
+		hook.OnJobRunBeforeExported = func(job *model.Job) {
+			if job.Type == model.ActionFlashbackCluster && job.SchemaState == model.StateWriteReorganization {
+				txn, err := store.Begin()
+				assert.NoError(t, err)
+				_, err = meta.NewMeta(txn).ListDatabases()
+				errorMsg := err.Error()
+				assert.Contains(t, errorMsg, "is in flashback progress, FlashbackStartTS is ")
+				slices := strings.Split(errorMsg, "is in flashback progress, FlashbackStartTS is ")
+				assert.Equal(t, len(slices), 2)
+				assert.NotEqual(t, slices[1], "0")
+				txn.Rollback()
+			}
+		}
+		dom.DDL().SetHook(hook)
+		tk.Exec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		dom.DDL().SetHook(originHook)
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/injectSafeTS"))
+	}
+}
+
+type testCallback struct {
+	ddl.Callback
+	OnJobRunBeforeExported func(job *model.Job)
+}
+
+func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
+	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
+	require.NoError(t, err)
+	return &testCallback{
+		Callback: defHookFactory(dom),
+	}
+}
+
+func (c *testCallback) OnJobRunBefore(job *model.Job) {
+	if c.OnJobRunBeforeExported != nil {
+		c.OnJobRunBeforeExported(job)
 	}
 }
