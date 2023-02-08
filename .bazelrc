@@ -1,4 +1,4 @@
-startup --host_jvm_args=-Xmx6g
+startup --host_jvm_args=-Xmx8g
 startup --unlimit_coredumps
 
 run:ci --color=yes
