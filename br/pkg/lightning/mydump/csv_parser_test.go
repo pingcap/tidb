@@ -481,12 +481,13 @@ func TestSyntaxErrorCSV(t *testing.T) {
 
 func TestTSV(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator:       "\t",
-		Delimiter:       "",
-		BackslashEscape: false,
-		NotNull:         false,
-		Null:            "",
-		Header:          true,
+		Separator:         "\t",
+		Delimiter:         "",
+		BackslashEscape:   false,
+		NotNull:           false,
+		Null:              "",
+		Header:            true,
+		HeaderSchemaMatch: true,
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`a	b	c	d	e	f
@@ -577,6 +578,7 @@ func TestCsvWithWhiteSpaceLine(t *testing.T) {
 	require.Nil(t, parser.Close())
 
 	cfg.Header = true
+	cfg.HeaderSchemaMatch = true
 	data = " \r\na,b,c\r\n0,,abc\r\n"
 	parser, err = mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(data), int64(config.ReadBlockSize), ioWorkers, true, nil)
 	require.NoError(t, err)
@@ -609,6 +611,7 @@ func TestEmpty(t *testing.T) {
 	// Try again with headers.
 
 	cfg.Header = true
+	cfg.HeaderSchemaMatch = true
 
 	parser, err = mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(""), int64(config.ReadBlockSize), ioWorkers, true, nil)
 	require.NoError(t, err)
@@ -1291,4 +1294,73 @@ func BenchmarkReadRowUsingEncodingCSV(b *testing.B) {
 		b.Fatal(err)
 	}
 	require.Equal(b, b.N, rowsCount)
+}
+
+func TestHeaderSchemaMatch(t *testing.T) {
+	cfg := config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator: ",",
+			Delimiter: `"`,
+		},
+	}
+
+	inputData := `id,val1,val2,val3
+1,111,aaa,1.0
+2,222,bbb,2.0
+3,333,ccc,3.0
+4,444,ddd,4.0`
+
+	parsedDataPart := [][]types.Datum{
+		{types.NewStringDatum("1"), types.NewStringDatum("111"), types.NewStringDatum("aaa"), types.NewStringDatum("1.0")},
+		{types.NewStringDatum("2"), types.NewStringDatum("222"), types.NewStringDatum("bbb"), types.NewStringDatum("2.0")},
+		{types.NewStringDatum("3"), types.NewStringDatum("333"), types.NewStringDatum("ccc"), types.NewStringDatum("3.0")},
+		{types.NewStringDatum("4"), types.NewStringDatum("444"), types.NewStringDatum("ddd"), types.NewStringDatum("4.0")},
+	}
+
+	type testCase struct {
+		Header            bool
+		HeaderSchemaMatch bool
+		ExpectedData      [][]types.Datum
+		ExpectedColumns   []string
+	}
+
+	for _, tc := range []testCase{
+		{
+			Header:            true,
+			HeaderSchemaMatch: true,
+			ExpectedData:      parsedDataPart,
+			ExpectedColumns:   []string{"id", "val1", "val2", "val3"},
+		},
+		{
+			Header:            true,
+			HeaderSchemaMatch: false,
+			ExpectedData:      parsedDataPart,
+			ExpectedColumns:   nil,
+		},
+		{
+			Header:            false,
+			HeaderSchemaMatch: true,
+			ExpectedData: append([][]types.Datum{
+				{types.NewStringDatum("id"), types.NewStringDatum("val1"), types.NewStringDatum("val2"), types.NewStringDatum("val3")},
+			}, parsedDataPart...),
+			ExpectedColumns: nil,
+		},
+	} {
+		comment := fmt.Sprintf("header = %v, header-schema-match = %v", tc.Header, tc.HeaderSchemaMatch)
+		cfg.CSV.Header = tc.Header
+		cfg.CSV.HeaderSchemaMatch = tc.HeaderSchemaMatch
+		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
+		assert.NoError(t, err)
+		parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(inputData), int64(config.ReadBlockSize), ioWorkers, tc.Header, charsetConvertor)
+		assert.NoError(t, err)
+		for i, row := range tc.ExpectedData {
+			comment := fmt.Sprintf("row = %d, header = %v, header-schema-match = %v", i+1, tc.Header, tc.HeaderSchemaMatch)
+			e := parser.ReadRow()
+			assert.NoErrorf(t, e, "row = %d, error = %s", i+1, errors.ErrorStack(e))
+			assert.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
+			assert.Equal(t, row, parser.LastRow().Row, comment)
+		}
+		assert.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, comment)
+		assert.Equal(t, tc.ExpectedColumns, parser.Columns(), comment)
+	}
 }
