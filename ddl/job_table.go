@@ -643,7 +643,6 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 	sqlBuilder.WriteString("insert into mysql.")
 	sqlBuilder.WriteString(tableName)
 	sqlBuilder.WriteString("(id, ddl_job_id, ele_id, ele_key, ddl_physical_tid, type, exec_id, exec_lease, state, curr_key, start_key, end_key, start_ts, finish_ts, row_count, backfill_meta) values")
-	jobs := ""
 	for i, bj := range backfillJobs {
 		mateByte, err := bj.Meta.Encode()
 		if err != nil {
@@ -656,7 +655,6 @@ func generateInsertBackfillJobSQL(tableName string, backfillJobs []*BackfillJob)
 		sqlBuilder.WriteString(fmt.Sprintf("(%d, %d, %d, %s, %d, %d, '%s', '%s', %d, %s, %s, %s, %d, %d, %d, %s)", bj.ID, bj.JobID, bj.EleID,
 			wrapKey2String(bj.EleKey), bj.PhysicalTableID, bj.Tp, bj.InstanceID, bj.InstanceLease, bj.State, wrapKey2String(bj.CurrKey),
 			wrapKey2String(bj.StartKey), wrapKey2String(bj.EndKey), bj.StartTS, bj.FinishTS, bj.RowCount, wrapKey2String(mateByte)))
-		jobs += fmt.Sprintf("job:%#v; ", bj.AbbrStr())
 	}
 	return sqlBuilder.String(), nil
 }
@@ -743,12 +741,12 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 		}
 		leaseStr := currTime.Add(-lease).Format(types.TimeFormat)
 
-		getJobsSQL := fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and ddl_job_id = %d order by ddl_job_id, ele_key, ele_id limit %d",
+		getJobsSQL := fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and ddl_job_id = %d order by ddl_job_id, ele_id, ele_key limit %d",
 			leaseStr, jobID, batch)
 		if pTblID != GetJobWithoutPartition {
 			if pTblID == 0 {
 				rows, err := s.execute(context.Background(),
-					fmt.Sprintf("select ddl_physical_tid from mysql.%s group by ddl_job_id, ele_id, ele_key, ddl_physical_tid having sum(length(exec_id)) = 0 or (max(exec_lease) < '%s' and max(exec_lease) is not null) order by ddl_job_id, ele_key, ele_id, ddl_physical_tid limit 1",
+					fmt.Sprintf("select ddl_physical_tid from mysql.%s group by ddl_job_id, ele_id, ele_key, ddl_physical_tid having sum(length(exec_id)) = 0 or max(exec_lease) < '%s' order by ddl_job_id, ele_key, ele_id, ddl_physical_tid limit 1",
 						BackfillTable, leaseStr), "get_mark_backfill_job")
 				if err != nil {
 					return errors.Trace(err)

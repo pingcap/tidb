@@ -33,6 +33,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -97,12 +98,8 @@ func getRunningPhysicalTableMetas(sess *session, sJobCtx *splitJobContext, reorg
 	} else {
 		for _, pMeta := range pTblMetas {
 			phyTblMetas = append(phyTblMetas, pMeta)
-			if pMeta.PhyTblID > currPID {
-				currPID = pMeta.PhyTblID
-			}
-			if pMeta.ID > currBfJobID {
-				currBfJobID = pMeta.ID
-			}
+			currPID = mathutil.Max(pMeta.PhyTblID, currPID)
+			currBfJobID = mathutil.Max(pMeta.ID, currBfJobID)
 			physicalTIDs = append(physicalTIDs, pMeta.PhyTblID)
 		}
 	}
@@ -118,13 +115,11 @@ func (dc *ddlCtx) sendPhysicalTableMetas(reorgInfo *reorgInfo, t table.Table, sJ
 	var err error
 	physicalTIDs := make([]int64, 0, distPhysicalTableConcurrency)
 	defer func() {
+		logutil.BgLogger().Info("[ddl] send physical table ranges to split finished", zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.Stringer("ele", reorgInfo.currElement), zap.Int64s("phyTblIDs", physicalTIDs), zap.Error(err))
 		if err != nil {
-			logutil.BgLogger().Info("[ddl] send physical table ranges to split failed", zap.Int64("jobID", reorgInfo.Job.ID),
-				zap.Stringer("ele", reorgInfo.currElement), zap.Int64s("phyTblIDs", physicalTIDs), zap.Error(err))
 			sJobCtx.cancel()
 		} else {
-			logutil.BgLogger().Info("[ddl] send physical table ranges to split finished", zap.Int64("jobID", reorgInfo.Job.ID),
-				zap.Stringer("ele", reorgInfo.currElement), zap.Int64s("phyTblIDs", physicalTIDs))
 			close(sJobCtx.phyTblMetaCh)
 		}
 	}()
@@ -181,13 +176,7 @@ func (dc *ddlCtx) sendPhysicalTableMetas(reorgInfo *reorgInfo, t table.Table, sJ
 
 			physicalTIDs = append(physicalTIDs, pID)
 		}
-	} //else {
-	//	//nolint:forcetypeassert
-	//	phyTbl := t.(table.PhysicalTable)
-	//	bfJM := &BackfillJobRangeMeta{PhyTblID: phyTbl.Meta().ID, PhyTbl: phyTbl, StartKey: reorgInfo.StartKey, EndKey: reorgInfo.EndKey}
-	//	sJobCtx.phyTblMetaCh <- bfJM
-	//	physicalTIDs = append(physicalTIDs, bfJM.PhyTblID)
-	// }
+	}
 }
 
 func (dc *ddlCtx) controlWriteTableRecord(sessPool *sessionPool, t table.Table, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
@@ -468,7 +457,7 @@ func getBackfillJobWithRetry(sess *session, tableName string, ddlJobID, currEleI
 			ddlJobID, currEleID, wrapKey2String(currEleKey)), "check_backfill_job_state")
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] GetBackfillJobs failed", zap.Error(err))
-			time.Sleep(retrySQLInterval)
+			time.Sleep(RetrySQLInterval)
 			continue
 		}
 

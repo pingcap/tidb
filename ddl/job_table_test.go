@@ -268,6 +268,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	eleID1 := int64(11)
 	eleID2 := int64(22)
 	eleID3 := int64(33)
+	noPID := int64(0)
 	uuid := d.GetID()
 	eleKey := meta.IndexElementKey
 	instanceLease := ddl.InstanceLease
@@ -276,7 +277,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJob, err := ddl.GetBackfillJobForOneEle(se, []int64{jobID1, jobID2}, instanceLease)
 	require.NoError(t, err)
 	require.Nil(t, bJob)
-	bJobs, err := ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, 1, instanceLease)
+	bJobs, err := ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, noPID, instanceLease)
 	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job").Error())
 	require.Nil(t, bJobs)
 	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID2), "check_backfill_job_count")
@@ -319,7 +320,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID2, uuid, 1, instanceLease)
+	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID2, uuid, noPID, instanceLease)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
 	expectJob = bjTestCases[2]
@@ -372,18 +373,34 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 7      jobID1     eleID1    ""                               4
 	// 8      jobID1     eleID1    ""                               3
 	// 9      jobID1     eleID1    ""                               4
-	checkAndClean := func(batch, jobCnt int, jobID int64) {
+	simpleCheck := func(batch, jobCnt int, bfJobIDs []int64, pID int64) {
 		err = ddl.AddBackfillJobs(se, bPhyJobs)
 		require.NoError(t, err)
-		bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, batch, jobID1, uuid, 0, instanceLease)
+		bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, batch, jobID1, uuid, pID, instanceLease)
 		require.NoError(t, err)
 		require.Len(t, bJobs, jobCnt)
-		require.Equal(t, jobID, bJobs[0].ID)
+		isExist := false
+		for _, id := range bfJobIDs {
+			if id == bJobs[0].ID {
+				isExist = true
+			}
+		}
+		require.True(t, isExist, fmt.Sprintf("expected ids:%v, actual id:%d", bfJobIDs, bJobs[0].ID))
 		err = ddl.RemoveBackfillJob(se, true, bJobs1[0])
 		require.NoError(t, err)
 	}
-	checkAndClean(3, 2, 2)
-	bPhyJobs[6].InstanceLease = types.NewTime(types.FromGoTime(time.Now().Add(-time.Hour)), 0, 0)
+	type cntAndID struct {
+		batch    int
+		bfJobCnt int
+		bfJobID  []int64
+	}
+	checkAndClean := func(expectRet1, expectRet2 cntAndID) {
+		simpleCheck(expectRet1.batch, expectRet1.bfJobCnt, expectRet1.bfJobID, noPID)
+		simpleCheck(expectRet2.batch, expectRet2.bfJobCnt, expectRet2.bfJobID, ddl.GetJobWithoutPartition)
+	}
+	checkAndClean(cntAndID{3, 3, []int64{0, 1, 3}},
+		cntAndID{3, 3, []int64{0, 1, 3}})
+	bPhyJobs[1].InstanceLease = types.NewTime(types.FromGoTime(time.Now().Add(-time.Hour).UTC()), 0, 0)
 	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
 	// -----------------------------------------------------------------------
 	// 0      jobID2     eleID2    ""                               1
@@ -391,17 +408,18 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID3    ""                               1
 	// 1      jobID2     eleID3    ""                               1
 	// 0      jobID1     eleID1    ""                               1
-	// 1      jobID1     eleID1    "uuid_1"                         1
+	// 1      jobID1     eleID1    "uuid_1"   currentTime-hour      1
 	// 2      jobID1     eleID1    ""                               2
 	// 3      jobID1     eleID1    ""                               1
 	// 4      jobID1     eleID1    ""                               3
 	// 5      jobID1     eleID1    ""                               3
-	// 6      jobID1     eleID1    ""         currentTime-hour      2
+	// 6      jobID1     eleID1    ""                               2
 	// 7      jobID1     eleID1    ""                               4
 	// 8      jobID1     eleID1    ""                               3
 	// 9      jobID1     eleID1    ""                               4
-	checkAndClean(3, 2, 2)
-	bPhyJobs[6].InstanceLease = types.NewTime(types.FromGoTime(time.Now()), 0, 0)
+	checkAndClean(cntAndID{3, 3, []int64{0, 1, 3}},
+		cntAndID{3, 3, []int64{0, 1, 3}})
+	bPhyJobs[3].InstanceLease = types.NewTime(types.FromGoTime(time.Now().UTC()), 0, 0)
 	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
 	// -----------------------------------------------------------------------
 	// 0      jobID2     eleID2    ""                               1
@@ -409,17 +427,55 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID3    ""                               1
 	// 1      jobID2     eleID3    ""                               1
 	// 0      jobID1     eleID1    ""                               1
-	// 1      jobID1     eleID1    "uuid_1"                         1
-	// 2      jobID1     eleID1    "uuid_2"                         2
-	// 3      jobID1     eleID1    ""                               1
+	// 1      jobID1     eleID1    "uuid_1"   currentTime-hour      1
+	// 2      jobID1     eleID1    ""                               2
+	// 3      jobID1     eleID1    ""         currentTime           1  // should not exist
 	// 4      jobID1     eleID1    ""                               3
 	// 5      jobID1     eleID1    ""                               3
-	// 6      jobID1     eleID1    ""         currentTime           2
+	// 6      jobID1     eleID1    ""                               2
 	// 7      jobID1     eleID1    ""                               4
 	// 8      jobID1     eleID1    ""                               3
 	// 9      jobID1     eleID1    ""                               4
-	bPhyJobs[2].InstanceID = "uuid_2"
-	checkAndClean(2, 2, 4)
+	checkAndClean(cntAndID{3, 2, []int64{2, 6}},
+		cntAndID{3, 3, []int64{0, 1, 3}})
+	bPhyJobs[6].InstanceLease = types.NewTime(types.FromGoTime(time.Now().UTC()), 0, 0)
+	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
+	// -----------------------------------------------------------------------
+	// 0      jobID2     eleID2    ""                               1
+	// 1      jobID2     eleID2    ""                               1
+	// 0      jobID2     eleID3    ""                               1
+	// 1      jobID2     eleID3    ""                               1
+	// 0      jobID1     eleID1    ""                               1
+	// 1      jobID1     eleID1    "uuid_1"   currentTime-hour      1
+	// 2      jobID1     eleID1    ""                               2
+	// 3      jobID1     eleID1    ""         currentTime           1  // should not exist
+	// 4      jobID1     eleID1    ""                               3
+	// 5      jobID1     eleID1    ""                               3
+	// 6      jobID1     eleID1    ""         currentTime           2  // should not exist
+	// 7      jobID1     eleID1    ""                               4
+	// 8      jobID1     eleID1    ""                               3
+	// 9      jobID1     eleID1    ""                               4
+	checkAndClean(cntAndID{3, 2, []int64{2, 6}},
+		cntAndID{10, 10, []int64{0, 1, 3}})
+	bPhyJobs[6].InstanceID = "uuid_2"
+	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
+	// -----------------------------------------------------------------------
+	// 0      jobID2     eleID2    ""                               1
+	// 1      jobID2     eleID2    ""                               1
+	// 0      jobID2     eleID3    ""                               1
+	// 1      jobID2     eleID3    ""                               1
+	// 0      jobID1     eleID1    ""                               1
+	// 1      jobID1     eleID1    "uuid_1"   currentTime-hour      1
+	// 2      jobID1     eleID1    ""                               2
+	// 3      jobID1     eleID1    ""         currentTime           1  // should not exist
+	// 4      jobID1     eleID1    ""                               3
+	// 5      jobID1     eleID1    ""                               3
+	// 6      jobID1     eleID1    "uuid_2"   currentTime           2  // should not exist
+	// 7      jobID1     eleID1    ""                               4
+	// 8      jobID1     eleID1    ""                               3
+	// 9      jobID1     eleID1    ""                               4
+	checkAndClean(cntAndID{3, 3, []int64{4, 5, 8}},
+		cntAndID{10, 9, []int64{0, 1, 3}})
 	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
 	// -----------------------------------------------------------------------
 	// 0      jobID2     eleID2    ""                               1

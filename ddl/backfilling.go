@@ -69,7 +69,6 @@ const (
 	minGenPhysicalTableTaskBatch = 64
 	minDistTaskCnt               = 64
 	retrySQLTimes                = 10
-	retrySQLInterval             = 300 * time.Millisecond
 )
 
 // RetrySQLInterval is export for test.
@@ -96,9 +95,9 @@ type BackfillJob struct {
 	JobID           int64
 	EleID           int64
 	EleKey          []byte
+	PhysicalTableID int64
 	Tp              backfillerType
 	State           model.JobState
-	PhysicalTableID int64
 	InstanceID      string
 	InstanceLease   types.Time
 	// range info
@@ -699,8 +698,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, pID int64, kvRanges []kv
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] get backfill range task, get reverse key failed", zap.Error(err))
 		} else {
-			logutil.BgLogger().Info("[ddl] get backfill range task, change end key",
-				zap.Int64("pID", pID), zap.Int64("pTbl", phyTbl.GetPhysicalID()), zap.Bool("mergeTIdx", reorgInfo.mergingTmpIdx),
+			logutil.BgLogger().Info("[ddl] get backfill range task, change end key", zap.Int64("pTbl", phyTbl.GetPhysicalID()),
 				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
 			endKey = endK
 		}
