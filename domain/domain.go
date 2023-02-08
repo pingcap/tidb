@@ -472,6 +472,18 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 
+func getFlashbackStartTSFromErrorMsg(err error) uint64 {
+	slices := strings.Split(err.Error(), "is in flashback progress, FlashbackStartTS is ")
+	if len(slices) != 2 {
+		return 0
+	}
+	version, err := strconv.ParseUint(slices[1], 10, 0)
+	if err != nil {
+		return 0
+	}
+	return version
+}
+
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
@@ -491,7 +503,15 @@ func (do *Domain) Reload() error {
 		return err
 	}
 
-	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(ver.Ver)
+	version := ver.Ver
+	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version)
+	if err != nil {
+		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
+			// use the lastest available version to create domain
+			version -= 1
+			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
+		}
+	}
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
@@ -520,7 +540,7 @@ func (do *Domain) Reload() error {
 	}
 
 	// lease renew, so it must be executed despite it is cache or not
-	do.SchemaValidator.Update(ver.Ver, oldSchemaVersion, is.SchemaMetaVersion(), changes)
+	do.SchemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
