@@ -262,14 +262,16 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 				return
 			case e, ok := <-ch:
 				if !ok {
+					log.Info("[log backup advancer] Task watcher exits due to stream ends.")
 					return
 				}
-				log.Info("meet task event", zap.Stringer("event", &e))
+				log.Info("[log backup advancer] Meet task event", zap.Stringer("event", &e))
 				if err := c.onTaskEvent(ctx, e); err != nil {
 					if errors.Cause(e.Err) != context.Canceled {
 						log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
 						time.AfterFunc(c.cfg.BackoffTime, func() { c.StartTaskListener(ctx) })
 					}
+					log.Info("[log backup advancer] Task watcher exits due to some error.", logutil.ShortError(err))
 					return
 				}
 			}
