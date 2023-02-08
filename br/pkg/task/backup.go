@@ -86,7 +86,7 @@ type BackupConfig struct {
 	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
-	ReplicaReadLabel map[string]string `json:"backup-replica-read-label" toml:"backup-replica-read-label"`
+	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	CompressionConfig
 
 	// for ebs-based backup
