@@ -11,7 +11,7 @@ incremental-import = true
 
 [checkpoint]
 enable = true
-schema = "tidb_lightning_checkpoint_dupe_resolve_incremental"
+schema = "tidb_lightning_checkpoint_dupe_resolve_incremental2"
 driver = "mysql"
 
 [[mydumper.files]]
