@@ -743,24 +743,28 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 		}
 		leaseStr := currTime.Add(-lease).Format(types.TimeFormat)
 
-		if pTblID == 0 {
-			rows, err := s.execute(context.Background(),
-				fmt.Sprintf("select ddl_physical_tid from mysql.%s group by ddl_job_id, ele_id, ele_key, ddl_physical_tid having sum(length(exec_id)) = 0 or (max(exec_lease) < '%s' and max(exec_lease) is not null) order by ddl_job_id, ele_key, ele_id, ddl_physical_tid limit 1",
-					BackfillTable, leaseStr), "get_mark_backfill_job")
-			if err != nil {
-				return errors.Trace(err)
-			}
+		getJobsSQL := fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and ddl_job_id = %d order by ddl_job_id, ele_key, ele_id limit %d",
+			leaseStr, jobID, batch)
+		if pTblID != GetJobWithoutPartition {
+			if pTblID == 0 {
+				rows, err := s.execute(context.Background(),
+					fmt.Sprintf("select ddl_physical_tid from mysql.%s group by ddl_job_id, ele_id, ele_key, ddl_physical_tid having sum(length(exec_id)) = 0 or (max(exec_lease) < '%s' and max(exec_lease) is not null) order by ddl_job_id, ele_key, ele_id, ddl_physical_tid limit 1",
+						BackfillTable, leaseStr), "get_mark_backfill_job")
+				if err != nil {
+					return errors.Trace(err)
+				}
 
-			if len(rows) == 0 {
-				return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job")
-			}
+				if len(rows) == 0 {
+					return dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job")
+				}
 
-			pTblID = rows[0].GetInt64(0)
+				pTblID = rows[0].GetInt64(0)
+			}
+			getJobsSQL = fmt.Sprintf("(exec_ID = '' or exec_lease < '%s') and ddl_job_id = %d and ddl_physical_tid = %d order by ddl_job_id, ele_key, ele_id limit %d",
+				leaseStr, jobID, pTblID, batch)
 		}
 
-		bJobs, err = GetBackfillJobs(se, BackfillTable,
-			fmt.Sprintf("(exec_ID = '' or exec_lease < '%s') and ddl_job_id = %d and ddl_physical_tid = %d order by ddl_job_id, ele_key, ele_id limit %d",
-				leaseStr, jobID, pTblID, batch), "get_mark_backfill_job")
+		bJobs, err = GetBackfillJobs(se, BackfillTable, getJobsSQL, "get_mark_backfill_job")
 		if err != nil {
 			return err
 		}

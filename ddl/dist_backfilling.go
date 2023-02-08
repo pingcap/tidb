@@ -34,6 +34,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const GetJobWithoutPartition = -1
+
 type backfillWorkerContext struct {
 	currID          int
 	mu              sync.Mutex
@@ -128,6 +130,10 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 	})
 
 	runningPID := int64(0)
+	// If txn-merge we needn't to claim the backfill job through the partition table
+	if ingestBackendCtx == nil {
+		runningPID = GetJobWithoutPartition
+	}
 	proFunc := func() ([]*reorgBackfillTask, error) {
 		// TODO: After BackfillJob replaces reorgBackfillTask, use backfiller's GetTasks instead of it.
 		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, &runningPID, workerCnt+5)
@@ -253,7 +259,9 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, run
 			}
 		}
 
-		*runningPID = bJobs[0].PhysicalTableID
+		if *runningPID != GetJobWithoutPartition {
+			*runningPID = bJobs[0].PhysicalTableID
+		}
 		tasks := make([]*reorgBackfillTask, 0, len(bJobs))
 		for _, bJ := range bJobs {
 			task, err := d.backfillJob2Task(tbl, bJ)
