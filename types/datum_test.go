@@ -76,6 +76,7 @@ func TestToBool(t *testing.T) {
 	testDatumToBool(t, NewBinaryLiteralFromUint(0, -1), 0)
 	testDatumToBool(t, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(t, Set{Name: "a", Value: 1}, 1)
+<<<<<<< HEAD
 	testDatumToBool(t, json.CreateBinary(int64(1)), 1)
 	testDatumToBool(t, json.CreateBinary(int64(0)), 0)
 	testDatumToBool(t, json.CreateBinary("0"), 1)
@@ -93,6 +94,25 @@ func TestToBool(t *testing.T) {
 	testDatumToBool(t, json.CreateBinary(false), 1)
 	testDatumToBool(t, json.CreateBinary(""), 1)
 	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
+=======
+	testDatumToBool(t, CreateBinaryJSON(int64(1)), 1)
+	testDatumToBool(t, CreateBinaryJSON(int64(0)), 0)
+	testDatumToBool(t, CreateBinaryJSON("0"), 1)
+	testDatumToBool(t, CreateBinaryJSON("aaabbb"), 1)
+	testDatumToBool(t, CreateBinaryJSON(float64(0.0)), 0)
+	testDatumToBool(t, CreateBinaryJSON(float64(3.1415)), 1)
+	testDatumToBool(t, CreateBinaryJSON([]interface{}{int64(1), int64(2)}), 1)
+	testDatumToBool(t, CreateBinaryJSON(map[string]interface{}{"ke": "val"}), 1)
+	testDatumToBool(t, CreateBinaryJSON("0000-00-00 00:00:00"), 1)
+	testDatumToBool(t, CreateBinaryJSON("0778"), 1)
+	testDatumToBool(t, CreateBinaryJSON("0000"), 1)
+	testDatumToBool(t, CreateBinaryJSON(nil), 1)
+	testDatumToBool(t, CreateBinaryJSON([]interface{}{nil}), 1)
+	testDatumToBool(t, CreateBinaryJSON(true), 1)
+	testDatumToBool(t, CreateBinaryJSON(false), 1)
+	testDatumToBool(t, CreateBinaryJSON(""), 1)
+	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
+>>>>>>> 8398f0fe098 (*: fix a timezone data race which may cause wrong row data (#41146))
 	require.NoError(t, err)
 	testDatumToBool(t, t1, 1)
 
@@ -135,7 +155,7 @@ func TestToInt64(t *testing.T) {
 
 	t1, err := ParseTime(&stmtctx.StatementContext{
 		TimeZone: time.UTC,
-	}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
+	}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0, nil)
 	require.NoError(t, err)
 	testDatumToInt64(t, t1, int64(20111110111112))
 
@@ -224,9 +244,14 @@ func TestConvertToFloat(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
 func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
+=======
+func mustParseTime(s string, tp byte, fsp int) Time {
+	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp, nil)
+>>>>>>> 8398f0fe098 (*: fix a timezone data race which may cause wrong row data (#41146))
 	if err != nil {
 		panic("ParseTime fail")
 	}

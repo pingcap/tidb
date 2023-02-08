@@ -543,7 +543,17 @@ func ParseTSString(ts string) (uint64, error) {
 	sc := &stmtctx.StatementContext{
 		TimeZone: loc,
 	}
+<<<<<<< HEAD
 	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
+=======
+	if tzCheck {
+		tzIdx, _, _, _, _ := types.GetTimezone(ts)
+		if tzIdx < 0 {
+			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
+		}
+	}
+	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp, nil)
+>>>>>>> 8398f0fe098 (*: fix a timezone data race which may cause wrong row data (#41146))
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

@@ -1288,7 +1288,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc, val, b.tp.GetType(), b.tp.GetDecimal())
+	res, err = types.ParseTime(sc, val, b.tp.GetType(), b.tp.GetDecimal(), nil)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -1729,9 +1729,54 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+<<<<<<< HEAD
 	s, err := val.Unquote()
 	if err != nil {
 		return res, false, err
+=======
+
+	switch val.TypeCode {
+	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
+		res = val.GetTime()
+		res.SetType(b.tp.GetType())
+		if b.tp.GetType() == mysql.TypeDate {
+			// Truncate hh:mm:ss part if the type is Date.
+			res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		}
+		return res, isNull, err
+	case types.JSONTypeCodeDuration:
+		duration := val.GetDuration()
+
+		sc := b.ctx.GetSessionVars().StmtCtx
+		ts, err := getStmtTimestamp(b.ctx)
+		if err != nil {
+			ts = gotime.Now()
+		}
+		res, err = duration.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
+		if err != nil {
+			return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
+		}
+		res, err = res.RoundFrac(sc, b.tp.GetDecimal())
+		return res, isNull, err
+	case types.JSONTypeCodeString:
+		s, err := val.Unquote()
+		if err != nil {
+			return res, false, err
+		}
+		sc := b.ctx.GetSessionVars().StmtCtx
+		res, err = types.ParseTime(sc, s, b.tp.GetType(), b.tp.GetDecimal(), nil)
+		if err != nil {
+			return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
+		}
+		if b.tp.GetType() == mysql.TypeDate {
+			// Truncate hh:mm:ss part if the type is Date.
+			res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+		}
+		return res, isNull, err
+	default:
+		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), val.String())
+		return res, true, b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+>>>>>>> 8398f0fe098 (*: fix a timezone data race which may cause wrong row data (#41146))
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTime(sc, s, b.tp.GetType(), b.tp.GetDecimal())

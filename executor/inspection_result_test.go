@@ -181,7 +181,7 @@ func TestInspectionResult(t *testing.T) {
 }
 
 func parseTime(t *testing.T, se session.Session, str string) types.Time {
-	time, err := types.ParseTime(se.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.MaxFsp)
+	time, err := types.ParseTime(se.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.MaxFsp, nil)
 	require.NoError(t, err)
 	return time
 }
@@ -342,7 +342,7 @@ func TestThresholdCheckInspection2(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}
@@ -427,7 +427,7 @@ func TestThresholdCheckInspection3(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}
@@ -638,7 +638,7 @@ func TestNodeLoadInspection(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}
@@ -716,7 +716,7 @@ func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}

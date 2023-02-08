@@ -492,8 +492,58 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if err != nil {
 			return err
 		}
+<<<<<<< HEAD
 		tm, err := types.ParseTime(stmtCtx, s, b.tp.GetType(), fsp)
 		if err != nil {
+=======
+
+		switch val.TypeCode {
+		case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
+			tm := val.GetTime()
+			times[i] = tm
+			times[i].SetType(b.tp.GetType())
+			if b.tp.GetType() == mysql.TypeDate {
+				// Truncate hh:mm:ss part if the type is Date.
+				times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			}
+		case types.JSONTypeCodeDuration:
+			duration := val.GetDuration()
+
+			sc := b.ctx.GetSessionVars().StmtCtx
+			tm, err := duration.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				}
+				result.SetNull(i, true)
+				continue
+			}
+			tm, err = tm.RoundFrac(stmtCtx, fsp)
+			if err != nil {
+				return err
+			}
+			times[i] = tm
+		case types.JSONTypeCodeString:
+			s, err := val.Unquote()
+			if err != nil {
+				return err
+			}
+			tm, err := types.ParseTime(stmtCtx, s, b.tp.GetType(), fsp, nil)
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				}
+				result.SetNull(i, true)
+				continue
+			}
+			times[i] = tm
+			if b.tp.GetType() == mysql.TypeDate {
+				// Truncate hh:mm:ss part if the type is Date.
+				times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
+			}
+		default:
+			err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), val.String())
+>>>>>>> 8398f0fe098 (*: fix a timezone data race which may cause wrong row data (#41146))
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
@@ -1692,7 +1742,7 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chu
 		if result.IsNull(i) {
 			continue
 		}
-		tm, err := types.ParseTime(stmtCtx, buf.GetString(i), b.tp.GetType(), fsp)
+		tm, err := types.ParseTime(stmtCtx, buf.GetString(i), b.tp.GetType(), fsp, nil)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
