@@ -387,8 +387,8 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 
 		key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
 		var originTempVal []byte
-		if len(tempKey) > 0 {
-			// Get the origin value of the temporary index key.
+		if len(tempKey) > 0 && c.idxInfo.Unique {
+			// Get the origin value of the unique temporary index key.
 			// Append the new delete operations to the end of the origin value.
 			originTempVal, err = getKeyInTxn(context.TODO(), txn, tempKey)
 			if err != nil {
