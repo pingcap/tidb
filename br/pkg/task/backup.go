@@ -753,6 +753,9 @@ func parseReplicaReadLabelFlag(flags *pflag.FlagSet) (map[string]string, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if replicaReadLabelStr == "" {
+		return nil, nil
+	}
 	kv := strings.Split(replicaReadLabelStr, ":")
 	if len(kv) != 2 {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "invalid replica read label '%s'", replicaReadLabelStr)

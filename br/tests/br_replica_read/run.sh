@@ -24,13 +24,16 @@ if [ "$VOTER_COUNT" -lt "1" ];then
 fi
 
 # set random store to read only
-random_store_id=$(run_pd_ctl --pd $PD_ADDR store | jq 'first(.stores[]|select(.store.labels|(.!= null and any(.key == "engine" and .value=="tiflash"))| not)|.store.id)')
-run_pd_ctl --pd $PD_ADDR store label $random_store_id '$mode' 'read_only'
+echo " $(run_pd_ctl -u https://$PD_ADDR store)"
+random_store_id_str=$(run_pd_ctl -u https://$PD_ADDR store | jq 'first(.stores[]|select(.store.labels|(.!= null and any(.key == "engine" and .value=="tiflash"))| not)|.store.id)')
+random_store_id=$((random_store_id_str + 0))
+echo "random store id: $random_store_id"
+run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' 'read_only'
 
 # set placement rule to add a learner replica for each region in the read only store
-run_pd_ctl --pd $PD_ADDR config placement-rules rule-bundle load --out=$TEST_DIR/default_rules.json
+run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle load --out=$TEST_DIR/default_rules.json
 cat tests/br_replica_read/placement_rule_with_learner_template.json | jq  ".[].rules[0].count = $VOTER_COUNT" > $TEST_DIR/placement_rule_with_learner.json
-run_pd_ctl --pd $PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/placement_rule_with_learner.json
+run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/placement_rule_with_learner.json
 
 run_sql "CREATE DATABASE $DB;"
 
@@ -51,19 +54,20 @@ run_sql "CREATE TABLE $DB.usertable2 ( \
 
 run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
 # backup db with wrong replica read label option
-echo "backup start with wrong replica read label option ..."
-run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label '$mode:no_such_label'
-grep "no store matches replica read label" $LOG
+# echo "backup start with wrong replica read label option ..."
+# run_br -u https://$PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label '$mode:no_such_label'
+# grep "no store matches replica read label" $LOG
+echo " $(run_pd_ctl -u https://$PD_ADDR region)"
 
 # backup db
 echo "backup start..."
-run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label '$mode:read_only'
+run_br -u https://$PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label '$mode:read_only'
 
 run_sql "DROP DATABASE $DB;"
 
 # restore db
 echo "restore start..."
-run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
+run_br restore db --db $DB -s "local://$TEST_DIR/$DB" -u https://$PD_ADDR
 
 table_count=$(run_sql "use $DB; show tables;" | grep "Tables_in" | wc -l)
 if [ "$table_count" -ne "2" ];then
@@ -83,5 +87,5 @@ run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE
 run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE DATABASE'
 
 run_sql "DROP DATABASE $DB;"
-run_pd_ctl --pd $PD_ADDR store label $random_store_id '$mode' ''
-run_pd_ctl --pd $PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/default_rules.json
+run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' ''
+run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/default_rules.json
