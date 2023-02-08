@@ -81,7 +81,7 @@ func TestCompareIndexData(t *testing.T) {
 		}
 		indexInfo := &model.IndexInfo{Name: model.NewCIStr("i0"), Columns: indexCols}
 
-		err := compareIndexData(sc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: model.NewCIStr("t")})
+		err := compareIndexData(sc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: model.NewCIStr("t")}, nil, nil)
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
 }
