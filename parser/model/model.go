@@ -1736,6 +1736,7 @@ type PlacementSettings struct {
 	LearnerConstraints  string `json:"learner_constraints"`
 	FollowerConstraints string `json:"follower_constraints"`
 	VoterConstraints    string `json:"voter_constraints"`
+	SurvivalPreferences string `json:"survival_preferences"`
 }
 
 // PolicyInfo is the struct to store the placement policy.
