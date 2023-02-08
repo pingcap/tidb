@@ -207,6 +207,7 @@ type TelemetryInfo struct {
 	PartitionTelemetry    *PartitionTelemetryInfo
 	AccountLockTelemetry  *AccountLockTelemetryInfo
 	UseIndexMerge         bool
+	UseTableLookUp        bool
 }
 
 // PartitionTelemetryInfo records table partition telemetry information during execution.
