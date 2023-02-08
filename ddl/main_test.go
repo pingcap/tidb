@@ -40,6 +40,8 @@ func TestMain(m *testing.M) {
 
 	autoid.SetStep(5000)
 	ddl.ReorgWaitTimeout = 30 * time.Millisecond
+	ddl.RetrySQLInterval = 30 * time.Millisecond
+	ddl.CheckBackfillJobFinishInterval = 50 * time.Millisecond
 	ddl.RunInGoTest = true
 	ddl.SetBatchInsertDeleteRangeSize(2)
 
@@ -52,7 +54,7 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, true)
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, true)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "ddl: infosync.GlobalInfoSyncerInit: %v\n", err)
 		os.Exit(1)

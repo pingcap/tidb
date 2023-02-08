@@ -414,6 +414,10 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 		--build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) \
+		--build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,distributereorg \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin

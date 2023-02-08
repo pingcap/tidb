@@ -73,7 +73,7 @@ func TestNormalSessionPool(t *testing.T) {
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
-	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, true)
+	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, true)
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
 	conf.Socket = ""
@@ -107,7 +107,7 @@ func TestAbnormalSessionPool(t *testing.T) {
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
-	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, true)
+	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, true)
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
 	conf.Socket = ""
