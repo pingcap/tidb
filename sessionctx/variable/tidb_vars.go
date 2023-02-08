@@ -916,6 +916,8 @@ const (
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBAuthTokenLifetime indicates the token lifetime for 'tidb_auth_token' in minute.
+	TiDBAuthTokenLifetime = "tidb_auth_token_lifetime"
 )
 
 // TiDB intentional limits
@@ -1179,6 +1181,7 @@ const (
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
+	DefTiDBAuthTokenLifetime                               = 15
 )
 
 // Process global variables.
@@ -1256,6 +1259,7 @@ var (
 	HistoricalStatsDuration            = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture    = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
 	EnableResourceControl              = atomic.NewBool(DefTiDBEnableResourceControl)
+	AuthTokenLifetime                  = atomic.NewInt64(DefTiDBAuthTokenLifetime)
 )
 
 var (

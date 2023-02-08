@@ -66,7 +66,6 @@ var dynamicPrivs = []string{
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
 }
 var dynamicPrivLock sync.Mutex
-var defaultTokenLife = 15 * time.Minute
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -564,7 +563,8 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
-		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
+		tokenLifetime := time.Duration(variable.AuthTokenLifetime.Load()) * time.Minute
+		if err = checkAuthTokenClaims(claims, record, tokenLifetime); err != nil {
 			logutil.BgLogger().Error("check claims failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}

@@ -2332,6 +2332,12 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableResourceControl.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBAuthTokenLifetime, Value: strconv.Itoa(DefTiDBAuthTokenLifetime), Type: TypeInt, MinValue: 0, MaxValue: 525600, SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+		AuthTokenLifetime.Store(TidbOptInt64(val, DefTiDBAuthTokenLifetime))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.FormatInt(AuthTokenLifetime.Load(), 10), nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPessimisticTransactionAggressiveLocking, Value: BoolToOnOff(DefTiDBPessimisticTransactionAggressiveLocking), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PessimisticTransactionAggressiveLocking = TiDBOptOn(val)
 		return nil
