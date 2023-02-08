@@ -238,7 +238,12 @@ func (r *HistoryReader) Rows() ([][]types.Datum, error) {
 			return nil, err
 		case rows, ok := <-r.rowsCh:
 			if !ok {
-				return nil, nil
+				select {
+				case err := <-r.errCh:
+					return nil, err
+				default:
+					return nil, nil
+				}
 			}
 			if len(rows) == 0 {
 				continue
