@@ -506,7 +506,8 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 			b.tasks = append(b.tasks, task)
 		}
 	}()
-	if b.limit <= 0 {
+	// only batch small tasks for memory control.
+	if b.limit <= 0 || !isSmallTask(task) {
 		return nil
 	}
 	batchedTask, err := b.cache.BuildBatchTask(b.bo, task, b.req.ReplicaRead)

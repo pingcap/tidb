@@ -453,10 +453,15 @@ func GetIndexMergeCounter() IndexMergeUsageCounter {
 
 // StoreBatchCoprCounter records the usages of batch copr statements.
 type StoreBatchCoprCounter struct {
-	BatchSize            int   `json:"batch_size"`
-	BatchedQuery         int64 `json:"query"`
-	BatchedQueryTask     int64 `json:"tasks"`
-	BatchedCount         int64 `json:"batched"`
+	// BatchSize is the global value of `tidb_store_batch_size`
+	BatchSize int `json:"batch_size"`
+	// BatchedQuery is the counter of queries that use this feature.
+	BatchedQuery int64 `json:"query"`
+	// BatchedQueryTask is the counter of total tasks in queries above.
+	BatchedQueryTask int64 `json:"tasks"`
+	// BatchedCount is the counter of successfully batched tasks.
+	BatchedCount int64 `json:"batched"`
+	// BatchedFallbackCount is the counter of fallback batched tasks by region miss.
 	BatchedFallbackCount int64 `json:"batched_fallback"`
 }
 
