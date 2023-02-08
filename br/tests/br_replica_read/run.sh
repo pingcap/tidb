@@ -24,9 +24,7 @@ if [ "$VOTER_COUNT" -lt "1" ];then
 fi
 
 # set random store to read only
-echo " $(run_pd_ctl -u https://$PD_ADDR store)"
-random_store_id_str=$(run_pd_ctl -u https://$PD_ADDR store | jq 'first(.stores[]|select(.store.labels|(.!= null and any(.key == "engine" and .value=="tiflash"))| not)|.store.id)')
-random_store_id=$((random_store_id_str + 0))
+random_store_id=$(run_pd_ctl -u https://$PD_ADDR store | jq 'first(.stores[]|select(.store.labels|(.!= null and any(.key == "engine" and .value=="tiflash"))| not)|.store.id)')
 echo "random store id: $random_store_id"
 run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' 'read_only'
 
@@ -53,11 +51,6 @@ run_sql "CREATE TABLE $DB.usertable2 ( \
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 
 run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
-# backup db with wrong replica read label option
-# echo "backup start with wrong replica read label option ..."
-# run_br -u https://$PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label '$mode:no_such_label'
-# grep "no store matches replica read label" $LOG
-echo " $(run_pd_ctl -u https://$PD_ADDR region)"
 
 # backup db
 echo "backup start..."
@@ -69,14 +62,18 @@ run_sql "DROP DATABASE $DB;"
 echo "restore start..."
 run_br restore db --db $DB -s "local://$TEST_DIR/$DB" -u https://$PD_ADDR
 
-table_count=$(run_sql "use $DB; show tables;" | grep "Tables_in" | wc -l)
-if [ "$table_count" -ne "2" ];then
+run_sql "select count(*) from $DB.usertable1;"
+table1_count=$(read_result)
+echo "table1 count: $table1_count"
+if [ "$table1_count" -ne "2" ];then
     echo "TEST: [$TEST_NAME] failed!"
     exit 1
 fi
 
-meta_count=$(run_sql "SHOW STATS_META where Row_count > 0;")
-if [ "$meta_count" -ne "2" ];then
+run_sql "select count(*) from $DB.usertable2;"
+table2_count=$(read_result)
+echo "table2 count: $table2_count"
+if [ "$table2_count" -ne "1" ];then
     echo "TEST: [$TEST_NAME] failed!"
     exit 1
 fi

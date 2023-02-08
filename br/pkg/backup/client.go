@@ -961,7 +961,7 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 		}
 
 		log.Warn("fail to find a target peer", logutil.Key("key", key))
-		time.Sleep(time.Millisecond * time.Duration(100*i))
+		time.Sleep(time.Millisecond * time.Duration(1000*i))
 		continue
 	}
 	log.Error("can not find a valid target peer", logutil.Key("key", key))
