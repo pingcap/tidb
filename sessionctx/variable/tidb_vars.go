@@ -1168,7 +1168,7 @@ const (
 	DefTiDBTTLDeleteRateLimit                              = 0
 	DefPasswordReuseHistory                                = 0
 	DefPasswordReuseTime                                   = 0
-	DefTiDBStoreBatchSize                                  = 0
+	DefTiDBStoreBatchSize                                  = 4
 	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture                 = false
 	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
