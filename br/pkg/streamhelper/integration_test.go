@@ -7,13 +7,19 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"path"
 	"testing"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+=======
+	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+>>>>>>> 93c6492418 (log-backup: added more robust error handling for log backup advancer (#41083))
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -143,6 +149,11 @@ func TestIntegration(t *testing.T) {
 	t.Run("testGetGlobalCheckPointTS", func(t *testing.T) { testGetGlobalCheckPointTS(t, metaCli) })
 	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 	t.Run("TestStreamCheckpoint", func(t *testing.T) { testStreamCheckpoint(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+<<<<<<< HEAD
+=======
+	t.Run("testStoptask", func(t *testing.T) { testStoptask(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+	t.Run("TestStreamClose", func(t *testing.T) { testStreamClose(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+>>>>>>> 93c6492418 (log-backup: added more robust error handling for log backup advancer (#41083))
 }
 
 func TestChecking(t *testing.T) {
@@ -320,6 +331,7 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	taskInfo2 := simpleTask(taskName2, 4)
 	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
 	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
+
 	first := <-ch
 	require.Equal(t, first.Type, streamhelper.EventAdd)
 	require.Equal(t, first.Name, taskName)
@@ -335,8 +347,44 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	require.Equal(t, forth.Type, streamhelper.EventDel)
 	require.Equal(t, forth.Name, taskName2)
 	cancel()
-	_, ok := <-ch
-	require.False(t, ok)
+	fifth, ok := <-ch
+	require.True(t, ok)
+	require.Equal(t, fifth.Type, streamhelper.EventErr)
+	require.Error(t, fifth.Err, context.Canceled)
+	item, ok := <-ch
+	require.False(t, ok, "%v", item)
+}
+
+func testStreamClose(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	ctx := context.Background()
+	taskName := "close_simple"
+	taskInfo := simpleTask(taskName, 4)
+
+	require.NoError(t, metaCli.PutTask(ctx, taskInfo))
+	ch := make(chan streamhelper.TaskEvent, 1024)
+	require.NoError(t, metaCli.Begin(ctx, ch))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName))
+	first := <-ch
+	require.Equal(t, first.Type, streamhelper.EventAdd)
+	require.Equal(t, first.Name, taskName)
+	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
+	second := <-ch
+	require.Equal(t, second.Type, streamhelper.EventDel, "%s", second)
+	require.Equal(t, second.Name, taskName, "%s", second)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/advancer_close_channel", "return"))
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/advancer_close_channel")
+	// We need to make the channel file some events hence we can simulate the closed channel.
+	taskName2 := "close_simple2"
+	taskInfo2 := simpleTask(taskName2, 4)
+	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
+
+	third := <-ch
+	require.Equal(t, third.Type, streamhelper.EventErr)
+	require.Error(t, third.Err, io.EOF)
+	item, ok := <-ch
+	require.False(t, ok, "%#v", item)
 }
 
 func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {
