@@ -289,11 +289,11 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 
 				idxRecord := &temporaryIndexRecord{
 					handle: elem.Handle,
-					delete: elem.IsDelete,
+					delete: elem.Delete,
 					unique: elem.Distinct,
 					skip:   false,
 				}
-				if !elem.IsDelete {
+				if !elem.Delete {
 					idxRecord.vals = elem.Value
 					idxRecord.distinct = tablecodec.IndexKVIsUnique(elem.Value)
 				}

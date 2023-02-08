@@ -15,7 +15,6 @@
 package tables
 
 import (
-	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -233,7 +232,7 @@ func checkIndexKeys(
 				return err
 			}
 			curElem := tmpVal.Current()
-			isTmpIdxValAndDeleted = curElem.IsDelete
+			isTmpIdxValAndDeleted = curElem.Delete
 			value = append(value, curElem.Value...)
 		} else {
 			value = append(value, m.value...)
@@ -269,9 +268,9 @@ func checkIndexKeys(
 
 		// When it is in add index new backfill state.
 		if len(value) == 0 || isTmpIdxValAndDeleted {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta(), m.key, value)
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta(), m.key, value)
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -355,7 +354,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 // Returns error if the index data is not a subset of the input data.
 func compareIndexData(
 	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
-	tableInfo *model.TableInfo, key, value []byte,
+	tableInfo *model.TableInfo,
 ) error {
 	for i := range indexData {
 		decodedMutationDatum := indexData[i]
@@ -382,9 +381,7 @@ func compareIndexData(
 				tableInfo.Name.O, indexInfo.Name.O, cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O,
 				decodedMutationDatum.String(), expectedDatum.String(),
 			)
-			logutil.BgLogger().Error("inconsistent indexed value in index insertion", zap.Error(err),
-				zap.String("key", hex.EncodeToString(key)),
-				zap.String("value", hex.EncodeToString(value)))
+			logutil.BgLogger().Error("inconsistent indexed value in index insertion", zap.Error(err))
 			return err
 		}
 	}

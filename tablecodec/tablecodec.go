@@ -1212,7 +1212,7 @@ func (v TempIndexValue) Current() *TempIndexValueElem {
 
 // FilterOverwritten is used by the temp index merge process to remove the overwritten index operations.
 // For example, the value {temp_idx_key -> [h2, h2d, h3, h1d]} recorded four operations on the original index.
-// 'h2d' overwrite 'h2', we can remove 'h2' from the value.
+// Since 'h2d' overwrites 'h2', we can remove 'h2' from the value.
 func (v TempIndexValue) FilterOverwritten() TempIndexValue {
 	if len(v) <= 1 || !v[0].Distinct {
 		return v
@@ -1244,13 +1244,13 @@ type TempIndexValueElem struct {
 	Value    []byte
 	Handle   kv.Handle
 	KeyVer   byte
-	IsDelete bool
+	Delete   bool
 	Distinct bool
 }
 
 // Encode encodes the temp index value.
 func (v *TempIndexValueElem) Encode(buf []byte) []byte {
-	if v.IsDelete {
+	if v.Delete {
 		if v.Distinct {
 			handle := v.Handle
 			var hEncoded []byte
@@ -1350,12 +1350,12 @@ func (v *TempIndexValueElem) DecodeOne(b []byte, isCommonHandle bool) (remain []
 		v.KeyVer = b[0]
 		b = b[1:]
 		v.Distinct = true
-		v.IsDelete = true
+		v.Delete = true
 		return b, nil
 	case TempIndexValueFlagNonDistinctDeleted:
 		v.KeyVer = b[0]
 		b = b[1:]
-		v.IsDelete = true
+		v.Delete = true
 		return b, nil
 	default:
 		return nil, errors.New("invalid temp index value")

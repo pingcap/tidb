@@ -645,8 +645,8 @@ func TestTempIndexValueCodec(t *testing.T) {
 	require.EqualValues(t, tempIdxVal, newTempIdxVal)
 
 	tempIdxVal = TempIndexValueElem{
-		IsDelete: true,
-		KeyVer:   'b',
+		Delete: true,
+		KeyVer: 'b',
 	}
 	newTempIdxVal = TempIndexValueElem{}
 	val = tempIdxVal.Encode(nil)
