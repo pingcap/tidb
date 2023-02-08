@@ -776,3 +776,41 @@ func TestAddIndexDecodeTempIndexCommonHandle(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 id_1 char_1", "2 id_2 char_2", "3 id_3 char_3"))
 }
+
+func TestAddIndexInsertIgnoreOnBackfill(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, b int);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	runDML := false
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			_, err := tk1.Exec("insert ignore into t values (1, 1);")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert ignore into t values (2, 2);")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("update t set b = null where id = 1;")
+			assert.NoError(t, err)
+			runDML = true
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 <nil>", "2 2"))
+}

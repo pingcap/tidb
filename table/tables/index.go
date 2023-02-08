@@ -240,7 +240,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		if !distinct || skipCheck || opt.Untouched {
 			val := idxVal
 			if keyIsTempIdxKey && !opt.Untouched { // Untouched key-values never occur in the storage.
-				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer}
+				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
 			}
 			err = txn.GetMemBuffer().Set(key, val)
@@ -249,7 +249,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			}
 			if len(tempKey) > 0 {
 				if !opt.Untouched { // Untouched key-values never occur in the storage.
-					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer}
+					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 					val = tempVal.Encode(nil)
 				}
 				err = txn.GetMemBuffer().Set(tempKey, val)
