@@ -65,6 +65,9 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+// DefaultResourceGroupName is the default resource group name.
+const DefaultResourceGroupName = "default"
+
 var (
 	// PreparedStmtCount is exported for test.
 	PreparedStmtCount int64
@@ -1341,6 +1344,10 @@ type SessionVars struct {
 	// PessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
 	// is enabled.
 	PessimisticTransactionAggressiveLocking bool
+
+	// EnableIndexJoinInnerSideMultiPattern indicates whether enable multi pattern for index join inner side
+	// For now it is not public to user
+	EnableIndexJoinInnerSideMultiPattern bool
 }
 
 // planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
@@ -2317,16 +2324,16 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 // EncodeSessionStates saves session states into SessionStates.
 func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
+	s.userVars.lock.RLock()
 	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
 	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.userVars.types))
-	s.userVars.lock.RLock()
-	defer s.userVars.lock.RUnlock()
 	for name, userVar := range s.userVars.values {
 		sessionStates.UserVars[name] = userVar.Clone()
 	}
 	for name, userVarType := range s.userVars.types {
 		sessionStates.UserVarTypes[name] = userVarType.Clone()
 	}
+	s.userVars.lock.RUnlock()
 
 	// Encode other session contexts.
 	sessionStates.PreparedStmtID = s.preparedStmtID
@@ -2354,11 +2361,9 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 // DecodeSessionStates restores session states from SessionStates.
 func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Decode user-defined variables.
-	s.userVars.values = make(map[string]types.Datum, len(sessionStates.UserVars))
 	for name, userVar := range sessionStates.UserVars {
 		s.SetUserVarVal(name, *userVar.Clone())
 	}
-	s.userVars.types = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
 	for name, userVarType := range sessionStates.UserVarTypes {
 		s.SetUserVarType(name, userVarType.Clone())
 	}

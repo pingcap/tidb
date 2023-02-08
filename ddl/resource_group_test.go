@@ -16,7 +16,6 @@ package ddl_test
 
 import (
 	"context"
-	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl/internal/callback"
@@ -89,15 +88,16 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(2000), g.RURate)
 	re.Equal(int64(-1), g.BurstLimit)
 
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 0 YES"))
+
+	tk.MustExec("drop resource group x")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Nil(g)
+
 	tk.MustExec("alter resource group if exists not_exists RU_PER_SEC=2000")
 	// Check warning message
 	res = tk.MustQuery("show warnings")
 	res.Check(testkit.Rows("Note 8249 Unknown resource group 'not_exists'"))
-
-	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x' ").Check(testkit.Rows(strconv.FormatInt(g.ID, 10) + " x 2000"))
-	tk.MustExec("drop resource group x")
-	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
-	re.Nil(g)
 
 	tk.MustExec("create resource group y " +
 		"CPU='4000m' " +
@@ -131,35 +131,44 @@ func TestResourceGroupBasic(t *testing.T) {
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
 	tk.MustContainErrMsg("create resource group x RU_PER_SEC=1000, CPU='8000m';", resourcegroup.ErrInvalidResourceGroupDuplicatedMode.Error())
-	groups, err := infosync.GetAllResourceGroups(context.TODO())
+	groups, err := infosync.ListResourceGroups(context.TODO())
 	require.Equal(t, 0, len(groups))
 	require.NoError(t, err)
 
 	// Check information schema table information_schema.resource_groups
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
-	g1 := testResourceGroupNameFromIS(t, tk.Session(), "x")
-	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'x'").Check(testkit.Rows(strconv.FormatInt(g1.ID, 10) + " x 1000"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 0 NO"))
 	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=1000"))
 
 	tk.MustExec("create resource group y RU_PER_SEC=2000")
-	g2 := testResourceGroupNameFromIS(t, tk.Session(), "y")
-	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'y'").Check(testkit.Rows(strconv.FormatInt(g2.ID, 10) + " y 2000"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 0 NO"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000"))
 
-	tk.MustExec("alter resource group y RU_PER_SEC=4000")
-
-	g2 = testResourceGroupNameFromIS(t, tk.Session(), "y")
-	tk.MustQuery("select * from information_schema.resource_groups where group_name = 'y'").Check(testkit.Rows(strconv.FormatInt(g2.ID, 10) + " y 4000"))
-	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000"))
+	tk.MustExec("alter resource group y RU_PER_SEC=4000 BURSTABLE")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 0 YES"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 BURSTABLE"))
 
 	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("2"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
+	tk.MustContainErrMsg("create user usr_fail resource group nil_group", "Unknown resource group 'nil_group'")
 	tk.MustExec("create user user2")
 	tk.MustGetErrCode("alter user user2 resource group nil_group", mysql.ErrResourceGroupNotExists)
+	tk.MustContainErrMsg("alter user user2 resource group nil_group", "Unknown resource group 'nil_group'")
+
+	tk.MustExec("create resource group z " +
+		"CPU='4000m' " +
+		"IO_READ_BANDWIDTH='1G' " +
+		"IO_WRITE_BANDWIDTH='300M'")
+	tk.MustQuery("show create resource group z").Check(testkit.Rows("z CREATE RESOURCE GROUP `z` CPU=\"4000m\" IO_READ_BANDWIDTH=\"1G\" IO_WRITE_BANDWIDTH=\"300M\""))
 
 	tk.MustExec("create resource group do_not_delete_rg ru_per_sec=100")
 	tk.MustExec("create user usr3 resource group do_not_delete_rg")
+	tk.MustQuery("select user_attributes from mysql.user where user = 'usr3'").Check(testkit.Rows(`{"resource_group": "do_not_delete_rg"}`))
 	tk.MustContainErrMsg("drop resource group do_not_delete_rg", "user [usr3] depends on the resource group to drop")
+	tk.MustExec("alter user usr3 resource group `default`")
+	tk.MustExec("alter user usr3 resource group ``")
+	tk.MustExec("alter user usr3 resource group `DeFault`")
+	tk.MustQuery("select user_attributes from mysql.user where user = 'usr3'").Check(testkit.Rows(`{"resource_group": "default"}`))
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {

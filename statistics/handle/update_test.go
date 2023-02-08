@@ -2212,19 +2212,30 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 
+	getStatsHealthy := func() int {
+		rows := tk.MustQuery("show stats_healthy where db_name = 'test' and table_name = 't'").Rows()
+		require.Len(t, rows, 1)
+		healthy, err := strconv.Atoi(rows[0][3].(string))
+		require.NoError(t, err)
+		return healthy
+	}
+
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 44)
 	require.True(t, h.HandleAutoAnalyze(is))
 
 	tk.MustExec("delete from t limit 12")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 61)
 	require.False(t, h.HandleAutoAnalyze(is))
 
 	tk.MustExec("delete from t limit 4")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	require.Equal(t, getStatsHealthy(), 48)
 	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
 }
 
@@ -2656,20 +2667,42 @@ func TestFillMissingStatsMeta(t *testing.T) {
 	}
 
 	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpDelta))
+	require.NoError(t, h.Update(is))
 	ver1 := checkStatsMeta(tbl1ID, "2", "2")
 	tk.MustExec("delete from t1 where a = 1")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpDelta))
+	require.NoError(t, h.Update(is))
 	ver2 := checkStatsMeta(tbl1ID, "3", "1")
 	require.Greater(t, ver2, ver1)
 
 	tk.MustExec("insert into t2 values (1, 2), (3, 4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpDelta))
+	require.NoError(t, h.Update(is))
 	checkStatsMeta(p0ID, "2", "2")
 	globalVer1 := checkStatsMeta(tbl2ID, "2", "2")
 	tk.MustExec("insert into t2 values (11, 12)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpDelta))
+	require.NoError(t, h.Update(is))
 	checkStatsMeta(p1ID, "1", "1")
 	globalVer2 := checkStatsMeta(tbl2ID, "3", "3")
 	require.Greater(t, globalVer2, globalVer1)
+}
+
+func TestNotDumpSysTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustQuery("select count(1) from mysql.stats_meta").Check(testkit.Rows("1"))
+	// After executing `delete from mysql.stats_meta`, a delta for mysql.stats_meta is created but it would not be dumped.
+	tk.MustExec("delete from mysql.stats_meta")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("stats_meta"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+	tk.MustQuery(fmt.Sprintf("select * from mysql.stats_meta where table_id = %v", tblID)).Check(testkit.Rows())
 }

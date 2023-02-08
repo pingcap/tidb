@@ -522,13 +522,14 @@ func unwrapResultSet(rs ResultSet) ResultSet {
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	ci = &ColumnInfo{
-		Name:    fld.ColumnAsName.O,
-		OrgName: fld.Column.Name.O,
-		Table:   fld.TableAsName.O,
-		Schema:  fld.DBName.O,
-		Flag:    uint16(fld.Column.GetFlag()),
-		Charset: uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
-		Type:    fld.Column.GetType(),
+		Name:         fld.ColumnAsName.O,
+		OrgName:      fld.Column.Name.O,
+		Table:        fld.TableAsName.O,
+		Schema:       fld.DBName.O,
+		Flag:         uint16(fld.Column.GetFlag()),
+		Charset:      uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
+		Type:         fld.Column.GetType(),
+		DefaultValue: fld.Column.GetDefaultValue(),
 	}
 
 	if fld.Table != nil {
