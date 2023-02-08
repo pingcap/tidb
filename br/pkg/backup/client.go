@@ -840,11 +840,15 @@ func (bc *Client) BackupRange(
 	}
 	var targetStores []*metapb.Store
 	targetStoreIds := make(map[uint64]struct{})
-	for _, store := range allStores {
-		for _, label := range store.Labels {
-			if val, ok := replicaReadLabel[label.Key]; ok && val == label.Value {
-				targetStores = append(targetStores, store)
-				targetStoreIds[store.GetId()] = struct{}{}
+	if len(replicaReadLabel) == 0 {
+		targetStores = allStores // send backup push down request to all stores
+	} else {
+		for _, store := range allStores {
+			for _, label := range store.Labels {
+				if val, ok := replicaReadLabel[label.Key]; !ok && val == label.Value {
+					targetStores = append(targetStores, store) // send backup push down request to stores that match replica read label
+					targetStoreIds[store.GetId()] = struct{}{} // record store id for fine grained backup
+				}
 			}
 		}
 	}
