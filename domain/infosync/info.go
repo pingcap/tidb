@@ -1230,10 +1230,6 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 
 // ConfigureTiFlashPDForPartitions configures pd rule for all partition in partitioned tables.
 func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string, tableID int64) error {
-	if config.GetGlobalKeyspaceName() != "" && count > 0 {
-		// TiDB 6.6 doesn't support tiflash multi-tenancy yet.
-		return errors.Trace(dbterror.ErrNotSupportedYet.GenWithStackByArgs("TiFlash replica doesn't support API V2"))
-	}
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
