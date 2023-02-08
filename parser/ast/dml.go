@@ -1804,14 +1804,12 @@ func (n *ColumnNameOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 type FileLocRefTp int
 
 const (
-	// FileLocServer is used when there's no keywords in SQL, which means the data file should be located on the tidb-server.
-	FileLocServer FileLocRefTp = iota
+	// FileLocServerOrRemote is used when there's no keywords in SQL, which means the data file should be located on the
+	// tidb-server or on remote storage (S3 for example).
+	FileLocServerOrRemote FileLocRefTp = iota
 	// FileLocClient is used when there's LOCAL keyword in SQL, which means the data file should be located on the MySQL
 	// client.
 	FileLocClient
-	// FileLocRemote is used when there's REMOTE keyword in SQL, which means the data file should be located on a remote
-	// server, such as a cloud storage.
-	FileLocRemote
 )
 
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
@@ -1837,11 +1835,9 @@ type LoadDataStmt struct {
 func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD DATA ")
 	switch n.FileLocRef {
-	case FileLocServer:
+	case FileLocServerOrRemote:
 	case FileLocClient:
 		ctx.WriteKeyWord("LOCAL ")
-	case FileLocRemote:
-		ctx.WriteKeyWord("REMOTE ")
 	}
 	ctx.WriteKeyWord("INFILE ")
 	ctx.WriteString(n.Path)
