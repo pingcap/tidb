@@ -583,6 +583,7 @@ func TestDistReorgUsage(t *testing.T) {
 	require.Equal(t, int64(0), usage.DDLUsageCounter.DistReorgUsed)
 	require.NoError(t, err)
 
+	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = off")
 	allow := variable.DDLEnableDistributeReorg.Load()
 	require.Equal(t, false, allow)
 	tk.MustExec("use test")
