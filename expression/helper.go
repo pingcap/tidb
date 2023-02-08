@@ -84,7 +84,7 @@ func getTimeCurrentTimeStamp(ctx sessionctx.Context, tp byte, fsp int) (t types.
 }
 
 // GetTimeValue gets the time value with type tp.
-func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
+func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int, explicitTz *time.Location) (d types.Datum, err error) {
 	var value types.Time
 
 	sc := ctx.GetSessionVars().StmtCtx
@@ -99,7 +99,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)
 			terror.Log(err)
 		} else {
-			value, err = types.ParseTime(sc, x, tp, fsp)
+			value, err = types.ParseTime(sc, x, tp, fsp, explicitTz)
 			if err != nil {
 				return d, err
 			}
@@ -107,7 +107,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	case *driver.ValueExpr:
 		switch x.Kind() {
 		case types.KindString:
-			value, err = types.ParseTime(sc, x.GetString(), tp, fsp)
+			value, err = types.ParseTime(sc, x.GetString(), tp, fsp, nil)
 			if err != nil {
 				return d, err
 			}
