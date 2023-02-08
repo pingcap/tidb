@@ -127,9 +127,10 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 		return bfWorker.runTask(task)
 	})
 
+	runningPID := int64(0)
 	proFunc := func() ([]*reorgBackfillTask, error) {
 		// TODO: After BackfillJob replaces reorgBackfillTask, use backfiller's GetTasks instead of it.
-		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, workerCnt+5)
+		return GetTasks(d.ddlCtx, sess, tbl, bJob.JobID, &runningPID, workerCnt+5)
 	}
 	// add new task
 	resultCh, control := d.backfillWorkerPool.AddProduceBySlice(proFunc, 0, workerCtx, spmc.WithConcurrency(workerCnt))
@@ -234,12 +235,11 @@ func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBac
 }
 
 // GetTasks gets the backfill tasks associated with the non-runningJobID.
-func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, concurrency int) ([]*reorgBackfillTask, error) {
+func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, runningPID *int64, concurrency int) ([]*reorgBackfillTask, error) {
 	// TODO: At present, only add index is processed. In the future, different elements need to be distinguished.
 	var err error
-	var pTblID int64
 	for i := 0; i < retrySQLTimes; i++ {
-		bJobs, err := GetAndMarkBackfillJobsForOneEle(sess, concurrency, runningJobID, d.uuid, pTblID, InstanceLease)
+		bJobs, err := GetAndMarkBackfillJobsForOneEle(sess, concurrency, runningJobID, d.uuid, *runningPID, InstanceLease)
 		if err != nil {
 			// TODO: add test: if all tidbs can't get the unmark backfill job(a tidb mark a backfill job, other tidbs returned, then the tidb can't handle this job.)
 			if dbterror.ErrDDLJobNotFound.Equal(err) {
@@ -252,8 +252,8 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, con
 				continue
 			}
 		}
-		pTblID = bJobs[0].PhysicalTableID
 
+		*runningPID = bJobs[0].PhysicalTableID
 		tasks := make([]*reorgBackfillTask, 0, len(bJobs))
 		for _, bJ := range bJobs {
 			task, err := d.backfillJob2Task(tbl, bJ)

@@ -319,7 +319,6 @@ func (dc *ddlCtx) splitPhysicalTableToBackfillJobs(sess *session, reorgInfo *reo
 			pTblMetaCnt++
 		}
 	}
-	return
 }
 
 func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgContexts, ddlJobID int64, currEle *meta.Element) error {

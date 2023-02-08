@@ -727,6 +727,10 @@ func TestGetTasks(t *testing.T) {
 		require.True(t, strings.Contains(err.Error(), "[kv:9007]Write conflict"))
 	}
 
+	err = ddl.RemoveBackfillJob(se, true, bJobsTestCases[0])
+	require.NoError(t, err)
+	err = ddl.AddBackfillJobs(se, bJobsTestCases)
+	require.NoError(t, err)
 	// get tbl
 	tk.MustExec("create table t(a int, b int)")
 	var tableID int64
@@ -735,6 +739,7 @@ func TestGetTasks(t *testing.T) {
 	require.Nil(t, err)
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
+	pID := int64(0)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(0)`))
 	// Mock GetAndMarkBackfillJobsForOneEle gets a writing conflict error, but getTasks is successful.
 	// Step 1: se1 begins txn1.
@@ -745,7 +750,7 @@ func TestGetTasks(t *testing.T) {
 	wg.Run(func() {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(1)`))
 		ch <- struct{}{}
-		bJobs, err := ddl.GetTasks(ddl.GetDDLCtx(d), se, tbl, jobID1, 1)
+		bJobs, err := ddl.GetTasks(ddl.GetDDLCtx(d), se, tbl, jobID1, &pID, 1)
 		require.Nil(t, err)
 		require.Len(t, bJobs, 1)
 	})
@@ -755,7 +760,7 @@ func TestGetTasks(t *testing.T) {
 		tk1.MustExec("use test")
 		se1 := ddl.NewSession(tk1.Session())
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(2)`))
-		bJobs1, err1 := ddl.GetTasks(ddl.GetDDLCtx(d), se1, tbl, jobID1, 1)
+		bJobs1, err1 := ddl.GetTasks(ddl.GetDDLCtx(d), se1, tbl, jobID1, &pID, 1)
 		require.Nil(t, err1)
 		require.Len(t, bJobs1, 1)
 	})
