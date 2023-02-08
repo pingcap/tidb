@@ -32,6 +32,7 @@ run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' 'read_only'
 run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle load --out=$TEST_DIR/default_rules.json
 cat tests/br_replica_read/placement_rule_with_learner_template.json | jq  ".[].rules[0].count = $VOTER_COUNT" > $TEST_DIR/placement_rule_with_learner.json
 run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/placement_rule_with_learner.json
+sleep 3 # wait for PD to apply the placement rule
 
 run_sql "CREATE DATABASE $DB;"
 
