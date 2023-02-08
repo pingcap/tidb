@@ -73,6 +73,7 @@ const (
 	flagPartitionProcessor
 	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
+	flagDeriveTopNFromWindow
 	flagPushDownTopN
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
@@ -95,6 +96,7 @@ var optRuleList = []logicalOptRule{
 	&partitionProcessor{},
 	&collectPredicateColumnsPoint{},
 	&aggregationPushDownSolver{},
+	&deriveTopNFromWindow{},
 	&pushDownTopNOptimizer{},
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
