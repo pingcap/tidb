@@ -1875,6 +1875,14 @@ func (p *ResourceGroupSettings) String() string {
 	return sb.String()
 }
 
+// Adjust adjusts the resource group settings.
+func (p *ResourceGroupSettings) Adjust() {
+	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec.
+	if p.BurstLimit == 0 {
+		p.BurstLimit = int64(p.RURate)
+	}
+}
+
 // Clone clones the resource group settings.
 func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
 	cloned := *p

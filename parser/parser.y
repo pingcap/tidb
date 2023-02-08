@@ -1599,19 +1599,21 @@ ResourceGroupOptionList:
 	}
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
-		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp {
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp ||
+		   (len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
             return 1
 		}
+		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp ||
+    	   (len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
+    		 yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+             return 1
+    	}
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp {
-        	yylex.AppendError(yylex.Errorf("Dupliated options specified"))
-            return 1
-        }
 	}
 
 DirectResourceGroupOption:
