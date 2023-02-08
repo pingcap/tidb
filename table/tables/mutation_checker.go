@@ -106,7 +106,7 @@ func CheckDataConsistency(
 	// }
 
 	if rowInsertion.key != nil {
-		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo, t.Meta().Name.O); err != nil {
+		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo, t.Meta()); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -123,7 +123,7 @@ func CheckDataConsistency(
 // in row insertions and index insertions are consistent.
 // A PUT_index implies a PUT_row with the same handle.
 // Deletions are not checked since the values of deletions are unknown
-func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo, tableName string) error {
+func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo, tblInfo *model.TableInfo) error {
 	var insertionHandle kv.Handle
 	var err error
 
@@ -159,7 +159,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 				continue
 			}
 			var tempIdxVal tablecodec.TempIndexValue
-			tempIdxVal, err = tablecodec.DecodeTempIndexValue(m.value, false)
+			tempIdxVal, err = tablecodec.DecodeTempIndexValue(m.value, tblInfo.IsCommonHandle)
 			if err != nil {
 				return err
 			}
@@ -181,7 +181,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 		}
 		// NOTE: handle type can be different, see issue 29520
 		if indexHandle.IsInt() == insertionHandle.IsInt() && indexHandle.Compare(insertionHandle) != 0 {
-			err = ErrInconsistentHandle.GenWithStackByArgs(tableName, indexInfo.Name.O, indexHandle, insertionHandle, m, rowInsertion)
+			err = ErrInconsistentHandle.GenWithStackByArgs(tblInfo.Name, indexInfo.Name.O, indexHandle, insertionHandle, m, rowInsertion)
 			logutil.BgLogger().Error("inconsistent handle in index and record insertions", zap.Error(err))
 			return err
 		}
