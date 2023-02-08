@@ -789,6 +789,7 @@ func TestStoreBatchCopr(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQuery, int64(0))
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQueryTask, int64(0))
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedCount, int64(0))
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedFallbackCount, int64(0))
 
@@ -799,6 +800,7 @@ func TestStoreBatchCopr(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQuery, int64(1))
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQueryTask, int64(0))
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedCount, int64(0))
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedFallbackCount, int64(0))
 
@@ -813,6 +815,7 @@ func TestStoreBatchCopr(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQuery, int64(2))
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQueryTask, int64(2))
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedCount, int64(1))
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedFallbackCount, int64(0))
 
@@ -826,11 +829,19 @@ func TestStoreBatchCopr(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQuery, int64(3))
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQueryTask, int64(4))
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedCount, int64(1))
 	require.Equal(t, usage.StoreBatchCoprUsage.BatchedFallbackCount, int64(1))
 
-	tk.MustExec("set global tidb_store_batch_size = 8")
+	tk.MustExec("set global tidb_store_batch_size = 0")
+	tk.MustExec("set session tidb_store_batch_size = 0")
+	tk.MustQuery("select * from tele_batch_t force index(i) where k between 1 and 3 and k % 2 != 0").Sort().
+		Check(testkit.Rows("1 1 1", "3 3 3"))
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 8)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 0)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQuery, int64(3))
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchedQueryTask, int64(4))
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchedCount, int64(1))
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchedFallbackCount, int64(1))
 }

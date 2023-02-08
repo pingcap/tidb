@@ -176,6 +176,13 @@ var (
 			Name:      "store_batched_query",
 			Help:      "Counter of queries which use store batched coprocessor tasks",
 		})
+	TelemetryBatchedQueryTaskCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "batched_query_task",
+			Help:      "Counter of coprocessor tasks in batched queries",
+		})
 	TelemetryStoreBatchedCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -448,6 +455,7 @@ func GetIndexMergeCounter() IndexMergeUsageCounter {
 type StoreBatchCoprCounter struct {
 	BatchSize            int   `json:"batch_size"`
 	BatchedQuery         int64 `json:"query"`
+	BatchedQueryTask     int64 `json:"tasks"`
 	BatchedCount         int64 `json:"batched"`
 	BatchedFallbackCount int64 `json:"batched_fallback"`
 }
@@ -456,6 +464,7 @@ type StoreBatchCoprCounter struct {
 func (n StoreBatchCoprCounter) Sub(rhs StoreBatchCoprCounter) StoreBatchCoprCounter {
 	return StoreBatchCoprCounter{
 		BatchedQuery:         n.BatchedQuery - rhs.BatchedQuery,
+		BatchedQueryTask:     n.BatchedQueryTask - rhs.BatchedQueryTask,
 		BatchedCount:         n.BatchedCount - rhs.BatchedCount,
 		BatchedFallbackCount: n.BatchedFallbackCount - rhs.BatchedFallbackCount,
 	}
@@ -465,6 +474,7 @@ func (n StoreBatchCoprCounter) Sub(rhs StoreBatchCoprCounter) StoreBatchCoprCoun
 func GetStoreBatchCoprCounter() StoreBatchCoprCounter {
 	return StoreBatchCoprCounter{
 		BatchedQuery:         readCounter(TelemetryStoreBatchedQueryCnt),
+		BatchedQueryTask:     readCounter(TelemetryBatchedQueryTaskCnt),
 		BatchedCount:         readCounter(TelemetryStoreBatchedCnt),
 		BatchedFallbackCount: readCounter(TelemetryStoreBatchedFallbackCnt),
 	}

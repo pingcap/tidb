@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -67,8 +66,6 @@ var (
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
 var LookupTableTaskChannelSize int32 = 50
-
-var telemetryStoreBatchedQueryCnt = metrics.TelemetryStoreBatchedQueryCnt
 
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
