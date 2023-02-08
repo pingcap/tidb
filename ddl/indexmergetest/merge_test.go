@@ -705,9 +705,9 @@ func TestAddIndexMergeDeleteDifferentHandle(t *testing.T) {
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &callback.TestDDLCallback{}
-	runInDeleteOnly := false
+	runDML := false
 	onJobUpdatedExportedFunc := func(job *model.Job) {
-		if t.Failed() || runInDeleteOnly {
+		if t.Failed() || runDML {
 			return
 		}
 		if job.SnapshotVer == 0 {
@@ -719,7 +719,7 @@ func TestAddIndexMergeDeleteDifferentHandle(t *testing.T) {
 			assert.NoError(t, err)
 			_, err = tk1.Exec("replace into t values (3, 'a');")
 			assert.NoError(t, err)
-			runInDeleteOnly = true
+			runDML = true
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
@@ -735,4 +735,44 @@ func TestAddIndexMergeDeleteDifferentHandle(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("3 a"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecution"))
+}
+
+func TestAddIndexDecodeTempIndexCommonHandle(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id_a bigint, id_b char(20), c char(20), primary key (id_a, id_b));")
+	tk.MustExec("insert into t values (1, 'id_1', 'char_1');")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	runDML := false
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		if job.SnapshotVer == 0 {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			_, err := tk1.Exec("insert into t values (2, 'id_2', 'char_2');")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert into t values (3, 'id_3', 'char_3');")
+			assert.NoError(t, err)
+			runDML = true
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	tk.MustExec("alter table t add unique index idx(c);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 id_1 char_1", "2 id_2 char_2", "3 id_3 char_3"))
 }
