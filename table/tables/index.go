@@ -290,7 +290,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			}
 		}
 		// The index key value is not found or deleted.
-		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().IsDelete) {
+		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
 			lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
 			if keyIsTempIdxKey {
@@ -395,7 +395,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 				return err
 			}
 		}
-		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, IsDelete: true, Distinct: distinct}
+		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
 
 		if distinct {
 			if len(key) > 0 {
@@ -584,7 +584,7 @@ func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 		return false, nil, err
 	}
 	curElem := tempVal.Current()
-	if curElem.IsDelete {
+	if curElem.Delete {
 		originKey := tempKey.Clone()
 		tablecodec.TempIndexKey2IndexKey(idxID, originKey)
 		originVal, err := getKeyInTxn(ctx, txn, originKey)
