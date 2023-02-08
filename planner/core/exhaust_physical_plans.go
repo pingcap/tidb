@@ -2700,10 +2700,8 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		if la.HasDistinct() {
 			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-			if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+			if !la.ctx.GetSessionVars().AllowDistinctAggPushDown || !la.canPushToCop(kv.TiKV) {
 				// if variable doesn't allow DistinctAggPushDown, just produce root task type.
-				taskTypes = []property.TaskType{property.RootTaskType}
-			} else if !la.canPushToCop(kv.TiKV) {
 				// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
 				taskTypes = []property.TaskType{property.RootTaskType}
 			} else if !la.distinctArgsMeetsProperty() {
@@ -2878,12 +2876,9 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	canPushDownToMPP := canPushDownToTiFlash && la.ctx.GetSessionVars().IsMPPAllowed() && la.checkCanPushDownToMPP()
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
-		// if variable doesn't allow DistinctAggPushDown, just produce root task type.
-		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown ||
-		// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
-		!la.canPushToCop(kv.TiKV) {
-			taskTypes = []property.TaskType{property.RootTaskType}
-			
+		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown || !la.canPushToCop(kv.TiKV) {
+			// if variable doesn't allow DistinctAggPushDown, just produce root task type.
+			// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
