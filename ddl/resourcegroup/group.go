@@ -35,15 +35,11 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 	}
 	if options.RURate > 0 {
 		group.Mode = rmpb.GroupMode_RUMode
-		burstLimit := options.BurstLimit
-		if burstLimit >= 0 {
-			burstLimit = int64(options.RURate)
-		}
 		group.RUSettings = &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{
 					FillRate:   options.RURate,
-					BurstLimit: burstLimit,
+					BurstLimit: options.BurstLimit,
 				},
 			},
 		}
