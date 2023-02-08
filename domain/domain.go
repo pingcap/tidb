@@ -510,13 +510,12 @@ func (do *Domain) Reload() error {
 			version -= 1
 			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
 		}
-		if err != nil {
-			metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
-			metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
-			return err
-		}
 	}
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
+		return err
+	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
 	// only update if it is not from cache
