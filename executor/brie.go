@@ -199,7 +199,7 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	sc := &stmtctx.StatementContext{TimeZone: b.ctx.GetSessionVars().Location()}
-	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, err
 	}

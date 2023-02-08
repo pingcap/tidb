@@ -520,7 +520,7 @@ func TestBytes(t *testing.T) {
 
 func parseTime(t *testing.T, s string) types.Time {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp)
+	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp, nil)
 	require.NoError(t, err)
 	return m
 }
