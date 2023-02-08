@@ -78,6 +78,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
@@ -165,6 +166,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
 
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = gRPCBackOffMaxDelay
@@ -181,8 +183,13 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 			PermitWithoutStream: true,
 		}),
 	)
-	if f.compressionType != config.CompressionTypeNone {
-		opts = append(opts, grpc.WithDefaultCallOptions(grpc.UseCompressor(f.compressionType.String())))
+	switch f.compressionType {
+	case config.CompressionNone:
+	// do nothing
+	case config.CompressionGzip:
+		opts = append(opts, grpc.WithDefaultCallOptions(grpc.UseCompressor(gzip.Name)))
+	default:
+		return nil, common.ErrInvalidConfig.GenWithStack("unsupported compression type %s", f.compressionType)
 	}
 
 	failpoint.Inject("LoggingImportBytes", func() {
@@ -196,7 +203,6 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 	})
 
 	conn, err := grpc.DialContext(ctx, addr, opts...)
-	cancel()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

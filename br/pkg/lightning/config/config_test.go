@@ -1148,13 +1148,13 @@ func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
 func TestCompressionType(t *testing.T) {
 	var ct config.CompressionType
 	require.NoError(t, ct.FromStringValue(""))
-	require.Equal(t, config.CompressionTypeNone, ct)
+	require.Equal(t, config.CompressionNone, ct)
 	require.NoError(t, ct.FromStringValue("gzip"))
-	require.Equal(t, config.CompressionTypeGzip, ct)
+	require.Equal(t, config.CompressionGzip, ct)
 	require.NoError(t, ct.FromStringValue("gz"))
-	require.Equal(t, config.CompressionTypeGzip, ct)
+	require.Equal(t, config.CompressionGzip, ct)
 	require.EqualError(t, ct.FromStringValue("zstd"), "invalid compression-type 'zstd', please choose valid option between ['gzip']")
 
-	require.Equal(t, "", config.CompressionTypeNone.String())
-	require.Equal(t, "gzip", config.CompressionTypeGzip.String())
+	require.Equal(t, "", config.CompressionNone.String())
+	require.Equal(t, "gzip", config.CompressionGzip.String())
 }

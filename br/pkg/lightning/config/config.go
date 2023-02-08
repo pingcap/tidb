@@ -472,10 +472,10 @@ func (dra DuplicateResolutionAlgorithm) String() string {
 type CompressionType int
 
 const (
-	// CompressionTypeNone means no compression.
-	CompressionTypeNone CompressionType = iota
-	// CompressionTypeGzip means gzip compression.
-	CompressionTypeGzip
+	// CompressionNone means no compression.
+	CompressionNone CompressionType = iota
+	// CompressionGzip means gzip compression.
+	CompressionGzip
 )
 
 func (t *CompressionType) UnmarshalTOML(v interface{}) error {
@@ -492,9 +492,9 @@ func (t CompressionType) MarshalText() ([]byte, error) {
 func (t *CompressionType) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
 	case "":
-		*t = CompressionTypeNone
+		*t = CompressionNone
 	case "gz", "gzip":
-		*t = CompressionTypeGzip
+		*t = CompressionGzip
 	default:
 		return errors.Errorf("invalid compression-type '%s', please choose valid option between ['gzip']", s)
 	}
@@ -511,9 +511,9 @@ func (t *CompressionType) UnmarshalJSON(data []byte) error {
 
 func (t CompressionType) String() string {
 	switch t {
-	case CompressionTypeGzip:
+	case CompressionGzip:
 		return "gzip"
-	case CompressionTypeNone:
+	case CompressionNone:
 		return ""
 	default:
 		panic(fmt.Sprintf("invalid compression type '%d'", t))
