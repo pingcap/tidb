@@ -253,6 +253,7 @@ type backfillResult struct {
 type reorgBackfillTask struct {
 	bfJob         *BackfillJob
 	physicalTable table.PhysicalTable
+	index         table.Index
 
 	// TODO: Remove the following fields after remove the function of run.
 	id              int
@@ -440,6 +441,14 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
+func (w *backfillWorker) updatePartitionIndexInfo(task *reorgBackfillTask) {
+	if _, ok := w.GetCtx().table.(table.PartitionedTable); ok {
+		if addIdxWorker, ok := w.backfiller.(*addIndexWorker); ok {
+			addIdxWorker.index = task.index
+		}
+	}
+}
+
 func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResult) {
 	logutil.BgLogger().Info("[ddl] backfill worker start", zap.Stringer("worker", w), zap.String("task", task.String()))
 	defer util.Recover(metrics.LabelDDL, "backfillWorker.runTask", func() {
@@ -461,6 +470,7 @@ func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResul
 		time.Sleep(100 * time.Millisecond)
 	})
 
+	w.updatePartitionIndexInfo(task)
 	// Change the batch size dynamically.
 	w.GetCtx().batchCnt = int(variable.GetDDLReorgBatchSize())
 	result = w.handleBackfillTask(w.GetCtx().ddlCtx, task, w.backfiller)

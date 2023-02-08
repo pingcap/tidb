@@ -1830,20 +1830,6 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	return errors.Trace(err)
 }
 
-func getPartitionRangeKey(reorg *reorgInfo, t table.PartitionedTable, pid int64) (kv.Key, kv.Key, error) {
-	if reorg.mergingTmpIdx {
-		indexID := reorg.currElement.ID
-		startKey, endKey := tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|indexID)
-		return startKey, endKey, nil
-	}
-
-	currentVer, err := getValidCurrentVersion(reorg.d.store)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	return getTableRange(reorg.d.jobContext(reorg.Job.ID), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
-}
-
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
@@ -1871,9 +1857,20 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 			time.Sleep(time.Second * 3)
 		}
 	})
-	startKey, endKey, err := getPartitionRangeKey(reorg, t, pid)
-	if err != nil {
-		return 0, nil, nil, errors.Trace(err)
+
+	var startKey, endKey kv.Key
+	if reorg.mergingTmpIdx {
+		indexID := reorg.currElement.ID
+		startKey, endKey = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|indexID)
+	} else {
+		currentVer, err := getValidCurrentVersion(reorg.d.store)
+		if err != nil {
+			return 0, nil, nil, errors.Trace(err)
+		}
+		startKey, endKey, err = getTableRange(reorg.d.jobContext(reorg.Job.ID), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
+		if err != nil {
+			return 0, nil, nil, errors.Trace(err)
+		}
 	}
 	return pid, startKey, endKey, nil
 }

@@ -289,25 +289,22 @@ func (dc *ddlCtx) splitPhysicalTableToBackfillJobs(sess *session, reorgInfo *reo
 	sess.GetSessionVars().SQLMode = mysql.ModeNone
 
 	var err error
+	var pTblMetaCnt int
 	var pTblMeta *BackfillJobRangeMeta
 	defer func() {
 		if err != nil {
 			sJobCtx.cancel()
-			logutil.BgLogger().Info("[ddl] split backfill jobs to table failed",
-				zap.Int64("jobID", reorgInfo.Job.ID), zap.Stringer("ele", reorgInfo.currElement),
-				zap.Stringer("physical_tbl", pTblMeta), zap.Error(err))
 		}
+		logutil.BgLogger().Info("[ddl] split backfill jobs to table finish", zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.Stringer("ele", reorgInfo.currElement), zap.Int("donePTbls", pTblMetaCnt), zap.Stringer("physical_tbl", pTblMeta), zap.Error(err))
 	}()
 
 	var ok bool
-	var pTblMetaCnt int
 	for {
 		select {
 		case <-sJobCtx.ctx.Done():
 			err = sJobCtx.ctx.Err()
 		case pTblMeta, ok = <-sJobCtx.phyTblMetaCh:
-			logutil.BgLogger().Info("[ddl] split backfill jobs to table start", zap.Int64("jobID", reorgInfo.Job.ID),
-				zap.Stringer("ele", reorgInfo.currElement), zap.Int("donePTbls", pTblMetaCnt), zap.Bool("more", ok))
 			if !ok {
 				return
 			}
@@ -348,29 +345,29 @@ func checkReorgJobFinished(ctx context.Context, sess *session, reorgCtxs *reorgC
 			if !backfillJobFinished {
 				err := checkAndHandleInterruptedBackfillJobs(sess, ddlJobID, currEle.ID, currEle.TypeKey)
 				if err != nil {
-					logutil.BgLogger().Warn("[ddl] finish interrupted backfill jobs", zap.Int64("job ID", ddlJobID), zap.Error(err))
+					logutil.BgLogger().Warn("[ddl] finish interrupted backfill jobs", zap.Int64("job ID", ddlJobID), zap.Stringer("ele", currEle), zap.Error(err))
 					return errors.Trace(err)
 				}
 
 				bfJobs, err := getBackfillJobWithRetry(sess, BackfillTable, ddlJobID, currEle.ID, currEle.TypeKey)
 				if err != nil {
-					logutil.BgLogger().Info("[ddl] getBackfillJobWithRetry failed", zap.Int64("job ID", ddlJobID), zap.Error(err))
+					logutil.BgLogger().Info("[ddl] getBackfillJobWithRetry failed", zap.Int64("job ID", ddlJobID), zap.Stringer("ele", currEle), zap.Error(err))
 					return errors.Trace(err)
 				}
 				if len(bfJobs) == 0 {
 					backfillJobFinished = true
-					logutil.BgLogger().Info("[ddl] finish all backfill jobs", zap.Int64("job ID", ddlJobID))
+					logutil.BgLogger().Info("[ddl] finish all backfill jobs", zap.Int64("job ID", ddlJobID), zap.Stringer("ele", currEle))
 				}
 			}
 			if backfillJobFinished {
 				// TODO: Consider whether these backfill jobs are always out of sync.
 				isSynced, err := checkJobIsFinished(sess, ddlJobID)
 				if err != nil {
-					logutil.BgLogger().Warn("[ddl] checkJobIsFinished failed", zap.Int64("job ID", ddlJobID), zap.Error(err))
+					logutil.BgLogger().Warn("[ddl] checkJobIsFinished failed", zap.Int64("job ID", ddlJobID), zap.Stringer("ele", currEle), zap.Error(err))
 					return errors.Trace(err)
 				}
 				if isSynced {
-					logutil.BgLogger().Info("[ddl] finish all backfill jobs and put them to history", zap.Int64("job ID", ddlJobID))
+					logutil.BgLogger().Info("[ddl] finish all backfill jobs and put them to history", zap.Int64("job ID", ddlJobID), zap.Stringer("ele", currEle))
 					return GetBackfillErr(sess, ddlJobID, currEle.ID, currEle.TypeKey)
 				}
 			}
