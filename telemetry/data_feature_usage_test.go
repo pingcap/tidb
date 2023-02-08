@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -776,4 +777,70 @@ func TestTTLTelemetry(t *testing.T) {
 	require.Equal(t, oneDayAgoDate.Format(dateFormat), usage.TTLUsage.TTLHistDate)
 	checkTableHistWithDeleteRows(1, 1, 0, 0, 0)
 	checkTableHistWithDelay(0, 1, 1, 0, 1)
+}
+
+func TestStoreBatchCopr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	init, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, init.StoreBatchCoprUsage.BatchSize, 4)
+
+	tk.MustExec("drop table if exists tele_batch_t")
+	tk.MustExec("create table tele_batch_t (id int primary key, c int, k int, index i(k))")
+	tk.MustExec("select * from tele_batch_t force index(i) where k between 1 and 10 and k % 2 != 0")
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
+	diff := usage.StoreBatchCoprUsage.Sub(*init.StoreBatchCoprUsage)
+	require.Equal(t, diff.BatchedQuery, int64(1))
+	require.Equal(t, diff.BatchedQueryTask, int64(0))
+	require.Equal(t, diff.BatchedCount, int64(0))
+	require.Equal(t, diff.BatchedFallbackCount, int64(0))
+
+	tk.MustExec("insert into tele_batch_t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (5, 5, 5), (7, 7, 7)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/setRangesPerTask", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/setRangesPerTask"))
+	}()
+	tk.MustQuery("select * from tele_batch_t force index(i) where k between 1 and 3 and k % 2 != 0").Sort().
+		Check(testkit.Rows("1 1 1", "3 3 3"))
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
+	diff = usage.StoreBatchCoprUsage.Sub(*init.StoreBatchCoprUsage)
+	require.Equal(t, diff.BatchedQuery, int64(2))
+	require.Equal(t, diff.BatchedQueryTask, int64(2))
+	require.Equal(t, diff.BatchedCount, int64(1))
+	require.Equal(t, diff.BatchedFallbackCount, int64(0))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/batchCopRegionError", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/batchCopRegionError"))
+	}()
+	tk.MustQuery("select * from tele_batch_t force index(i) where k between 1 and 3 and k % 2 != 0").Sort().
+		Check(testkit.Rows("1 1 1", "3 3 3"))
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 4)
+	diff = usage.StoreBatchCoprUsage.Sub(*init.StoreBatchCoprUsage)
+	require.Equal(t, diff.BatchedQuery, int64(3))
+	require.Equal(t, diff.BatchedQueryTask, int64(4))
+	require.Equal(t, diff.BatchedCount, int64(1))
+	require.Equal(t, diff.BatchedFallbackCount, int64(1))
+
+	tk.MustExec("set global tidb_store_batch_size = 0")
+	tk.MustExec("set session tidb_store_batch_size = 0")
+	tk.MustQuery("select * from tele_batch_t force index(i) where k between 1 and 3 and k % 2 != 0").Sort().
+		Check(testkit.Rows("1 1 1", "3 3 3"))
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, usage.StoreBatchCoprUsage.BatchSize, 0)
+	diff = usage.StoreBatchCoprUsage.Sub(*init.StoreBatchCoprUsage)
+	require.Equal(t, diff.BatchedQuery, int64(3))
+	require.Equal(t, diff.BatchedQueryTask, int64(4))
+	require.Equal(t, diff.BatchedCount, int64(1))
+	require.Equal(t, diff.BatchedFallbackCount, int64(1))
 }

@@ -17,6 +17,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
@@ -62,6 +63,7 @@ type featureUsage struct {
 	IndexMergeUsageCounter    *m.IndexMergeUsageCounter        `json:"indexMergeUsageCounter"`
 	ResourceControlUsage      *resourceControlUsage            `json:"resourceControl"`
 	TTLUsage                  *ttlUsageCounter                 `json:"ttlUsage"`
+	StoreBatchCoprUsage       *m.StoreBatchCoprCounter         `json:"storeBatchCopr"`
 }
 
 type placementPolicyUsage struct {
@@ -120,6 +122,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.IndexMergeUsageCounter = getIndexMergeUsageInfo()
 
 	usage.TTLUsage = getTTLUsageInfo(ctx, sctx)
+
+	usage.StoreBatchCoprUsage = getStoreBatchUsage(sctx)
 
 	return &usage, nil
 }
@@ -264,6 +268,7 @@ var initialSavepointStmtCounter int64
 var initialLazyPessimisticUniqueCheckSetCount int64
 var initialDDLUsageCounter m.DDLUsageCounter
 var initialIndexMergeCounter m.IndexMergeUsageCounter
+var initialStoreBatchCoprCounter m.StoreBatchCoprCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -431,4 +436,19 @@ func getIndexMergeUsageInfo() *m.IndexMergeUsageCounter {
 	curr := m.GetIndexMergeCounter()
 	diff := curr.Sub(initialIndexMergeCounter)
 	return &diff
+}
+
+func getStoreBatchUsage(ctx sessionctx.Context) *m.StoreBatchCoprCounter {
+	curr := m.GetStoreBatchCoprCounter()
+	diff := curr.Sub(initialStoreBatchCoprCounter)
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBStoreBatchSize); err == nil {
+		if batchSize, err := strconv.Atoi(val); err == nil {
+			diff.BatchSize = batchSize
+		}
+	}
+	return &diff
+}
+
+func postStoreBatchUsage() {
+	initialStoreBatchCoprCounter = m.GetStoreBatchCoprCounter()
 }
