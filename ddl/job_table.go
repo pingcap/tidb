@@ -403,6 +403,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 	d.wg.Run(func() {
 		defer func() {
 			d.removeBackfillCtxJobCtx(bfJob.JobID)
+			d.removeReorgCtx(bfJob.JobID)
 			tidbutil.Recover(metrics.LabelBackfillWorker, "runBackfillJobs", nil, false)
 		}()
 
