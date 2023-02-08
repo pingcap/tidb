@@ -237,7 +237,7 @@ func (m *TiFlashReplicaManagerCtx) SetPlacementRule(ctx context.Context, rule pl
 	// TiDB 6.6 doesn't support tiflash multi-tenancy yet.
 	// TODO(iosmanthus): remove this check after TiDB supports tiflash multi-tenancy.
 	if m.codec.GetAPIVersion() == kvrpcpb.APIVersion_V2 {
-		return errors.Trace(dbterror.ErrNotSupportedYet.GenWithStackByArgs("TiFlash replica doesn't support API V2"))
+		return errors.Trace(dbterror.ErrNotSupportedYet.GenWithStackByArgs("set TiFlash replica count while enabling API V2"))
 	}
 	if err := m.SetTiFlashGroupConfig(ctx); err != nil {
 		return err
