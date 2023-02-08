@@ -22,13 +22,32 @@ LOG_FILE1="$TEST_DIR/lightning-duplicate-resolution1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-resolution2.log"
 
 # let lightning run a bit slow to avoid some table in the first lightning finish too fast.
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckDupe=sleep(5000)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckDupe=return(10)"
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_resolution_incremental.sorted1" \
   --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml" &
+
+counter=0
+while [ $counter -lt 10 ]; do
+    if grep -Fq "start to sleep several seconds before checking other dupe" "$LOG_FILE1"; then
+        echo "lightning 1 already starts waiting for dupe"
+        break
+    fi
+    ((counter += 1))
+    echo "waiting for lightning 1 starts"
+    sleep 1
+done
+
+if [ $counter -ge 10 ]; then
+  echo "fail to wait for lightning 1 starts"
+  exit 1
+fi
+
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_resolution_incremental.sorted2" \
   --enable-checkpoint=1 --log-file "$LOG_FILE2" --config "tests/$TEST_NAME/config2.toml" &
 
 wait
+
+export GO_FAILPOINTS=""
 
 # Ensure table is consistent.
 run_sql 'admin check table dup_resolve_detect.ta'
