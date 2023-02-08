@@ -889,38 +889,6 @@ func timeRangeOverlap(aBegin, aEnd, bBegin, bEnd int64) bool {
 	if bEnd == 0 || bEnd < bBegin {
 		bEnd = math.MaxInt64
 	}
-	// ------------------------------>   (timeline)
-	//  |        |      |        |
-	// aBegin   aEnd   bBegin   bEnd
-	if aEnd < bBegin {
-		return false
-	}
-	// ------------------------------>   (timeline)
-	//  |        |      |        |
-	// bBegin   bEnd   aBegin   aEnd
-	if bEnd < aBegin {
-		return false
-	}
-	// ------------------------------>   (timeline)
-	//  |        |        |      |
-	// aBegin   bBegin   aEnd   bEnd
-	//
-	// or
-	//
-	// ------------------------------>   (timeline)
-	//  |        |        |      |
-	// bBegin   aBegin   aEnd   bEnd
-	//
-	// or
-	//
-	// ------------------------------>   (timeline)
-	//  |        |        |      |
-	// bBegin   aBegin   bEnd   aEnd
-	//
-	// or
-	//
-	// ------------------------------>   (timeline)
-	//  |        |        |      |
-	// aBegin   bBegin   bEnd   aEnd
-	return true
+	// https://stackoverflow.com/questions/3269434/whats-the-most-efficient-way-to-test-if-two-ranges-overlap
+	return aBegin <= bEnd && aEnd >= bBegin
 }
