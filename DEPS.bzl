@@ -1018,8 +1018,8 @@ def go_deps():
         name = "com_github_evanphx_json_patch",
         build_file_proto_mode = "disable",
         importpath = "github.com/evanphx/json-patch",
-        sum = "h1:4onqiflcdA9EOZ4RxV643DvftH5pOlLGNtQ5lPWQu84=",
-        version = "v4.12.0+incompatible",
+        sum = "h1:K1MDoo4AZ4wU0GIU/fPmtZg7VpzLjCxu+UwBD1FvwOc=",
+        version = "v4.1.0+incompatible",
     )
     go_repository(
         name = "com_github_facebookgo_clock",
@@ -1709,8 +1709,8 @@ def go_deps():
         name = "com_github_google_gofuzz",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/google/gofuzz",
-        sum = "h1:Hsa8mG0dQ46ij8Sl2AYJDUv1oA9/d6Vk+3LG99Oe02g=",
-        version = "v1.1.0",
+        sum = "h1:A8PeW59pxE9IoFRqBp37U+mSNaQoZ46F1f0f863XSXw=",
+        version = "v1.0.0",
     )
     go_repository(
         name = "com_github_google_licensecheck",
@@ -4085,8 +4085,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:XuLRQVj1sm+H306ZXvqH2RcpUdN5bcQnLZ+6oANZmwM=",
-        version = "v2.0.6-0.20230207090007-6a1ecaa292b0",
+        sum = "h1:1/ow7ZUnsU5CcxHF1cFAKdD+5b58tMbaeb8qAoli1m4=",
+        version = "v2.0.6-0.20230207090754-29dfcc272912",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -5622,8 +5622,8 @@ def go_deps():
         name = "io_k8s_apimachinery",
         build_file_proto_mode = "disable",
         importpath = "k8s.io/apimachinery",
-        sum = "h1:1feANjElT7MvPqp0JT6F3Ss6TWDwmcjLypwoPpEf7zg=",
-        version = "v0.26.0",
+        sum = "h1:Jmdtdt1ZnoGfWWIIik61Z7nKYgO3J+swQJtPYsP9wHA=",
+        version = "v0.0.0-20190404173353-6a84e37a896d",
     )
     go_repository(
         name = "io_k8s_client_go",
@@ -5651,8 +5651,8 @@ def go_deps():
         name = "io_k8s_kube_openapi",
         build_file_proto_mode = "disable",
         importpath = "k8s.io/kube-openapi",
-        sum = "h1:+70TFaan3hfJzs+7VK2o+OGxg8HsuBr/5f6tVAjDu6E=",
-        version = "v0.0.0-20221012153701-172d655c2280",
+        sum = "h1:tHgpQvrWaYfrnC8G4N0Oszw5HHCsZxKilDi2R7HuCSM=",
+        version = "v0.0.0-20180629012420-d83b052f768a",
     )
     go_repository(
         name = "io_k8s_sigs_json",
@@ -5680,8 +5680,8 @@ def go_deps():
         name = "io_k8s_utils",
         build_file_proto_mode = "disable",
         importpath = "k8s.io/utils",
-        sum = "h1:0Smp/HP1OH4Rvhe+4B8nWGERtlqAGSftbSbbmm45oFs=",
-        version = "v0.0.0-20221107191617-1a15be271d1d",
+        sum = "h1:8r+l4bNWjRlsFYlQJnKJ2p7s1YQPj4XyXiJVqDHRx7c=",
+        version = "v0.0.0-20190308190857-21c4ce38f2a7",
     )
     go_repository(
         name = "io_moul_zapgorm2",
