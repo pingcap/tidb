@@ -270,7 +270,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 				if elem.KeyVer == tables.TempIndexKeyTypeMerge || elem.KeyVer == tables.TempIndexKeyTypeDelete {
 					// For 'm' version kvs, they are double-written.
 					// For 'd' version kvs, they are written in the delete-only state and can be dropped safely.
-					return true, nil
+					continue
 				}
 
 				if elem.Handle == nil {
