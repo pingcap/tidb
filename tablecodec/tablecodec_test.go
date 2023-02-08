@@ -654,4 +654,47 @@ func TestTempIndexValueCodec(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, len(remain))
 	require.EqualValues(t, tempIdxVal, newTempIdxVal)
+
+	tempIdxVal = TempIndexValueElem{
+		Delete:   true,
+		KeyVer:   'b',
+		Distinct: true,
+		Handle:   kv.IntHandle(100),
+	}
+	newTempIdxVal = TempIndexValueElem{}
+	val = tempIdxVal.Encode(nil)
+	remain, err = newTempIdxVal.DecodeOne(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(remain))
+	require.EqualValues(t, tempIdxVal, newTempIdxVal)
+
+	// Test multiple temp index value elements.
+	idxVal = EncodeHandleInUniqueIndexValue(kv.IntHandle(100), false)
+	tempIdxVal = TempIndexValueElem{
+		Value:    idxVal,
+		KeyVer:   'm',
+		Distinct: true,
+	}
+	tempIdxVal2 := TempIndexValueElem{
+		Handle:   kv.IntHandle(100),
+		KeyVer:   'm',
+		Distinct: true,
+		Delete:   true,
+	}
+	idxVal3 := EncodeHandleInUniqueIndexValue(kv.IntHandle(101), false)
+	tempIdxVal3 := TempIndexValueElem{
+		Value:    idxVal3,
+		KeyVer:   'm',
+		Distinct: true,
+	}
+	val = tempIdxVal.Encode(nil)
+	val = tempIdxVal2.Encode(val)
+	val = tempIdxVal3.Encode(val)
+	var result TempIndexValue
+	result, err = DecodeTempIndexValue(val, false)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(result))
+	require.Equal(t, result[0].Handle.IntValue(), int64(100))
+	require.Equal(t, result[1].Handle.IntValue(), int64(100))
+	require.Equal(t, result[2].Handle.IntValue(), int64(101))
 }
