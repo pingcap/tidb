@@ -1177,7 +1177,7 @@ const (
 	DefTiDBTTLDeleteWorkerCount                            = 4
 	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                           = false
-	DefTiDBPessimisticTransactionAggressiveLocking         = true
+	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true
 )
 
