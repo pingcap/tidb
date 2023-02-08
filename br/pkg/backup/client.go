@@ -965,7 +965,10 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 		continue
 	}
 	log.Error("can not find a valid target peer", logutil.Key("key", key))
-	return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find a valid target peer for key %s", key)
+	if len(targetStoreIds) == 0 {
+		return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find a valid leader for key %s", key)
+	}
+	return nil, errors.Errorf("can not find a valid target peer for key %s", key)
 }
 
 func (bc *Client) fineGrainedBackup(
