@@ -173,7 +173,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
-			Name:      "Distributed_reorg_count",
+			Name:      "distributed_reorg_count",
 			Help:      "Counter of usage of distributed reorg DDL tasks count",
 		})
 )
