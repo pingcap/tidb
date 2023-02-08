@@ -3305,8 +3305,9 @@ func (s *stmtSummary) Add(stmtExecInfo *stmtsummary.StmtExecInfo) {
 
 	if s.EnablePersistent {
 		s.StmtSummaryV2.Add(stmtExecInfo)
+	} else {
+		stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 	}
-	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 }
 
 func (s *stmtSummary) Enabled() bool {
