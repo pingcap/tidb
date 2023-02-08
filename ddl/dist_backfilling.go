@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gpool/spmc"
@@ -34,7 +33,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const GetJobWithoutPartition = -1
+const getJobWithoutPartition = -1
 
 type backfillWorkerContext struct {
 	currID          int
@@ -132,7 +131,7 @@ func runBackfillJobs(d *ddl, sess *session, ingestBackendCtx *ingest.BackendCont
 	runningPID := int64(0)
 	// If txn-merge we needn't to claim the backfill job through the partition table
 	if ingestBackendCtx == nil {
-		runningPID = GetJobWithoutPartition
+		runningPID = getJobWithoutPartition
 	}
 	proFunc := func() ([]*reorgBackfillTask, error) {
 		// TODO: After BackfillJob replaces reorgBackfillTask, use backfiller's GetTasks instead of it.
@@ -218,20 +217,15 @@ func (bwm *backfilWorkerManager) close(d *ddl) error {
 // backfillJob2Task builds reorg task.
 func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBackfillTask, error) {
 	pt := t.(table.PhysicalTable)
-	var idx table.Index
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		pt = tbl.GetPartition(bfJob.PhysicalTableID)
 		if pt == nil {
 			return nil, dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", bfJob.PhysicalTableID, t.Meta().ID)
 		}
-		indexInfo := model.FindIndexInfoByID(pt.Meta().Indices, bfJob.EleID)
-		idx = tables.NewIndex(bfJob.PhysicalTableID, pt.Meta(), indexInfo)
 	}
 	return &reorgBackfillTask{
-		bfJob:           bfJob,
-		index:           idx,
-		physicalTable:   pt,
-		physicalTableID: bfJob.PhysicalTableID,
+		bfJob:         bfJob,
+		physicalTable: pt,
 		// TODO: Remove these fields after remove the old logic.
 		sqlQuery:   bfJob.Meta.Query,
 		startKey:   bfJob.StartKey,
@@ -259,7 +253,7 @@ func GetTasks(d *ddlCtx, sess *session, tbl table.Table, runningJobID int64, run
 			}
 		}
 
-		if *runningPID != GetJobWithoutPartition {
+		if *runningPID != getJobWithoutPartition {
 			*runningPID = bJobs[0].PhysicalTableID
 		}
 		tasks := make([]*reorgBackfillTask, 0, len(bJobs))

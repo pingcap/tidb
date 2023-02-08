@@ -743,7 +743,7 @@ func GetAndMarkBackfillJobsForOneEle(s *session, batch int, jobID int64, uuid st
 
 		getJobsSQL := fmt.Sprintf("(exec_ID = '' or exec_lease < '%v') and ddl_job_id = %d order by ddl_job_id, ele_id, ele_key limit %d",
 			leaseStr, jobID, batch)
-		if pTblID != GetJobWithoutPartition {
+		if pTblID != getJobWithoutPartition {
 			if pTblID == 0 {
 				rows, err := s.execute(context.Background(),
 					fmt.Sprintf("select ddl_physical_tid from mysql.%s group by ddl_job_id, ele_id, ele_key, ddl_physical_tid having sum(length(exec_id)) = 0 or max(exec_lease) < '%s' order by ddl_job_id, ele_key, ele_id, ddl_physical_tid limit 1",

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -252,17 +253,15 @@ type backfillResult struct {
 type reorgBackfillTask struct {
 	bfJob         *BackfillJob
 	physicalTable table.PhysicalTable
-	index         table.Index
 
 	// TODO: Remove the following fields after remove the function of run.
-	id              int
-	physicalTableID int64
-	startKey        kv.Key
-	endKey          kv.Key
-	endInclude      bool
-	jobID           int64
-	sqlQuery        string
-	priority        int
+	id         int
+	startKey   kv.Key
+	endKey     kv.Key
+	endInclude bool
+	jobID      int64
+	sqlQuery   string
+	priority   int
 }
 
 func (r *reorgBackfillTask) getJobID() int64 {
@@ -281,7 +280,7 @@ func (r *reorgBackfillTask) excludedEndKey() kv.Key {
 }
 
 func (r *reorgBackfillTask) String() string {
-	physicalID := strconv.FormatInt(r.physicalTableID, 10)
+	physicalID := strconv.FormatInt(r.physicalTable.GetPhysicalID(), 10)
 	startKey := hex.EncodeToString(r.startKey)
 	endKey := hex.EncodeToString(r.endKey)
 	rangeStr := "taskID_" + strconv.Itoa(r.id) + "_physicalTableID_" + physicalID + "_" + "[" + startKey + "," + endKey
@@ -369,6 +368,9 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	rc := d.getReorgCtx(jobID)
 
 	isDistReorg := task.bfJob != nil
+	if isDistReorg {
+		w.initPartitionIndexInfo(task)
+	}
 	for {
 		// Give job chance to be canceled, if we not check it here,
 		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
@@ -440,10 +442,11 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
-func (w *backfillWorker) updatePartitionIndexInfo(task *reorgBackfillTask) {
-	if _, ok := w.GetCtx().table.(table.PartitionedTable); ok {
+func (w *backfillWorker) initPartitionIndexInfo(task *reorgBackfillTask) {
+	if pt, ok := w.GetCtx().table.(table.PartitionedTable); ok {
 		if addIdxWorker, ok := w.backfiller.(*addIndexWorker); ok {
-			addIdxWorker.index = task.index
+			indexInfo := model.FindIndexInfoByID(pt.Meta().Indices, task.bfJob.EleID)
+			addIdxWorker.index = tables.NewIndex(task.bfJob.PhysicalTableID, pt.Meta(), indexInfo)
 		}
 	}
 }
@@ -469,7 +472,6 @@ func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResul
 		time.Sleep(100 * time.Millisecond)
 	})
 
-	w.updatePartitionIndexInfo(task)
 	// Change the batch size dynamically.
 	w.GetCtx().batchCnt = int(variable.GetDDLReorgBatchSize())
 	result = w.handleBackfillTask(w.GetCtx().ddlCtx, task, w.backfiller)
@@ -678,7 +680,7 @@ func (dc *ddlCtx) sendTasksAndWait(scheduler *backfillScheduler, totalAddedCount
 	return nil
 }
 
-func getBatchTasks(t table.Table, reorgInfo *reorgInfo, pID int64, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
+func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, batch int) []*reorgBackfillTask {
 	batchTasks := make([]*reorgBackfillTask, 0, batch)
 	var prefix kv.Key
 	if reorgInfo.mergingTmpIdx {
@@ -710,13 +712,12 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, pID int64, kvRanges []kv
 		}
 
 		task := &reorgBackfillTask{
-			id:              i,
-			jobID:           job.ID,
-			physicalTableID: pID,
-			physicalTable:   phyTbl,
-			priority:        reorgInfo.Priority,
-			startKey:        startKey,
-			endKey:          endKey,
+			id:            i,
+			jobID:         job.ID,
+			physicalTable: phyTbl,
+			priority:      reorgInfo.Priority,
+			startKey:      startKey,
+			endKey:        endKey,
 			// If the boundaries overlap, we should ignore the preceding endKey.
 			endInclude: endK.Cmp(keyRange.EndKey) != 0 || i == len(kvRanges)-1}
 		batchTasks = append(batchTasks, task)
@@ -731,7 +732,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, pID int64, kvRanges []kv
 // handleRangeTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
 func (dc *ddlCtx) handleRangeTasks(scheduler *backfillScheduler, t table.Table,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
-	batchTasks := getBatchTasks(t, scheduler.reorgInfo, scheduler.reorgInfo.PhysicalTableID, kvRanges, backfillTaskChanSize)
+	batchTasks := getBatchTasks(t, scheduler.reorgInfo, kvRanges, backfillTaskChanSize)
 	if len(batchTasks) == 0 {
 		return nil, nil
 	}
@@ -1171,7 +1172,7 @@ func (dc *ddlCtx) splitTableToBackfillJobs(sess *session, reorgInfo *reorgInfo, 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, pTblMeta.PhyTblID, kvRanges, batchSize)
+		batchTasks := getBatchTasks(pTblMeta.PhyTbl, reorgInfo, kvRanges, batchSize)
 		if len(batchTasks) == 0 {
 			break
 		}
