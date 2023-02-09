@@ -74,6 +74,14 @@ func TestTxnUsageInfo(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCWriteCheckTs))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RCWriteCheckTS)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBPessimisticTransactionAggressiveLocking))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.False(t, txnUsage.AggressiveLocking)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBPessimisticTransactionAggressiveLocking))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.AggressiveLocking)
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -843,4 +851,73 @@ func TestStoreBatchCopr(t *testing.T) {
 	require.Equal(t, diff.BatchedQueryTask, int64(4))
 	require.Equal(t, diff.BatchedCount, int64(1))
 	require.Equal(t, diff.BatchedFallbackCount, int64(1))
+}
+
+func TestAggressiveLockingUsage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	usage, err := telemetry.GetFeatureUsage(tk2.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	tk.MustExec("set @@tidb_pessimistic_txn_aggressive_locking = 1")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t set v = v + 1 where id = 1")
+	usage, err = telemetry.GetFeatureUsage(tk2.Session())
+	// Not counted before transaction committing.
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	tk.MustExec("commit")
+	usage, err = telemetry.GetFeatureUsage(tk2.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	// Counted by transaction instead of by statement.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t set v = v + 1 where id = 1")
+	tk.MustExec("update t set v = v + 1 where id = 2")
+	tk.MustExec("commit")
+	usage, err = telemetry.GetFeatureUsage(tk2.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(0), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
+
+	// Effective only when LockedWithConflict occurs.
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	tk.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+	tk3.MustExec("update t set v = v + 1 where id = 1")
+	ch := make(chan interface{})
+	go func() {
+		tk.MustExec("update t set v = v + 1 where id = 1")
+		ch <- nil
+	}()
+	select {
+	case <-ch:
+		require.Fail(t, "expected statement to be blocked but finished")
+	case <-time.After(time.Millisecond * 100):
+	}
+	tk3.MustExec("commit")
+	select {
+	case <-time.After(time.Second):
+		require.Fail(t, "expected statement to be resumed but still blocked")
+	case <-ch:
+	}
+	tk.MustExec("commit")
+	usage, err = telemetry.GetFeatureUsage(tk2.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(3), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingUsed)
+	require.Equal(t, int64(1), usage.Txn.AggressiveLockingUsageCounter.TxnAggressiveLockingEffective)
 }

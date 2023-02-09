@@ -484,3 +484,25 @@ func GetStoreBatchCoprCounter() StoreBatchCoprCounter {
 		BatchedFallbackCount: readCounter(TelemetryStoreBatchedFallbackCnt),
 	}
 }
+
+// AggressiveLockingUsageCounter records the usage of Aggressive Locking feature of pessimistic transaction.
+type AggressiveLockingUsageCounter struct {
+	TxnAggressiveLockingUsed      int64 `json:"txn_aggressive_locking_used"`
+	TxnAggressiveLockingEffective int64 `json:"txn_aggressive_locking_effective"`
+}
+
+// Sub returns the difference of two counters.
+func (i AggressiveLockingUsageCounter) Sub(rhs AggressiveLockingUsageCounter) AggressiveLockingUsageCounter {
+	return AggressiveLockingUsageCounter{
+		TxnAggressiveLockingUsed:      i.TxnAggressiveLockingUsed - rhs.TxnAggressiveLockingUsed,
+		TxnAggressiveLockingEffective: i.TxnAggressiveLockingEffective - rhs.TxnAggressiveLockingEffective,
+	}
+}
+
+// GetAggressiveLockingUsageCounter returns the Aggressive Locking usage counter.
+func GetAggressiveLockingUsageCounter() AggressiveLockingUsageCounter {
+	return AggressiveLockingUsageCounter{
+		TxnAggressiveLockingUsed:      readCounter(AggressiveLockingUsageCount.WithLabelValues(LblAggressiveLockingTxnUsed)),
+		TxnAggressiveLockingEffective: readCounter(AggressiveLockingUsageCount.WithLabelValues(LblAggressiveLockingTxnEffective)),
+	}
+}
