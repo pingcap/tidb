@@ -58,6 +58,9 @@ var JobNeedGCForTest = jobNeedGC
 // NewSession is only used for test.
 var NewSession = newSession
 
+// GetJobWithoutPartition is only used for test.
+const GetJobWithoutPartition = getJobWithoutPartition
+
 // GetDDLCtx returns ddlCtx for test.
 func GetDDLCtx(d DDL) *ddlCtx {
 	return d.(*ddl).ddlCtx

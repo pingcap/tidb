@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -43,7 +44,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		endKey := startKey.PrefixNext()
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		idxRec, done, err := ddl.FetchRowsFromCop4Test(copCtx, startKey, endKey, store, 10)
+		idxRec, done, err := ddl.FetchRowsFromCop4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
 		require.NoError(t, err)
 		require.False(t, done)
 		require.NoError(t, txn.Rollback())
