@@ -69,6 +69,8 @@ func postReportTelemetryData() {
 	PostSavepointCount()
 	postReportLazyPessimisticUniqueCheckSetCount()
 	postReportDDLUsage()
+	postReportIndexMergeUsage()
+	postStoreBatchUsage()
 	postReportAggressiveLockingUsageCounter()
 }
 
