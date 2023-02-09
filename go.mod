@@ -92,7 +92,7 @@ require (
 	github.com/stretchr/testify v1.8.1
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tiancaiamao/sched v0.0.0-20230120055155-071bd84b1ce4
+	github.com/tiancaiamao/sched v0.0.0-20230207140312-c710bb0e9d7b
 	github.com/tikv/client-go/v2 v2.0.5-0.20230202101145-8fd09cd88cce
 	github.com/tikv/pd v1.1.0-beta.0.20230202094356-18df271ce57f
 	github.com/tikv/pd/client v0.0.0-20230202094356-18df271ce57f
@@ -279,5 +279,3 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 	go.opencensus.io => go.opencensus.io v0.23.1-0.20220331163232-052120675fac
 )
-
-replace github.com/tiancaiamao/sched => ../../tiancaiamao/sched

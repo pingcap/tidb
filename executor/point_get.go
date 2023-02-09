@@ -236,9 +236,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.done = true
 
-	if _, ok := e.ctx.GetSessionVars().GetUserVarVal("fuck"); ok {
+	if _, ok := e.ctx.GetSessionVars().GetUserVarVal("hack"); ok {
 		rand.Read(glCrc32bs)
-		fmt.Println("fuck ...")
 		var wg sync.WaitGroup
 		ch := make(chan struct{})
 		NUM := 20
