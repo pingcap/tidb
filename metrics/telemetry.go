@@ -176,7 +176,7 @@ var (
 			Subsystem: "telemetry",
 			Name:      "distributed_reorg_count",
 			Help:      "Counter of usage of distributed reorg DDL tasks count",
-    })
+		})
 	TelemetryStoreBatchedQueryCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
