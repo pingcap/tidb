@@ -648,7 +648,14 @@ func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
+<<<<<<< HEAD
 	return sessCtx, nil
+=======
+	// Prevent initializing the mock context in the workers concurrently.
+	// For details, see https://github.com/pingcap/tidb/issues/40879.
+	_ = sessCtx.GetDomainInfoSchema()
+	return nil
+>>>>>>> f5efbbadd1 (ddl: initialize the mock session in advanced (#41227))
 }
 
 func (b *backfillScheduler) setMaxWorkerSize(maxSize int) {
