@@ -830,11 +830,7 @@ type indexMergeTableScanWorker struct {
 	memTracker *memory.Tracker
 }
 
-<<<<<<< HEAD
-func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *lookupTableTask) {
-=======
-func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **indexMergeTableTask) {
->>>>>>> d6302c1144 (executor: Fix tidb crash on index merge reader (#40904))
+func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **lookupTableTask) {
 	var ok bool
 	for {
 		waitStart := time.Now()
@@ -858,11 +854,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 	}
 }
 
-<<<<<<< HEAD
-func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, task *lookupTableTask) func(r interface{}) {
-=======
-func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, task **indexMergeTableTask) func(r interface{}) {
->>>>>>> d6302c1144 (executor: Fix tidb crash on index merge reader (#40904))
+func (w *indexMergeTableScanWorker) handlePickAndExecTaskPanic(ctx context.Context, task **lookupTableTask) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
 			return
