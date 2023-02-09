@@ -3026,6 +3026,8 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 		placementSettings.FollowerConstraints = stringVal
 	case ast.PlacementOptionVoterConstraints:
 		placementSettings.VoterConstraints = stringVal
+	case ast.PlacementOptionSurvivalPreferences:
+		placementSettings.SurvivalPreferences = stringVal
 	default:
 		return errors.Trace(errors.New("unknown placement policy option"))
 	}
@@ -7615,14 +7617,11 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 
 // AddResourceGroup implements the DDL interface, creates a resource group.
 func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
-	groupInfo := &model.ResourceGroupInfo{ResourceGroupSettings: &model.ResourceGroupSettings{}}
 	groupName := stmt.ResourceGroupName
-	groupInfo.Name = groupName
-	for _, opt := range stmt.ResourceGroupOptionList {
-		err := SetDirectResourceGroupUnit(groupInfo.ResourceGroupSettings, opt.Tp, opt.StrValue, opt.UintValue, opt.BoolValue)
-		if err != nil {
-			return err
-		}
+	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
+	if err != nil {
+		return err
 	}
 
 	if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
@@ -7711,6 +7710,7 @@ func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.Resour
 			return nil, err
 		}
 	}
+	groupInfo.ResourceGroupSettings.Adjust()
 	return groupInfo, nil
 }
 
