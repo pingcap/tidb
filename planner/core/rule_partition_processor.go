@@ -252,7 +252,7 @@ func (s *partitionProcessor) findUsedKeyPartitions(ctx sessionctx.Context, tbl t
 	if err != nil {
 		return nil, nil, err
 	}
-	partCols, colLen := partExpr.GetPartColumns(columns)
+	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, nil, err
@@ -271,7 +271,7 @@ func (s *partitionProcessor) findUsedKeyPartitions(ctx sessionctx.Context, tbl t
 			highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
 			highLowVals = append(highLowVals, r.HighVal...)
 			highLowVals = append(highLowVals, r.LowVal...)
-			idx, err := partExpr.LocateKeyPartition(ctx, pi, partCols, highLowVals, int64(pi.Num))
+			idx, err := partExpr.LocateKeyPartition(pi, partCols, highLowVals)
 			if err != nil {
 				// If we failed to get the point position, we can just skip and ignore it.
 				continue
@@ -312,9 +312,8 @@ func (s *partitionProcessor) findUsedKeyPartitions(ctx sessionctx.Context, tbl t
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
 				if rangeScalar < float64(pi.Num) && !highIsNull && !lowIsNull {
 					for i := posLow; i <= posHigh; i++ {
-						d := types.Datum{}
-						d.SetInt64(i)
-						idx, err := partExpr.LocateKeyPartition(ctx, pi, partCols, []types.Datum{d}, int64(pi.Num))
+						d := types.NewIntDatum(i)
+						idx, err := partExpr.LocateKeyPartition(pi, partCols, []types.Datum{d})
 						if err != nil {
 							// If we failed to get the point position, we can just skip and ignore it.
 							continue

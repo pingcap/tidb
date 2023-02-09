@@ -2875,7 +2875,6 @@ func isValidKeyPartitionColType(fieldType types.FieldType) bool {
 	default:
 		return true
 	}
-	return true
 }
 
 func isColTypeAllowedAsPartitioningCol(partType model.PartitionType, fieldType types.FieldType) bool {

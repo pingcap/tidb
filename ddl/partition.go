@@ -2854,6 +2854,15 @@ func hexIfNonPrint(s string) string {
 	return "0x" + hex.EncodeToString([]byte(driver.UnwrapFromSingleQuotes(s)))
 }
 
+func writeColumnListToBuffer(partitionInfo *model.PartitionInfo, sqlMode mysql.SQLMode, buf *bytes.Buffer) {
+	for i, col := range partitionInfo.Columns {
+		buf.WriteString(stringutil.Escape(col.O, sqlMode))
+		if i < len(partitionInfo.Columns)-1 {
+			buf.WriteString(",")
+		}
+	}
+}
+
 // AppendPartitionInfo is used in SHOW CREATE TABLE as well as generation the SQL syntax
 // for the PartitionInfo during validation of various DDL commands
 func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
@@ -2883,19 +2892,14 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 				fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
 			} else {
 				buf.WriteString("\nPARTITION BY KEY (")
-				for i, col := range partitionInfo.Columns {
-					buf.WriteString(stringutil.Escape(col.O, sqlMode))
-					if i < len(partitionInfo.Columns)-1 {
-						buf.WriteString(",")
-					}
-				}
+				writeColumnListToBuffer(partitionInfo, sqlMode, buf)
 				buf.WriteString(")")
 				fmt.Fprintf(buf, " PARTITIONS %d", partitionInfo.Num)
 			}
 			return
 		}
 	}
-	// this if statement takes care of lists/range columns case
+	// this if statement takes care of lists/range/key columns case
 	if len(partitionInfo.Columns) > 0 {
 		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
 		// || partitionInfo.Type == model.PartitionTypeKey
@@ -2905,12 +2909,7 @@ func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		} else {
 			fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
 		}
-		for i, col := range partitionInfo.Columns {
-			buf.WriteString(stringutil.Escape(col.O, sqlMode))
-			if i < len(partitionInfo.Columns)-1 {
-				buf.WriteString(",")
-			}
-		}
+		writeColumnListToBuffer(partitionInfo, sqlMode, buf)
 		buf.WriteString(")\n(")
 	} else {
 		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)

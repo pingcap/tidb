@@ -1778,11 +1778,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 		if len(pi.Columns) == 1 {
 			for i, pair := range pairs {
 				if pi.Columns[0].L == pair.colName {
-					col := &expression.Column{}
-					*col = *partitionExpr.ForKeyPruning.Cols[0]
-					col.Index = 0
-					pos, err := partitionExpr.LocateKeyPartition(ctx, pi, []*expression.Column{col},
-						[]types.Datum{pair.value}, int64(pi.Num))
+					pos, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{pair.value})
 					if err != nil {
 						return nil, 0, 0, false
 					}
@@ -1864,8 +1860,8 @@ func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.Partition
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
 	case model.PartitionTypeKey:
-		if len(partitionExpr.ForKeyPruning.Cols) == 1 {
-			colInfo := findColNameByColID(tbl.Columns, partitionExpr.ForKeyPruning.Cols[0])
+		if len(partitionExpr.KeyPartCols) == 1 {
+			colInfo := findColNameByColID(tbl.Columns, partitionExpr.KeyPartCols[0])
 			partitionName = colInfo.Name
 		} else {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")

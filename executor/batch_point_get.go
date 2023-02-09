@@ -226,7 +226,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				continue
 			}
 
-			physID, err := getPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos], idxVals[e.partPos].GetInt64())
+			physID, err := getPhysID(e.tblInfo, e.partExpr, idxVals[e.partPos])
 			if err != nil {
 				continue
 			}
@@ -357,9 +357,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			tID = e.physIDs[i]
 		} else {
 			if handle.IsInt() {
-				d := &types.Datum{}
-				d.SetInt64(handle.IntValue())
-				tID, err = getPhysID(e.tblInfo, e.partExpr, *d, handle.IntValue())
+				d := types.NewIntDatum(handle.IntValue())
+				tID, err = getPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
@@ -368,7 +367,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				if err1 != nil {
 					return err1
 				}
-				tID, err = getPhysID(e.tblInfo, e.partExpr, d, d.GetInt64())
+				tID, err = getPhysID(e.tblInfo, e.partExpr, d)
 				if err != nil {
 					continue
 				}
@@ -529,7 +528,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum, intVal int64) (int64, error) {
+func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d types.Datum) (int64, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return tblInfo.ID, nil
@@ -541,16 +540,14 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d 
 
 	switch pi.Type {
 	case model.PartitionTypeHash:
+		intVal := d.GetInt64()
 		partIdx := mathutil.Abs(intVal % int64(pi.Num))
 		return pi.Definitions[partIdx].ID, nil
 	case model.PartitionTypeKey:
 		if len(pi.Columns) > 1 {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		col := &expression.Column{}
-		*col = *partitionExpr.Cols[0]
-		col.Index = 0
-		partIdx, err := partitionExpr.LocateKeyPartition(nil, pi, []*expression.Column{col}, []types.Datum{d}, int64(pi.Num))
+		partIdx, err := partitionExpr.LocateKeyPartitionWithSPC(pi, []types.Datum{d})
 		if err != nil {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
@@ -564,6 +561,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d 
 		unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
 		ranges := partitionExpr.ForRangePruning
 		length := len(ranges.LessThan)
+		intVal := d.GetInt64()
 		partIdx := sort.Search(length, func(i int) bool {
 			return ranges.Compare(i, intVal, unsigned) > 0
 		})
@@ -572,6 +570,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, d 
 		}
 	case model.PartitionTypeList:
 		isNull := false // we've guaranteed this in the build process of either TryFastPlan or buildBatchPointGet
+		intVal := d.GetInt64()
 		partIdx := partitionExpr.ForListPruning.LocatePartition(intVal, isNull)
 		if partIdx >= 0 {
 			return pi.Definitions[partIdx].ID, nil

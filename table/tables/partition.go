@@ -157,7 +157,8 @@ type PartitionExpr struct {
 	*ForListPruning
 }
 
-func (pe *PartitionExpr) GetPartColumns(columns []*expression.Column) ([]*expression.Column, []int) {
+// GetPartColumnsForKeyPartition is used to get partition columns for key partition table
+func (pe *PartitionExpr) GetPartColumnsForKeyPartition(columns []*expression.Column) ([]*expression.Column, []int) {
 	schema := expression.NewSchema(columns...)
 	partCols := make([]*expression.Column, len(pe.ColumnOffset))
 	colLen := make([]int, 0, len(pe.ColumnOffset))
@@ -169,9 +170,19 @@ func (pe *PartitionExpr) GetPartColumns(columns []*expression.Column) ([]*expres
 	return partCols, colLen
 }
 
-// TODO: supports linear hashing
-func (pe *PartitionExpr) LocateKeyPartition(ctx sessionctx.Context,
-	pi *model.PartitionInfo, cols []*expression.Column, r []types.Datum, pNum int64) (int, error) {
+// LocateKeyPartitionWithSPC is used to locate the destination partition for key
+// partition table has single partition column(SPC). It's called in FastPlan process.
+func (pe *PartitionExpr) LocateKeyPartitionWithSPC(pi *model.PartitionInfo,
+	r []types.Datum) (int, error) {
+	col := &expression.Column{}
+	*col = *pe.KeyPartCols[0]
+	col.Index = 0
+	return pe.LocateKeyPartition(pi, []*expression.Column{col}, r)
+}
+
+// LocateKeyPartition is the common interface used to locate the destination partition
+func (pe *PartitionExpr) LocateKeyPartition(pi *model.PartitionInfo,
+	cols []*expression.Column, r []types.Datum) (int, error) {
 	nr1 := uint64(1)
 	nr2 := uint64(4)
 	for _, col := range cols {
@@ -185,12 +196,11 @@ func (pe *PartitionExpr) LocateKeyPartition(ctx sessionctx.Context,
 		}
 		nr1, nr2 = types.CalcBytesHash(data, nr1, nr2)
 	}
-	// partId := nr1 % pi.Num
 
-	partId := (int)(nr1 & (uint64)(pi.HashMask))
-	if partId > int(pNum) {
+	partId := nr1 & (uint64)(pi.HashMask)
+	if partId > pi.Num {
 		newmask := ((pi.HashMask + 1) >> 1) - 1
-		partId = (int)(nr1 & (uint64)(newmask))
+		partId = nr1 & (uint64)(newmask)
 	}
 
 	return int(partId), nil
@@ -260,35 +270,9 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx sessionctx.Context, exprStr 
 
 // ForKeyPruning is used for key partition pruning.
 type ForKeyPruning struct {
-	Cols []*expression.Column
+	KeyPartCols []*expression.Column
 }
 
-/*
-func (f *ForKeyPruning) GetKeyPartitionIdx(ctx sessionctx.Context, partitionExpr *PartitionExpr,
-	r []types.Datum) (int, error) {
-	nr := int64(1)
-	for _, col := range partitionExpr.ForKeyPruning.cols {
-		var data types.Datum
-		switch r[col.Index].Kind() {
-		case types.KindInt64, types.KindUint64:
-			data = r[col.Index]
-		default:
-			var err error
-			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLong))
-			if err != nil {
-				return 0, err
-			}
-		}
-		ret := data.GetInt64()
-		nr ^= ret
-	}
-	nr = nr % int64(t.meta.Partition.Num)
-	if nr < 0 {
-		nr = -nr
-	}
-	return int(nr), nil
-}
-*/
 // ForListPruning is used for list partition pruning.
 type ForListPruning struct {
 	// LocateExpr uses to locate list partition by row.
@@ -573,7 +557,7 @@ func generateKeyPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		return nil, errors.Trace(err)
 	}
 	ret.ColumnOffset = offset
-	ret.ForKeyPruning.Cols = partColumns
+	ret.KeyPartCols = partColumns
 
 	return ret, nil
 }
@@ -1082,7 +1066,7 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	case model.PartitionTypeHash:
 		idx, err = t.locateHashPartition(ctx, pi, r)
 	case model.PartitionTypeKey:
-		idx, err = t.locateKeyPartition(ctx, pi, r)
+		idx, err = t.locateKeyPartition(pi, r)
 	case model.PartitionTypeList:
 		idx, err = t.locateListPartition(ctx, pi, r)
 	}
@@ -1235,8 +1219,8 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 }
 
 // TODO: supports linear hashing
-func (t *partitionedTable) locateKeyPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
-	return t.partitionExpr.LocateKeyPartition(ctx, pi, t.partitionExpr.Cols, r, int64(t.meta.Partition.Num))
+func (t *partitionedTable) locateKeyPartition(pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	return t.partitionExpr.LocateKeyPartition(pi, t.partitionExpr.KeyPartCols, r)
 }
 
 // GetPartition returns a Table, which is actually a partition.
