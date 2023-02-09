@@ -29,6 +29,7 @@ import (
 
 const (
 	orderByTiDBRowID = "ORDER BY `_tidb_rowid`"
+	snapshotVar      = "tidb_snapshot"
 )
 
 type listTableType int
@@ -851,7 +852,9 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 		s := fmt.Sprintf("SET SESSION %s = ?", k)
 		_, err := db.ExecContext(tctx, s, pv)
 		if err != nil {
-			if isUnknownSystemVariableErr(err) {
+			if k == snapshotVar {
+				err = errors.Annotate(err, "fail to set snapshot for tidb, please set --consistency=none/--consistency=lock or fix snapshot problem")
+			} else if isUnknownSystemVariableErr(err) {
 				tctx.L().Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
 				continue
 			}
@@ -876,6 +879,9 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 		}
 		cfg.Params[k] = s
 	}
+	failpoint.Inject("SkipResetDB", func(_ failpoint.Value) {
+		failpoint.Return(db, nil)
+	})
 
 	db.Close()
 	c, err := mysql.NewConnector(cfg)
