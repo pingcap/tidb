@@ -12,7 +12,3 @@ enable = true
 schema = "tidb_lightning_checkpoint_test"
 driver = "mysql"
 keep-after-success = true
-
-[tikv-importer]
-send-kv-pairs=10
-region-split-size = 1024

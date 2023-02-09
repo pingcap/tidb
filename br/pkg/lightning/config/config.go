@@ -468,6 +468,58 @@ func (dra DuplicateResolutionAlgorithm) String() string {
 	}
 }
 
+// CompressionType is the config type of compression algorithm.
+type CompressionType int
+
+const (
+	// CompressionNone means no compression.
+	CompressionNone CompressionType = iota
+	// CompressionGzip means gzip compression.
+	CompressionGzip
+)
+
+func (t *CompressionType) UnmarshalTOML(v interface{}) error {
+	if val, ok := v.(string); ok {
+		return t.FromStringValue(val)
+	}
+	return errors.Errorf("invalid compression-type '%v', please choose valid option between ['gzip']", v)
+}
+
+func (t CompressionType) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
+func (t *CompressionType) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	case "":
+		*t = CompressionNone
+	case "gz", "gzip":
+		*t = CompressionGzip
+	default:
+		return errors.Errorf("invalid compression-type '%s', please choose valid option between ['gzip']", s)
+	}
+	return nil
+}
+
+func (t *CompressionType) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + t.String() + `"`), nil
+}
+
+func (t *CompressionType) UnmarshalJSON(data []byte) error {
+	return t.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+func (t CompressionType) String() string {
+	switch t {
+	case CompressionGzip:
+		return "gzip"
+	case CompressionNone:
+		return ""
+	default:
+		panic(fmt.Sprintf("invalid compression type '%d'", t))
+	}
+}
+
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
 	Checksum          PostOpLevel `toml:"checksum" json:"checksum"`
@@ -583,6 +635,7 @@ type TikvImporter struct {
 	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
 	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	CompressKVPairs     CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
 	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
 	RegionSplitKeys     int                          `toml:"region-split-keys" json:"region-split-keys"`
 	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
