@@ -774,8 +774,38 @@ func RunStreamResume(
 	return nil
 }
 
+<<<<<<< HEAD
 func checkConfigForStatus(cfg *StreamConfig) error {
 	if len(cfg.PD) == 0 {
+=======
+func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+	ctx, cancel := context.WithCancel(c)
+	defer cancel()
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, false, conn.StreamVersionChecker)
+	if err != nil {
+		return err
+	}
+
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return err
+	}
+	env := streamhelper.CliEnv(mgr.StoreManager, etcdCLI)
+	advancer := streamhelper.NewCheckpointAdvancer(env)
+	advancer.UpdateConfig(cfg.AdvancerCfg)
+	advancerd := daemon.New(advancer, streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI), cfg.AdvancerCfg.TickDuration)
+	loop, err := advancerd.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	loop()
+	return nil
+}
+
+func checkConfigForStatus(pd []string) error {
+	if len(pd) == 0 {
+>>>>>>> d16f4c0ed0 (pitr: prevent from restore point to cluster running log backup (#40871))
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"the command needs access to PD, please specify `-u` or `--pd`")
 	}
@@ -825,7 +855,7 @@ func RunStreamStatus(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	if err := checkConfigForStatus(cfg); err != nil {
+	if err := checkConfigForStatus(cfg.PD); err != nil {
 		return err
 	}
 	ctl, err := makeStatusController(ctx, cfg, g)
@@ -926,6 +956,32 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	return nil
 }
 
+// checkTaskExists checks whether there is a log backup task running.
+// If so, return an error.
+func checkTaskExists(ctx context.Context, cfg *RestoreConfig) error {
+	if err := checkConfigForStatus(cfg.PD); err != nil {
+		return err
+	}
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return err
+	}
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer func() {
+		if err := cli.Close(); err != nil {
+			log.Error("failed to close the etcd client", zap.Error(err))
+		}
+	}()
+	tasks, err := cli.GetAllTasks(ctx)
+	if err != nil {
+		return err
+	}
+	if len(tasks) > 0 {
+		return errors.Errorf("log backup task is running: %s, please stop the task before restore, and after PITR operation finished, create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
+	}
+	return nil
+}
+
 // RunStreamRestore restores stream log.
 func RunStreamRestore(
 	c context.Context,
@@ -974,8 +1030,12 @@ func RunStreamRestore(
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
+<<<<<<< HEAD
 		cfg.skipTiflash = true
 		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
+=======
+		if err = runRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
+>>>>>>> d16f4c0ed0 (pitr: prevent from restore point to cluster running log backup (#40871))
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage

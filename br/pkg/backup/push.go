@@ -197,10 +197,13 @@ func (push *pushDown) pushBackup(
 					if len(errMsg) <= 0 {
 						errMsg = errPb.Msg
 					}
+<<<<<<< HEAD
 					return res, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s %s",
+=======
+					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s",
+>>>>>>> d16f4c0ed0 (pitr: prevent from restore point to cluster running log backup (#40871))
 						store.GetId(),
 						redact.String(store.GetAddress()),
-						req.StorageBackend.String(),
 						errMsg,
 					)
 				}

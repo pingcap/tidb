@@ -339,12 +339,29 @@ func IsStreamRestore(cmdName string) bool {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+<<<<<<< HEAD
+=======
+	if err := checkTaskExists(c, cfg); err != nil {
+		return errors.Annotate(err, "failed to check task exits")
+	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
+>>>>>>> d16f4c0ed0 (pitr: prevent from restore point to cluster running log backup (#40871))
 	if IsStreamRestore(cmdName) {
 		cfg.adjustRestoreConfigForStreamRestore()
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
+	return runRestore(c, g, cmdName, cfg)
+}
 
+<<<<<<< HEAD
 	cfg.adjustRestoreConfig()
+=======
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	cfg.Adjust()
+>>>>>>> d16f4c0ed0 (pitr: prevent from restore point to cluster running log backup (#40871))
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
