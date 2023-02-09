@@ -1566,6 +1566,10 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 	if err != nil {
 		return err
 	}
+	err = rs.Close()
+	if err != nil {
+		return err
+	}
 	var curCnt, curModifyCnt int64
 	if len(rows) > 0 {
 		snapshot := rows[0].GetUint64(0)
