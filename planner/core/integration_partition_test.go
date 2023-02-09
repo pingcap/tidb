@@ -1655,3 +1655,43 @@ func TestPartitionProcessorWithUninitializedTable(t *testing.T) {
 	}
 	tk.MustQuery("explain format=brief select * from q1,q2").CheckAt([]int{0}, rows)
 }
+
+func TestEstimationForTopNPushToDynamicPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table trange (a int, b int, c int, index ia(a), primary key (b) clustered)
+    partition by range(b) (
+    partition p1 values less than(100),
+    partition p2 values less than(200),
+    partition p3 values less than maxvalue);`)
+	tk.MustExec(`create table tlist (a int, b int, c int, index ia(a), primary key (b) clustered)
+    partition by list (b) (
+    partition p0 values in (0, 1, 2),
+    partition p1 values in (3, 4, 5));`)
+	tk.MustExec(`create table thash (a int, b int, c int, index ia(a), primary key (b) clustered)
+    partition by hash(b) partitions 4;`)
+	tk.MustExec(`create table t (a int, b int, c int, index ia(a), primary key (b) clustered);`)
+	tk.MustExec(`analyze table trange;`)
+	tk.MustExec(`analyze table tlist;`)
+	tk.MustExec(`analyze table thash;`)
+	tk.MustExec(`analyze table t;`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}

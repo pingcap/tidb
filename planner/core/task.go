@@ -1032,6 +1032,10 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		return true
 	}
 	var (
+		selOnIdxScan   *PhysicalSelection
+		selOnTblScan   *PhysicalSelection
+		selSelectivity float64
+
 		idxScan *PhysicalIndexScan
 		tblScan *PhysicalTableScan
 		tblInfo *model.TableInfo
@@ -1044,6 +1048,7 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 		finalIdxScanPlan := copTsk.indexPlan
 		for len(finalIdxScanPlan.Children()) > 0 && finalIdxScanPlan.Children()[0] != nil {
+			selOnIdxScan, _ = finalIdxScanPlan.(*PhysicalSelection)
 			finalIdxScanPlan = finalIdxScanPlan.Children()[0]
 		}
 		idxScan = finalIdxScanPlan.(*PhysicalIndexScan)
@@ -1056,10 +1061,19 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 		finalTblScanPlan := copTsk.tablePlan
 		for len(finalTblScanPlan.Children()) > 0 {
+			selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
 			finalTblScanPlan = finalTblScanPlan.Children()[0]
 		}
 		tblScan = finalTblScanPlan.(*PhysicalTableScan)
 		tblInfo = tblScan.Table
+	}
+
+	// Note that we only need to care about one Selection at most.
+	if selOnIdxScan != nil && idxScan.statsInfo().RowCount > 0 {
+		selSelectivity = selOnIdxScan.statsInfo().RowCount / idxScan.statsInfo().RowCount
+	}
+	if idxScan == nil && selOnTblScan != nil && tblScan.statsInfo().RowCount > 0 {
+		selSelectivity = selOnTblScan.statsInfo().RowCount / tblScan.statsInfo().RowCount
 	}
 
 	pi := tblInfo.GetPartitionInfo()
@@ -1083,6 +1097,17 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+
+		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalIndexScan.
+		child := pushedLimit.Children()[0]
+		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		// The Limit->Selection->IndexScan case:
+		// adjust the row count of IndexScan according to the selectivity of the Selection.
+		if selSelectivity > 0 && selSelectivity < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivity
+			idxScan.SetStats(idxScan.Stats().ScaleByExpectCnt(scaledRowCount))
+		}
 	} else if copTsk.indexPlan == nil {
 		if tblScan.HandleCols == nil {
 			return nil, false
@@ -1111,6 +1136,17 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}.Init(p.SCtx(), stats, p.SelectBlockOffset())
 		pushedLimit.SetSchema(copTsk.tablePlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
+
+		// A similar but simplified logic compared the ExpectedCnt handling logic in getOriginalPhysicalTableScan.
+		child := pushedLimit.Children()[0]
+		// The row count of the direct child of Limit should be adjusted to be no larger than the Limit.Count.
+		child.SetStats(child.statsInfo().ScaleByExpectCnt(float64(newCount)))
+		// The Limit->Selection->TableScan case:
+		// adjust the row count of IndexScan according to the selectivity of the Selection.
+		if selSelectivity > 0 && selSelectivity < 1 {
+			scaledRowCount := child.Stats().RowCount / selSelectivity
+			tblScan.SetStats(tblScan.Stats().ScaleByExpectCnt(scaledRowCount))
+		}
 	} else {
 		return nil, false
 	}
