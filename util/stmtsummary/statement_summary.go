@@ -516,10 +516,17 @@ func getBindableStmtByPlanDigest(ssbd *stmtSummaryByDigest, planDigest string) *
 				Collation: ssElement.collation,
 				Users:     ssElement.authUsers,
 			}
-			// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
+			// If it is SQL command prepare / execute, we should remove the arguments
 			// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
+<<<<<<< HEAD
 			if ssElement.prepared {
 				stmt.Query = ssbd.normalizedSQL
+=======
+			if row.GetInt64(4) == 1 {
+				if idx := strings.LastIndex(stmt.Query, "[arguments:"); idx != -1 {
+					stmt.Query = stmt.Query[:idx]
+				}
+>>>>>>> 98fe813b49 (planner: fix space requirement when binding from history (#41140))
 			}
 			return stmt
 		}

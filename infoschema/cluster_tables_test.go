@@ -852,3 +852,37 @@ func TestMDLView(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestCreateBindingForPrepareToken(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b time, c varchar(5))")
+
+	//some builtin functions listed in https://dev.mysql.com/doc/refman/8.0/en/function-resolution.html
+	cases := []string{
+		"select std(a) from t",
+		"select cast(a as decimal(10, 2)) from t",
+		"select bit_or(a) from t",
+		"select min(a) from t",
+		"select max(a) from t",
+		"select substr(c, 1, 2) from t",
+	}
+
+	for _, sql := range cases {
+		prep := fmt.Sprintf("prepare stmt from '%s'", sql)
+		tk.MustExec(prep)
+		tk.MustExec("execute stmt")
+		planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+		tk.MustExec(fmt.Sprintf("create binding from history using plan digest '%s'", planDigest[0][0]))
+	}
+}
