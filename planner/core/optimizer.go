@@ -760,8 +760,9 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 			// In most x86-64 platforms, `Thread(s) per core` is 2
 			return true, minLogicalCores / 2
 		}
-		// ARM cpus don't implement Hyper-threading
+		// ARM cpus don't implement Hyper-threading.
 		return true, minLogicalCores
+		// Other platforms are too rare to consider
 	}
 
 	return false, 0
