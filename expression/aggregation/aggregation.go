@@ -61,25 +61,25 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 	}
 	switch expr.Tp {
 	case tipb.ExprType_Sum:
-		return &sumFunction{aggFunction: newAggFunc(ast.AggFuncSum, args, false)}, nil
+		return &sumFunction{aggFunction: newAggFunc(ast.AggFuncSum, args, expr.HasDistinct, AggFunctionMode(*expr.AggFuncMode))}, nil
 	case tipb.ExprType_Count:
-		return &countFunction{aggFunction: newAggFunc(ast.AggFuncCount, args, false)}, nil
+		return &countFunction{aggFunction: newAggFunc(ast.AggFuncCount, args, expr.HasDistinct, AggFunctionMode(*expr.AggFuncMode))}, nil
 	case tipb.ExprType_Avg:
-		return &avgFunction{aggFunction: newAggFunc(ast.AggFuncAvg, args, false)}, nil
+		return &avgFunction{aggFunction: newAggFunc(ast.AggFuncAvg, args, expr.HasDistinct, AggFunctionMode(*expr.AggFuncMode))}, nil
 	case tipb.ExprType_GroupConcat:
-		return &concatFunction{aggFunction: newAggFunc(ast.AggFuncGroupConcat, args, false)}, nil
+		return &concatFunction{aggFunction: newAggFunc(ast.AggFuncGroupConcat, args, expr.HasDistinct, AggFunctionMode(*expr.AggFuncMode))}, nil
 	case tipb.ExprType_Max:
-		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMax, args, false), isMax: true, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
+		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMax, args, expr.HasDistinct, AggFunctionMode(*expr.AggFuncMode)), isMax: true, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
 	case tipb.ExprType_Min:
-		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false), ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
+		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, expr.HasDistinct, AggFunctionMode(*expr.AggFuncMode)), ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
 	case tipb.ExprType_First:
-		return &firstRowFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
+		return &firstRowFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, expr.HasDistinct, AggFunctionMode(*expr.AggFuncMode))}, nil
 	case tipb.ExprType_Agg_BitOr:
-		return &bitOrFunction{aggFunction: newAggFunc(ast.AggFuncBitOr, args, false)}, nil
+		return &bitOrFunction{aggFunction: newAggFunc(ast.AggFuncBitOr, args, expr.HasDistinct, AggFunctionMode(*expr.AggFuncMode))}, nil
 	case tipb.ExprType_Agg_BitXor:
-		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, false)}, nil
+		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, expr.HasDistinct, AggFunctionMode(*expr.AggFuncMode))}, nil
 	case tipb.ExprType_Agg_BitAnd:
-		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
+		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false, AggFunctionMode(*expr.AggFuncMode))}, nil
 	}
 	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }
@@ -117,10 +117,11 @@ type aggFunction struct {
 	*AggFuncDesc
 }
 
-func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool) aggFunction {
+func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool, mode AggFunctionMode) aggFunction {
 	agg := &AggFuncDesc{HasDistinct: hasDistinct}
 	agg.Name = funcName
 	agg.Args = args
+	agg.Mode = mode
 	return aggFunction{AggFuncDesc: agg}
 }
 

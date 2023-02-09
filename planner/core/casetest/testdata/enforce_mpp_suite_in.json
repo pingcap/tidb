@@ -172,5 +172,31 @@
       "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s) from t; -- 7. left anti semi join, two join key",
       "EXPLAIN select *, (t.a, t.b) not in (select s.a, s.b from s where t.c < s.c) from t; -- 8. left anti semi join, two join key + other condition"
     ]
+  },
+  {
+    "name": "TestMPPMultiDistinct2Stage",
+    "cases": [
+      "EXPLAIN select count(distinct a) from t",
+      "select count(distinct a) from t",
+      "EXPLAIN select count(distinct a), count(distinct b) from t",
+      "select count(distinct a), count(distinct b) from t",
+      "EXPLAIN select count(distinct a), count(distinct b), count(c) from t",
+      "select count(distinct a), count(distinct b), count(c) from t",
+      "EXPLAIN select count(distinct a), count(distinct b), count(c+1) from t",
+      "select count(distinct a), count(distinct b), count(c+1) from t",
+      "EXPLAIN select count(distinct a), count(distinct b), sum(c) from t",
+      "select count(distinct a), count(distinct b), sum(c) from t",
+      "EXPLAIN select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
+      "select count(distinct a, b), count(distinct b), count(c), sum(d) from t",
+      "EXPLAIN select count(distinct a+b), sum(c) from t",
+      "select count(distinct a+b), sum(c) from t",
+      "EXPLAIN select count(distinct a+b), count(distinct b+c), count(c) from t",
+      "select count(distinct a+b), count(distinct b+c), count(c) from t",
+      "explain select count(distinct a,c), count(distinct b,c), count(c) from t",
+      "select count(distinct a), count(distinct b), count(*) from t",
+      "explain select count(distinct a), count(distinct b), count(*) from t",
+      "select count(distinct a), count(distinct b), avg(c+d) from t",
+      "explain select count(distinct a), count(distinct b), avg(c+d) from t"
+    ]
   }
 ]
