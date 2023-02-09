@@ -1091,6 +1091,9 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 
+	// record the TTLInsertRows in the metric
+	metrics.TTLInsertRowsCount.Add(float64(s.sessionVars.TxnCtx.InsertTTLRowsCount))
+
 	failpoint.Inject("keepHistory", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(err)
