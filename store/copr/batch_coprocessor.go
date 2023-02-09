@@ -612,9 +612,11 @@ func buildBatchCopTasksConsistentHash(
 	cache := kvStore.GetRegionCache()
 	fetchTopoBo := backoff.NewBackofferWithVars(ctx, fetchTopoMaxBackoff, nil)
 
-	var retryNum int
-	var rangesLen int
-	var storesStr []string
+	var (
+		retryNum  int
+		rangesLen int
+		storesStr []string
+	)
 
 	tasks := make([]*copTask, 0)
 	regionIDs := make([]tikv.RegionVerID, 0)
@@ -704,8 +706,8 @@ func buildBatchCopTasksConsistentHash(
 		logutil.BgLogger().Warn("buildBatchCopTasksConsistentHash takes too much time",
 			zap.Duration("total elapsed", elapsed),
 			zap.Int("retryNum", retryNum),
-			zap.Duration("SplitKeyRangesByLocations", splitKeyElapsed),
-			zap.Duration("fetchTopo", fetchTopoElapsed),
+			zap.Duration("splitKeyElapsed", splitKeyElapsed),
+			zap.Duration("fetchTopoElapsed", fetchTopoElapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("copTaskNum", len(tasks)),
 			zap.Int("batchCopTaskNum", len(res)))
@@ -1207,11 +1209,13 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 	storeType kv.StoreType,
 	ttl time.Duration) (res []*batchCopTask, err error) {
 	const cmdType = tikvrpc.CmdBatchCop
-	var retryNum int
-	var rangesLen int
-	var copTaskNum int
-	var splitKeyElapsed time.Duration
-	var getStoreElapsed time.Duration
+	var (
+		retryNum        int
+		rangesLen       int
+		copTaskNum      int
+		splitKeyElapsed time.Duration
+		getStoreElapsed time.Duration
+	)
 	cache := kvStore.GetRegionCache()
 	start := time.Now()
 
