@@ -479,14 +479,15 @@ type PostRestore struct {
 
 type CSVConfig struct {
 	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
-	Separator       string `toml:"separator" json:"separator"`
-	Delimiter       string `toml:"delimiter" json:"delimiter"`
-	Terminator      string `toml:"terminator" json:"terminator"`
-	Null            string `toml:"null" json:"null"`
-	Header          bool   `toml:"header" json:"header"`
-	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
-	NotNull         bool   `toml:"not-null" json:"not-null"`
-	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	Separator         string `toml:"separator" json:"separator"`
+	Delimiter         string `toml:"delimiter" json:"delimiter"`
+	Terminator        string `toml:"terminator" json:"terminator"`
+	Null              string `toml:"null" json:"null"`
+	Header            bool   `toml:"header" json:"header"`
+	HeaderSchemaMatch bool   `toml:"header-schema-match" json:"header-schema-match"`
+	TrimLastSep       bool   `toml:"trim-last-separator" json:"trim-last-separator"`
+	NotNull           bool   `toml:"not-null" json:"not-null"`
+	BackslashEscape   bool   `toml:"backslash-escape" json:"backslash-escape"`
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
 	StartingBy string `toml:"-" json:"-"`
@@ -743,13 +744,14 @@ func NewConfig() *Config {
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
 			CSV: CSVConfig{
-				Separator:       ",",
-				Delimiter:       `"`,
-				Header:          true,
-				NotNull:         false,
-				Null:            `\N`,
-				BackslashEscape: true,
-				TrimLastSep:     false,
+				Separator:         ",",
+				Delimiter:         `"`,
+				Header:            true,
+				HeaderSchemaMatch: true,
+				NotNull:           false,
+				Null:              `\N`,
+				BackslashEscape:   true,
+				TrimLastSep:       false,
 			},
 			StrictFormat:           false,
 			MaxRegionSize:          MaxRegionSize,
