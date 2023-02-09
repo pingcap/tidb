@@ -551,7 +551,7 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("grant drop on *.* to 'testflashbackschema'@'localhost';")
 	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
 
-	// Got select, create and drop privilege, execute success.
+	// Got create and drop privilege, execute success.
 	tk.MustExec("grant create on *.* to 'testflashbackschema'@'localhost';")
 	newTk.MustExec("flashback schema t_recover")
 
