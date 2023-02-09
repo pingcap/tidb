@@ -46,7 +46,6 @@ func (s *testSuite1) TestSingleTableRead(c *C) {
 	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(a) from t1 where a < 2 or b > 4").Check(testkit.Rows("6"))
 }
 
-
 func (s *testSuite1) TestJoin(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2")
