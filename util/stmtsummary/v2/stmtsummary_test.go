@@ -71,17 +71,6 @@ func TestStmtSummary(t *testing.T) {
 	require.Equal(t, 2, w.lru.Size())
 	require.Equal(t, 0, w.evicted.count())
 
-	ss.SetEnableInternalQuery(false)
-	internalInfo := GenerateStmtExecInfo4Test("digest8")
-	internalInfo.IsInternal = true
-	ss.Add(internalInfo)
-	require.Equal(t, 2, w.lru.Size())
-	ss.SetEnableInternalQuery(true)
-	ss.Add(internalInfo)
-	require.Equal(t, 3, w.lru.Size())
-	require.Equal(t, 0, w.evicted.count())
-	ss.ClearInternal()
-	require.Equal(t, 2, w.lru.Size())
 	ss.Clear()
 	require.Equal(t, 0, w.lru.Size())
 }

@@ -93,9 +93,9 @@ func (r *MemReader) Rows() [][]types.Datum {
 	if r.s == nil {
 		return nil
 	}
+	end := timeNow().Unix()
 	r.s.windowLock.Lock()
 	w := r.s.window
-	end := w.begin.Unix() + int64(r.s.RefreshInterval())
 	if !r.checker.isTimeValid(w.begin.Unix(), end) {
 		r.s.windowLock.Unlock()
 		return nil

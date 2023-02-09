@@ -92,9 +92,6 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		return nil, errors.New("stmtsummary: empty filename")
 	}
 
-	now := timeNow().Unix()
-	now -= now % defaultRefreshInterval
-
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &StmtSummary{
 		ctx:    ctx,
@@ -108,7 +105,7 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
-		window:                 newStmtWindow(time.Unix(now, 0), uint(defaultMaxStmtCount)),
+		window:                 newStmtWindow(timeNow(), uint(defaultMaxStmtCount)),
 		storage: newStmtLogStorage(&log.Config{
 			File: log.FileLogConfig{
 				Filename:   cfg.Filename,
@@ -373,9 +370,6 @@ func (s *StmtSummary) rotateLoop() {
 			w := s.window
 			// The current window has expired and needs to be refreshed and persisted.
 			if now.After(w.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
-				nowTs := now.Unix()
-				nowTs -= nowTs % int64(s.RefreshInterval())
-				now = time.Unix(nowTs, 0)
 				s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
 				size := w.lru.Size()
 				if size > 0 {
