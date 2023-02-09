@@ -924,6 +924,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			return nil, err
 		}
 	}
+	if shouldIncreaseTTLMetricCount(t.meta) {
+		sctx.GetSessionVars().TxnCtx.InsertTTLRowsCount += 1
+	}
 	if sessVars.TxnCtx == nil {
 		return recordID, nil
 	}
@@ -1590,6 +1593,10 @@ func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
 		return false
 	}
 	return !ctx.GetSessionVars().InRestrictedSQL
+}
+
+func shouldIncreaseTTLMetricCount(tblInfo *model.TableInfo) bool {
+	return tblInfo.TTLInfo != nil
 }
 
 func (t *TableCommon) getMutation(ctx sessionctx.Context) *binlog.TableMutation {

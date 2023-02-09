@@ -58,4 +58,12 @@ var (
 			Name:      "ttl_phase_time",
 			Help:      "The time spent in each phase",
 		}, []string{LblType, LblPhase})
+
+	TTLInsertRowsCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ttl_insert_rows",
+			Help:      "The count of TTL rows inserted",
+		})
 )

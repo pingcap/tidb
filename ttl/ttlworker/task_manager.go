@@ -497,7 +497,17 @@ func (m *taskManager) checkInvalidTask(se session.Session) {
 }
 
 func (m *taskManager) reportMetrics() {
-	metrics.RunningTaskCnt.Set(float64(len(m.runningTasks)))
+	scanningTaskCnt := 0
+	deletingTaskCnt := 0
+	for _, task := range m.runningTasks {
+		if task.result != nil {
+			scanningTaskCnt += 1
+		} else {
+			deletingTaskCnt += 1
+		}
+	}
+	metrics.ScanningTaskCnt.Set(float64(scanningTaskCnt))
+	metrics.DeletingTaskCnt.Set(float64(deletingTaskCnt))
 }
 
 type runningScanTask struct {
