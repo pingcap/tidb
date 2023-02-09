@@ -3390,7 +3390,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 }
 
 func (e *memtableRetriever) setDataFromResourceGroups() error {
-	resourceGroups, err := infosync.GetAllResourceGroups(context.TODO())
+	resourceGroups, err := infosync.ListResourceGroups(context.TODO())
 	if err != nil {
 		return errors.Errorf("failed to access resource group manager, error message is %s", err.Error())
 	}
@@ -3406,7 +3406,6 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			row := types.MakeDatums(
 				group.Name,
 				group.RUSettings.RU.Settings.FillRate,
-				uint64(group.RUSettings.RU.Tokens),
 				burstable,
 			)
 			rows = append(rows, row)
@@ -3414,7 +3413,6 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			//mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
-				nil,
 				nil,
 				nil,
 			)
