@@ -19,7 +19,7 @@ build:race --config=ci
 build:race --@io_bazel_rules_go//go/config:race --test_env=GORACE=halt_on_error=1 --test_sharding_strategy=disabled
 
 test --test_env=TZ=Asia/Shanghai
-test --test_output=errors --test_summary=testcase
+test --test_output=errors --test_summary=testcase --test_keep_going=false
 test:ci --color=yes --spawn_strategy=local
 test:ci --verbose_failures --test_verbose_timeout_warnings
 test:ci --test_env=GO_TEST_WRAP_TESTV=1
