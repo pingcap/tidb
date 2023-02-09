@@ -794,11 +794,19 @@ func (tr *TableRestore) postProcess(
 			}
 			hasDupe = hasLocalDupe
 		}
+		failpoint.Inject("SlowDownCheckDupe", func(v failpoint.Value) {
+			sec := v.(int)
+			tr.logger.Warn("start to sleep several seconds before checking other dupe",
+				zap.Int("seconds", sec))
+			time.Sleep(time.Duration(sec) * time.Second)
+		})
 
-		needChecksum, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
+		otherHasDupe, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
 		if err != nil {
 			return false, err
 		}
+		needChecksum := !otherHasDupe && needRemoteDupe
+		hasDupe = hasDupe || otherHasDupe
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			opts := &kv.SessionOptions{
