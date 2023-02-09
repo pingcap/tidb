@@ -153,7 +153,8 @@ var (
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
 	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
 
-	telemetryIndexMerge = metrics.TelemetryIndexMergeUsage
+	telemetryIndexMerge        = metrics.TelemetryIndexMergeUsage
+	telemetryStoreBatchedUsage = metrics.TelemetryStoreBatchedQueryCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -4046,6 +4047,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryLockUserUsage.Add(float64(ti.AccountLockTelemetry.LockUser))
 		telemetryUnlockUserUsage.Add(float64(ti.AccountLockTelemetry.UnlockUser))
 		telemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
+	}
+
+	if ti.UseTableLookUp && s.sessionVars.StoreBatchSize > 0 {
+		telemetryStoreBatchedUsage.Inc()
 	}
 }
 
