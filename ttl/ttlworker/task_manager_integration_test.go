@@ -227,7 +227,7 @@ func TestTaskMetrics(t *testing.T) {
 
 	m.ReportMetrics()
 	out := &dto.Metric{}
-	require.NoError(t, metrics.RunningTaskCnt.Write(out))
+	require.NoError(t, metrics.DeletingTaskCnt.Write(out))
 	require.Equal(t, float64(1), out.GetGauge().GetValue())
 }
 
