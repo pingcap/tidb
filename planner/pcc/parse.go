@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 )
 
+// ParseText indicates ParseText
 func ParseText(sql, explainText, version string) (Plan, error) {
 	explainLines, err := trimAndSplitExplainResult(explainText)
 	if err != nil {
@@ -35,6 +36,7 @@ func ParseText(sql, explainText, version string) (Plan, error) {
 	return Parse(ver, sql, rows)
 }
 
+// Parse indicates Parse
 func Parse(version, sql string, explainRows [][]string) (_ Plan, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -54,6 +56,7 @@ func Parse(version, sql string, explainRows [][]string) (_ Plan, err error) {
 	return Plan{}, errors.Errorf("unsupported TiDB version %v", version)
 }
 
+// Compare indicates Compare
 func Compare(p1, p2 Plan) (reason string, same bool) {
 	if p1.SQL != p2.SQL {
 		return "differentiate SQLs", false
@@ -309,6 +312,7 @@ func parseTaskType(taskStr string) TaskType {
 	return TaskTypeTiKV
 }
 
+// MatchOpType indicates MatchOpType
 func MatchOpType(opID string) OpType {
 	x := strings.ToLower(opID)
 	if strings.Contains(x, "agg") {
@@ -379,6 +383,7 @@ func MatchOpType(opID string) OpType {
 	return OpTypeUnknown
 }
 
+// FormatExplainRows indicates FormatExplainRows
 func FormatExplainRows(rows [][]string) string {
 	if len(rows) == 0 {
 		return ""

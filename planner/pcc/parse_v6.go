@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
+// ParseV6 parse sql into Plan with v6
 func ParseV6(SQL string, rows [][]string) (Plan, error) {
 	p := Plan{SQL: SQL, Ver: V6}
 	root, err := parseV6Op(rows, 0)
