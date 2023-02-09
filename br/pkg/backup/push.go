@@ -218,10 +218,9 @@ func (push *pushDown) pushBackup(
 					if len(errMsg) <= 0 {
 						errMsg = errPb.Msg
 					}
-					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s %s",
+					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s",
 						store.GetId(),
 						redact.String(store.GetAddress()),
-						req.StorageBackend.String(),
 						errMsg,
 					)
 				}
