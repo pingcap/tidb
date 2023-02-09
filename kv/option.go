@@ -117,6 +117,8 @@ const (
 	ReplicaReadClosestAdaptive
 	// ReplicaReadLearner stands for 'read from learner'.
 	ReplicaReadLearner
+	// ReplicaReadPreferLeader stands for 'read from leader and auto-turn to followers if leader is abnormal'.
+	ReplicaReadPreferLeader
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
