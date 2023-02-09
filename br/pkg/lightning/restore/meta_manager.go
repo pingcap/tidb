@@ -87,7 +87,7 @@ type tableMetaMgr interface {
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
 	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
-		needChecksum bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error)
+		otherHasDupe bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error)
 	FinishTable(ctx context.Context) error
 }
 
@@ -392,7 +392,7 @@ func (m *dbTableMetaMgr) UpdateTableStatus(ctx context.Context, status metaStatu
 }
 
 func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
-	needChecksum bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error,
+	otherHasDupe bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error,
 ) {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
@@ -414,7 +414,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		taskHasDuplicates                          bool
 	)
 	newStatus := metaStatusChecksuming
-	needChecksum = true
+	otherHasDupe = false
 	needRemoteDupe = true
 	err = exec.Transact(ctx, "checksum pre-check", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(
@@ -444,9 +444,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 				return err
 			}
 
-			if taskHasDuplicates {
-				needChecksum = false
-			}
+			otherHasDupe = otherHasDupe || taskHasDuplicates
 
 			// skip finished meta
 			if status >= metaStatusFinished {
@@ -457,7 +455,6 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 				if status >= metaStatusChecksuming {
 					newStatus = status
 					needRemoteDupe = status == metaStatusChecksuming
-					needChecksum = needChecksum && needRemoteDupe
 					return nil
 				}
 
@@ -466,7 +463,6 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 
 			if status < metaStatusChecksuming {
 				newStatus = metaStatusChecksumSkipped
-				needChecksum = false
 				needRemoteDupe = false
 				break
 			} else if status == metaStatusChecksuming {
@@ -496,12 +492,18 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		return false, false, nil, err
 	}
 
-	if needChecksum {
+	if !otherHasDupe && needRemoteDupe {
 		ck := verify.MakeKVChecksum(totalBytes, totalKvs, totalChecksum)
 		baseTotalChecksum = &ck
 	}
+<<<<<<< HEAD
 	log.L().Info("check table checksum", zap.String("table", m.tr.tableName),
 		zap.Bool("checksum", needChecksum), zap.String("new_status", newStatus.String()))
+=======
+	log.FromContext(ctx).Info("check table checksum", zap.String("table", m.tr.tableName),
+		zap.Bool("otherHasDupe", otherHasDupe), zap.Bool("needRemoteDupe", needRemoteDupe),
+		zap.String("new_status", newStatus.String()))
+>>>>>>> 7255868dae0 (lightning: do resolve conflict job when other lightning has local dupes (#41157))
 	return
 }
 
@@ -1075,7 +1077,7 @@ func (m noopTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum 
 }
 
 func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (bool, bool, *verify.KVChecksum, error) {
-	return true, true, &verify.KVChecksum{}, nil
+	return false, true, &verify.KVChecksum{}, nil
 }
 
 func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {
