@@ -296,6 +296,43 @@ func TestRecoverTableMeetError(t *testing.T) {
 	tk.MustContainErrMsg("select * from t_recover", "Table 'test_recover.t_recover' doesn't exist")
 }
 
+func TestRecoverTablePrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("create table t_recover (a int);")
+	tk.MustExec("drop table t_recover")
+
+	// Recover without drop/create privilege.
+	tk.MustExec("CREATE USER 'testrecovertable'@'localhost';")
+	newTk := testkit.NewTestKit(t, store)
+	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testrecovertable", Hostname: "localhost"}, nil, nil))
+	newTk.MustGetErrCode("recover table t_recover", errno.ErrTableaccessDenied)
+	newTk.MustGetErrCode("flashback table t_recover", errno.ErrTableaccessDenied)
+
+	// Got drop privilege, still failed.
+	tk.MustExec("grant drop on *.* to 'testrecovertable'@'localhost';")
+	newTk.MustGetErrCode("recover table t_recover", errno.ErrTableaccessDenied)
+	newTk.MustGetErrCode("flashback table t_recover", errno.ErrTableaccessDenied)
+
+	// Got select, create and drop privilege, execute success.
+	tk.MustExec("grant select,create on *.* to 'testrecovertable'@'localhost';")
+	newTk.MustExec("use test")
+	newTk.MustExec("recover table t_recover")
+	newTk.MustExec("drop table t_recover")
+	newTk.MustExec("flashback table t_recover")
+
+	tk.MustExec("drop user 'testrecovertable'@'localhost';")
+}
+
 func TestRecoverClusterMeetError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -499,6 +536,26 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("use test2")
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("4", "5", "6"))
+
+	tk.MustExec("drop database if exists t_recover")
+	tk.MustExec("create database t_recover")
+	tk.MustExec("drop database t_recover")
+
+	// Recover without drop/create privilege.
+	tk.MustExec("CREATE USER 'testflashbackschema'@'localhost';")
+	newTk := testkit.NewTestKit(t, store)
+	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashbackschema", Hostname: "localhost"}, nil, nil))
+	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
+
+	// Got drop privilege, still failed.
+	tk.MustExec("grant drop on *.* to 'testflashbackschema'@'localhost';")
+	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
+
+	// Got select, create and drop privilege, execute success.
+	tk.MustExec("grant create on *.* to 'testflashbackschema'@'localhost';")
+	newTk.MustExec("flashback schema t_recover")
+
+	tk.MustExec("drop user 'testflashbackschema'@'localhost';")
 }
 
 // MockGC is used to make GC work in the test environment.
