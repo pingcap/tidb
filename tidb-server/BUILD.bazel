@@ -46,6 +46,7 @@ go_library(
         "//util/printer",
         "//util/sem",
         "//util/signal",
+        "//util/stmtsummary/v2:stmtsummary",
         "//util/sys/linux",
         "//util/sys/storage",
         "//util/systimemon",

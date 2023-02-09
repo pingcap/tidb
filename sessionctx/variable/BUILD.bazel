@@ -51,7 +51,7 @@ go_library(
         "//util/replayer",
         "//util/rowcodec",
         "//util/size",
-        "//util/stmtsummary",
+        "//util/stmtsummary/v2:stmtsummary",
         "//util/stringutil",
         "//util/tableutil",
         "//util/tikvutil",
