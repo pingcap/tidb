@@ -895,7 +895,7 @@ type indexMergeTableScanWorker struct {
 	memTracker *memory.Tracker
 }
 
-func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task **lookupTableTask) {
+func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **lookupTableTask) {
 	var ok bool
 	for {
 		waitStart := time.Now()
