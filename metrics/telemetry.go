@@ -169,7 +169,6 @@ var (
 			Name:      "compact_partition_usage",
 			Help:      "Counter of compact table partition",
 		})
-
 	TelemetryDistReorgCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
