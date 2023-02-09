@@ -197,10 +197,21 @@ func (push *pushDown) pushBackup(
 						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg),
 							zap.String("work around", "please ensure tikv has permission to read from & write to the storage."))
 					}
+<<<<<<< HEAD
 					return res, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s",
 						store.GetId(),
 						redact.String(store.GetAddress()),
 						errPb.Msg,
+=======
+
+					if len(errMsg) <= 0 {
+						errMsg = errPb.Msg
+					}
+					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s",
+						store.GetId(),
+						redact.String(store.GetAddress()),
+						errMsg,
+>>>>>>> d16f4c0ed0 (pitr: prevent from restore point to cluster running log backup (#40871))
 					)
 				}
 			}
