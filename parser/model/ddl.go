@@ -626,13 +626,18 @@ func (job *Job) GetRowCount() int64 {
 
 // SetWarnings sets the warnings of rows handled.
 func (job *Job) SetWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
+	job.Mu.Lock()
 	job.ReorgMeta.Warnings = warnings
 	job.ReorgMeta.WarningsCount = warningsCount
+	job.Mu.Unlock()
 }
 
 // GetWarnings gets the warnings of the rows handled.
 func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
-	return job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
+	job.Mu.Lock()
+	w, wc := job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
+	job.Mu.Unlock()
+	return w, wc
 }
 
 // Encode encodes job with json format.
@@ -700,7 +705,8 @@ func (job *Job) String() string {
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
 	if job.ReorgMeta != nil {
-		ret += fmt.Sprintf(", UniqueWarnings:%d", len(job.ReorgMeta.Warnings))
+		warnings, _ := job.GetWarnings()
+		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
 	}
 	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
