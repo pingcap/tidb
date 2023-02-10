@@ -54,7 +54,6 @@ func initDistReorg(reorgMeta *model.DDLReorgMeta) {
 	if isDistReorg {
 		metrics.TelemetryDistReorgCnt.Inc()
 	}
-	return nil
 }
 
 // BackfillJobRangeMeta is export for test.
