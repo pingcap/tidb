@@ -39,7 +39,10 @@ import (
 )
 
 // CheckBackfillJobFinishInterval is export for test.
-var CheckBackfillJobFinishInterval = 300 * time.Millisecond
+var (
+	CheckBackfillJobFinishInterval = 300 * time.Millisecond
+	telemetryDistReorgUsage        = metrics.TelemetryDistReorgCnt
+)
 
 const (
 	distPhysicalTableConcurrency = 16
@@ -48,6 +51,9 @@ const (
 func initDistReorg(reorgMeta *model.DDLReorgMeta) {
 	isDistReorg := variable.DDLEnableDistributeReorg.Load()
 	reorgMeta.IsDistReorg = isDistReorg
+	if isDistReorg {
+		metrics.TelemetryDistReorgCnt.Inc()
+	}
 }
 
 // BackfillJobRangeMeta is export for test.
