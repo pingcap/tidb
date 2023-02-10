@@ -17,6 +17,7 @@ go_test(
         "//ddl/internal/callback",
         "//ddl/testutil",
         "//domain",
+        "//errno",
         "//kv",
         "//meta/autoid",
         "//parser/model",
