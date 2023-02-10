@@ -545,7 +545,7 @@ func (dc *ddlCtx) setReorgCtxForBackfill(bfJob *BackfillJob) {
 	rc := dc.getReorgCtx(bfJob.JobID)
 	if rc == nil {
 		ele := &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}
-		dc.newReorgCtx(bfJob.JobID, bfJob.StartKey, ele, bfJob.RowCount)
+		dc.newReorgCtx(bfJob.JobID, bfJob.Meta.StartKey, ele, bfJob.Meta.RowCount)
 	} else {
 		rc.references.Add(1)
 	}
