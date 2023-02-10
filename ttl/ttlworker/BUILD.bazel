@@ -57,7 +57,7 @@ go_test(
     embed = [":ttlworker"],
     flaky = True,
     race = "on",
-    shard_count = 50,
+    shard_count = 30,
     deps = [
         "//domain",
         "//infoschema",
