@@ -501,6 +501,7 @@ func (tr *TableRestore) restoreEngine(
 	metrics, _ := metric.FromContext(ctx)
 
 	// Restore table data
+ChunkLoop:
 	for chunkIndex, chunk := range cp.Chunks {
 		if rc.status != nil && rc.status.backend == config.BackendTiDB {
 			rc.status.FinishedFileSize.Add(chunk.Chunk.Offset - chunk.Key.Offset)
@@ -524,9 +525,15 @@ func (tr *TableRestore) restoreEngine(
 		}
 		checkFlushLock.Unlock()
 
+		failpoint.Inject("orphanWriterGoRoutine", func() {
+			if chunkIndex > 0 {
+				<-pCtx.Done()
+			}
+		})
+
 		select {
 		case <-pCtx.Done():
-			return nil, pCtx.Err()
+			break ChunkLoop
 		default:
 		}
 
@@ -615,6 +622,11 @@ func (tr *TableRestore) restoreEngine(
 	}
 
 	wg.Wait()
+	select {
+	case <-pCtx.Done():
+		return nil, pCtx.Err()
+	default:
+	}
 
 	// Report some statistics into the log for debugging.
 	totalKVSize := uint64(0)
