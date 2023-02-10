@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -308,4 +309,29 @@ func TestJobNeedGC(t *testing.T) {
 			{Type: model.ActionRebaseAutoID, State: model.JobStateCancelled},
 		}}}
 	require.True(t, ddl.JobNeedGCForTest(job))
+}
+
+func TestUsingReorgCtx(t *testing.T) {
+	_, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	d := domain.DDL()
+
+	wg := tidbutil.WaitGroupWrapper{}
+	wg.Run(func() {
+		jobID := int64(1)
+		bfJob := &ddl.BackfillJob{JobID: jobID, EleID: 1, EleKey: nil}
+		for i := 0; i < 100; i++ {
+			d.(ddl.DDLForTest).SetReorgCtxForBackfill(bfJob)
+			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
+		}
+	})
+	wg.Run(func() {
+		jobID := int64(1)
+		startKey := []byte("skey")
+		ele := &meta.Element{ID: 1, TypeKey: nil}
+		for i := 0; i < 100; i++ {
+			d.(ddl.DDLForTest).NewReorgCtx(jobID, startKey, ele, 0)
+			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
+		}
+	})
+	wg.Wait()
 }
