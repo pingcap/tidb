@@ -657,9 +657,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SchemaState = model.StateWriteReorganization
 
 		if job.MultiSchemaInfo == nil {
-			if err := initDistReorg(job.ReorgMeta, d.store, schemaID, tblInfo); err != nil {
-				return ver, errors.Trace(err)
-			}
+			initDistReorg(job.ReorgMeta)
 		}
 	case model.StateWriteReorganization:
 		// reorganization -> public
@@ -1802,6 +1800,11 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
+	// TODO: Support typeAddIndexMergeTmpWorker.
+	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+		return w.controlWriteTableRecord(w.sessPool, t, typeAddIndexWorker, reorgInfo)
+	}
+
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
@@ -1814,7 +1817,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			if err != nil {
 				break
 			}
-			finish, err = w.updateReorgInfo(tbl, reorgInfo)
+			finish, err = updateReorgInfo(w.sessPool, tbl, reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1822,27 +1825,15 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	} else {
 		//nolint:forcetypeassert
 		phyTbl := t.(table.PhysicalTable)
-		// TODO: Support typeAddIndexMergeTmpWorker.
-		if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-			sCtx, err := w.sessPool.get()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			defer w.sessPool.put(sCtx)
-			return w.controlWritePhysicalTableRecord(newSession(sCtx), phyTbl, typeAddIndexWorker, reorgInfo)
-		}
 		err = w.addPhysicalTableIndex(phyTbl, reorgInfo)
 	}
 	return errors.Trace(err)
 }
 
-// updateReorgInfo will find the next partition according to current reorgInfo.
-// If no more partitions, or table t is not a partitioned table, returns true to
-// indicate that the reorganize work is finished.
-func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
-		return true, nil
+		return 0, nil, nil, nil
 	}
 
 	// During data copying, copy data from partitions to be dropped
@@ -1854,15 +1845,15 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	if nextPartitionDefs == nil {
 		nextPartitionDefs = pi.Definitions
 	}
-	pid, err := findNextPartitionID(reorg.PhysicalTableID, nextPartitionDefs)
+	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)
 	if err != nil {
 		// Fatal error, should not run here.
 		logutil.BgLogger().Error("[ddl] find next partition ID failed", zap.Reflect("table", t), zap.Error(err))
-		return false, errors.Trace(err)
+		return 0, nil, nil, errors.Trace(err)
 	}
 	if pid == 0 {
 		// Next partition does not exist, all the job done.
-		return true, nil
+		return 0, nil, nil, nil
 	}
 
 	failpoint.Inject("mockUpdateCachedSafePoint", func(val failpoint.Value) {
@@ -1875,24 +1866,40 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 			time.Sleep(time.Second * 3)
 		}
 	})
+
+	var startKey, endKey kv.Key
 	if reorg.mergingTmpIdx {
 		indexID := reorg.currElement.ID
-		reorg.StartKey, reorg.EndKey = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|indexID)
+		startKey, endKey = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|indexID)
 	} else {
 		currentVer, err := getValidCurrentVersion(reorg.d.store)
 		if err != nil {
-			return false, errors.Trace(err)
+			return 0, nil, nil, errors.Trace(err)
 		}
-		start, end, err := getTableRange(reorg.d.jobContext(reorg.Job.ID), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
+		startKey, endKey, err = getTableRange(reorg.d.jobContext(reorg.Job.ID), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
 		if err != nil {
-			return false, errors.Trace(err)
+			return 0, nil, nil, errors.Trace(err)
 		}
-		reorg.StartKey, reorg.EndKey = start, end
 	}
-	reorg.PhysicalTableID = pid
+	return pid, startKey, endKey, nil
+}
+
+// updateReorgInfo will find the next partition according to current reorgInfo.
+// If no more partitions, or table t is not a partitioned table, returns true to
+// indicate that the reorganize work is finished.
+func updateReorgInfo(sessPool *sessionPool, t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+	pid, startKey, endKey, err := getNextPartitionInfo(reorg, t, reorg.PhysicalTableID)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if pid == 0 {
+		// Next partition does not exist, all the job done.
+		return true, nil
+	}
+	reorg.PhysicalTableID, reorg.StartKey, reorg.EndKey = pid, startKey, endKey
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
+	err = reorg.UpdateReorgMeta(reorg.StartKey, sessPool)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo",
 		zap.Int64("jobID", reorg.Job.ID),
 		zap.Stringer("element", reorg.currElement),
@@ -2086,14 +2093,14 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-func runBackfillJobsWithLightning(d *ddl, bfJob *BackfillJob, jobCtx *JobContext) error {
+func runBackfillJobsWithLightning(d *ddl, sess *session, bfJob *BackfillJob, jobCtx *JobContext) error {
 	bc, err := ingest.LitBackCtxMgr.Register(d.ctx, bfJob.Meta.IsUnique, bfJob.JobID, bfJob.Meta.SQLMode)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] lightning register error", zap.Error(err))
 		return err
 	}
 
-	tbl, err := runBackfillJobs(d, bc, bfJob, jobCtx)
+	tbl, err := runBackfillJobs(d, sess, bc, bfJob, jobCtx)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] runBackfillJobs error", zap.Error(err))
 		ingest.LitBackCtxMgr.Unregister(bfJob.JobID)

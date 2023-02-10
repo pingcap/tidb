@@ -279,10 +279,12 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 	rc := w.getReorgCtx(job.ID)
 	rc.mu.Lock()
-	defer rc.mu.Unlock()
 	partWarnings := rc.mu.warnings
 	partWarningsCount := rc.mu.warningsCount
-	job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
+	rc.mu.Unlock()
+	warnings, warningsCount := job.GetWarnings()
+	warnings, warningsCount = mergeWarningsAndWarningsCount(partWarnings, warnings, partWarningsCount, warningsCount)
+	job.SetWarnings(warnings, warningsCount)
 }
 
 func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,

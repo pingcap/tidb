@@ -1072,7 +1072,7 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 			if err != nil {
 				return err
 			}
-			done, err = w.updateReorgInfo(tbl, reorgInfo)
+			done, err = updateReorgInfo(w.sessPool, tbl, reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}

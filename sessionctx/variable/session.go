@@ -187,6 +187,9 @@ type TxnCtxNeedToRestore struct {
 
 	// CachedTables is not nil if the transaction write on cached table.
 	CachedTables map[int64]interface{}
+
+	// InsertTTLRowsCount counts how many rows are inserted in this statement
+	InsertTTLRowsCount int
 }
 
 // TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
@@ -237,6 +240,14 @@ type TxnCtxNoNeedToRestore struct {
 	EnableMDL bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
+
+	// AggressiveLockingUsed marking whether at least one of the statements in the transaction was executed in
+	// aggressive locking mode.
+	AggressiveLockingUsed bool
+	// AggressiveLockingEffective marking whether at least one of the statements in the transaction was executed in
+	// aggressive locking mode, and it takes effect (which is determined according to whether lock-with-conflict
+	// has occurred during execution of any statement).
+	AggressiveLockingEffective bool
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -377,6 +388,7 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 		TableDeltaMap:        tableDeltaMap,
 		pessimisticLockCache: pessimisticLockCache,
 		CachedTables:         cachedTables,
+		InsertTTLRowsCount:   tc.InsertTTLRowsCount,
 	}
 }
 
@@ -385,6 +397,7 @@ func (tc *TransactionContext) RestoreBySavepoint(savepoint TxnCtxNeedToRestore) 
 	tc.TableDeltaMap = savepoint.TableDeltaMap
 	tc.pessimisticLockCache = savepoint.pessimisticLockCache
 	tc.CachedTables = savepoint.CachedTables
+	tc.InsertTTLRowsCount = savepoint.InsertTTLRowsCount
 }
 
 // AddSavepoint adds a new savepoint.
