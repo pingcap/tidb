@@ -92,7 +92,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMultiplePriKey:                           mysql.Message("Multiple primary key defined", nil),
 	ErrTooManyKeys:                              mysql.Message("Too many keys specified; max %d keys allowed", nil),
 	ErrTooManyKeyParts:                          mysql.Message("Too many key parts specified; max %d parts allowed", nil),
-	ErrTooLongKey:                               mysql.Message("Specified key was too long; max key length is %d bytes", nil),
+	ErrTooLongKey:                               mysql.Message("Specified key was too long (%d bytes); max key length is %d bytes", nil),
 	ErrKeyColumnDoesNotExits:                    mysql.Message("Key column '%-.192s' doesn't exist in table", nil),
 	ErrBlobUsedAsKey:                            mysql.Message("BLOB column '%-.192s' can't be used in key specification with the used table type", nil),
 	ErrTooBigFieldlength:                        mysql.Message("Column length too big for column '%-.192s' (max = %d); use BLOB or TEXT instead", nil),

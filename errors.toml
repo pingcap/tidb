@@ -668,7 +668,7 @@ Too many keys specified; max %d keys allowed
 
 ["ddl:1071"]
 error = '''
-Specified key was too long; max key length is %d bytes
+Specified key was too long (%d bytes); max key length is %d bytes
 '''
 
 ["ddl:1072"]
