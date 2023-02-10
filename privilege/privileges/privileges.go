@@ -141,6 +141,14 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
 	dbLowerName := strings.ToLower(db)
 	tblLowerName := strings.ToLower(table)
+
+	/// Skip check for plan replayer related table
+	if util.IsSysDB(dbLowerName) {
+		if util.IsPlanReplayerTable(tblLowerName) {
+			return true
+		}
+	}
+
 	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
 	// There are some hard rules which overwrite system tables and schemas as read-only at most.
 	semEnabled := sem.IsEnabled()

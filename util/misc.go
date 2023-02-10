@@ -209,6 +209,15 @@ func IsSysDB(dbLowerName string) bool {
 	return dbLowerName == mysql.SystemDB
 }
 
+// IsPlanReplayerTable checks whether is plan replayer related table
+func IsPlanReplayerTable(tblLowerName string) bool {
+	switch tblLowerName {
+	case "plan_replayer_status", "plan_replayer_task":
+		return true
+	}
+	return false
+}
+
 // IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
 func IsSystemView(dbLowerName string) bool {
 	switch dbLowerName {

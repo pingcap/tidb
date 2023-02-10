@@ -178,6 +178,20 @@ func TestPlanReplayer(t *testing.T) {
 	require.Len(t, rows, 1)
 }
 
+func TestPlanReplayerCaptureSEM(t *testing.T) {
+	originSEM := config.GetGlobalConfig().Security.EnableSEM
+	defer func() {
+		config.GetGlobalConfig().Security.EnableSEM = originSEM
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("plan replayer capture '123' '123';")
+	tk.MustExec("create table t(id int)")
+	tk.MustQuery("plan replayer dump explain select * from t")
+	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
+}
+
 func TestPlanReplayerCapture(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -185,7 +199,8 @@ func TestPlanReplayerCapture(t *testing.T) {
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustQuery("select sql_digest, plan_digest from mysql.plan_replayer_task;").Check(testkit.Rows("123 123"))
 	tk.MustGetErrMsg("plan replayer capture '123' '123';", "plan replayer capture task already exists")
-	tk.MustExec("delete from mysql.plan_replayer_task")
+	tk.MustExec("plan replayer capture remove '123' '123'")
+	tk.MustQuery("select count(*) from mysql.plan_replayer_task;").Check(testkit.Rows("0"))
 	tk.MustExec("create table t(id int)")
 	tk.MustExec("prepare stmt from 'update t set id = ?  where id = ? + 1';")
 	tk.MustExec("SET @number = 5;")
