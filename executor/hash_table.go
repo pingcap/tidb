@@ -240,8 +240,8 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	var (
 		matchedDataSize                  = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
 		lastChunkBufPointer *chunk.Chunk = nil
-		memDelta          int64 = 0
-		needTrackMemUsage       = cap(innerPtrs) > signalCheckpointForJoin
+		memDelta            int64        = 0
+		needTrackMemUsage                = cap(innerPtrs) > signalCheckpointForJoin
 	)
 	c.chkBuf = nil
 	c.memTracker.Consume(-c.chkBufSizeForOneProbe)
