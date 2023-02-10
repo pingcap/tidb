@@ -903,10 +903,12 @@ func (do *Domain) Close() {
 		do.info.RemoveMinStartTS()
 	}
 	ttlJobManager := do.ttlJobManager.Load()
-	ttlJobManager.Stop()
-	err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
-	if err != nil {
-		logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+	if ttlJobManager != nil {
+		ttlJobManager.Stop()
+		err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
+		if err != nil {
+			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+		}
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
