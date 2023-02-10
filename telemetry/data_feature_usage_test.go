@@ -589,8 +589,8 @@ func TestDistReorgUsage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
-	require.Equal(t, int64(0), usage.DDLUsageCounter.DistReorgUsed)
 	require.NoError(t, err)
+	initCount := usage.DDLUsageCounter.DistReorgUsed
 
 	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = off")
 	allow := variable.DDLEnableDistributeReorg.Load()
@@ -602,18 +602,18 @@ func TestDistReorgUsage(t *testing.T) {
 	tk.MustExec("alter table tele_t add index idx_org(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.DDLUsageCounter.DistReorgUsed)
+	require.Equal(t, initCount, usage.DDLUsageCounter.DistReorgUsed)
 
 	tk.MustExec("set @@global.tidb_ddl_distribute_reorg = on")
 	allow = variable.DDLEnableDistributeReorg.Load()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), usage.DDLUsageCounter.DistReorgUsed)
+	require.Equal(t, initCount, usage.DDLUsageCounter.DistReorgUsed)
 	tk.MustExec("alter table tele_t add index idx_new(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(1), usage.DDLUsageCounter.DistReorgUsed)
+	require.Equal(t, initCount+1, usage.DDLUsageCounter.DistReorgUsed)
 }
 
 func TestGlobalMemoryControl(t *testing.T) {
