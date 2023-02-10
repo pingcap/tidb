@@ -847,7 +847,7 @@ func GetBackfillIDAndMetas(sess *session, tblName, condition string, label strin
 	}
 
 	pTblMetas := make([]*BackfillJobRangeMeta, 0, len(rows))
-	for i, r := range rows {
+	for _, r := range rows {
 		key := r.GetString(0)
 		keySlice := strings.Split(key, "_")
 		id, err := strconv.ParseInt(keySlice[3], 10, 64)
