@@ -55,6 +55,7 @@ type PlanReplayerExec struct {
 type PlanReplayerCaptureInfo struct {
 	SQLDigest  string
 	PlanDigest string
+	Remove     bool
 }
 
 // PlanReplayerDumpInfo indicates dump info
@@ -74,6 +75,9 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	if e.CaptureInfo != nil {
+		if e.CaptureInfo.Remove {
+			return e.removeCaptureTask(ctx)
+		}
 		return e.registerCaptureTask(ctx)
 	}
 	err := e.createFile()
@@ -98,6 +102,25 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	req.AppendString(0, e.DumpInfo.FileName)
+	e.endFlag = true
+	return nil
+}
+
+func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	exec := e.ctx.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx1, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
+		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
+	if err != nil {
+		logutil.BgLogger().Warn("remove mysql.plan_replayer_status record failed",
+			zap.Error(err))
+		return err
+	}
+	err = domain.GetDomain(e.ctx).GetPlanReplayerHandle().CollectPlanReplayerTask()
+	if err != nil {
+		logutil.BgLogger().Warn("collect task failed", zap.Error(err))
+	}
+	logutil.BgLogger().Info("collect plan replayer task success")
 	e.endFlag = true
 	return nil
 }
