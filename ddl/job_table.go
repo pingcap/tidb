@@ -407,6 +407,7 @@ func (d *ddl) loadBackfillJobAndRun() {
 		defer func() {
 			tidbutil.Recover(metrics.LabelDistReorg, "runBackfillJobs", nil, false)
 			d.removeBackfillCtxJobCtx(bfJob.JobID)
+			d.removeReorgCtx(bfJob.JobID)
 			d.sessPool.put(se)
 		}()
 
