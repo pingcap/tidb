@@ -626,7 +626,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 4      jobID1     eleID1    JobStateNone
 	pTblMeta, err = ddl.GetPhysicalTableMetas(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
-	require.Equal(t, backfillJob2PTblMetaMap(bJobs1[1]), pTblMeta) // ???????????
+	require.Equal(t, backfillJob2PTblMetaMap(bJobs1[0]), pTblMeta) // ???????????
 	bJobs1[0].ID = 6
 	bJobs1[1].ID = 7
 	err = ddl.AddBackfillJobs(se, bJobs1)
