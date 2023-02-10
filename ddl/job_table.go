@@ -856,6 +856,9 @@ func GetBackfillIDAndMetas(sess *session, tblName, condition string, label strin
 		}
 		meta := &model.BackfillMeta{}
 		err = meta.Decode(r.GetBytes(1))
+		if err != nil {
+			return nil, err
+		}
 		pTblMeta := BackfillJobRangeMeta{
 			ID:       id,
 			StartKey: meta.StartKey,
