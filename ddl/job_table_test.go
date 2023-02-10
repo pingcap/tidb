@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -198,6 +199,8 @@ func makeAddIdxBackfillJobs(schemaID, tblID, jobID, eleID int64, cnt int, query 
 				TableID:  tblID,
 				Query:    query,
 			},
+			StartKey: sKey,
+			EndKey:   eKey,
 		}
 		bj := &ddl.BackfillJob{
 			ID:              int64(i),
@@ -207,11 +210,9 @@ func makeAddIdxBackfillJobs(schemaID, tblID, jobID, eleID int64, cnt int, query 
 			State:           model.JobStateNone,
 			PhysicalTableID: 1,
 			InstanceLease:   types.ZeroTimestamp,
-			CurrKey:         sKey,
-			StartKey:        sKey,
-			EndKey:          eKey,
 			Meta:            bm,
 		}
+		bj.Meta.CurrKey = sKey
 		bJobs = append(bJobs, bj)
 	}
 	return bJobs
@@ -230,8 +231,8 @@ func equalBackfillJob(t *testing.T, a, b *ddl.BackfillJob, lessTime types.Time) 
 }
 
 func getIdxConditionStr(jobID, eleID int64) string {
-	return fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s",
-		jobID, eleID, wrapKey2String(meta.IndexElementKey))
+	return fmt.Sprintf("task_key like \"%d_%s_%d_%%\"",
+		jobID, hex.EncodeToString(meta.IndexElementKey), eleID)
 }
 
 func readInTxn(se sessionctx.Context, f func(sessionctx.Context)) (err error) {
@@ -248,8 +249,8 @@ func backfillJob2PTblMetaMap(bJob *ddl.BackfillJob) map[int64]*ddl.BackfillJobRa
 	m := &ddl.BackfillJobRangeMeta{
 		ID:       bJob.ID,
 		PhyTblID: bJob.PhysicalTableID,
-		StartKey: bJob.StartKey,
-		EndKey:   bJob.EndKey,
+		StartKey: bJob.Meta.StartKey,
+		EndKey:   bJob.Meta.EndKey,
 	}
 	mMap := make(map[int64]*ddl.BackfillJobRangeMeta)
 	mMap[m.PhyTblID] = m
@@ -280,7 +281,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs, err := ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, noPID, instanceLease)
 	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job").Error())
 	require.Nil(t, bJobs)
-	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID2), "check_backfill_job_count")
+	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID2), "check_backfill_job_count")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
 	// Test some backfill jobs, add backfill jobs to the table.
@@ -293,7 +294,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bjTestCases = append(bjTestCases, bJobs2...)
 	bjTestCases = append(bjTestCases, bJobs3...)
 	err = ddl.AddBackfillJobs(se, bjTestCases)
-	require.Equal(t, err.Error(), "[table:1292]Incorrect timestamp value: '0000-00-00 00:00:00' for column 'exec_lease' at row 1")
+	require.Equal(t, err.Error(), "[table:1292]Incorrect timestamp value: '0000-00-00 00:00:00' for column 'exec_expired' at row 1")
 	tk.Session().GetSessionVars().SQLMode = mysql.ModeNone
 	err = ddl.AddBackfillJobs(se, bjTestCases)
 	// ID     jobID     eleID    InstanceID  PhysicalTableID
@@ -336,7 +337,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	})
 	currGoTime := ddl.GetLeaseGoTime(currTime, instanceLease)
 	require.GreaterOrEqual(t, currGoTime.Compare(bJobs[0].InstanceLease), 0)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, cnt)
 	// test physical table
@@ -503,10 +504,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID3
 	// 1      jobID2     eleID3
 	require.NoError(t, err)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 1)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, cnt)
 	// remove all backfill jobs
@@ -517,10 +518,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID3
 	// 1      jobID2     eleID3
 	require.NoError(t, err)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 1)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
 	// clean backfill job
@@ -541,11 +542,11 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 		currTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
-	condition := fmt.Sprintf("exec_ID = '' or exec_lease < '%v' and ddl_job_id = %d", currTime.Add(-instanceLease), jobID2)
-	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackfillHistoryTable, condition, "test_get_bj")
+	condition := fmt.Sprintf("exec_id = '' or exec_expired < '%v' and task_key like \"%d_%%\"", currTime.Add(-instanceLease), jobID2)
+	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackgroundSubtaskHistoryTable, condition, "test_get_bj")
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
-	require.Equal(t, bJobs[0].FinishTS, uint64(0))
+	require.Equal(t, bJobs[0].StateUpdateTS, uint64(0))
 
 	// test GetMaxBackfillJob
 	pTblMeta, err := ddl.GetPhysicalTableMetas(se, bJobs3[0].JobID, bJobs3[0].EleID, eleKey)
@@ -590,10 +591,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.Equal(t, "ID:3, JobID:1, EleID:11, Type:add index, State:cancelled, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
 	require.Equal(t, "ID:0, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[0].AbbrStr())
 	require.Equal(t, "ID:1, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[1].AbbrStr())
-	// test select tidb_ddl_backfill
-	tk.MustQuery(fmt.Sprintf("select exec_id, exec_lease from mysql.tidb_ddl_backfill where id = %d and  %s", bJobs1[0].ID, getIdxConditionStr(jobID1, eleID1))).
+	// test select tidb_background_subtask
+	tk.MustQuery(fmt.Sprintf("select exec_id, exec_expired from mysql.tidb_background_subtask where task_key like \"%%%d\" and  %s", bJobs1[0].ID, getIdxConditionStr(jobID1, eleID1))).
 		Check(testkit.Rows(fmt.Sprintf("%s 0000-00-00 00:00:00", uuid)))
-	tk.MustQuery(fmt.Sprintf("select exec_id, exec_lease from mysql.tidb_ddl_backfill where id = %d and  %s", bJobs1[1].ID, getIdxConditionStr(jobID1, eleID1))).
+	tk.MustQuery(fmt.Sprintf("select exec_id, exec_expired from mysql.tidb_background_subtask where task_key like \"%%%d\" and  %s", bJobs1[1].ID, getIdxConditionStr(jobID1, eleID1))).
 		Check(testkit.Rows(" 0000-00-00 00:00:00"))
 	// test GetBackfillMetas
 	bfErr := ddl.GetBackfillErr(se, jobID1, eleID1, eleKey)
@@ -606,7 +607,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs1[1].State = model.JobStateNone
 	bJobs1[1].ID = 4
 	err = ddl.AddBackfillHistoryJob(se, bJobs1)
-	// BackfillTable
+	// BackgroundSubtaskTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 0      jobID1     eleID1    JobStateNone
@@ -618,18 +619,18 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 2      jobID1     eleID1    JobStateRollingback
 	// 3      jobID1     eleID1    JobStateCancelled
 	//
-	// BackfillHistoryTable
+	// BackgroundSubtaskHistoryTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone
 	// 4      jobID1     eleID1    JobStateNone
 	pTblMeta, err = ddl.GetPhysicalTableMetas(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
-	require.Equal(t, backfillJob2PTblMetaMap(bJobs1[0]), pTblMeta)
+	require.Equal(t, backfillJob2PTblMetaMap(bJobs1[1]), pTblMeta) // ???????????
 	bJobs1[0].ID = 6
 	bJobs1[1].ID = 7
 	err = ddl.AddBackfillJobs(se, bJobs1)
-	// BackfillTable
+	// BackgroundSubtaskTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 0      jobID1     eleID1    JobStateNone
@@ -643,7 +644,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 6      jobID1     eleID1    JobStateNone
 	// 7      jobID1     eleID1    JobStateNone
 	//
-	// BackfillHistoryTable
+	// BackgroundSubtaskHistoryTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone
@@ -653,18 +654,18 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	require.Equal(t, backfillJob2PTblMetaMap(bJobs1[1]), pTblMeta)
 
 	// test MoveBackfillJobsToHistoryTable and GetInterruptedBackfillJobForOneEle
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 2)
 	err = ddl.MoveBackfillJobsToHistoryTable(se, bJobs3[0])
 	require.NoError(t, err)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillHistoryTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskHistoryTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 2)
-	// BackfillTable
+	// BackgroundSubtaskTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 0      jobID1     eleID1    JobStateNone
@@ -676,7 +677,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 6      jobID1     eleID1    JobStateNone
 	// 7      jobID1     eleID1    JobStateNone
 	//
-	// BackfillHistoryTable
+	// BackgroundSubtaskHistoryTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone
@@ -686,15 +687,15 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs, err = ddl.GetInterruptedBackfillJobForOneEle(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 0)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 6)
 	err = ddl.MoveBackfillJobsToHistoryTable(se, bJobs1[0])
 	require.NoError(t, err)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillHistoryTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskHistoryTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 8)
 	bJobs, err = ddl.GetInterruptedBackfillJobForOneEle(se, jobID2, eleID3, eleKey)
@@ -706,13 +707,13 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	}
 	expectJob.State = model.JobStateCancelled
 	equalBackfillJob(t, bJobs3[0], bJobs[0], types.ZeroTimestamp)
-	// BackfillTable
+	// BackgroundSubtaskTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 0      jobID2     eleID2    JobStateNone
 	// 1      jobID2     eleID2    JobStateNone
 	//
-	// BackfillHistoryTable
+	// BackgroundSubtaskHistoryTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone

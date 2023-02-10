@@ -229,8 +229,8 @@ func (dc *ddlCtx) backfillJob2Task(t table.Table, bfJob *BackfillJob) (*reorgBac
 		physicalTable: pt,
 		// TODO: Remove these fields after remove the old logic.
 		sqlQuery:   bfJob.Meta.Query,
-		startKey:   bfJob.StartKey,
-		endKey:     bfJob.EndKey,
+		startKey:   bfJob.Meta.StartKey,
+		endKey:     bfJob.Meta.EndKey,
 		endInclude: bfJob.Meta.EndInclude,
 		priority:   bfJob.Meta.Priority}, nil
 }
