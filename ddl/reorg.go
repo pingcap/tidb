@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -77,6 +78,8 @@ type reorgCtx struct {
 		warnings      map[errors.ErrorID]*terror.Error
 		warningsCount map[errors.ErrorID]int64
 	}
+
+	references atomicutil.Int32
 }
 
 // nullableKey can store <nil> kv.Key.
@@ -229,7 +232,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 	case err := <-rc.doneCh:
 		// Since job is cancelled，we don't care about its partial counts.
 		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
-			d.removeReorgCtx(job)
+			d.removeReorgCtx(job.ID)
 			return dbterror.ErrCancelledDDLJob
 		}
 		rowCount := rc.getRowCount()
@@ -244,7 +247,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
-		d.removeReorgCtx(job)
+		d.removeReorgCtx(job.ID)
 		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
 		// since in the next round, the startKey is brand new which is stored by last time.
 		if err != nil {
@@ -254,7 +257,7 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		updateBackfillProgress(w, reorgInfo, tblInfo, 0)
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
-		d.removeReorgCtx(job)
+		d.removeReorgCtx(job.ID)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):

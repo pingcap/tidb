@@ -534,6 +534,7 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, startKey []byte, currElement *meta.El
 	rc.setCurrentElement(currElement)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
+	rc.references.Add(1)
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
 	dc.reorgCtx.reorgCtxMap[jobID] = rc
@@ -544,14 +545,22 @@ func (dc *ddlCtx) setReorgCtxForBackfill(bfJob *BackfillJob) {
 	rc := dc.getReorgCtx(bfJob.JobID)
 	if rc == nil {
 		ele := &meta.Element{ID: bfJob.EleID, TypeKey: bfJob.EleKey}
-		dc.newReorgCtx(bfJob.JobID, bfJob.StartKey, ele, bfJob.RowCount)
+		dc.newReorgCtx(bfJob.JobID, bfJob.Meta.StartKey, ele, bfJob.Meta.RowCount)
+	} else {
+		rc.references.Add(1)
 	}
 }
 
-func (dc *ddlCtx) removeReorgCtx(job *model.Job) {
+func (dc *ddlCtx) removeReorgCtx(jobID int64) {
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
-	delete(dc.reorgCtx.reorgCtxMap, job.ID)
+	ctx, ok := dc.reorgCtx.reorgCtxMap[jobID]
+	if ok {
+		ctx.references.Sub(1)
+		if ctx.references.Load() == 0 {
+			delete(dc.reorgCtx.reorgCtxMap, jobID)
+		}
+	}
 }
 
 func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
