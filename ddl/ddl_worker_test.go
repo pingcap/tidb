@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -315,7 +314,7 @@ func TestUsingReorgCtx(t *testing.T) {
 	_, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	d := domain.DDL()
 
-	wg := tidbutil.WaitGroupWrapper{}
+	wg := util.WaitGroupWrapper{}
 	wg.Run(func() {
 		jobID := int64(1)
 		bfJob := &ddl.BackfillJob{JobID: jobID, EleID: 1, EleKey: nil}
