@@ -449,6 +449,20 @@ func TestSubPartitioning(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 2"))
 	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`CREATE TABLE t ( col1 INT NOT NULL, col2 INT NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL, primary KEY (col1,col3) ) PARTITION BY HASH(col1) PARTITIONS 4 SUBPARTITION BY HASH(col3) SUBPARTITIONS 2`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8200 Unsupported subpartitioning, only using HASH partitioning"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `col1` int(11) NOT NULL,\n" +
+		"  `col2` int(11) NOT NULL,\n" +
+		"  `col3` int(11) NOT NULL,\n" +
+		"  `col4` int(11) NOT NULL,\n" +
+		"  PRIMARY KEY (`col1`,`col3`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`col1`) PARTITIONS 4"))
+	tk.MustExec(`drop table t`)
+
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {
