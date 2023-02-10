@@ -149,5 +149,34 @@
       "explain format='brief' select a from tcollist limit 10",
       "explain format='brief' select a from tcollist order by a limit 10"
     ]
+  },
+  {
+    "name": "TestEstimationForTopNPushToDynamicPartition",
+    "cases": [
+      "explain format='brief' select a from t use index (ia) where a > 10 order by a limit 10",
+      "explain format='brief' select a from trange use index (ia) where a > 10 order by a limit 10",
+      "explain format='brief' select a from tlist use index (ia) where a > 10 order by a limit 10",
+      "explain format='brief' select a from thash use index (ia) where a > 10 order by a limit 10",
+      "explain format='brief' select * from t use index (ia) where a > 10 order by a limit 10",
+      "explain format='brief' select * from trange use index (ia) where a > 10 order by a limit 10",
+      "explain format='brief' select * from tlist use index (ia) where a > 10 order by a limit 10",
+      "explain format='brief' select * from thash use index (ia) where a > 10 order by a limit 10",
+      "explain format='brief' select * from t use index (ia) where a + 1 > 10 order by a limit 10",
+      "explain format='brief' select * from trange use index (ia) where a + 1 > 10 order by a limit 10",
+      "explain format='brief' select * from tlist use index (ia) where a + 1 > 10 order by a limit 10",
+      "explain format='brief' select * from thash use index (ia) where a + 1 > 10 order by a limit 10",
+      "explain format='brief' select a from t use index (ia) where a > 10 and c = 10 order by a limit 10",
+      "explain format='brief' select a from trange use index (ia) where a > 10 and c = 10 order by a limit 10",
+      "explain format='brief' select a from tlist use index (ia) where a > 10 and c = 10 order by a limit 10",
+      "explain format='brief' select a from thash use index (ia) where a > 10 and c = 10 order by a limit 10",
+      "explain format='brief' select a from t use index () where b > 10 order by b limit 10",
+      "explain format='brief' select a from trange use index () where b > 10 order by b limit 10",
+      "explain format='brief' select a from tlist use index () where b > 10 order by b limit 10",
+      "explain format='brief' select a from thash use index () where b > 10 order by b limit 10",
+      "explain format='brief' select a from t use index () where a > 10 order by b limit 10",
+      "explain format='brief' select a from trange use index () where a > 10 order by b limit 10",
+      "explain format='brief' select a from tlist use index () where a > 10 order by b limit 10",
+      "explain format='brief' select a from thash use index () where a > 10 order by b limit 10"
+    ]
   }
 ]
