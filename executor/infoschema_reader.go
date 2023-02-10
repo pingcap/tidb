@@ -1127,7 +1127,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 						case model.PartitionTypeList:
 							partitionMethod = "LIST COLUMNS"
 						default:
-							return errors.New(fmt.Sprintf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns)))
+							return fmt.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
 						}
 						buf := bytes.NewBuffer(nil)
 						for i, col := range table.Partition.Columns {
