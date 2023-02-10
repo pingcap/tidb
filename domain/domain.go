@@ -902,6 +902,12 @@ func (do *Domain) Close() {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
 	}
+	ttlJobManager := do.ttlJobManager.Load()
+	ttlJobManager.Stop()
+	err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
+	if err != nil {
+		logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+	}
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -2542,12 +2548,6 @@ func (do *Domain) StartTTLJobManager() {
 		ttlJobManager.Start()
 
 		<-do.exit
-
-		ttlJobManager.Stop()
-		err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
-		if err != nil {
-			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
-		}
 	}, "ttlJobManager")
 }
 
