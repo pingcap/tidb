@@ -321,6 +321,7 @@ func TestUsingReorgCtx(t *testing.T) {
 		bfJob := &ddl.BackfillJob{JobID: jobID, EleID: 1, EleKey: nil}
 		for i := 0; i < 100; i++ {
 			d.(ddl.DDLForTest).SetReorgCtxForBackfill(bfJob)
+			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
 			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
 		}
 	})
@@ -330,6 +331,7 @@ func TestUsingReorgCtx(t *testing.T) {
 		ele := &meta.Element{ID: 1, TypeKey: nil}
 		for i := 0; i < 100; i++ {
 			d.(ddl.DDLForTest).NewReorgCtx(jobID, startKey, ele, 0)
+			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
 			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
 		}
 	})
