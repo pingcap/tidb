@@ -380,10 +380,10 @@ func checkJobIsFinished(sess *session, ddlJobID int64) (bool, error) {
 			return true, nil
 		}
 
-		logutil.BgLogger().Info("[ddl] checkJobIsSynced failed",
-			zap.Strings("unsyncedInstanceIDs", unsyncedInstanceIDs), zap.Int("tryTimes", i), zap.Error(err))
 		time.Sleep(RetrySQLInterval)
 	}
+	logutil.BgLogger().Info("[ddl] checkJobIsSynced failed",
+		zap.Strings("unsyncedInstanceIDs", unsyncedInstanceIDs), zap.Int("tryTimes", retrySQLTimes), zap.Error(err))
 
 	return false, errors.Trace(err)
 }
