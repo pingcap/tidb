@@ -108,8 +108,8 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	exec := e.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx1, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
 	if err != nil {
 		logutil.BgLogger().Warn("remove mysql.plan_replayer_status record failed",
@@ -134,8 +134,8 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	if exists {
 		return errors.New("plan replayer capture task already exists")
 	}
-	exec := e.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx1, fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%s','%s')",
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	_, _, err = exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%s','%s')",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",

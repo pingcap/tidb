@@ -142,13 +142,6 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	dbLowerName := strings.ToLower(db)
 	tblLowerName := strings.ToLower(table)
 
-	/// Skip check for plan replayer related table
-	if util.IsSysDB(dbLowerName) {
-		if util.IsPlanReplayerTable(tblLowerName) {
-			return true
-		}
-	}
-
 	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
 	// There are some hard rules which overwrite system tables and schemas as read-only at most.
 	semEnabled := sem.IsEnabled()
