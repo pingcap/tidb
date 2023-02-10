@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -867,7 +866,6 @@ func GetBackfillIDAndMetas(sess *session, tblName, condition string, label strin
 		}
 		pTblMetas = append(pTblMetas, &pTblMeta)
 	}
-	log.Info("pTblMetas", zap.Int("len", len(pTblMetas)))
 	return pTblMetas, nil
 }
 
