@@ -39,9 +39,14 @@ import (
 
 const testLease = 5 * time.Millisecond
 
+// DDLForTest exports for testing.
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
+	NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx
+	SetReorgCtxForBackfill(bfJob *BackfillJob)
+	GetReorgCtx(jobID int64) *reorgCtx
+	RemoveReorgCtx(id int64)
 }
 
 // SetInterceptor implements DDL.SetInterceptor interface.
@@ -50,6 +55,31 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 	defer d.mu.Unlock()
 
 	d.mu.interceptor = i
+}
+
+// IsReorgCanceled exports for testing.
+func (rc *reorgCtx) IsReorgCanceled() bool {
+	return rc.isReorgCanceled()
+}
+
+// NewReorgCtx exports for testing.
+func (d *ddl) NewReorgCtx(jobID int64, startKey []byte, currElement *meta.Element, rowCount int64) *reorgCtx {
+	return d.newReorgCtx(jobID, startKey, currElement, rowCount)
+}
+
+// SetReorgCtxForBackfill exports for testing.
+func (d *ddl) SetReorgCtxForBackfill(bfJob *BackfillJob) {
+	d.setReorgCtxForBackfill(bfJob)
+}
+
+// GetReorgCtx exports for testing.
+func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
+	return d.getReorgCtx(jobID)
+}
+
+// RemoveReorgCtx exports for testing.
+func (d *ddl) RemoveReorgCtx(id int64) {
+	d.removeReorgCtx(id)
 }
 
 // JobNeedGCForTest is only used for test.
