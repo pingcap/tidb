@@ -90,7 +90,7 @@ func (bT backfillerType) String() string {
 	}
 }
 
-// BackfillJob is for a tidb_ddl_backfill table's record.
+// BackfillJob is for a tidb_background_subtask table's record.
 type BackfillJob struct {
 	ID              int64
 	JobID           int64
@@ -101,15 +101,9 @@ type BackfillJob struct {
 	State           model.JobState
 	InstanceID      string
 	InstanceLease   types.Time
-	// range info
-	CurrKey  []byte
-	StartKey []byte
-	EndKey   []byte
-
-	StartTS  uint64
-	FinishTS uint64
-	RowCount int64
-	Meta     *model.BackfillMeta
+	StartTS         uint64
+	StateUpdateTS   uint64
+	Meta            *model.BackfillMeta
 }
 
 // AbbrStr returns the BackfillJob's info without the Meta info.
@@ -321,7 +315,7 @@ func (w *backfillWorker) updateLease(execID string, bfJob *BackfillJob, nextKey 
 	if err != nil {
 		return err
 	}
-	bfJob.CurrKey = nextKey
+	bfJob.Meta.CurrKey = nextKey
 	bfJob.InstanceID = execID
 	bfJob.InstanceLease = GetLeaseGoTime(leaseTime, InstanceLease)
 	return w.backfiller.UpdateTask(bfJob)
@@ -475,7 +469,7 @@ func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResul
 	// Change the batch size dynamically.
 	w.GetCtx().batchCnt = int(variable.GetDDLReorgBatchSize())
 	result = w.handleBackfillTask(w.GetCtx().ddlCtx, task, w.backfiller)
-	task.bfJob.RowCount = int64(result.addedCount)
+	task.bfJob.Meta.RowCount = int64(result.addedCount)
 	if result.err != nil {
 		logutil.BgLogger().Warn("[ddl] backfill worker runTask failed",
 			zap.Stringer("worker", w), zap.String("backfillJob", task.bfJob.AbbrStr()), zap.Error(result.err))
@@ -1142,6 +1136,8 @@ func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJob
 				Type:     reorgInfo.Job.Type,
 				Query:    reorgInfo.Job.Query,
 			},
+			StartKey: task.startKey,
+			EndKey:   task.endKey,
 		}
 		bj := &BackfillJob{
 			ID:              sJobCtx.currBackfillJobID.Add(1),
@@ -1152,11 +1148,9 @@ func addBatchBackfillJobs(sess *session, reorgInfo *reorgInfo, sJobCtx *splitJob
 			Tp:              sJobCtx.bfWorkerType,
 			State:           model.JobStateNone,
 			InstanceID:      instanceID,
-			CurrKey:         task.startKey,
-			StartKey:        task.startKey,
-			EndKey:          task.endKey,
 			Meta:            bm,
 		}
+		bj.Meta.CurrKey = task.startKey
 		bJobs = append(bJobs, bj)
 	}
 	if err := AddBackfillJobs(sess, bJobs); err != nil {
