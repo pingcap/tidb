@@ -69,15 +69,15 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "TestKey", s3.SseKmsKeyId)
 
 	// special character in access keys
-	s, err = ParseBackend(`s3://bucket4/prefix/path?access-key=NXN7*******LMAF&secret-access-key=nREY**********XMLPUANw&session-token=FQoD*********PjaXyoo2Iql2QU=`, nil)
+	s, err = ParseBackend(`s3://bucket4/prefix/path?access-key=******&secret-access-key=******&session-token=******`, nil)
 	require.NoError(t, err)
 	s3 = s.GetS3()
 	require.NotNil(t, s3)
 	require.Equal(t, "bucket4", s3.Bucket)
 	require.Equal(t, "prefix/path", s3.Prefix)
-	require.Equal(t, "NXN7*******LMAF", s3.AccessKey)
-	require.Equal(t, "nREY**********XMLPUANw", s3.SecretAccessKey)
-	require.Equal(t, "FQoD*********PjaXyoo2Iql2QU=", s3.SessionToken)
+	require.Equal(t, "******", s3.AccessKey)
+	require.Equal(t, "******", s3.SecretAccessKey)
+	require.Equal(t, "******", s3.SessionToken)
 	require.True(t, s3.ForcePathStyle)
 
 	// parse role ARN and external ID
