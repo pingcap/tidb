@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -398,6 +399,10 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 				zap.Int64("tableID", availableTableID.ID),
 				zap.Bool("IsPartition", availableTableID.IsPartition),
 			)
+			if intest.InTest {
+				// https://github.com/pingcap/tidb/issues/39949
+				panic(err)
+			}
 			continue
 		}
 		err = infosync.UpdateTiFlashProgressCache(availableTableID.ID, progress)
