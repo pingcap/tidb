@@ -870,7 +870,7 @@ func GetBackfillIDAndMetas(sess *session, tblName, condition string, label strin
 }
 
 func getUnsyncedInstanceIDs(sess *session, jobID int64, label string) ([]string, error) {
-	sql := fmt.Sprintf("select sum((state=%d) + (state=%d)) as tmp, exec_id from mysql.tidb_background_subtask_history where ddl_job_id = %d group by exec_id having tmp = 0;",
+	sql := fmt.Sprintf("select sum((state=%d) + (state=%d)) as tmp, exec_id from mysql.tidb_background_subtask_history where task like \"%d_%%\" group by exec_id having tmp = 0;",
 		model.JobStateSynced, model.JobStateCancelled, jobID)
 	rows, err := sess.execute(context.Background(), sql, label)
 	if err != nil {
