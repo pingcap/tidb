@@ -153,7 +153,8 @@ var (
 	telemetryUnlockUserUsage        = metrics.TelemetryAccountLockCnt.WithLabelValues("unlockUser")
 	telemetryCreateOrAlterUserUsage = metrics.TelemetryAccountLockCnt.WithLabelValues("createOrAlterUser")
 
-	telemetryIndexMerge = metrics.TelemetryIndexMergeUsage
+	telemetryIndexMerge        = metrics.TelemetryIndexMergeUsage
+	telemetryStoreBatchedUsage = metrics.TelemetryStoreBatchedQueryCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -1090,6 +1091,9 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 
+	// record the TTLInsertRows in the metric
+	metrics.TTLInsertRowsCount.Add(float64(s.sessionVars.TxnCtx.InsertTTLRowsCount))
+
 	failpoint.Inject("keepHistory", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(err)
@@ -1597,7 +1601,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		}
 	}
 	// We set process info before building plan, so we extended execution time.
-	if oldPi != nil && oldPi.Info == pi.Info {
+	if oldPi != nil && oldPi.Info == pi.Info && oldPi.Command == pi.Command {
 		pi.Time = oldPi.Time
 	}
 	_, digest := s.sessionVars.StmtCtx.SQLDigest()
@@ -4046,6 +4050,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryLockUserUsage.Add(float64(ti.AccountLockTelemetry.LockUser))
 		telemetryUnlockUserUsage.Add(float64(ti.AccountLockTelemetry.UnlockUser))
 		telemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
+	}
+
+	if ti.UseTableLookUp && s.sessionVars.StoreBatchSize > 0 {
+		telemetryStoreBatchedUsage.Inc()
 	}
 }
 

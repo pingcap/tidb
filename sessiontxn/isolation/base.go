@@ -510,7 +510,10 @@ func (p *basePessimisticTxnContextProvider) OnHandlePessimisticStmtStart(ctx con
 	if err := p.baseTxnContextProvider.OnHandlePessimisticStmtStart(ctx); err != nil {
 		return err
 	}
-	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking && p.txn != nil {
+	if p.sctx.GetSessionVars().PessimisticTransactionAggressiveLocking &&
+		p.txn != nil &&
+		p.sctx.GetSessionVars().ConnectionID != 0 &&
+		!p.sctx.GetSessionVars().InRestrictedSQL {
 		if err := p.txn.StartAggressiveLocking(); err != nil {
 			return err
 		}

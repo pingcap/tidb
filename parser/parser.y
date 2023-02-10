@@ -709,6 +709,7 @@ import (
 	subDate               "SUBDATE"
 	sum                   "SUM"
 	substring             "SUBSTRING"
+	survivalPreferences   "SURVIVAL_PREFERENCES"
 	target                "TARGET"
 	tidbJson              "TIDB_JSON"
 	timestampAdd          "TIMESTAMPADD"
@@ -1598,19 +1599,21 @@ ResourceGroupOptionList:
 	}
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
-		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp {
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp ||
+		   (len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
             return 1
 		}
+		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
+		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp ||
+    	   (len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
+    		 yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+             return 1
+    	}
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
-		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp {
-        	yylex.AppendError(yylex.Errorf("Dupliated options specified"))
-            return 1
-        }
 	}
 
 DirectResourceGroupOption:
@@ -1686,6 +1689,10 @@ DirectPlacementOption:
 |	"LEARNER_CONSTRAINTS" EqOpt stringLit
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerConstraints, StrValue: $3}
+	}
+|	"SURVIVAL_PREFERENCES" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionSurvivalPreferences, StrValue: $3}
 	}
 
 PlacementPolicyOption:
@@ -6617,6 +6624,7 @@ NotKeywordToken:
 |	"CONSTRAINTS"
 |	"PRIMARY_REGION"
 |	"SCHEDULE"
+|	"SURVIVAL_PREFERENCES"
 |	"LEADER_CONSTRAINTS"
 |	"FOLLOWER_CONSTRAINTS"
 |	"LEARNER_CONSTRAINTS"
