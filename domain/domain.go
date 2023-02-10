@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
@@ -905,7 +906,12 @@ func (do *Domain) Close() {
 	ttlJobManager := do.ttlJobManager.Load()
 	if ttlJobManager != nil {
 		ttlJobManager.Stop()
-		err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
+		err := ttlJobManager.WaitStopped(context.Background(), func() time.Duration {
+			if intest.InTest {
+				return 10 * time.Second
+			}
+			return 30 * time.Second
+		}())
 		if err != nil {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
