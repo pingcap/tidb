@@ -21,12 +21,14 @@ go_library(
 
 go_test(
     name = "session_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "session_test.go",
         "sysvar_test.go",
     ],
     flaky = True,
+    shard_count = 5,
     deps = [
         ":session",
         "//sessionctx/variable",
