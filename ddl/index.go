@@ -890,8 +890,32 @@ func convertToKeyExistsErr(originErr error, idxInfo *model.IndexInfo, tblInfo *m
 func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, mergingTmpIdx bool) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
+<<<<<<< HEAD
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, mergingTmpIdx)
+=======
+
+	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
+		//nolint:forcetypeassert
+		if val.(bool) && indexInfo.BackfillState == model.BackfillStateMerging &&
+			MockDMLExecutionStateMerging != nil {
+			MockDMLExecutionStateMerging()
+		}
+	})
+
+	sctx, err1 := w.sessPool.get()
+	if err1 != nil {
+		err = err1
+		return
+	}
+	defer w.sessPool.put(sctx)
+	rh := newReorgHandler(newSession(sctx))
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+	reorgInfo, err := getReorgInfo(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, elements, mergingTmpIdx)
+>>>>>>> c6e6d621e2 (ddl: check the key existence on original index (#40749))
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -1626,6 +1650,12 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 
 // MockDMLExecution is only used for test.
 var MockDMLExecution func()
+
+// MockDMLExecutionMerging is only used for test.
+var MockDMLExecutionMerging func()
+
+// MockDMLExecutionStateMerging is only used for test.
+var MockDMLExecutionStateMerging func()
 
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
