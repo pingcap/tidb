@@ -56,6 +56,16 @@ views_count=$(run_sql "select count(*) c, sum(m) s from $DB.view_3;" | tail -2 |
 
 run_sql "insert into $DB.table_2 (c) values (33);"
 seq_val=$(run_sql "select a >= 8 and b >= 4 as g from $DB.table_2 where c = 33;" | tail -1)
+val=$(run_sql "SELECT LASTVAL($DB.seq_1);")
+echo "$val"
+val=$(run_sql "SELECT LASTVAL($DB.seq_2);")
+echo "$val"
+val=$(run_sql "SELECT NEXTVAL($DB.seq_1);")
+echo "$val"
+val=$(run_sql "SELECT NEXTVAL($DB.seq_2);")
+echo "$val"
+val=$(run_sql "SELECT * from $DB.table_2;")
+echo "$val"
 [ "$seq_val" = 'g: 1' ]
 
 run_sql "insert into $DB.auto_inc values ();"
