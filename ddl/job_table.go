@@ -835,10 +835,9 @@ func GetBackfillMetas(sess *session, tblName, condition string, label string) ([
 
 // GetBackfillIDAndMetas gets the backfill IDs and metas in the tblName table according to condition.
 func GetBackfillIDAndMetas(sess *session, tblName, condition string, label string) ([]*BackfillJobRangeMeta, error) {
-	sql := "select tbl.task_key, tbl.meta, tbl.ddl_physical_tid from (select max(id) max_id, ddl_physical_tid " +
+	sql := "select tbl.task_key, tbl.meta, tbl.ddl_physical_tid from (select max(task_key) max_id, ddl_physical_tid " +
 		fmt.Sprintf(" from mysql.%s tbl where %s group by ddl_physical_tid) tmp join mysql.%s tbl",
-			tblName, condition, tblName) + " on tbl.id=tmp.max_id and tbl.ddl_physical_tid=tmp.ddl_physical_tid;"
-	log.Info("sql", zap.String("sql", sql))
+			tblName, condition, tblName) + " on tbl.task_key=tmp.max_id and tbl.ddl_physical_tid=tmp.ddl_physical_tid;"
 	rows, err := sess.execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -857,7 +856,6 @@ func GetBackfillIDAndMetas(sess *session, tblName, condition string, label strin
 		}
 		meta := &model.BackfillMeta{}
 		err = meta.Decode(r.GetBytes(1))
-		log.Info("fuck", zap.Int64("id", id), zap.Int("index", i))
 		pTblMeta := BackfillJobRangeMeta{
 			ID:       id,
 			StartKey: meta.StartKey,

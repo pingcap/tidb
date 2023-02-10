@@ -466,29 +466,6 @@ func getBackfillJobWithRetry(sess *session, tableName string, ddlJobID, currEleI
 	return nil, errors.Trace(err)
 }
 
-func GetBackfillJobForOneEleT(s *session, tableName, cond string) (*BackfillJob, error) {
-	var err error
-	var bJobs []*BackfillJob
-	err = s.runInTxn(func(se *session) error {
-		bJobs, err = GetBackfillJobs(se, tableName,
-			cond, "get_backfill_job")
-		return err
-	})
-	if err != nil || len(bJobs) == 0 {
-		return nil, err
-	}
-	logutil.BgLogger().Warn("xxx--------------------------------------------------11", zap.String("cond", cond))
-	logutil.BgLogger().Warn("xxx--------------------------------------------------11", zap.Int("job", len(bJobs)))
-
-	for _, j := range bJobs {
-		jobs := fmt.Sprintf("job:%#v  \n", j)
-		logutil.BgLogger().Warn("xxx--------------------------------------------------11",
-			zap.String("job", jobs))
-	}
-
-	return bJobs[0], nil
-}
-
 // GetPhysicalTableMetas gets the max backfill metas per physical table in BackgroundSubtaskTable and BackgroundSubtaskHistoryTable.
 func GetPhysicalTableMetas(sess *session, ddlJobID, currEleID int64, currEleKey []byte) (map[int64]*BackfillJobRangeMeta, error) {
 	condition := fmt.Sprintf("task_key like \"%d_%s_%d_%%\"", ddlJobID, hex.EncodeToString(currEleKey), currEleID)
@@ -496,8 +473,6 @@ func GetPhysicalTableMetas(sess *session, ddlJobID, currEleID int64, currEleKey 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	GetBackfillJobForOneEleT(sess, BackgroundSubtaskTable, condition)
-	GetBackfillJobForOneEleT(sess, BackgroundSubtaskHistoryTable, condition)
 	hPTblMs, err := GetBackfillIDAndMetas(sess, BackgroundSubtaskHistoryTable, condition, "get_ptbl_metas")
 	if err != nil {
 		return nil, errors.Trace(err)
