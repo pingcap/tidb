@@ -634,7 +634,7 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 }
 
 func syncBackfillHistoryJobs(sess *session, uuid string, backfillJob *BackfillJob) error {
-	sql := fmt.Sprintf("update mysql.%s set state = %s where task_key like \"%d_%s_%d_%%\" and exec_id = '%s' limit 1;",
+	sql := fmt.Sprintf("update mysql.%s set state = '%s' where task_key like \"%d_%s_%d_%%\" and exec_id = '%s' limit 1;",
 		BackgroundSubtaskHistoryTable, model.JobStateSynced.String(), backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, uuid)
 	_, err := sess.execute(context.Background(), sql, "sync_backfill_history_job")
 	return err
@@ -871,8 +871,8 @@ func GetBackfillIDAndMetas(sess *session, tblName, condition string, label strin
 }
 
 func getUnsyncedInstanceIDs(sess *session, jobID int64, label string) ([]string, error) {
-	sql := fmt.Sprintf("select sum((state=%d) + (state=%d)) as tmp, exec_id from mysql.tidb_background_subtask_history where task_key like \"%d_%%\" group by exec_id having tmp = 0;",
-		model.JobStateSynced, model.JobStateCancelled, jobID)
+	sql := fmt.Sprintf("select sum((state='%s') + (state='%s')) as tmp, exec_id from mysql.tidb_background_subtask_history where task_key like \"%d_%%\" group by exec_id having tmp = 0;",
+		model.JobStateSynced.String(), model.JobStateCancelled.String(), jobID)
 	rows, err := sess.execute(context.Background(), sql, label)
 	if err != nil {
 		return nil, errors.Trace(err)
