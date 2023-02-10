@@ -317,7 +317,8 @@ func TestUsingReorgCtx(t *testing.T) {
 	wg := util.WaitGroupWrapper{}
 	wg.Run(func() {
 		jobID := int64(1)
-		bfJob := &ddl.BackfillJob{JobID: jobID, EleID: 1, EleKey: nil}
+		m := &model.BackfillMeta{StartKey: []byte("skey"), RowCount: 1}
+		bfJob := &ddl.BackfillJob{JobID: jobID, EleID: 1, EleKey: nil, Meta: m}
 		for i := 0; i < 100; i++ {
 			d.(ddl.DDLForTest).SetReorgCtxForBackfill(bfJob)
 			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()

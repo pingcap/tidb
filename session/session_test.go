@@ -45,11 +45,11 @@ func TestInitMetaTable(t *testing.T) {
 	}
 
 	tbls := map[string]struct{}{
-		"tidb_ddl_job":              {},
-		"tidb_ddl_reorg":            {},
-		"tidb_ddl_history":          {},
-		"tidb_ddl_backfill":         {},
-		"tidb_ddl_backfill_history": {},
+		"tidb_ddl_job":                    {},
+		"tidb_ddl_reorg":                  {},
+		"tidb_ddl_history":                {},
+		"tidb_background_subtask":         {},
+		"tidb_background_subtask_history": {},
 	}
 
 	for tbl := range tbls {
@@ -83,12 +83,12 @@ func TestMetaTableRegion(t *testing.T) {
 
 	require.NotEqual(t, ddlJobTableRegionID, ddlReorgTableRegionID)
 
-	ddlBackfillTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_backfill regions").Rows()[0][0]
-	ddlBackfillTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_backfill regions").Rows()[0][1]
-	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackfillTableID))
-	ddlBackfillHistoryTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_backfill_history regions").Rows()[0][0]
-	ddlBackfillHistoryTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_backfill_history regions").Rows()[0][1]
-	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackfillHistoryTableID))
+	ddlBackfillTableRegionID := tk.MustQuery("show table mysql.tidb_background_subtask regions").Rows()[0][0]
+	ddlBackfillTableRegionStartKey := tk.MustQuery("show table mysql.tidb_background_subtask regions").Rows()[0][1]
+	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackgroundSubtaskTableID))
+	ddlBackfillHistoryTableRegionID := tk.MustQuery("show table mysql.tidb_background_subtask_history regions").Rows()[0][0]
+	ddlBackfillHistoryTableRegionStartKey := tk.MustQuery("show table mysql.tidb_background_subtask_history regions").Rows()[0][1]
+	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackgroundSubtaskHistoryTableID))
 
 	require.NotEqual(t, ddlBackfillTableRegionID, ddlBackfillHistoryTableRegionID)
 }

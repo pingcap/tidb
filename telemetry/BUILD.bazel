@@ -51,7 +51,7 @@ go_library(
 
 go_test(
     name = "telemetry_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "data_cluster_hardware_test.go",
         "data_feature_usage_test.go",
@@ -62,6 +62,7 @@ go_test(
     ],
     embed = [":telemetry"],
     flaky = True,
+    shard_count = 30,
     deps = [
         "//autoid_service",
         "//config",

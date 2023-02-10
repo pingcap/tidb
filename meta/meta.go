@@ -132,7 +132,7 @@ const (
 	BaseDDLTableVersion DDLTableVersion = 1
 	// MDLTableVersion is for support MDL tables.
 	MDLTableVersion DDLTableVersion = 2
-	// BackfillTableVersion is for support distributed reorg stage, it added tidb_ddl_backfill, tidb_ddl_backfill_history.
+	// BackfillTableVersion is for support distributed reorg stage, it added tidb_background_subtask, tidb_background_subtask_history.
 	BackfillTableVersion DDLTableVersion = 3
 )
 
