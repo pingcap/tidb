@@ -448,8 +448,11 @@ type BackfillMeta struct {
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZoneLocation                `json:"location"`
 	ReorgTp       ReorgType                        `json:"reorg_tp"`
-
-	*JobMeta `json:"job_meta"`
+	RowCount      int64                            `json:"row_count"`
+	StartKey      []byte                           `json:"start_key"`
+	EndKey        []byte                           `json:"end_key"`
+	CurrKey       []byte                           `json:"curr_key"`
+	*JobMeta      `json:"job_meta"`
 }
 
 // Encode encodes BackfillMeta with json format.
@@ -985,6 +988,30 @@ func (s JobState) String() string {
 		return "queueing"
 	default:
 		return "none"
+	}
+}
+
+// StrToJobState converts string to JobState.
+func StrToJobState(s string) JobState {
+	switch s {
+	case "running":
+		return JobStateRunning
+	case "rollingback":
+		return JobStateRollingback
+	case "rollback done":
+		return JobStateRollbackDone
+	case "done":
+		return JobStateDone
+	case "cancelled":
+		return JobStateCancelled
+	case "cancelling":
+		return JobStateCancelling
+	case "synced":
+		return JobStateSynced
+	case "queueing":
+		return JobStateQueueing
+	default:
+		return JobStateNone
 	}
 }
 
