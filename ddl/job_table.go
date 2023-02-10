@@ -633,7 +633,7 @@ func getJobsBySQL(sess *session, tbl, condition string) ([]*model.Job, error) {
 }
 
 func syncBackfillHistoryJobs(sess *session, uuid string, backfillJob *BackfillJob) error {
-	sql := fmt.Sprintf("update mysql.%s set state = %s where task_key like \"%d_%s_%d%%\" and exec_id = '%s' limit 1;",
+	sql := fmt.Sprintf("update mysql.%s set state = %s where task_key like \"%d_%s_%d_%%\" and exec_id = '%s' limit 1;",
 		BackgroundSubtaskHistoryTable, model.JobStateSynced.String(), backfillJob.JobID, hex.EncodeToString(backfillJob.EleKey), backfillJob.EleID, uuid)
 	_, err := sess.execute(context.Background(), sql, "sync_backfill_history_job")
 	return err
