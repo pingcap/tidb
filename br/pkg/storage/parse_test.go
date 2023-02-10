@@ -69,15 +69,15 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "TestKey", s3.SseKmsKeyId)
 
 	// special character in access keys
-	s, err = ParseBackend(`s3://bucket4/prefix/path?access-key=NXN7IPIOSAAKDEEOLMAF&secret-access-key=nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw&session-token=FQoDYXdzEPP//////////wEaDPv5GPAhRW8pw6/nsiKsAZu7sZDCXPtEBEurxmvyV1r+nWy1I4VPbdIJV+iDnotwS3PKIyj+yDnOeigMf2yp9y2Dg9D7r51vWUyUQQfceZi9/8Ghy38RcOnWImhNdVP5zl1zh85FHz6ytePo+puHZwfTkuAQHj38gy6VF/14GU17qDcPTfjhbETGqEmh8QX6xfmWlO0ZrTmsAo4ZHav8yzbbl3oYdCLICOjMhOO1oY+B/DiURk3ZLPjaXyoo2Iql2QU=`, nil)
+	s, err = ParseBackend(`s3://bucket4/prefix/path?access-key=NXN7*******LMAF&secret-access-key=nREY**********XMLPUANw&session-token=FQoD*********PjaXyoo2Iql2QU=`, nil)
 	require.NoError(t, err)
 	s3 = s.GetS3()
 	require.NotNil(t, s3)
 	require.Equal(t, "bucket4", s3.Bucket)
 	require.Equal(t, "prefix/path", s3.Prefix)
-	require.Equal(t, "NXN7IPIOSAAKDEEOLMAF", s3.AccessKey)
-	require.Equal(t, "nREY/7Dt+PaIbYKrKlEEMMF/ExCiJEX=XMLPUANw", s3.SecretAccessKey)
-	require.Equal(t, "FQoDYXdzEPP//////////wEaDPv5GPAhRW8pw6/nsiKsAZu7sZDCXPtEBEurxmvyV1r+nWy1I4VPbdIJV+iDnotwS3PKIyj+yDnOeigMf2yp9y2Dg9D7r51vWUyUQQfceZi9/8Ghy38RcOnWImhNdVP5zl1zh85FHz6ytePo+puHZwfTkuAQHj38gy6VF/14GU17qDcPTfjhbETGqEmh8QX6xfmWlO0ZrTmsAo4ZHav8yzbbl3oYdCLICOjMhOO1oY+B/DiURk3ZLPjaXyoo2Iql2QU=", s3.SessionToken)
+	require.Equal(t, "NXN7*******LMAF", s3.AccessKey)
+	require.Equal(t, "nREY**********XMLPUANw", s3.SecretAccessKey)
+	require.Equal(t, "FQoD*********PjaXyoo2Iql2QU=", s3.SessionToken)
 	require.True(t, s3.ForcePathStyle)
 
 	// parse role ARN and external ID
