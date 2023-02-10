@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -477,7 +476,6 @@ func GetPhysicalTableMetas(sess *session, ddlJobID, currEleID int64, currEleKey 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Info("log", zap.Int("hptblms", len(hPTblMs)))
 	metaMap := make(map[int64]*BackfillJobRangeMeta, len(pTblMs)+len(hPTblMs))
 	for _, m := range pTblMs {
 		metaMap[m.PhyTblID] = m
