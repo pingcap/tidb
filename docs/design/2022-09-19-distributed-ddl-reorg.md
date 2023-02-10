@@ -3,25 +3,23 @@
 - Author(s): [zimulala](https://github.com/zimulala), [Defined2014](https://github.com/Defined2014)
 - Tracking Issue: https://github.com/pingcap/tidb/issues/41208
 
-# <a id="_37pie9l9cba0"></a>__Abstract__
+##Abstract
 
-This is distributed processing of design in the DDL reorg phase.
+This is distributed processing of design in the DDL reorg phase. The current design is based on the main logic that only the DDL owner can handle DDL jobs. However, for jobs in the reorg phase, it is expected that all TiDBs can claim subtasks in the reorg phase based on resource usage.
 
-The current design is based on the main logic that only the  DDL owner can handle DDL jobs. However, for jobs in the reorg phase, it is expected that all TiDBs can claim subtasks in the reorg phase based on resource usage.
+##Motivation or Background
 
-## <a id="_w5dmo7bi2lre"></a>__Motivation or Background__
-
-At present, TiDB already supports parallel processing of DDL jobs on the owner. However, the resources of a single TiDB are limited. Even if it supports a parallel framework, the execution speed of DDL is relatively limited, and it will compete for resources that will affect the daily operations such as TiDB's TPS.
+At present, TiDB already supports parallel processing of DDL jobs on the owner. However, the resources of a single TiDB are limited. Even if it supports a parallel framework, the execution speed of DDL is relatively limited, and it will compete for resources that affect the daily operations such as TiDB's TPS.
 
 DDL Jobs can be divided into the general job and the reorg job. It can also be considered that improving DDL operation performance can be divided into improving the performance of all DDL jobs (including the time consumption of each schema state change, checking all TiDB schema state update success, etc.), and improving the performance of the reorg stage. The current time-consuming and resource-consuming stage is obviously the reorg stage.
 
 At present, considering the problem of significantly improving DDL performance and improving TiDB resource utilization, and relatively stable design and development, we will DDL reorg stage for distributed processing.
 
-## <a id="_pgem3wcrecg"></a>__Current Implementation__
+##Current Implementation
 
 At present, the master branch reorg stage processing logic (that is, no lighting optimization is added), takes an  added index as an example. The simple steps that the owner needs to perform in the reorg stage of the added index operation:
 
-1. Split the entire table [startHandel: endHandle] into ranges by region.
+1. Split the entire table [startHandle: endHandle] into ranges by region.
 2. Each backfill worker scans the data in the corresponding range, then checks the data and writes it to the index.
 3. After all backfill workers complete step 2, check if there is still data to process:
     1. If there is continued step 2
@@ -29,15 +27,15 @@ At present, the master branch reorg stage processing logic (that is, no lighting
 
 ![Figure 1: add index flow chart](./imgs/add-index-flow-chart.png)
 
-## <a id="_pfhyqfxivdo9"></a>__Rationale__
+##Rationale
 
-### <a id="_a87sypxxsvcx"></a>__Prepare__
+###Prepare
 
 The reorg worker and backfill worker for this scenario are completely decoupled, i.e. the two roles are not related.
 
 Backfill workers build the associated worker pool to handle subtasks ( DDL small tasks that a job splits into during the reorg phase).
 
-### <a id="_4ie5mblq5kg5"></a>__Process__
+###Process
 
 The overall process of this document program is rough as follows:
 
@@ -50,13 +48,13 @@ The overall process of this document program is rough as follows:
 
 ![Figure 2: dist reorg flow chart](./imgs/dist-reorg-flow-chart.png)
 
-## <a id="_3sqnjcjlr92v"></a>__Detailed Design__
+##Detailed Design
 
-### <a id="_9bup4r9f5b8d"></a>__Meta Info Definition__
+###Meta Info Definition
 
 The contents of the existing table structure may be lacking, and a new Metadata needs to be added or defined.
 
-Add fields to the DDLReorgMeta structure of the mysql.TiDB_ddl_job table as follows:
+Add fields to the DDLReorgMeta structure of the `mysql.TiDB_ddl_job` table as follows:
 
 ```go
 type DDLReorgMeta struct {
@@ -66,7 +64,7 @@ type DDLReorgMeta struct {
 }
 ```
 
-Consider that if all subtask information is added to the TiDB_ddl_reorg.reorg field, there may be a lock  problem. It is added to the mysql. TiDB_background_subtask table, the specific structure is as follows:
+Consider that if all subtask information is added to the TiDB_ddl_reorg.reorg field, there may be a lock problem. It is added to the mysql.tidb_background_subtask table, the specific structure is as follows:
 
 ```sql
 +---------------+------------+------+-------------+
@@ -111,33 +109,15 @@ type BackfillMeta struct {
     EndKey          kv.Key
     EndInclude      bool    
     ReorgTp         ReorgType
-    IsUnique        bool 
-    SQLMode         mysql.SQLMode                
-    Location        *TimeZoneLocation            
-    row_count       int64
-    Error           *terror.Error
-    Warnings      map[errors.ErrorID]*terror.Error
-    WarningsCount map[errors.ErrorID]int64 
+    ...
     
-    *JobMeta
-}
-
-// JobMeta is meta info of Job.
-type JobMeta struct {
-   SchemaID int64 
-   TableID  int64 
-   // Type is the DDL job's type.
-   Type ActionType 
-   // Query is the DDL job's SQL string.
-   Query string 
-   // Priority is only used to set the operation priority of adding indices.
-   Priority int 
+    *JobMeta // parent job meta
 }
 ```
 
-Add mysql.TiDB_background_subtask_history table to record completed (including failure status) subtasks. The table structure is the same as TiDB_background_subtask . Considering the number of subtasks, some records of the history table are deleted regularly in the later stage.
+Add mysql.TiDB_background_subtask_history table to record completed (including failure status) subtasks. The table structure is the same as tidb_background_subtask . Considering the number of subtasks, some records of the history table are deleted regularly in the later stage.
 
-### <a id="_cbh6ieoc6691"></a>__Principle__
+###Principle
 
 The general process is simply divided into two parts:
 
@@ -148,7 +128,7 @@ The general process is simply divided into two parts:
 
 Regarding step 1.b, the current plan is to reorg worker through timer regular check, consider the completion of subtask synchronization through PD, to actively check.
 
-### <a id="_iey28ymfmhdf"></a>__Rules__
+###Rules
 
 Rules for backfill workers to claim subtasks:
 
@@ -167,20 +147,17 @@ Subtask claim notification method:
     - The Owner node notifies backfill workers to other nodes by changing the information registered in the PD.
 - Passive mode: All nodes themselves periodically check if there are tasks to handle.
 
-### <a id="_cg9qtg7ls4q9"></a>__Interface Definition__
+###Interface Definition
 
-- Backfiller existing interface
+Adjust the `backfiller` and `backfillWorker` to update their interfaces and make them more explicit and generic when fetching and processing tasks.
 
+- `backfiller` interfaces:
 ```go
-type backfiller interface {
-   BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
-   AddMetricInfo(float64)
-}
-```
+// backfiller existing interfaces:
+func BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
+func AddMetricInfo(float64)
 
-- Backfiller needs new interfaces
-
-```go
+// backfiller new interfaces:
 // get batch tasks
 func GetTasks() ([]*BackfillJob, error){}
 // update task
@@ -191,19 +168,7 @@ func GetCtx() *backfillCtx{}
 func String() string{}
 ```
 
-- Backfill worker Existing interface
-
-```go
-func (w *backfillWorker) Close() {}
-
-func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, bf backfiller) *backfillResult {}
-
-func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {}
-
-func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo) *backfillWorker {}
-```
-
-- Interfaces that need to be added or modified by backfill workers
+- Interfaces that need to be added or modified by `backfillWorker`.
 
 ```go
 // In the current implementation, the result is passed between the reorg worker and the backfill worker using chan, and it runs tasks by calling `run`
@@ -212,99 +177,74 @@ func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable
 // 2. Added support for transfer through system tables to reorg workers between different TiDB-servers
 // Consider early compatibility. Implement the two adaptations separately, i.e., use the original `run` function for function 1 and `runTask` for function 2
 func (w *backfillWorker) runTask(task *reorgBackfillTask) (result *backfillResult) {}
-
-// updatet reorg substask exec_id and exec_lease 
+// updatet reorg substask exec_id and exec_lease
 func (w *backfillWorker) updateLease(bfJob *BackfillJob) error{}
 func (w *backfillWorker) releaseLease() {}
-
 // return backfiller related info
 func (w *backfillWorker) String() string {}
 ```
 
-- Added backfillWorkerContext interface
+- Add the backfill worker pool like `WorkerPool`(later considered to be unified with the existing WorkerPool).
+- In addition, the above interface will be modified in the second phase of this project to make it more general.
 
-```go
-// different type worker use the different newBackfillerFunc.
-type newBackfillerFunc func(bfCtx *backfillCtx) (bf backfiller, err error)
-
-func newBackfillWorkerContext(d *ddl, schemaName string, tbl table.Table, workerCnt int, reorgTp model.ReorgType,
-   bfFunc newBackfillerFunc) (*backfillWorkerContext, error) {}
-
-// use it in spmc.Pool 
-func (bwCtx *backfillWorkerContext) GetContext() *backfillWorker {}
-```
-
-- Added backfill worker pool interface ( later considered to be unified with the existing WorkerPool ).
-
-```go
-// Interface similar to workerPool
-func newBackfillContextPool(resPool *pools.ResourcePool) *backfillCtxPool {}
-func (bcp *backfillCtxPool) batchGet(cnt int) ([]*backfillWorker, error) {}
-func (bcp *backfillCtxPool) get() (*backfillWorker, error) }
-func (bcp *backfillCtxPool) put(bw *backfillWorker)  {}
-func (bcp *backfillCtxPool) close()  {}
-
-// Add or modify an interface
-// Specifies the number of backfill workers on the TiDB-server
-func (bcp *backfillCtxPool) setCapacity(capacity int) error {}
-```
-
-### <a id="_p1kj0bi482xl"></a>__Communication Mode__
+###Communication Mode
 
 In the current scheme, the backfill worker obtains subtasks and the reorg worker checks whether the subtask is completed through regular inspection and processing. Here, we consider combining PD watches for communication.
 
-### <a id="_q2j6xv14l488"></a>__Breakpoints Resume__
+###Breakpoints Resume
 
 When the network partition or abnormal exit occurs in the TiDB where the current backfill worker is located, the corresponding subtask may not be handled by the worker. In the current scheme, it is tentatively planned to mark whether the executor owner of the current subtask is valid by lease. There are more suitable schemes that can be discussed later. The specific operation of this scheme:
 
-1. When the backfill worker handles a subtask, it will record the current DDL_ID (may need worker_type_worker_id suffix) in the TiDB_background_subtask table as the exec_id, and regularly update the exec_expired value and curr_key.
-2. Non- DDL owner TiDB encountered this problem:
+1. When the backfill worker handles a subtask, it will record the current DDL_ID (may need worker_type_worker_id suffix) in the tidb_background_subtask table as the exec_id, and regularly update the exec_expired value and curr_key.
+2. Non-DDL owner TiDB encountered this problem:
     1. When there is a network problem in the TiDB where the backfill worker who is processing the subtask is located, and another TiDB obtains the current subtask and finds that its exec_expired expired (for example, the exec_expired + lease value is earlier than now () ), the exec_id and exec_expired values of this subtask are updated, and the subtask is processed from curr_key.
 3. DDL Owner TiDB may encounter this problem refer to the following changing owner description.
 
-### <a id="_mwgod5hbdyi8"></a>__Changing Owner__
+###Changing Owner
 
 - DDL an exception may occur in the TiDB where the owner is located, resulting in the need to switch DDL owner.
     1. The reorg worker will check the reorg info to confirm that the reorg job has completed subtasks.
         1. If it is not completed, enter the stage of reorg job splitting, and then enter the process of checking the completion of the reorg job. The subsequent process will not be repeated.
         2. If completed, enter the process of checking the completion of the reorg job. The follow-up process will not be repeated. (Problem: under the new framework, no owner can continue to perform backfill phase tasks).
 
-### <a id="_gkvcehv497ov"></a>__Failed__
+###Failed
 
 When processing the reorg stage, the process with an error when backfilling is handled as follows:
 
-1. When one of the reorg workers has an error when processing subtask, it changes the state in the TiDB_background_subtask table to the failed state and exits the process of processing this subtask.
+1. When one of the reorg workers has an error when processing subtask, it changes the state in the tidb_background_subtask table to the failed state and exits the process of processing this subtask.
 2. DDL In addition to checking whether all tasks are completed, it will also check whether   there is a subtask execution failure (currently considering an error will return ).
     1. Move unprocessed subtasks into the TiDB_background_subtask_history table.
     2. When there is no subtask to process, the error is passed to the generation logic. This will convert the DDL job to a rollback job according to the original logic.
 3. All TiDB b ackfill worker in each task to take subtask, if the half of the execution found that the task does not exist (indicating that half of the reorg task failed to execute, the owner cleaned up its subtask), then exit normally .
 4. Follow-up operations refer to the rollback process.
 
-### <a id="_kz1ccvjak5qh"></a>__Cancel__
+###Cancel
 
 When the user executes admin cancel ddl job , the job is marked as canceling as in the original logic. DDL the reorg worker where the owner is located checks this field and finds that it is canceling, the next process is similar to step 3-6 of Failed.
 
-### <a id="_p77k5jsxxa42"></a>__Clean up__
+###Clean up
 
 Since the subtask may be segmented by each table region, it may cause the mysql.TiDB_background_subtask_history table is particularly large, so you need to add a regular cleaning function.
 
-### <a id="_mya0tqljljle"></a>__Display__
+###Display
 
-#### <a id="_71xzduyjcqa"></a>__Display of Progress__
+####Display of Progress
 
 The first stage can be through subtasks inside row count to calculate the entire DDL job row count. Then the display is the same as the original logic.
 
 Subsequent progress can be displayed more humanely, providing results such as percentages, allowing users to better understand the processing of the reorg phase.
 
-#### <a id="_gnys6atmc5yu"></a>__Monitor__
+####Monitor
 
 Update and add some new logs and metrics.
 
-## <a id="_oxptv4f08c5z"></a>__Further__
+##Further
 
-- Added backfill to handle subtask scheduling policies, including preventing small reorg jobs from being blocked by large reorg jobs.
-- Support reorg progress show
-- Remove the DDL owner.
+- Improve and optimize backfill processing subtask scheduling strategy
+    - Use more flexible and reasonable subtask segmentation and preemption mechanism
+    - Prevent small reorg jobs from being blocked by large reorg jobs , this function should be handled in conjunction with resource management functions
+- The framework is more general, and the current form and interface are more general, but relatively simple, the future will be improved so that it can be used more with DDL reorg as slower background tasks
+- Consider the design of removing DDL owner
 - Remove the reorg worker layers, and each TiDB -server only keeps one DDL worker for schema synchronization and other work.
 
 
