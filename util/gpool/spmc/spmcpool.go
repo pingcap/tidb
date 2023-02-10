@@ -249,6 +249,7 @@ func (p *Pool[T, U, C, CT, TF]) ReleaseAndWait() {
 		if p.Running() == 0 && p.heartbeatDone.Load() && p.waitingTask.Load() == 0 {
 			return
 		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
