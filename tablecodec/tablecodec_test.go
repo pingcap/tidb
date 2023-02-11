@@ -708,4 +708,12 @@ func TestV2TableCodec(t *testing.T) {
 	key = c.EncodeKey(key)
 	tbid := DecodeTableID(key)
 	require.Equal(t, tableID, tbid)
+
+	key = []byte("x001HelloWorld")
+	tbid = DecodeTableID(key)
+	require.Equal(t, int64(0), tbid)
+
+	key = []byte("x001x001t123")
+	tbid = DecodeTableID(key)
+	require.Equal(t, int64(0), tbid)
 }
