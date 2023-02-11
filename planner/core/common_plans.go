@@ -596,6 +596,7 @@ type PlanReplayer struct {
 	File     string
 
 	Capture    bool
+	Remove     bool
 	SQLDigest  string
 	PlanDigest string
 }

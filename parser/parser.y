@@ -14662,4 +14662,19 @@ PlanReplayerStmt:
 
 		$$ = x
 	}
+|	"PLAN" "REPLAYER" "CAPTURE" "REMOVE" stringLit stringLit
+	{
+		x := &ast.PlanReplayerStmt{
+			Stmt:       nil,
+			Analyze:    false,
+			Remove:     true,
+			SQLDigest:  $5,
+			PlanDigest: $6,
+			Where:      nil,
+			OrderBy:    nil,
+			Limit:      nil,
+		}
+
+		$$ = x
+	}
 %%

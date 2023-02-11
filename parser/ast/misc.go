@@ -268,7 +268,10 @@ type PlanReplayerStmt struct {
 	Load    bool
 
 	// Capture indicates 'plan replayer capture <sql_digest> <plan_digest>'
-	Capture    bool
+	Capture bool
+	// Remove indicates `plan replayer capture remove <sql_digest> <plan_digest>
+	Remove bool
+
 	SQLDigest  string
 	PlanDigest string
 
@@ -298,6 +301,14 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(n.PlanDigest)
 		return nil
 	}
+	if n.Remove {
+		ctx.WriteKeyWord("PLAN REPLAYER CAPTURE REMOVE ")
+		ctx.WriteString(n.SQLDigest)
+		ctx.WriteKeyWord(" ")
+		ctx.WriteString(n.PlanDigest)
+		return nil
+	}
+
 	ctx.WriteKeyWord("PLAN REPLAYER DUMP EXPLAIN ")
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")
