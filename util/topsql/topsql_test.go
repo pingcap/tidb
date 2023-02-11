@@ -397,7 +397,9 @@ func mockExecuteSQL(sql, plan string) {
 func mockExecute(d time.Duration) {
 	start := time.Now()
 	for {
-		for i := 0; i < 10e5; i++ {
+		i := 0
+		for i < 10e5 {
+			i++
 		}
 		if time.Since(start) > d {
 			return

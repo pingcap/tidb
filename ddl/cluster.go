@@ -142,6 +142,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 		select {
 		case <-ticker.C:
 			minSafeTime = getStoreGlobalMinSafeTS(sctx.GetStore())
+			//nolint: all_revive
 			break
 		case <-ctx.Done():
 			return ctx.Err()

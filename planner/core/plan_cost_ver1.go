@@ -190,8 +190,9 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer1(taskType property.TaskType, 
 
 	// to keep compatible with the previous cost implementation, re-calculate table-scan cost by using index stats-count again (see copTask.finishIndexPlan).
 	// TODO: amend table-side cost here later
-	var tmp PhysicalPlan
-	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
+	var tmp = p.tablePlan
+	for len(tmp.Children()) > 0 {
+		tmp = tmp.Children()[0]
 	}
 	ts := tmp.(*PhysicalTableScan)
 	tblCost, err := ts.getPlanCostVer1(property.CopMultiReadTaskType, option)

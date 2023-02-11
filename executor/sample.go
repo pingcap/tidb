@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/tracing"
@@ -378,8 +379,7 @@ func (s *sampleSyncer) sync() error {
 	defer func() {
 		for _, f := range s.fetchers {
 			// Cleanup channels to terminate fetcher goroutines.
-			for _, ok := <-f.kvChan; ok; {
-			}
+			channel.Clear(f.kvChan)
 		}
 	}()
 	for i := 0; i < s.totalCount; i++ {

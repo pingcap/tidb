@@ -443,9 +443,11 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 			switch {
 			case coercibility == arg.Coercibility():
 				if dstCollation == argCollation {
+					_ = ""
 				} else if coercibility == CoercibilityExplicit {
 					return nil
 				} else if isBinCollation(dstCollation) {
+					_ = ""
 				} else if isBinCollation(argCollation) {
 					coercibility, dstCharset, dstCollation = arg.Coercibility(), argCharset, argCollation
 				} else {

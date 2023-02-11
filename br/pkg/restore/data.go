@@ -188,6 +188,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context) error {
 	for i := 0; i < totalStores; i++ {
 		select {
 		case <-ectx.Done(): // err or cancel, eg.wait will catch the error
+			//nolint: all_revive
 			break
 		case storeMeta := <-metaChan:
 			recovery.StoreMetas[i] = storeMeta

@@ -774,14 +774,13 @@ func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, tota
 		case <-ctx.Done():
 			return
 		case <-time.After(500 * time.Millisecond):
-			break
-		}
-		cur := progress.GetCurrent()
-		p := float64(cur) / float64(total)
-		p *= 100
-		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
-		if err != nil {
-			log.Warn("failed to update tmp progress file", zap.Error(err))
+			cur := progress.GetCurrent()
+			p := float64(cur) / float64(total)
+			p *= 100
+			err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+			if err != nil {
+				log.Warn("failed to update tmp progress file", zap.Error(err))
+			}
 		}
 	}
 }

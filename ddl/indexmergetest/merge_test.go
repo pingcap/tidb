@@ -520,7 +520,6 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	timer := time.NewTimer(300 * time.Millisecond)
 	select {
 	case <-timer.C:
-		break
 	case <-afterCommit:
 		require.Fail(t, "should be blocked by the pessimistic txn")
 	}

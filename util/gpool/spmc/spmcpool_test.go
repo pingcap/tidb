@@ -305,6 +305,7 @@ func TestPoolWithEnoughCapacity(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for range resultCh {
+					_ = ""
 				}
 			}()
 			ctl.Wait()
@@ -361,6 +362,7 @@ func TestPoolWithoutEnoughCapacity(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for range resultCh {
+					_ = ""
 				}
 			}()
 			ctl.Wait()
@@ -418,6 +420,7 @@ func TestPoolWithoutEnoughCapacityParallel(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for range resultCh {
+					_ = ""
 				}
 			}()
 			ctl.Wait()
@@ -467,6 +470,7 @@ func TestBenchPool(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range resultCh {
+				_ = ""
 			}
 		}()
 		ctl.Wait()

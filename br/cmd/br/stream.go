@@ -189,10 +189,7 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 	}
 
 	switch cmdName {
-	case task.StreamMetadata:
-		{
-			// do nothing.
-		}
+	case task.StreamMetadata: // do nothing.
 	case task.StreamTruncate:
 		if err = cfg.ParseStreamTruncateFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)

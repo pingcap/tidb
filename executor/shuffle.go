@@ -298,6 +298,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 				case <-e.finishCh:
 					return
 				case results[workerIdx] = <-w.receivers[dataSourceIndex].inputHolderCh:
+					//nolint: all_revive
 					break
 				}
 			}
