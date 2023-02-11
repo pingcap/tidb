@@ -52,7 +52,9 @@ func IntergerUnsignedUpperBound(intType byte) uint64 {
 	case mysql.TypeBit:
 		return math.MaxUint64
 	case mysql.TypeEnum:
-		return math.MaxUint64
+		// enum can have at most 65535 distinct elements
+		// it would be better to use len(FieldType.GetElems()), but we only have a byte type here
+		return 65535
 	case mysql.TypeSet:
 		return math.MaxUint64
 	default:
@@ -73,8 +75,12 @@ func IntergerSignedUpperBound(intType byte) int64 {
 		return math.MaxInt32
 	case mysql.TypeLonglong:
 		return math.MaxInt64
+	case mysql.TypeEnum:
+		// enum can have at most 65535 distinct elements
+		// it would be better to use len(FieldType.GetElems()), but we only have a byte type here
+		return 65535
 	default:
-		panic("Input byte is not a mysql type")
+		panic("Input byte is not a mysql int type")
 	}
 }
 
@@ -91,6 +97,8 @@ func IntergerSignedLowerBound(intType byte) int64 {
 		return math.MinInt32
 	case mysql.TypeLonglong:
 		return math.MinInt64
+	case mysql.TypeEnum:
+		return 0
 	default:
 		panic("Input byte is not a mysql type")
 	}
