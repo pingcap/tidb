@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // TestTableCodec  tests some functions in package tablecodec
@@ -697,4 +698,14 @@ func TestTempIndexValueCodec(t *testing.T) {
 	require.Equal(t, result[0].Handle.IntValue(), int64(100))
 	require.Equal(t, result[1].Handle.IntValue(), int64(100))
 	require.Equal(t, result[2].Handle.IntValue(), int64(101))
+}
+
+func TestV2TableCodec(t *testing.T) {
+	const tableID int64 = 31415926
+	key := EncodeTablePrefix(tableID)
+	c, err := tikv.NewCodecV2(tikv.ModeTxn, 271828)
+	require.NoError(t, err)
+	key = c.EncodeKey(key)
+	tbid := DecodeTableID(key)
+	require.Equal(t, tableID, tbid)
 }
