@@ -1858,6 +1858,8 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		return 0, nil, nil, errors.Trace(err)
 	}
 	if pid == 0 {
+		// Reset the id to the first partition
+		reorg.PhysicalTableID = pi.Definitions[0].ID
 		// Next partition does not exist, all the job done.
 		return 0, nil, nil, nil
 	}
