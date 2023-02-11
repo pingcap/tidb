@@ -566,7 +566,7 @@ func BuildBackupRangeAndSchema(
 			var globalAutoID int64
 			switch {
 			case tableInfo.IsSequence():
-				globalAutoID, err = autoIDAccess.SequenceCycle().Get()
+				globalAutoID, err = autoIDAccess.SequenceValue().Get()
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
@@ -841,7 +841,7 @@ func (bc *Client) BackupRange(
 	} else {
 		for _, store := range allStores {
 			for _, label := range store.Labels {
-				if val, ok := replicaReadLabel[label.Key]; !ok && val == label.Value {
+				if val, ok := replicaReadLabel[label.Key]; ok && val == label.Value {
 					targetStores = append(targetStores, store) // send backup push down request to stores that match replica read label
 					targetStoreIds[store.GetId()] = struct{}{} // record store id for fine grained backup
 				}
