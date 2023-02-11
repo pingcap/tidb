@@ -58,7 +58,7 @@ go_library(
 
 go_test(
     name = "aggfuncs_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "aggfunc_test.go",
         "export_test.go",
@@ -89,7 +89,7 @@ go_test(
     embed = [":aggfuncs"],
     flaky = True,
     race = "on",
-    shard_count = 25,
+    shard_count = 40,
     deps = [
         "//expression",
         "//expression/aggregation",
