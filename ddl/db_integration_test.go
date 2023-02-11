@@ -4311,3 +4311,14 @@ func TestRegexpFunctionsGeneratedColumn(t *testing.T) {
 
 	tk.MustExec("drop table if exists reg_like")
 }
+
+func TestIssue41277(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select @@global.tidb_enable_ddl").Check(testkit.Rows("1"))
+	tk.MustGetErrCode("set @@global.tidb_enable_ddl=false;", errno.ErrDDLSetting)
+	tk.MustGetErrCode("set @@global.tidb_enable_ddl=false;", errno.ErrDDLSetting)
+	tk.MustQuery("select @@global.tidb_enable_ddl").Check(testkit.Rows("1"))
+}
