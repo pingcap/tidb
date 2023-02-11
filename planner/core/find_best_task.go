@@ -1500,13 +1500,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		if ds.tableInfo.GetPartitionInfo() != nil {
 			return invalidTask, nil
 		}
-		if cop.tablePlan != nil {
-			cop.doubleReadWithOrderReserved = true
-			if !ds.tableInfo.IsCommonHandle {
-				col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
-				cop.extraHandleCol = col
-				cop.needExtraProj = cop.needExtraProj || isNew
-			}
+		if cop.tablePlan != nil && !ds.tableInfo.IsCommonHandle {
+			col, isNew := cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.extraHandleCol = col
+			cop.needExtraProj = cop.needExtraProj || isNew
 		}
 	}
 	if cop.needExtraProj {

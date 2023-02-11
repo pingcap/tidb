@@ -1223,14 +1223,11 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
 		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
 		ts.stats = &property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion}
-		if cop.keepOrder {
-			cop.doubleReadWithOrderReserved = true
-			// If inner cop task need keep order, the extraHandleCol should be set.
-			if !ds.tableInfo.IsCommonHandle {
-				var needExtraProj bool
-				cop.extraHandleCol, needExtraProj = ts.appendExtraHandleCol(ds)
-				cop.needExtraProj = cop.needExtraProj || needExtraProj
-			}
+		// If inner cop task need keep order, the extraHandleCol should be set.
+		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
+			var needExtraProj bool
+			cop.extraHandleCol, needExtraProj = ts.appendExtraHandleCol(ds)
+			cop.needExtraProj = cop.needExtraProj || needExtraProj
 		}
 		if cop.needExtraProj {
 			cop.originSchema = ds.schema
