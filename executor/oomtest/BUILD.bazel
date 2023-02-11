@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "oomtest_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = ["oom_test.go"],
     flaky = True,
     race = "on",

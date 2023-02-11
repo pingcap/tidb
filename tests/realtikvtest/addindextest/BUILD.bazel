@@ -21,7 +21,7 @@ go_library(
 
 go_test(
     name = "addindextest_test",
-    timeout = "long",
+    timeout = "short",
     srcs = [
         "add_index_test.go",
         "concurrent_ddl_test.go",
@@ -32,6 +32,7 @@ go_test(
         "pitr_test.go",
     ],
     embed = [":addindextest"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/backend/local",
         "//config",

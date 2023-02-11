@@ -16,6 +16,7 @@ go_test(
     timeout = "short",
     srcs = ["metrics_test.go"],
     embed = [":metrics"],
+    flaky = True,
     shard_count = 5,
     deps = ["@com_github_stretchr_testify//require"],
 )

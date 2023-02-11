@@ -58,7 +58,7 @@ go_library(
 
 go_test(
     name = "aggfuncs_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "aggfunc_test.go",
         "export_test.go",

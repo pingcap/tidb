@@ -122,7 +122,7 @@ go_library(
 
 go_test(
     name = "expression_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "builtin_arithmetic_test.go",
