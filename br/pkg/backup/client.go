@@ -566,7 +566,7 @@ func BuildBackupRangeAndSchema(
 			var globalAutoID int64
 			switch {
 			case tableInfo.IsSequence():
-				globalAutoID, err = autoIDAccess.SequenceCycle().Get()
+				globalAutoID, err = autoIDAccess.SequenceValue().Get()
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
