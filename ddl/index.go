@@ -1851,7 +1851,16 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		return 0, nil, nil, nil
 	}
 
-	pid, err := findNextPartitionID(currPhysicalTableID, pi.Definitions)
+	// During data copying, copy data from partitions to be dropped
+	nextPartitionDefs := pi.DroppingDefinitions
+	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
+		// During index re-creation, process data from partitions to be added
+		nextPartitionDefs = pi.AddingDefinitions
+	}
+	if nextPartitionDefs == nil {
+		nextPartitionDefs = pi.Definitions
+	}
+	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)
 	if err != nil {
 		// Fatal error, should not run here.
 		logutil.BgLogger().Error("[ddl] find next partition ID failed", zap.Reflect("table", t), zap.Error(err))

@@ -147,6 +147,8 @@ const (
 	LblAddIndex      = "add_index"
 	LblAddIndexMerge = "add_index_merge_tmp"
 	LblModifyColumn  = "modify_column"
+
+	LblReorgPartition = "reorganize_partition"
 )
 
 // GenerateReorgLabel returns the label with schema name and table name.

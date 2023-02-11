@@ -1119,7 +1119,12 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				}
 				b.Ti.PartitionTelemetry.UseAddIntervalPartition = true
 			case ast.AlterTableExchangePartition:
-				b.Ti.UesExchangePartition = true
+				b.Ti.UseExchangePartition = true
+			case ast.AlterTableReorganizePartition:
+				if b.Ti.PartitionTelemetry == nil {
+					b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+				}
+				b.Ti.PartitionTelemetry.UseReorganizePartition = true
 			}
 		}
 	case *ast.CreateTableStmt:
@@ -3560,10 +3565,14 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 		keyColOffsets[i] = offset
 	}
 
-	pe, err := pt.(interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
-	}).PartitionExpr()
-	if err != nil {
+	t, ok := pt.(interface {
+		PartitionExpr() *tables.PartitionExpr
+	})
+	if !ok {
+		return nil
+	}
+	pe := t.PartitionExpr()
+	if pe == nil {
 		return nil
 	}
 

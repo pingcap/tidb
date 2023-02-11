@@ -416,7 +416,7 @@ func testAddIndexRollback(t *testing.T, idxName, addIdxSQL, errMsg string, hasNu
 	}
 
 	done := make(chan error, 1)
-	go backgroundExec(store, addIdxSQL, done)
+	go backgroundExec(store, "test", addIdxSQL, done)
 
 	times := 0
 	ticker := time.NewTicker(indexModifyLease / 2)

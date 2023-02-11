@@ -2138,6 +2138,10 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}
+	case model.ActionReorganizePartition:
+		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
+			return
+		}
 	}
 
 	if len(physicalTableIDs) == 0 {
