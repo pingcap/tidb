@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -198,19 +199,20 @@ func makeAddIdxBackfillJobs(schemaID, tblID, jobID, eleID int64, cnt int, query 
 				TableID:  tblID,
 				Query:    query,
 			},
+			StartKey: sKey,
+			EndKey:   eKey,
 		}
 		bj := &ddl.BackfillJob{
-			ID:            int64(i),
-			JobID:         jobID,
-			EleID:         eleID,
-			EleKey:        meta.IndexElementKey,
-			State:         model.JobStateNone,
-			InstanceLease: types.ZeroTimestamp,
-			CurrKey:       sKey,
-			StartKey:      sKey,
-			EndKey:        eKey,
-			Meta:          bm,
+			ID:              int64(i),
+			JobID:           jobID,
+			EleID:           eleID,
+			EleKey:          meta.IndexElementKey,
+			State:           model.JobStateNone,
+			PhysicalTableID: 1,
+			InstanceLease:   types.ZeroTimestamp,
+			Meta:            bm,
 		}
+		bj.Meta.CurrKey = sKey
 		bJobs = append(bJobs, bj)
 	}
 	return bJobs
@@ -221,7 +223,7 @@ func equalBackfillJob(t *testing.T, a, b *ddl.BackfillJob, lessTime types.Time) 
 	require.Equal(t, a.JobID, b.JobID)
 	require.Equal(t, a.EleID, b.EleID)
 	require.Equal(t, a.EleKey, b.EleKey)
-	require.Equal(t, a.StoreID, b.StoreID)
+	require.Equal(t, a.PhysicalTableID, b.PhysicalTableID)
 	require.Equal(t, a.InstanceID, b.InstanceID)
 	require.GreaterOrEqual(t, b.InstanceLease.Compare(lessTime), 0)
 	require.Equal(t, a.State, b.State)
@@ -229,8 +231,8 @@ func equalBackfillJob(t *testing.T, a, b *ddl.BackfillJob, lessTime types.Time) 
 }
 
 func getIdxConditionStr(jobID, eleID int64) string {
-	return fmt.Sprintf("ddl_job_id = %d and ele_id = %d and ele_key = %s",
-		jobID, eleID, wrapKey2String(meta.IndexElementKey))
+	return fmt.Sprintf("task_key like \"%d_%s_%d_%%\"",
+		jobID, hex.EncodeToString(meta.IndexElementKey), eleID)
 }
 
 func readInTxn(se sessionctx.Context, f func(sessionctx.Context)) (err error) {
@@ -241,6 +243,18 @@ func readInTxn(se sessionctx.Context, f func(sessionctx.Context)) (err error) {
 	f(se)
 	se.RollbackTxn(context.Background())
 	return nil
+}
+
+func backfillJob2PTblMetaMap(bJob *ddl.BackfillJob) map[int64]*ddl.BackfillJobRangeMeta {
+	m := &ddl.BackfillJobRangeMeta{
+		ID:       bJob.ID,
+		PhyTblID: bJob.PhysicalTableID,
+		StartKey: bJob.Meta.StartKey,
+		EndKey:   bJob.Meta.EndKey,
+	}
+	mMap := make(map[int64]*ddl.BackfillJobRangeMeta)
+	mMap[m.PhyTblID] = m
+	return mMap
 }
 
 func TestSimpleExecBackfillJobs(t *testing.T) {
@@ -255,6 +269,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	eleID1 := int64(11)
 	eleID2 := int64(22)
 	eleID3 := int64(33)
+	noPID := int64(0)
 	uuid := d.GetID()
 	eleKey := meta.IndexElementKey
 	instanceLease := ddl.InstanceLease
@@ -263,10 +278,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJob, err := ddl.GetBackfillJobForOneEle(se, []int64{jobID1, jobID2}, instanceLease)
 	require.NoError(t, err)
 	require.Nil(t, bJob)
-	bJobs, err := ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, instanceLease)
+	bJobs, err := ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, noPID, instanceLease)
 	require.EqualError(t, err, dbterror.ErrDDLJobNotFound.FastGen("get zero backfill job").Error())
 	require.Nil(t, bJobs)
-	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID2), "check_backfill_job_count")
+	allCnt, err := ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID2), "check_backfill_job_count")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
 	// Test some backfill jobs, add backfill jobs to the table.
@@ -279,17 +294,17 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bjTestCases = append(bjTestCases, bJobs2...)
 	bjTestCases = append(bjTestCases, bJobs3...)
 	err = ddl.AddBackfillJobs(se, bjTestCases)
-	require.Equal(t, err.Error(), "[table:1292]Incorrect timestamp value: '0000-00-00 00:00:00' for column 'exec_lease' at row 1")
+	require.Equal(t, err.Error(), "[table:1292]Incorrect timestamp value: '0000-00-00 00:00:00' for column 'exec_expired' at row 1")
 	tk.Session().GetSessionVars().SQLMode = mysql.ModeNone
 	err = ddl.AddBackfillJobs(se, bjTestCases)
-	// ID     jobID     eleID    InstanceID
-	// -------------------------------------
-	// 0      jobID1     eleID1    uuid
-	// 1      jobID1     eleID1    ""
-	// 0      jobID2     eleID2    ""
-	// 1      jobID2     eleID2    ""
-	// 0      jobID2     eleID3    ""
-	// 1      jobID2     eleID3    ""
+	// ID     jobID     eleID    InstanceID  PhysicalTableID
+	// --------------------------------------------------
+	// 0      jobID1     eleID1    uuid          1
+	// 1      jobID1     eleID1    ""            1
+	// 0      jobID2     eleID2    ""            1
+	// 1      jobID2     eleID2    ""            1
+	// 0      jobID2     eleID3    ""            1
+	// 1      jobID2     eleID3    ""            1
 	require.NoError(t, err)
 	// test get some backfill jobs
 	bJob, err = ddl.GetBackfillJobForOneEle(se, []int64{jobID2 - 1, jobID2 + 1}, instanceLease)
@@ -306,7 +321,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID2, uuid, instanceLease)
+	bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID2, uuid, noPID, instanceLease)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
 	expectJob = bjTestCases[2]
@@ -322,10 +337,163 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	})
 	currGoTime := ddl.GetLeaseGoTime(currTime, instanceLease)
 	require.GreaterOrEqual(t, currGoTime.Compare(bJobs[0].InstanceLease), 0)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, cnt)
+	// test physical table
+	err = ddl.RemoveBackfillJob(se, true, bJobs1[0])
+	require.NoError(t, err)
+	// ID     jobID     eleID    InstanceID  PhysicalTableID
+	// --------------------------------------------------
+	// 0      jobID2     eleID2    ""            1
+	// 1      jobID2     eleID2    ""            1
+	// 0      jobID2     eleID3    ""            1
+	// 1      jobID2     eleID3    ""            1
+	bPhyJobs := makeAddIdxBackfillJobs(1, 2, jobID1, eleID1, 10, "alter table t add index idx(a)")
+	bPhyJobs[1].InstanceID = "uuid_1"
+	bPhyJobs[2].PhysicalTableID = 2
+	bPhyJobs[6].PhysicalTableID = 2
+	bPhyJobs[4].PhysicalTableID = 3
+	bPhyJobs[5].PhysicalTableID = 3
+	bPhyJobs[8].PhysicalTableID = 3
+	bPhyJobs[7].PhysicalTableID = 4
+	bPhyJobs[9].PhysicalTableID = 4
+	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
+	// -----------------------------------------------------------------------
+	// 0      jobID2     eleID2    ""                               1
+	// 1      jobID2     eleID2    ""                               1
+	// 0      jobID2     eleID3    ""                               1
+	// 1      jobID2     eleID3    ""                               1
+	// 0      jobID1     eleID1    ""                               1
+	// 1      jobID1     eleID1    "uuid_1"                         1
+	// 2      jobID1     eleID1    ""                               2
+	// 3      jobID1     eleID1    ""                               1
+	// 4      jobID1     eleID1    ""                               3
+	// 5      jobID1     eleID1    ""                               3
+	// 6      jobID1     eleID1    ""                               2
+	// 7      jobID1     eleID1    ""                               4
+	// 8      jobID1     eleID1    ""                               3
+	// 9      jobID1     eleID1    ""                               4
+	simpleCheck := func(batch, jobCnt int, bfJobIDs []int64, pID int64) {
+		err = ddl.AddBackfillJobs(se, bPhyJobs)
+		require.NoError(t, err)
+		bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, batch, jobID1, uuid, pID, instanceLease)
+		require.NoError(t, err)
+		require.Len(t, bJobs, jobCnt)
+		isExist := false
+		for _, id := range bfJobIDs {
+			if id == bJobs[0].ID {
+				isExist = true
+			}
+		}
+		require.True(t, isExist, fmt.Sprintf("expected ids:%v, actual id:%d", bfJobIDs, bJobs[0].ID))
+		err = ddl.RemoveBackfillJob(se, true, bJobs1[0])
+		require.NoError(t, err)
+	}
+	type cntAndID struct {
+		batch    int
+		bfJobCnt int
+		bfJobID  []int64
+	}
+	checkAndClean := func(expectRet1, expectRet2 cntAndID) {
+		simpleCheck(expectRet1.batch, expectRet1.bfJobCnt, expectRet1.bfJobID, noPID)
+		simpleCheck(expectRet2.batch, expectRet2.bfJobCnt, expectRet2.bfJobID, ddl.GetJobWithoutPartition)
+	}
+	checkAndClean(cntAndID{3, 3, []int64{0, 1, 3}},
+		cntAndID{3, 3, []int64{0, 1, 3}})
+	bPhyJobs[1].InstanceLease = types.NewTime(types.FromGoTime(time.Now().Add(-time.Hour).UTC()), 0, 0)
+	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
+	// -----------------------------------------------------------------------
+	// 0      jobID2     eleID2    ""                               1
+	// 1      jobID2     eleID2    ""                               1
+	// 0      jobID2     eleID3    ""                               1
+	// 1      jobID2     eleID3    ""                               1
+	// 0      jobID1     eleID1    ""                               1
+	// 1      jobID1     eleID1    "uuid_1"   currentTime-hour      1
+	// 2      jobID1     eleID1    ""                               2
+	// 3      jobID1     eleID1    ""                               1
+	// 4      jobID1     eleID1    ""                               3
+	// 5      jobID1     eleID1    ""                               3
+	// 6      jobID1     eleID1    ""                               2
+	// 7      jobID1     eleID1    ""                               4
+	// 8      jobID1     eleID1    ""                               3
+	// 9      jobID1     eleID1    ""                               4
+	checkAndClean(cntAndID{3, 3, []int64{0, 1, 3}},
+		cntAndID{3, 3, []int64{0, 1, 3}})
+	bPhyJobs[3].InstanceLease = types.NewTime(types.FromGoTime(time.Now().UTC()), 0, 0)
+	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
+	// -----------------------------------------------------------------------
+	// 0      jobID2     eleID2    ""                               1
+	// 1      jobID2     eleID2    ""                               1
+	// 0      jobID2     eleID3    ""                               1
+	// 1      jobID2     eleID3    ""                               1
+	// 0      jobID1     eleID1    ""                               1
+	// 1      jobID1     eleID1    "uuid_1"   currentTime-hour      1
+	// 2      jobID1     eleID1    ""                               2
+	// 3      jobID1     eleID1    ""         currentTime           1  // should not exist
+	// 4      jobID1     eleID1    ""                               3
+	// 5      jobID1     eleID1    ""                               3
+	// 6      jobID1     eleID1    ""                               2
+	// 7      jobID1     eleID1    ""                               4
+	// 8      jobID1     eleID1    ""                               3
+	// 9      jobID1     eleID1    ""                               4
+	checkAndClean(cntAndID{3, 2, []int64{2, 6}},
+		cntAndID{3, 3, []int64{0, 1, 3}})
+	bPhyJobs[6].InstanceLease = types.NewTime(types.FromGoTime(time.Now().UTC()), 0, 0)
+	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
+	// -----------------------------------------------------------------------
+	// 0      jobID2     eleID2    ""                               1
+	// 1      jobID2     eleID2    ""                               1
+	// 0      jobID2     eleID3    ""                               1
+	// 1      jobID2     eleID3    ""                               1
+	// 0      jobID1     eleID1    ""                               1
+	// 1      jobID1     eleID1    "uuid_1"   currentTime-hour      1
+	// 2      jobID1     eleID1    ""                               2
+	// 3      jobID1     eleID1    ""         currentTime           1  // should not exist
+	// 4      jobID1     eleID1    ""                               3
+	// 5      jobID1     eleID1    ""                               3
+	// 6      jobID1     eleID1    ""         currentTime           2  // should not exist
+	// 7      jobID1     eleID1    ""                               4
+	// 8      jobID1     eleID1    ""                               3
+	// 9      jobID1     eleID1    ""                               4
+	checkAndClean(cntAndID{3, 2, []int64{2, 6}},
+		cntAndID{10, 10, []int64{0, 1, 3}})
+	bPhyJobs[6].InstanceID = "uuid_2"
+	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
+	// -----------------------------------------------------------------------
+	// 0      jobID2     eleID2    ""                               1
+	// 1      jobID2     eleID2    ""                               1
+	// 0      jobID2     eleID3    ""                               1
+	// 1      jobID2     eleID3    ""                               1
+	// 0      jobID1     eleID1    ""                               1
+	// 1      jobID1     eleID1    "uuid_1"   currentTime-hour      1
+	// 2      jobID1     eleID1    ""                               2
+	// 3      jobID1     eleID1    ""         currentTime           1  // should not exist
+	// 4      jobID1     eleID1    ""                               3
+	// 5      jobID1     eleID1    ""                               3
+	// 6      jobID1     eleID1    "uuid_2"   currentTime           2  // should not exist
+	// 7      jobID1     eleID1    ""                               4
+	// 8      jobID1     eleID1    ""                               3
+	// 9      jobID1     eleID1    ""                               4
+	checkAndClean(cntAndID{3, 3, []int64{4, 5, 8}},
+		cntAndID{10, 9, []int64{0, 1, 3}})
+	// ID     jobID     eleID    InstanceID   InstanceLease   PhysicalTableID
+	// -----------------------------------------------------------------------
+	// 0      jobID2     eleID2    ""                               1
+	// 1      jobID2     eleID2    ""                               1
+	// 0      jobID2     eleID3    ""                               1
+	// 1      jobID2     eleID3    ""                               1
 
+	err = ddl.AddBackfillJobs(se, bJobs1)
+	require.NoError(t, err)
+	// ID     jobID     eleID
+	// ------------------------
+	// 0      jobID1     eleID1
+	// 1      jobID1     eleID1
+	// 0      jobID2     eleID2
+	// 1      jobID2     eleID2
+	// 0      jobID2     eleID3
+	// 1      jobID2     eleID3
 	// remove a backfill job
 	err = ddl.RemoveBackfillJob(se, false, bJobs1[0])
 	// ID     jobID     eleID
@@ -336,10 +504,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID3
 	// 1      jobID2     eleID3
 	require.NoError(t, err)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 1)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, cnt)
 	// remove all backfill jobs
@@ -350,10 +518,10 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 0      jobID2     eleID3
 	// 1      jobID2     eleID3
 	require.NoError(t, err)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 1)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID2), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
 	// clean backfill job
@@ -374,16 +542,16 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 		currTime, err = ddl.GetOracleTimeWithStartTS(se)
 		require.NoError(t, err)
 	})
-	condition := fmt.Sprintf("exec_ID = '' or exec_lease < '%v' and ddl_job_id = %d order by ddl_job_id", currTime.Add(-instanceLease), jobID2)
-	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackfillHistoryTable, condition, "test_get_bj")
+	condition := fmt.Sprintf("exec_id = '' or exec_expired < '%v' and task_key like \"%d_%%\"", currTime.Add(-instanceLease), jobID2)
+	bJobs, err = ddl.GetBackfillJobs(se, ddl.BackgroundSubtaskHistoryTable, condition, "test_get_bj")
 	require.NoError(t, err)
 	require.Len(t, bJobs, 1)
-	require.Equal(t, bJobs[0].FinishTS, uint64(0))
+	require.Equal(t, bJobs[0].StateUpdateTS, uint64(0))
 
 	// test GetMaxBackfillJob
-	bjob, err := ddl.GetMaxBackfillJob(se, bJobs3[0].JobID, bJobs3[0].EleID, eleKey)
+	pTblMeta, err := ddl.GetPhysicalTableMetas(se, bJobs3[0].JobID, bJobs3[0].EleID, eleKey)
 	require.NoError(t, err)
-	require.Nil(t, bjob)
+	require.Len(t, pTblMeta, 0)
 	err = ddl.AddBackfillJobs(se, bjTestCases)
 	require.NoError(t, err)
 	// ID     jobID     eleID
@@ -394,9 +562,9 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 1      jobID2     eleID2
 	// 0      jobID2     eleID3
 	// 1      jobID2     eleID3
-	bjob, err = ddl.GetMaxBackfillJob(se, jobID2, eleID2, eleKey)
+	pTblMeta, err = ddl.GetPhysicalTableMetas(se, jobID2, eleID2, eleKey)
 	require.NoError(t, err)
-	require.Equal(t, bJobs2[1], bjob)
+	require.Equal(t, backfillJob2PTblMetaMap(bJobs2[1]), pTblMeta)
 	bJobs1[0].State = model.JobStateRollingback
 	bJobs1[0].ID = 2
 	bJobs1[0].InstanceID = uuid
@@ -415,18 +583,18 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 1      jobID2     eleID3    JobStateNone
 	// 2      jobID1     eleID1    JobStateRollingback
 	// 3      jobID1     eleID1    JobStateCancelled
-	bjob, err = ddl.GetMaxBackfillJob(se, jobID1, eleID1, eleKey)
+	pTblMeta, err = ddl.GetPhysicalTableMetas(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
-	require.Equal(t, bJobs1[1], bjob)
+	require.Equal(t, backfillJob2PTblMetaMap(bJobs1[1]), pTblMeta)
 	// test the BackfillJob's AbbrStr
 	require.Equal(t, fmt.Sprintf("ID:2, JobID:1, EleID:11, Type:add index, State:rollingback, InstanceID:%s, InstanceLease:0000-00-00 00:00:00", uuid), bJobs1[0].AbbrStr())
 	require.Equal(t, "ID:3, JobID:1, EleID:11, Type:add index, State:cancelled, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs1[1].AbbrStr())
 	require.Equal(t, "ID:0, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[0].AbbrStr())
 	require.Equal(t, "ID:1, JobID:2, EleID:33, Type:add index, State:none, InstanceID:, InstanceLease:0000-00-00 00:00:00", bJobs3[1].AbbrStr())
-	// test select tidb_ddl_backfill
-	tk.MustQuery(fmt.Sprintf("select exec_id, exec_lease from mysql.tidb_ddl_backfill where id = %d and  %s", bJobs1[0].ID, getIdxConditionStr(jobID1, eleID1))).
+	// test select tidb_background_subtask
+	tk.MustQuery(fmt.Sprintf("select exec_id, exec_expired from mysql.tidb_background_subtask where task_key like \"%%%d\" and  %s", bJobs1[0].ID, getIdxConditionStr(jobID1, eleID1))).
 		Check(testkit.Rows(fmt.Sprintf("%s 0000-00-00 00:00:00", uuid)))
-	tk.MustQuery(fmt.Sprintf("select exec_id, exec_lease from mysql.tidb_ddl_backfill where id = %d and  %s", bJobs1[1].ID, getIdxConditionStr(jobID1, eleID1))).
+	tk.MustQuery(fmt.Sprintf("select exec_id, exec_expired from mysql.tidb_background_subtask where task_key like \"%%%d\" and  %s", bJobs1[1].ID, getIdxConditionStr(jobID1, eleID1))).
 		Check(testkit.Rows(" 0000-00-00 00:00:00"))
 	// test GetBackfillMetas
 	bfErr := ddl.GetBackfillErr(se, jobID1, eleID1, eleKey)
@@ -439,7 +607,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs1[1].State = model.JobStateNone
 	bJobs1[1].ID = 4
 	err = ddl.AddBackfillHistoryJob(se, bJobs1)
-	// BackfillTable
+	// BackgroundSubtaskTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 0      jobID1     eleID1    JobStateNone
@@ -451,18 +619,18 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 2      jobID1     eleID1    JobStateRollingback
 	// 3      jobID1     eleID1    JobStateCancelled
 	//
-	// BackfillHistoryTable
+	// BackgroundSubtaskHistoryTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone
 	// 4      jobID1     eleID1    JobStateNone
-	bjob, err = ddl.GetMaxBackfillJob(se, jobID1, eleID1, eleKey)
+	pTblMeta, err = ddl.GetPhysicalTableMetas(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
-	require.Equal(t, bJobs1[0], bjob)
+	require.Equal(t, backfillJob2PTblMetaMap(bJobs1[0]), pTblMeta) // ???????????
 	bJobs1[0].ID = 6
 	bJobs1[1].ID = 7
 	err = ddl.AddBackfillJobs(se, bJobs1)
-	// BackfillTable
+	// BackgroundSubtaskTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 0      jobID1     eleID1    JobStateNone
@@ -476,28 +644,28 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 6      jobID1     eleID1    JobStateNone
 	// 7      jobID1     eleID1    JobStateNone
 	//
-	// BackfillHistoryTable
+	// BackgroundSubtaskHistoryTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone
 	// 4      jobID1     eleID1    JobStateNone
-	bjob, err = ddl.GetMaxBackfillJob(se, jobID1, eleID1, eleKey)
+	pTblMeta, err = ddl.GetPhysicalTableMetas(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
-	require.Equal(t, bJobs1[1], bjob)
+	require.Equal(t, backfillJob2PTblMetaMap(bJobs1[1]), pTblMeta)
 
 	// test MoveBackfillJobsToHistoryTable and GetInterruptedBackfillJobForOneEle
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 2)
 	err = ddl.MoveBackfillJobsToHistoryTable(se, bJobs3[0])
 	require.NoError(t, err)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillHistoryTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskHistoryTable, getIdxConditionStr(jobID2, eleID3), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 2)
-	// BackfillTable
+	// BackgroundSubtaskTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 0      jobID1     eleID1    JobStateNone
@@ -509,7 +677,7 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	// 6      jobID1     eleID1    JobStateNone
 	// 7      jobID1     eleID1    JobStateNone
 	//
-	// BackfillHistoryTable
+	// BackgroundSubtaskHistoryTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone
@@ -519,15 +687,15 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	bJobs, err = ddl.GetInterruptedBackfillJobForOneEle(se, jobID1, eleID1, eleKey)
 	require.NoError(t, err)
 	require.Len(t, bJobs, 0)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 6)
 	err = ddl.MoveBackfillJobsToHistoryTable(se, bJobs1[0])
 	require.NoError(t, err)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 0)
-	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackfillHistoryTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
+	allCnt, err = ddl.GetBackfillJobCount(se, ddl.BackgroundSubtaskHistoryTable, getIdxConditionStr(jobID1, eleID1), "test_get_bj")
 	require.NoError(t, err)
 	require.Equal(t, allCnt, 8)
 	bJobs, err = ddl.GetInterruptedBackfillJobForOneEle(se, jobID2, eleID3, eleKey)
@@ -539,13 +707,13 @@ func TestSimpleExecBackfillJobs(t *testing.T) {
 	}
 	expectJob.State = model.JobStateCancelled
 	equalBackfillJob(t, bJobs3[0], bJobs[0], types.ZeroTimestamp)
-	// BackfillTable
+	// BackgroundSubtaskTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 0      jobID2     eleID2    JobStateNone
 	// 1      jobID2     eleID2    JobStateNone
 	//
-	// BackfillHistoryTable
+	// BackgroundSubtaskHistoryTable
 	// ID     jobID     eleID     state
 	// --------------------------------
 	// 5      jobID1     eleID1    JobStateNone
@@ -593,7 +761,7 @@ func TestGetTasks(t *testing.T) {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(1)`))
 		ch <- struct{}{}
 		var bJobs []*ddl.BackfillJob
-		bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, instanceLease)
+		bJobs, err = ddl.GetAndMarkBackfillJobsForOneEle(se, 1, jobID1, uuid, 1, instanceLease)
 		require.Len(t, bJobs, 1)
 	})
 	<-ch
@@ -604,7 +772,7 @@ func TestGetTasks(t *testing.T) {
 		se1 := ddl.NewSession(tk1.Session())
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(2)`))
 		var bJobs1 []*ddl.BackfillJob
-		bJobs1, err1 = ddl.GetAndMarkBackfillJobsForOneEle(se1, 1, jobID1, uuid, instanceLease)
+		bJobs1, err1 = ddl.GetAndMarkBackfillJobsForOneEle(se1, 1, jobID1, uuid, 1, instanceLease)
 		require.Len(t, bJobs1, 1)
 	})
 	wg.Wait()
@@ -616,6 +784,10 @@ func TestGetTasks(t *testing.T) {
 		require.True(t, strings.Contains(err.Error(), "[kv:9007]Write conflict"))
 	}
 
+	err = ddl.RemoveBackfillJob(se, true, bJobsTestCases[0])
+	require.NoError(t, err)
+	err = ddl.AddBackfillJobs(se, bJobsTestCases)
+	require.NoError(t, err)
 	// get tbl
 	tk.MustExec("create table t(a int, b int)")
 	var tableID int64
@@ -624,6 +796,7 @@ func TestGetTasks(t *testing.T) {
 	require.Nil(t, err)
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
+	pID := int64(0)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(0)`))
 	// Mock GetAndMarkBackfillJobsForOneEle gets a writing conflict error, but getTasks is successful.
 	// Step 1: se1 begins txn1.
@@ -634,7 +807,7 @@ func TestGetTasks(t *testing.T) {
 	wg.Run(func() {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(1)`))
 		ch <- struct{}{}
-		bJobs, err := ddl.GetTasks(ddl.GetDDLCtx(d), se, tbl, jobID1, 1)
+		bJobs, err := ddl.GetTasks(ddl.GetDDLCtx(d), se, tbl, jobID1, &pID, 1)
 		require.Nil(t, err)
 		require.Len(t, bJobs, 1)
 	})
@@ -644,7 +817,7 @@ func TestGetTasks(t *testing.T) {
 		tk1.MustExec("use test")
 		se1 := ddl.NewSession(tk1.Session())
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NotifyBeginTxnCh", `return(2)`))
-		bJobs1, err1 := ddl.GetTasks(ddl.GetDDLCtx(d), se1, tbl, jobID1, 1)
+		bJobs1, err1 := ddl.GetTasks(ddl.GetDDLCtx(d), se1, tbl, jobID1, &pID, 1)
 		require.Nil(t, err1)
 		require.Len(t, bJobs1, 1)
 	})

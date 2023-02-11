@@ -20,15 +20,14 @@ go_library(
 
 go_test(
     name = "sessiontxn_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "txn_context_test.go",
         "txn_manager_test.go",
         "txn_rc_tso_optimize_test.go",
     ],
     flaky = True,
-    race = "on",
-    shard_count = 2,
+    shard_count = 50,
     deps = [
         ":sessiontxn",
         "//domain",

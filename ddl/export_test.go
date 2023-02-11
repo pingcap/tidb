@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -28,13 +29,14 @@ func SetBatchInsertDeleteRangeSize(i int) {
 
 var NewCopContext4Test = newCopContext
 
-func FetchRowsFromCop4Test(copCtx *copContext, startKey, endKey kv.Key, store kv.Storage,
+func FetchRowsFromCop4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
 	batchSize int) ([]*indexRecord, bool, error) {
 	variable.SetDDLReorgBatchSize(int32(batchSize))
 	task := &reorgBackfillTask{
-		id:       1,
-		startKey: startKey,
-		endKey:   endKey,
+		id:            1,
+		startKey:      startKey,
+		endKey:        endKey,
+		physicalTable: tbl,
 	}
 	pool := newCopReqSenderPool(context.Background(), copCtx, store)
 	pool.adjustSize(1)

@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/ddl/internal/callback"
-	"github.com/pingcap/tidb/ddl/resourcegroup"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
@@ -88,7 +87,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(2000), g.RURate)
 	re.Equal(int64(-1), g.BurstLimit)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 0 YES"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 YES"))
 
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -99,53 +98,57 @@ func TestResourceGroupBasic(t *testing.T) {
 	res = tk.MustQuery("show warnings")
 	res.Check(testkit.Rows("Note 8249 Unknown resource group 'not_exists'"))
 
-	tk.MustExec("create resource group y " +
-		"CPU='4000m' " +
-		"IO_READ_BANDWIDTH='1G' " +
-		"IO_WRITE_BANDWIDTH='300M'")
+	tk.MustExec("create resource group y RU_PER_SEC=4000")
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
 		require.Equal(t, true, groupInfo.ID != 0)
 		require.Equal(t, "y", groupInfo.Name.L)
 		require.Equal(t, groupID, groupInfo.ID)
-		require.Equal(t, "4000m", groupInfo.CPULimiter)
-		require.Equal(t, "1G", groupInfo.IOReadBandwidth)
-		require.Equal(t, "300M", groupInfo.IOWriteBandwidth)
+		require.Equal(t, uint64(4000), groupInfo.RURate)
+		require.Equal(t, int64(4000), groupInfo.BurstLimit)
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
-	tk.MustExec("alter resource group y " +
-		"CPU='8000m' " +
-		"IO_READ_BANDWIDTH='10G' " +
-		"IO_WRITE_BANDWIDTH='3000M'")
+	tk.MustExec("alter resource group y BURSTABLE RU_PER_SEC=5000")
 	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
 		require.Equal(t, true, groupInfo.ID != 0)
 		require.Equal(t, "y", groupInfo.Name.L)
 		require.Equal(t, groupID, groupInfo.ID)
-		require.Equal(t, "8000m", groupInfo.CPULimiter)
-		require.Equal(t, "10G", groupInfo.IOReadBandwidth)
-		require.Equal(t, "3000M", groupInfo.IOWriteBandwidth)
+		require.Equal(t, uint64(5000), groupInfo.RURate)
+		require.Equal(t, int64(-1), groupInfo.BurstLimit)
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
 	tk.MustExec("drop resource group y")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
-	tk.MustContainErrMsg("create resource group x RU_PER_SEC=1000, CPU='8000m';", resourcegroup.ErrInvalidResourceGroupDuplicatedMode.Error())
+
+	tk.MustGetErrCode("create resource group x ru_per_sec=1000 ru_per_sec=200", mysql.ErrParse)
+	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 ru_per_sec=200, ru_per_sec=300", "Dupliated options specified")
+	tk.MustGetErrCode("create resource group x burstable, burstable", mysql.ErrParse)
+	tk.MustContainErrMsg("create resource group x burstable, burstable", "Dupliated options specified")
+	tk.MustGetErrCode("create resource group x  ru_per_sec=1000, burstable, burstable", mysql.ErrParse)
+	tk.MustContainErrMsg("create resource group x  ru_per_sec=1000, burstable, burstable", "Dupliated options specified")
+	tk.MustGetErrCode("create resource group x  burstable, ru_per_sec=1000, burstable", mysql.ErrParse)
+	tk.MustContainErrMsg("create resource group x burstable, ru_per_sec=1000, burstable", "Dupliated options specified")
 	groups, err := infosync.ListResourceGroups(context.TODO())
 	require.Equal(t, 0, len(groups))
 	require.NoError(t, err)
 
 	// Check information schema table information_schema.resource_groups
 	tk.MustExec("create resource group x RU_PER_SEC=1000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 0 NO"))
-	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=1000"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 NO"))
+	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 YES"))
+	tk.MustExec("alter resource group x BURSTABLE RU_PER_SEC=3000")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 3000 YES"))
+	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=3000 BURSTABLE"))
 
-	tk.MustExec("create resource group y RU_PER_SEC=2000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 0 NO"))
-	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000"))
+	tk.MustExec("create resource group y BURSTABLE RU_PER_SEC=2000")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 YES"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000 BURSTABLE"))
 
 	tk.MustExec("alter resource group y RU_PER_SEC=4000 BURSTABLE")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 0 YES"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 YES"))
 	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000 BURSTABLE"))
 
 	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("2"))
@@ -154,12 +157,6 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("create user user2")
 	tk.MustGetErrCode("alter user user2 resource group nil_group", mysql.ErrResourceGroupNotExists)
 	tk.MustContainErrMsg("alter user user2 resource group nil_group", "Unknown resource group 'nil_group'")
-
-	tk.MustExec("create resource group z " +
-		"CPU='4000m' " +
-		"IO_READ_BANDWIDTH='1G' " +
-		"IO_WRITE_BANDWIDTH='300M'")
-	tk.MustQuery("show create resource group z").Check(testkit.Rows("z CREATE RESOURCE GROUP `z` CPU=\"4000m\" IO_READ_BANDWIDTH=\"1G\" IO_WRITE_BANDWIDTH=\"300M\""))
 
 	tk.MustExec("create resource group do_not_delete_rg ru_per_sec=100")
 	tk.MustExec("create user usr3 resource group do_not_delete_rg")

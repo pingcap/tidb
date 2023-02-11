@@ -20,8 +20,10 @@ go_library(
 
 go_test(
     name = "client_test",
+    timeout = "short",
     srcs = ["command_test.go"],
     embed = [":client"],
+    shard_count = 5,
     deps = [
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

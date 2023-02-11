@@ -1035,6 +1035,17 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executo
 		}
 		return e
 	}
+	if v.Remove {
+		e := &PlanReplayerExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+			CaptureInfo: &PlanReplayerCaptureInfo{
+				SQLDigest:  v.SQLDigest,
+				PlanDigest: v.PlanDigest,
+				Remove:     true,
+			},
+		}
+		return e
+	}
 
 	e := &PlanReplayerExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -1937,8 +1948,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiFlashReplica),
 			strings.ToLower(infoschema.TableTiDBServersInfo),
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
-			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
-			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
@@ -1993,16 +2002,18 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableStatementsSummary),
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
+			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
+			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
-			strings.ToLower(infoschema.ClusterTableStatementsSummary):
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted):
+			var extractor *plannercore.StatementsSummaryExtractor
+			if v.Extractor != nil {
+				extractor = v.Extractor.(*plannercore.StatementsSummaryExtractor)
+			}
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
-				retriever: &stmtSummaryTableRetriever{
-					table:     v.Table,
-					columns:   v.Columns,
-					extractor: v.Extractor.(*plannercore.StatementsSummaryExtractor),
-				},
+				retriever:    buildStmtSummaryRetriever(b.ctx, v.Table, v.Columns, extractor),
 			}
 		case strings.ToLower(infoschema.TableColumns):
 			return &MemTableReaderExec{
@@ -2016,7 +2027,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					viewOutputNamesMap: make(map[int64]types.NameSlice),
 				},
 			}
-
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -3863,6 +3873,9 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
+	if b.Ti != nil {
+		b.Ti.UseTableLookUp = true
+	}
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
@@ -4000,6 +4013,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
 	if b.Ti != nil {
 		b.Ti.UseIndexMerge = true
+		b.Ti.UseTableLookUp = true
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
@@ -4445,6 +4459,9 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexLookUpReader,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
+	if builder.Ti != nil {
+		builder.Ti.UseTableLookUp = true
+	}
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err
