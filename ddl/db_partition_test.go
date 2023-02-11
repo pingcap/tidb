@@ -3337,9 +3337,6 @@ func TestPartitionErrorCode(t *testing.T) {
 		);`)
 	tk.MustGetDBError("alter table t_part coalesce partition 4;", dbterror.ErrCoalesceOnlyOnHashPartition)
 
-	tk.MustGetErrCode(`alter table t_part reorganize partition p0, p1 into (
-			partition p0 values less than (1980));`, errno.ErrUnsupportedDDLOperation)
-
 	tk.MustGetErrCode("alter table t_part check partition p0, p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
@@ -3751,9 +3748,9 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 	}
 	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
 	done1 := make(chan error, 1)
-	go backgroundExec(store, "alter table test.t truncate partition p0;", done1)
+	go backgroundExec(store, "test", "alter table test.t truncate partition p0;", done1)
 	done2 := make(chan error, 1)
-	go backgroundExec(store, "alter table test.t truncate partition p0;", done2)
+	go backgroundExec(store, "test", "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
 	require.LessOrEqual(t, errCount, int32(1))
@@ -4584,6 +4581,7 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
 		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
 		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
+	tk.MustExec(`admin check table t`)
 }
 
 func TestAlterModifyColumnOnPartitionedTableRename(t *testing.T) {

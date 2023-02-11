@@ -169,6 +169,13 @@ var (
 			Name:      "compact_partition_usage",
 			Help:      "Counter of compact table partition",
 		})
+	TelemetryReorganizePartitionCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "reorganize_partition_usage",
+			Help:      "Counter of alter table reorganize partition",
+		})
 	TelemetryDistReorgCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -304,6 +311,7 @@ type TablePartitionUsageCounter struct {
 	TablePartitionAddIntervalPartitionsCnt    int64 `json:"table_partition_add_interval_partitions_cnt"`
 	TablePartitionDropIntervalPartitionsCnt   int64 `json:"table_partition_drop_interval_partitions_cnt"`
 	TablePartitionComactCnt                   int64 `json:"table_TablePartitionComactCnt"`
+	TablePartitionReorganizePartitionCnt      int64 `json:"table_reorganize_partition_cnt"`
 }
 
 // ExchangePartitionUsageCounter records the usages of exchange partition.
@@ -342,22 +350,24 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 		TablePartitionAddIntervalPartitionsCnt:    c.TablePartitionAddIntervalPartitionsCnt - rhs.TablePartitionAddIntervalPartitionsCnt,
 		TablePartitionDropIntervalPartitionsCnt:   c.TablePartitionDropIntervalPartitionsCnt - rhs.TablePartitionDropIntervalPartitionsCnt,
 		TablePartitionComactCnt:                   c.TablePartitionComactCnt - rhs.TablePartitionComactCnt,
+		TablePartitionReorganizePartitionCnt:      c.TablePartitionReorganizePartitionCnt - rhs.TablePartitionReorganizePartitionCnt,
 	}
 }
 
 // ResetTablePartitionCounter gets the TxnCommitCounter.
 func ResetTablePartitionCounter(pre TablePartitionUsageCounter) TablePartitionUsageCounter {
 	return TablePartitionUsageCounter{
-		TablePartitionCnt:                readCounter(TelemetryTablePartitionCnt),
-		TablePartitionListCnt:            readCounter(TelemetryTablePartitionListCnt),
-		TablePartitionRangeCnt:           readCounter(TelemetryTablePartitionRangeCnt),
-		TablePartitionHashCnt:            readCounter(TelemetryTablePartitionHashCnt),
-		TablePartitionRangeColumnsCnt:    readCounter(TelemetryTablePartitionRangeColumnsCnt),
-		TablePartitionRangeColumnsGt1Cnt: readCounter(TelemetryTablePartitionRangeColumnsGt1Cnt),
-		TablePartitionRangeColumnsGt2Cnt: readCounter(TelemetryTablePartitionRangeColumnsGt2Cnt),
-		TablePartitionRangeColumnsGt3Cnt: readCounter(TelemetryTablePartitionRangeColumnsGt3Cnt),
-		TablePartitionListColumnsCnt:     readCounter(TelemetryTablePartitionListColumnsCnt),
-		TablePartitionMaxPartitionsCnt:   mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
+		TablePartitionCnt:                    readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListCnt:                readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeCnt:               readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashCnt:                readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsCnt:        readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionRangeColumnsGt1Cnt:     readCounter(TelemetryTablePartitionRangeColumnsGt1Cnt),
+		TablePartitionRangeColumnsGt2Cnt:     readCounter(TelemetryTablePartitionRangeColumnsGt2Cnt),
+		TablePartitionRangeColumnsGt3Cnt:     readCounter(TelemetryTablePartitionRangeColumnsGt3Cnt),
+		TablePartitionListColumnsCnt:         readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionsCnt:       mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
+		TablePartitionReorganizePartitionCnt: readCounter(TelemetryReorganizePartitionCnt),
 	}
 }
 
@@ -378,6 +388,7 @@ func GetTablePartitionCounter() TablePartitionUsageCounter {
 		TablePartitionAddIntervalPartitionsCnt:    readCounter(TelemetryTablePartitionAddIntervalPartitionsCnt),
 		TablePartitionDropIntervalPartitionsCnt:   readCounter(TelemetryTablePartitionDropIntervalPartitionsCnt),
 		TablePartitionComactCnt:                   readCounter(TelemetryCompactPartitionCnt),
+		TablePartitionReorganizePartitionCnt:      readCounter(TelemetryReorganizePartitionCnt),
 	}
 }
 
