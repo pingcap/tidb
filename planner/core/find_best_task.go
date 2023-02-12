@@ -2023,7 +2023,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			return invalidTask, nil
 		}
 		for _, col := range ts.schema.Columns {
-			if col.VirtualExpr != nil {
+			if col.VirtualExpr != nil && !isDisaggregatedTiFlash {
 				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
 				return invalidTask, nil
 			}
