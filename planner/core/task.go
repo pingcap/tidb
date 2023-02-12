@@ -1655,9 +1655,9 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	final := p
 	if cop, ok := t.(*copTask); ok {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
-		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
-		// whether the following plan is double read with order reserved.
-		if cop.extraHandleCol != nil || len(cop.rootTaskConds) > 0 {
+		// We use (cop.indexPlan != nil && cop.tablePlan != nil && cop.keepOrder) to decided whether the following plan is double
+		// read with order reserved.
+		if (cop.indexPlan != nil && cop.tablePlan != nil && cop.keepOrder) || len(cop.rootTaskConds) > 0 {
 			t = cop.convertToRootTask(p.ctx)
 			inputRows = t.count()
 			attachPlan2Task(p, t)

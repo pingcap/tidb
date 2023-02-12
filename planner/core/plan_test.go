@@ -862,6 +862,87 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult(ctx, mixedAggFuncs, groupByItems)
 }
 
+<<<<<<< HEAD
+=======
+func TestIssue34863(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists c")
+	tk.MustExec("drop table if exists o")
+	tk.MustExec("create table c(c_id bigint);")
+	tk.MustExec("create table o(o_id bigint, c_id bigint);")
+	tk.MustExec("insert into c values(1),(2),(3),(4),(5);")
+	tk.MustExec("insert into o values(1,1),(2,1),(3,2),(4,2),(5,2);")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1")
+	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
+	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
+	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustExec("set @@tidb_opt_agg_push_down=0")
+	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
+	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
+	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+}
+
+func TestIssue40857(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (c1 mediumint(9) DEFAULT '-4747160',c2 year(4) NOT NULL DEFAULT '2075',c3 double DEFAULT '1.1559030660251948',c4 enum('wbv4','eli','d8ym','m3gsx','lz7td','o','d1k7l','y1x','xcxq','bj','n7') DEFAULT 'xcxq',c5 int(11) DEFAULT '255080866',c6 tinyint(1) DEFAULT '1',PRIMARY KEY (c2),KEY `c4d86d54-091c-4307-957b-b164c9652b7f` (c6,c4) );")
+	tk.MustExec("insert into t values (-4747160, 2075, 722.5719203870632, 'xcxq', 1576824797, 1);")
+	tk.MustExec("select /*+ stream_agg() */ bit_or(t.c5) as r0 from t where t.c3 in (select c6 from t where not(t.c6 <> 1) and not(t.c3 in(9263.749352636818))) group by t.c1;")
+	require.Empty(t, tk.Session().LastMessage())
+}
+
+func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
+	window := &core.PhysicalWindow{}
+	newPlan, err := window.Clone()
+	require.NoError(t, err)
+	newWindow, ok := newPlan.(*core.PhysicalWindow)
+	require.Equal(t, ok, true)
+	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
+
+	window.TiFlashFineGrainedShuffleStreamCount = 8
+	newPlan, err = window.Clone()
+	require.NoError(t, err)
+	newWindow, ok = newPlan.(*core.PhysicalWindow)
+	require.Equal(t, ok, true)
+	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
+
+	sort := &core.PhysicalSort{}
+	newPlan, err = sort.Clone()
+	require.NoError(t, err)
+	newSort, ok := newPlan.(*core.PhysicalSort)
+	require.Equal(t, ok, true)
+	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+
+	sort.TiFlashFineGrainedShuffleStreamCount = 8
+	newPlan, err = sort.Clone()
+	require.NoError(t, err)
+	newSort, ok = newPlan.(*core.PhysicalSort)
+	require.Equal(t, ok, true)
+	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+}
+
+// https://github.com/pingcap/tidb/issues/35527.
+func TestTableDualAsSubQuery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
+	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0 IS NULL) LIKE(NULL);").Check(testkit.Rows())
+	tk.MustQuery("SELECT v0.c0 FROM (SELECT null as c0) v0 WHERE (v0.c0 IS NULL) like (NULL);").Check(testkit.Rows())
+}
+
+>>>>>>> 288c2dd490 (planner: fix a bug when pushing streamAgg down (#41056))
 // https://github.com/pingcap/tidb/issues/38310
 func TestNullEQConditionPlan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
