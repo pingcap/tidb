@@ -866,7 +866,6 @@ func TestLeaderTick(t *testing.T) {
 	select {
 	case err = <-s.gcWorker.done:
 		s.gcWorker.gcIsRunning = false
-		break
 	case <-time.After(time.Second * 10):
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
@@ -886,7 +885,6 @@ func TestLeaderTick(t *testing.T) {
 	select {
 	case err = <-s.gcWorker.done:
 		s.gcWorker.gcIsRunning = false
-		break
 	case <-time.After(time.Second * 10):
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
@@ -897,9 +895,7 @@ func TestLeaderTick(t *testing.T) {
 	select {
 	case err = <-s.gcWorker.done:
 		err = errors.Errorf("received signal s.gcWorker.done which shouldn't exist: %v", err)
-		break
 	case <-time.After(time.Second):
-		break
 	}
 	require.NoError(t, err)
 }
@@ -1840,7 +1836,6 @@ func TestGCWithPendingTxn(t *testing.T) {
 	select {
 	case err = <-s.gcWorker.done:
 		s.gcWorker.gcIsRunning = false
-		break
 	case <-time.After(time.Second * 10):
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
@@ -1910,7 +1905,6 @@ func TestGCWithPendingTxn2(t *testing.T) {
 	select {
 	case err = <-s.gcWorker.done:
 		s.gcWorker.gcIsRunning = false
-		break
 	case <-time.After(time.Second * 10):
 		err = errors.New("receive from s.gcWorker.done timeout")
 	}
