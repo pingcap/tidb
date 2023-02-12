@@ -3409,6 +3409,11 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		startTS:      startTs,
 		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.ctx), LocalQueryID: getMPPQueryID(b.ctx), ServerID: domain.GetDomain(b.ctx).ServerID()},
 		memTracker:   memory.NewTracker(v.ID(), -1),
+
+		// To fill virtual column.
+		columns:                    []*model.ColumnInfo{},
+		virtualColumnIndex:         []int{},
+		virtualColumnRetFieldTypes: []*types.FieldType{},
 	}
 	var hasVirtualCol bool
 	for _, col := range v.Schema().Columns {
