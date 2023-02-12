@@ -61,7 +61,6 @@ var allRules = append([]lint.Rule{
 	//&rule.ArgumentsLimitRule{},
 	//&rule.CyclomaticRule{},
 	//&rule.FileHeaderRule{},
-	&rule.EmptyBlockRule{},
 	//&rule.ConfusingNamingRule{},
 	&rule.ConfusingResultsRule{},
 	//&rule.DeepExitRule{},
@@ -85,7 +84,6 @@ var allRules = append([]lint.Rule{
 	&rule.UnexportedNamingRule{},
 	//&rule.FunctionLength{},
 	//&rule.NestedStructs{},
-	&rule.UselessBreak{},
 	//&rule.BannedCharsRule{},
 }, defaultRules...)
 
