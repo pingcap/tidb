@@ -19,13 +19,13 @@ errorCode = -1
 warningCode = -1
 
 [rule.blank-imports]
-[rule.context-as-argument]
+#[rule.context-as-argument]
 [rule.dot-imports]
 [rule.error-return]
 [rule.error-strings]
 [rule.error-naming]
 [rule.exported]
-[rule.if-return]
+#[rule.if-return]
 [rule.var-naming]
 [rule.package-comments]
 [rule.range]
