@@ -2022,10 +2022,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
 			return invalidTask, nil
 		}
-		for _, col := range ts.schema.Columns {
-			if col.VirtualExpr != nil && !isDisaggregatedTiFlash {
-				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
-				return invalidTask, nil
+		if !isDisaggregatedTiFlash || !canMppConvertToRootForDisaggregatedTiFlash {
+			// Normally, cannot generate mppTask when got virtual column.
+			// But in disaggregated tiflash mode, we can convert mppTask of TableScan to rootTask directly.
+			for _, col := range ts.schema.Columns {
+				if col.VirtualExpr != nil {
+					ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
+					return invalidTask, nil
+				}
 			}
 		}
 		mppTask := &mppTask{
