@@ -332,7 +332,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields := rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "NULL", fields[0].Column.Name.O)
+	require.Equal(t, "NULL", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select "\N";`
@@ -341,7 +341,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `N`, fields[0].Column.Name.O)
+	require.Equal(t, `N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	tk.MustExec("use test;")
@@ -354,7 +354,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `\N`, fields[0].Column.Name.O)
+	require.Equal(t, `\N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select \N from test;`
@@ -364,7 +364,7 @@ func TestSelectBackslashN(t *testing.T) {
 	fields = rs.Fields()
 	require.NoError(t, err)
 	require.Len(t, fields, 1)
-	require.Equal(t, `NULL`, fields[0].Column.Name.O)
+	require.Equal(t, `NULL`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select (\N) from test;`
@@ -373,7 +373,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `NULL`, fields[0].Column.Name.O)
+	require.Equal(t, `NULL`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = "select `\\N` from test;"
@@ -382,7 +382,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `\N`, fields[0].Column.Name.O)
+	require.Equal(t, `\N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = "select (`\\N`) from test;"
@@ -391,7 +391,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `\N`, fields[0].Column.Name.O)
+	require.Equal(t, `\N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select '\N' from test;`
@@ -400,7 +400,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `N`, fields[0].Column.Name.O)
+	require.Equal(t, `N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select ('\N') from test;`
@@ -409,7 +409,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `N`, fields[0].Column.Name.O)
+	require.Equal(t, `N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 }
 
@@ -424,7 +424,7 @@ func TestSelectNull(t *testing.T) {
 	require.NoError(t, err)
 	fields := rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `NULL`, fields[0].Column.Name.O)
+	require.Equal(t, `NULL`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select (null);`
@@ -433,7 +433,7 @@ func TestSelectNull(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `NULL`, fields[0].Column.Name.O)
+	require.Equal(t, `NULL`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select null+NULL;`
@@ -443,7 +443,7 @@ func TestSelectNull(t *testing.T) {
 	fields = rs.Fields()
 	require.NoError(t, err)
 	require.Len(t, fields, 1)
-	require.Equal(t, `null+NULL`, fields[0].Column.Name.O)
+	require.Equal(t, `null+NULL`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 }
 
@@ -458,7 +458,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields := rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `abc`, fields[0].Column.Name.O)
+	require.Equal(t, `abc`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select (('abc'));`
@@ -467,7 +467,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `abc`, fields[0].Column.Name.O)
+	require.Equal(t, `abc`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select 'abc'+'def';`
@@ -476,7 +476,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `'abc'+'def'`, fields[0].Column.Name.O)
+	require.Equal(t, `'abc'+'def'`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	// Below checks whether leading invalid chars are trimmed.
@@ -486,7 +486,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "", fields[0].Column.Name.O)
+	require.Equal(t, "", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = "select '\t   col';" // Lowercased letter is a valid char.
@@ -494,7 +494,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "col", fields[0].Column.Name.O)
+	require.Equal(t, "col", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = "select '\t   Col';" // Uppercased letter is a valid char.
@@ -502,7 +502,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "Col", fields[0].Column.Name.O)
+	require.Equal(t, "Col", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = "select '\n\t   中文 col';" // Chinese char is a valid char.
@@ -510,7 +510,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "中文 col", fields[0].Column.Name.O)
+	require.Equal(t, "中文 col", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = "select ' \r\n  .col';" // Punctuation is a valid char.
@@ -518,7 +518,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, ".col", fields[0].Column.Name.O)
+	require.Equal(t, ".col", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = "select '   😆col';" // Emoji is a valid char.
@@ -526,7 +526,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "😆col", fields[0].Column.Name.O)
+	require.Equal(t, "😆col", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	// Below checks whether trailing invalid chars are preserved.
@@ -535,7 +535,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "abc   ", fields[0].Column.Name.O)
+	require.Equal(t, "abc   ", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select '  abc   123   ';`
@@ -543,7 +543,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "abc   123   ", fields[0].Column.Name.O)
+	require.Equal(t, "abc   123   ", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	// Issue #4239.
@@ -553,7 +553,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "a", fields[0].Column.Name.O)
+	require.Equal(t, "a", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select 'a' " " "string";`
@@ -562,7 +562,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "a", fields[0].Column.Name.O)
+	require.Equal(t, "a", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select 'string' 'string';`
@@ -571,7 +571,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "string", fields[0].Column.Name.O)
+	require.Equal(t, "string", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select "ss" "a";`
@@ -580,7 +580,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "ss", fields[0].Column.Name.O)
+	require.Equal(t, "ss", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select "ss" "a" "b";`
@@ -589,7 +589,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "ss", fields[0].Column.Name.O)
+	require.Equal(t, "ss", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select "ss" "a" ' ' "b";`
@@ -598,7 +598,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "ss", fields[0].Column.Name.O)
+	require.Equal(t, "ss", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select "ss" "a" ' ' "b" ' ' "d";`
@@ -607,7 +607,7 @@ func TestSelectStringLiteral(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "ss", fields[0].Column.Name.O)
+	require.Equal(t, "ss", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 }
 
@@ -5154,16 +5154,16 @@ func TestColumnName(t *testing.T) {
 	require.NoError(t, err)
 	fields := rs.Fields()
 	require.Len(t, fields, 2)
-	require.Equal(t, "1 + c", fields[0].Column.Name.L)
+	require.Equal(t, "", fields[0].Column.Name.L)
 	require.Equal(t, "1 + c", fields[0].ColumnAsName.L)
-	require.Equal(t, "count(*)", fields[1].Column.Name.L)
+	require.Equal(t, "", fields[1].Column.Name.L)
 	require.Equal(t, "count(*)", fields[1].ColumnAsName.L)
 	require.NoError(t, rs.Close())
 	rs, err = tk.Exec("select (c) > all (select c from t) from t")
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "(c) > all (select c from t)", fields[0].Column.Name.L)
+	require.Equal(t, "", fields[0].Column.Name.L)
 	require.Equal(t, "(c) > all (select c from t)", fields[0].ColumnAsName.L)
 	require.NoError(t, rs.Close())
 	tk.MustExec("begin")
@@ -5193,7 +5193,7 @@ func TestColumnName(t *testing.T) {
 	rs, err = tk.Exec("select hour(1) as a from t as t2")
 	require.NoError(t, err)
 	fields = rs.Fields()
-	require.Equal(t, "a", fields[0].Column.Name.L)
+	require.Equal(t, "", fields[0].Column.Name.L)
 	require.Equal(t, "a", fields[0].ColumnAsName.L)
 	require.Equal(t, "", fields[0].Table.Name.L)
 	require.Equal(t, "", fields[0].TableAsName.L)
@@ -5216,9 +5216,9 @@ func TestColumnName(t *testing.T) {
 	rs, err = tk.Exec("select 1+1, row_number() over() num from t")
 	require.NoError(t, err)
 	fields = rs.Fields()
-	require.Equal(t, "1+1", fields[0].Column.Name.L)
+	require.Equal(t, "", fields[0].Column.Name.L)
 	require.Equal(t, "1+1", fields[0].ColumnAsName.L)
-	require.Equal(t, "num", fields[1].Column.Name.L)
+	require.Equal(t, "", fields[1].Column.Name.L)
 	require.Equal(t, "num", fields[1].ColumnAsName.L)
 	tk.MustExec("set @@tidb_enable_window_function = 0")
 	require.Nil(t, rs.Close())
@@ -5226,7 +5226,7 @@ func TestColumnName(t *testing.T) {
 	rs, err = tk.Exec("select if(1,c,c) from t;")
 	require.NoError(t, err)
 	fields = rs.Fields()
-	require.Equal(t, "if(1,c,c)", fields[0].Column.Name.L)
+	require.Equal(t, "", fields[0].Column.Name.L)
 	// It's a compatibility issue. Should be empty instead.
 	require.Equal(t, "if(1,c,c)", fields[0].ColumnAsName.L)
 	require.Nil(t, rs.Close())
