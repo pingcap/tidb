@@ -49,7 +49,7 @@ func (sender *drySender) Close() {
 }
 
 func waitForSend() {
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 }
 
 func (sender *drySender) Ranges() []rtree.Range {
