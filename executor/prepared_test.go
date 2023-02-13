@@ -1114,8 +1114,10 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	// Do not use the parallel apply.
 	require.False(t, strings.Contains(executionInfo, "Concurrency"))
 	tk.MustExec("execute stmt;")
-	// The subquery plan can be cached.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	// The subquery plan with PhysicalApply can't be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: the plan with PhysicalApply is un-cacheable"))
 
 	// test for apply cache
 	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
