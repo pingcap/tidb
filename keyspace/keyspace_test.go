@@ -34,7 +34,6 @@ func (k *keyspaceSuite) TearDownTest() {
 	conf := config.GetGlobalConfig()
 	conf.KeyspaceName = ""
 	config.StoreGlobalConfig(conf)
-
 }
 
 func (k *keyspaceSuite) TestSetKeyspaceNameInConf() {
@@ -50,7 +49,6 @@ func (k *keyspaceSuite) TestSetKeyspaceNameInConf() {
 	// The cfg.keyspaceName get higher weights than KEYSPACE_NAME in system env.
 	k.Equal(keyspaceNameInCfg, getKeyspaceName)
 	k.Equal(false, IsKeyspaceNameEmpty(getKeyspaceName))
-
 }
 
 func (k *keyspaceSuite) TestNoKeyspaceNameSet() {
