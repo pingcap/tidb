@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/tiancaiamao/sched"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -517,8 +518,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if err != nil {
 		return nil, err
 	}
+	sched.CheckPoint(ctx)
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
+	sched.CheckPoint(ctx)
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
 	if err = a.openExecutor(ctx, e); err != nil {
@@ -548,6 +551,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			maxExecutionTime = 0
 		}
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		sched.CheckPoint(ctx)
 	}
 
 	failpoint.Inject("mockDelayInnerSessionExecute", func() {

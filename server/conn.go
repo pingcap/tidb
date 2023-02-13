@@ -1336,8 +1336,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	token := cc.server.getToken()
 	defer func() {
 		// if handleChangeUser failed, cc.ctx may be nil
-		if ctx := cc.getCtx(); ctx != nil {
-			ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
+		if sctx := cc.getCtx(); sctx != nil {
+			sctx.SetProcessInfo(ctx, "", t, mysql.ComSleep, 0)
 		}
 
 		cc.server.releaseToken(token)
@@ -1355,9 +1355,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
-		cc.ctx.SetProcessInfo("", t, cmd, 0)
+		cc.ctx.SetProcessInfo(ctx, "", t, cmd, 0)
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd, 0)
+		cc.ctx.SetProcessInfo(ctx, "use "+dataStr, t, cmd, 0)
 	}
 
 	switch cmd {

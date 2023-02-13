@@ -30,6 +30,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/tiancaiamao/sched"
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -158,7 +159,10 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	e.workerWg.Add(1)
 	ow := e.newOuterWorker(innerCh)
-	go util.WithRecovery(func() { ow.run(workerCtx) }, e.finishJoinWorkers)
+	go util.WithRecovery(func() {
+		ctx := sched.WithSchedInfo(workerCtx)
+		ow.run(ctx)
+	}, e.finishJoinWorkers)
 
 	for i := 0; i < concurrency; i++ {
 		if !e.keepOuterOrder {
@@ -175,7 +179,10 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	e.workerWg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
 		workerID := i
-		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
+		go util.WithRecovery(func() {
+			ctx := sched.WithSchedInfo(workerCtx)
+			e.newInnerWorker(innerCh, workerID).run(ctx, cancelFunc)
+		}, e.finishJoinWorkers)
 	}
 	go e.wait4JoinWorkers()
 }
@@ -488,6 +495,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			joinResult.err = task.err
 			break
 		}
+		sched.CheckPoint(ctx)
 		err := iw.handleTask(ctx, task, joinResult, h, resultCh)
 		if err != nil && !task.keepOuterOrder {
 			// Only need check non-keep-outer-order case because the
@@ -586,6 +594,8 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 			rowPtr := chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 			task.lookupMap.Put(h.Sum64(), rowPtr)
 		}
+
+		sched.CheckPoint(ctx)
 	}
 }
 
@@ -637,6 +647,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
 		func() {
+			ctx = sched.WithSchedInfo(ctx)
 			iw.buildHashTableForOuterResult(ctx, task, h)
 		},
 		func(r interface{}) {
