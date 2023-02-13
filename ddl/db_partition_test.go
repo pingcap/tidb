@@ -419,6 +419,7 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 
 func TestSubPartitioning(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int) partition by range (a) subpartition by hash (a) subpartitions 2 (partition pMax values less than (maxvalue))`)
@@ -462,7 +463,6 @@ func TestSubPartitioning(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`col1`) PARTITIONS 4"))
 	tk.MustExec(`drop table t`)
-
 }
 
 func TestCreateTableWithRangeColumnPartition(t *testing.T) {
