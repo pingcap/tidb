@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -27,13 +28,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// Cacheable checks whether the input ast is cacheable with empty session context, which is mainly for testing.
+// Cacheable checks whether the input ast(query) is cacheable with empty session context, which is mainly for testing.
 func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
 	c, _ := CacheableWithCtx(nil, node, is)
 	return c
 }
 
-// CacheableWithCtx checks whether the input ast is cacheable.
+// CacheableWithCtx checks whether the input ast(query) is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
 func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
@@ -54,12 +55,7 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 	return checker.cacheable, checker.reason
 }
 
-// cacheableChecker checks whether a query's plan can be cached, querys that:
-//  1. have ExistsSubqueryExpr, or
-//  2. have VariableExpr
-//
-// will not be cached currently.
-// NOTE: we can add more rules in the future.
+// cacheableChecker checks whether a query can be cached:
 type cacheableChecker struct {
 	sctx      sessionctx.Context
 	cacheable bool
@@ -319,4 +315,55 @@ func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
 		return true
 	}
 	return false
+}
+
+// isPlanCacheable returns whether this plan is cacheable and the reason if not.
+func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+	var pp PhysicalPlan
+	switch x := p.(type) {
+	case *Insert:
+		pp = x.SelectPlan
+	case *Update:
+		pp = x.SelectPlan
+	case *Delete:
+		pp = x.SelectPlan
+	case PhysicalPlan:
+		pp = x
+	default:
+		return false, fmt.Sprintf("skip plan-cache: unexpected un-cacheable plan %v", p.ExplainID().String())
+	}
+	if pp == nil { // simple DML statements
+		return true, ""
+	}
+	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+		return false, "skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+	}
+	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum)
+}
+
+// isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
+func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, limitParamNum int) (cacheable bool, reason string) {
+	switch x := p.(type) {
+	case *PhysicalTableDual:
+		if paramNum > 0 {
+			return false, "skip plan-cache: get a TableDual plan"
+		}
+	case *PhysicalTableReader:
+		if x.StoreType == kv.TiFlash {
+			return false, "skip plan-cache: TiFlash plan is un-cacheable"
+		}
+	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
+		return false, "skip plan-cache: get a Shuffle plan"
+	case *PhysicalIndexMergeReader:
+		if x.AccessMVIndex {
+			return false, "skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
+		}
+	}
+
+	for _, c := range p.Children() {
+		if cacheable, reason = isPhysicalPlanCacheable(sctx, c, paramNum, limitParamNum); !cacheable {
+			return cacheable, reason
+		}
+	}
+	return true, ""
 }
