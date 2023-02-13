@@ -1452,3 +1452,127 @@ func TestMPPMemoryTracker(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 }
+
+func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100) AS (lower(c1)));")
+	tk.MustExec("insert into t1(c1) values('ABC');")
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tb := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2(c1 int, c2 varchar(100));")
+	tk.MustExec("insert into t2 values(1, 'xhy'), (2, 'abc');")
+	tk.MustExec("alter table t2 set tiflash replica 1;")
+	tb = external.GetTableByName(t, tk, "test", "t2")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("alter table t2 add index idx2((lower(c2)));")
+
+	nthPlan := 100
+	test1 := func(forceTiFlash bool) {
+		if forceTiFlash {
+			tk.MustExec("set tidb_isolation_read_engines = 'tiflash'")
+		} else {
+			tk.MustExec("set tidb_isolation_read_engines = 'tikv,tiflash'")
+		}
+		sqls := []string{
+			"explain select /*+ nth_plan(%d) */ * from t2 where lower(c2) = 'abc';",
+			"explain select /*+ nth_plan(%d) */ count(*) from t2 where lower(c2) = 'abc';",
+			"explain select /*+ nth_plan(%d) */ count(c1) from t2 where lower(c2) = 'abc';",
+		}
+		for _, sql := range sqls {
+			var genTiFlashPlan bool
+			var selectionPushdownTiFlash bool
+			var aggPushdownTiFlash bool
+
+			for i := 0; i < nthPlan; i++ {
+				s := fmt.Sprintf(sql, i)
+				fmt.Printf("handling sql: %s, forceTiFlash: %v\n", s, forceTiFlash)
+				rows := tk.MustQuery(s).Rows()
+				for _, row := range rows {
+					line := fmt.Sprintf("%v", row)
+					if strings.Contains(line, "tiflash") {
+						genTiFlashPlan = true
+					}
+					if strings.Contains(line, "Selection") && strings.Contains(line, "tiflash") {
+						selectionPushdownTiFlash = true
+					}
+					if strings.Contains(line, "Agg") && strings.Contains(line, "tiflash") {
+						aggPushdownTiFlash = true
+					}
+				}
+			}
+			if forceTiFlash {
+				// Can generate tiflash plan, also Agg/Selection can push down to tiflash.
+				require.True(t, genTiFlashPlan)
+				require.True(t, selectionPushdownTiFlash)
+				if strings.Contains(sql, "count") {
+					require.True(t, aggPushdownTiFlash)
+				}
+			} else {
+				// Can generate tiflash plan, but Agg/Selection cannot push down to tiflash.
+				require.True(t, genTiFlashPlan)
+				require.False(t, selectionPushdownTiFlash)
+				if strings.Contains(sql, "count") {
+					require.False(t, aggPushdownTiFlash)
+				}
+			}
+		}
+	}
+
+	test2 := func() {
+		// Can generate tiflash plan when select generated column.
+		// But Agg cannot push down to tiflash.
+		sqls := []string{
+			"explain select /*+ nth_plan(%d) */ * from t1;",
+			"explain select /*+ nth_plan(%d) */ c2 from t1;",
+			"explain select /*+ nth_plan(%d) */ count(c2) from t1;",
+		}
+		for _, sql := range sqls {
+			var genTiFlashPlan bool
+			var aggPushdownTiFlash bool
+			for i := 0; i < nthPlan; i++ {
+				s := fmt.Sprintf(sql, i)
+				fmt.Println("handling ", s)
+				rows := tk.MustQuery(s).Rows()
+				for _, row := range rows {
+					line := fmt.Sprintf("%v", row)
+					if strings.Contains(line, "tiflash") {
+						genTiFlashPlan = true
+					}
+					if strings.Contains(line, "tiflash") && strings.Contains(line, "Agg") {
+						aggPushdownTiFlash = true
+					}
+				}
+			}
+			require.True(t, genTiFlashPlan)
+			if strings.Contains(sql, "count") {
+				require.False(t, aggPushdownTiFlash)
+			}
+		}
+	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = false
+	})
+	test1(true)
+	test1(false)
+	test2()
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = true
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.DisaggregatedTiFlash = true
+	})
+	test1(true)
+	test1(false)
+	test2()
+}
