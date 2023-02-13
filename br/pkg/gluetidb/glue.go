@@ -165,11 +165,6 @@ func (gs *tidbSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
 }
 
-// SetSession implements for Unit Test
-func (gs *tidbSession) SetSession(session session.Session) {
-	gs.se = session
-}
-
 // Execute implements glue.Session.
 func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return gs.ExecuteInternal(ctx, sql)
