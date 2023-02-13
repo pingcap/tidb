@@ -214,7 +214,7 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 		isNull = !parser.cfg.NotNull &&
 			slices.Contains(parser.cfg.Null, unescaped)
 		if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedBy+`N` {
-			// avoid \\N
+			// avoid \\Nbr/pkg/lightning/config/config.g
 			isNull = false
 		}
 	}
@@ -648,6 +648,9 @@ func (parser *CSVParser) ReadColumns() error {
 	columns, err := parser.readRecord(nil)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if !parser.cfg.HeaderSchemaMatch {
+		return nil
 	}
 	parser.columns = make([]string, 0, len(columns))
 	for _, colName := range columns {

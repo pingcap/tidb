@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/distributereorg"
 	"github.com/pingcap/tidb/util/memory"
@@ -793,12 +794,21 @@ const (
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
 
+	// MppExchangeCompressionMode indicates the data compression method in mpp exchange operator
+	MppExchangeCompressionMode = "mpp_exchange_compression_mode"
+
+	// MppVersion indicates the mpp-version used to build mpp plan
+	MppVersion = "mpp_version"
+
 	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
 	// is enabled.
 	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
 
 	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
 	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
+
+	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
+	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
 )
 
 // TiDB vars that have only global scope
@@ -909,6 +919,16 @@ const (
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
+	// TiDBStmtSummaryEnablePersistent indicates whether to enable file persistence for stmtsummary.
+	TiDBStmtSummaryEnablePersistent = "tidb_stmt_summary_enable_persistent"
+	// TiDBStmtSummaryFilename indicates the file name written by stmtsummary.
+	TiDBStmtSummaryFilename = "tidb_stmt_summary_filename"
+	// TiDBStmtSummaryFileMaxDays indicates how many days the files written by stmtsummary will be kept.
+	TiDBStmtSummaryFileMaxDays = "tidb_stmt_summary_file_max_days"
+	// TiDBStmtSummaryFileMaxSize indicates the maximum size (in mb) of a single file written by stmtsummary.
+	TiDBStmtSummaryFileMaxSize = "tidb_stmt_summary_file_max_size"
+	// TiDBStmtSummaryFileMaxBackups indicates the maximum number of files written by stmtsummary.
+	TiDBStmtSummaryFileMaxBackups = "tidb_stmt_summary_file_max_backups"
 )
 
 // TiDB intentional limits
@@ -1161,13 +1181,14 @@ const (
 	DefTiDBTTLDeleteRateLimit                              = 0
 	DefPasswordReuseHistory                                = 0
 	DefPasswordReuseTime                                   = 0
-	DefTiDBStoreBatchSize                                  = 0
+	DefTiDBStoreBatchSize                                  = 4
 	DefTiDBHistoricalStatsDuration                         = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture                 = false
 	DefTiDBTTLJobScheduleWindowStartTime                   = "00:00 +0000"
 	DefTiDBTTLJobScheduleWindowEndTime                     = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                              = 4
 	DefTiDBTTLDeleteWorkerCount                            = 4
+	DefaultExchangeCompressionMode                         = kv.ExchangeCompressionModeUnspecified
 	DefTiDBEnableResourceControl                           = false
 	DefTiDBPessimisticTransactionAggressiveLocking         = false
 	DefTiDBEnablePlanCacheForParamLimit                    = true

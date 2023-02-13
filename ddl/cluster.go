@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -99,6 +98,16 @@ func recoverPDSchedule(pdScheduleParam map[string]interface{}) error {
 	return infosync.SetPDScheduleConfig(context.Background(), pdScheduleParam)
 }
 
+func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
+	minSafeTS := s.GetMinSafeTS(kv.GlobalTxnScope)
+	// Inject mocked SafeTS for test.
+	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
+		injectTS := val.(int)
+		minSafeTS = uint64(injectTS)
+	})
+	return oracle.GetTimeFromTS(minSafeTS)
+}
+
 // ValidateFlashbackTS validates that flashBackTS in range [gcSafePoint, currentTS).
 func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBackTS uint64) error {
 	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
@@ -111,12 +120,34 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 		}
 		currentTS = currentVer.Ver
 	}
-	if oracle.GetTimeFromTS(flashBackTS).After(oracle.GetTimeFromTS(currentTS)) {
+	oracleFlashbackTS := oracle.GetTimeFromTS(flashBackTS)
+	if oracleFlashbackTS.After(oracle.GetTimeFromTS(currentTS)) {
 		return errors.Errorf("cannot set flashback timestamp to future time")
 	}
-	if oracle.GetTimeFromTS(flashBackTS).After(expression.GetMinSafeTime(sctx)) {
-		return errors.Errorf("cannot set flashback timestamp to too close to present time")
+
+	flashbackGetMinSafeTimeTimeout := time.Minute
+	failpoint.Inject("changeFlashbackGetMinSafeTimeTimeout", func(val failpoint.Value) {
+		t := val.(int)
+		flashbackGetMinSafeTimeTimeout = time.Duration(t)
+	})
+
+	start := time.Now()
+	minSafeTime := getStoreGlobalMinSafeTS(sctx.GetStore())
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for oracleFlashbackTS.After(minSafeTime) {
+		if time.Since(start) >= flashbackGetMinSafeTimeTimeout {
+			return errors.Errorf("cannot set flashback timestamp after min-resolved-ts(%s)", minSafeTime)
+		}
+		select {
+		case <-ticker.C:
+			minSafeTime = getStoreGlobalMinSafeTS(sctx.GetStore())
+			break
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+
 	gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
 	if err != nil {
 		return err
@@ -592,8 +623,8 @@ func splitRegionsByKeyRanges(d *ddlCtx, keyRanges []kv.KeyRange) {
 
 // A Flashback has 4 different stages.
 // 1. before lock flashbackClusterJobID, check clusterJobID and lock it.
-// 2. before flashback start, check timestamp, disable GC and close PD schedule.
-// 3. phase 1, get key ranges, lock all regions.
+// 2. before flashback start, check timestamp, disable GC and close PD schedule, get flashback key ranges.
+// 3. phase 1, lock flashback key ranges.
 // 4. phase 2, send flashback RPC, do flashback jobs.
 func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	inFlashbackTest := false
@@ -661,7 +692,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.Args[ttlJobEnableOffSet] = &ttlJobEnableValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
-	// Stage 2, check flashbackTS, close GC and PD schedule.
+	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
 		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
 			job.State = model.JobStateCancelled
@@ -680,8 +711,8 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 		job.Args[keyRangesOffset] = keyRanges
 		job.SchemaState = model.StateWriteOnly
-		return ver, nil
-	// Stage 3, get key ranges and get locks.
+		return updateSchemaVersion(d, t, job)
+	// Stage 3, lock related key ranges.
 	case model.StateWriteOnly:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
@@ -711,7 +742,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 		job.Args[commitTSOffset] = commitTS
 		job.SchemaState = model.StateWriteReorganization
-		return updateSchemaVersion(d, t, job)
+		return ver, nil
 	// Stage 4, get key ranges and send flashback RPC.
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
