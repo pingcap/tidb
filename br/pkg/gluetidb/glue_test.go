@@ -28,7 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBatchCreateTables(t *testing.T) {
+// batch create table with table id reused
+func TestSplitBatchCreateTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
