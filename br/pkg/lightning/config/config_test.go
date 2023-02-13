@@ -477,15 +477,15 @@ func TestInvalidCSV(t *testing.T) {
 				separator = '\'
 				backslash-escape = true
 			`,
-			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' both as CSV separator and `mydumper.csv.escaped-by`",
 		},
 		{
 			input: `
 				[mydumper.csv]
 				delimiter = '\'
-				backslash-escape = true
+				escaped-by = '\'
 			`,
-			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' both as CSV delimiter and `mydumper.csv.escaped-by`",
 		},
 		{
 			input: `
@@ -528,7 +528,7 @@ func TestInvalidCSV(t *testing.T) {
 		if tc.err != "" {
 			require.EqualError(t, err, tc.err, comment)
 		} else {
-			require.NoError(t, err)
+			require.NoError(t, err, tc.input)
 		}
 	}
 }
@@ -541,6 +541,25 @@ func TestInvalidTOML(t *testing.T) {
 		backslash-escape = true
 	`))
 	require.EqualError(t, err, "toml: line 2: expected '.' or '=', but got '[' instead")
+}
+
+func TestStringOrStringSlice(t *testing.T) {
+	cfg := &config.Config{}
+	err := cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = '\N'
+	`))
+	require.NoError(t, err)
+	err = cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = [ '\N', 'NULL' ]
+	`))
+	require.NoError(t, err)
+	err = cfg.LoadFromTOML([]byte(`
+		[mydumper.csv]
+		null = [ '\N', 123 ]
+	`))
+	require.ErrorContains(t, err, "invalid string slice")
 }
 
 func TestTOMLUnusedKeys(t *testing.T) {
