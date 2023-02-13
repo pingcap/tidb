@@ -43,7 +43,7 @@ func TestGetCgroupCPU(t *testing.T) {
 	}
 	cpu, err := GetCgroupCPU()
 	if err == errNoCPUControllerDetected {
-		require.False(t, InContainer(), "Please check linux version. This is related to cgroup compatibility.")
+		require.False(t, InContainer(), "Please check linux version > v4.7.x. This is related to cgroup compatibility.")
 	} else {
 		require.NoError(t, err)
 		require.NotZero(t, cpu.Period)
