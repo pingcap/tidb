@@ -1218,13 +1218,8 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		// If the function call is ast.CurrentTimestamp, it needs to be continuously processed.
 	}
 
-<<<<<<< HEAD
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp)
-=======
-	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime || tp == mysql.TypeDate {
 		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp, nil)
->>>>>>> 8398f0fe098 (*: fix a timezone data race which may cause wrong row data (#41146))
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
