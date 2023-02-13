@@ -413,11 +413,11 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), ioWorkers, false, nil)
 
 func TestMySQL(t *testing.T) {
 	cfg := config.CSVConfig{
-		Separator:       ",",
-		Delimiter:       `"`,
-		BackslashEscape: true,
-		NotNull:         false,
-		Null:            `\N`,
+		Separator: ",",
+		Delimiter: `"`,
+		EscapedBy: `\`,
+		NotNull:   false,
+		Null:      []string{`\N`},
 	}
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`"\"","\\","\?"
@@ -452,12 +452,53 @@ func TestMySQL(t *testing.T) {
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
 }
 
+func TestCustomEscapeChar(t *testing.T) {
+	cfg := config.CSVConfig{
+		Separator: ",",
+		Delimiter: `"`,
+		EscapedBy: `!`,
+		NotNull:   false,
+		Null:      []string{`!N`},
+	}
+
+	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`"!"","!!","!\"
+"!
+",!N,!!N`), int64(config.ReadBlockSize), ioWorkers, false, nil)
+	require.NoError(t, err)
+
+	require.Nil(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum(`"`),
+			types.NewStringDatum(`!`),
+			types.NewStringDatum(`\`),
+		},
+		Length: 6,
+	}, parser.LastRow())
+	assertPosEqual(t, parser, 15, 1)
+
+	require.Nil(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 2,
+		Row: []types.Datum{
+			types.NewStringDatum("\n"),
+			nullDatum,
+			types.NewStringDatum(`!N`),
+		},
+		Length: 7,
+	}, parser.LastRow())
+	assertPosEqual(t, parser, 26, 2)
+
+	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
+}
+
 func TestSyntaxErrorCSV(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:       ",",
-			Delimiter:       `"`,
-			BackslashEscape: true,
+			Separator: ",",
+			Delimiter: `"`,
+			EscapedBy: `\`,
 		},
 	}
 
@@ -475,7 +516,7 @@ func TestSyntaxErrorCSV(t *testing.T) {
 
 	runFailingTestCasesCSV(t, &cfg, int64(config.ReadBlockSize), inputs)
 
-	cfg.CSV.BackslashEscape = false
+	cfg.CSV.EscapedBy = ""
 	runFailingTestCasesCSV(t, &cfg, int64(config.ReadBlockSize), []string{`"\`})
 }
 
@@ -485,7 +526,7 @@ func TestTSV(t *testing.T) {
 		Delimiter:         "",
 		BackslashEscape:   false,
 		NotNull:           false,
-		Null:              "",
+		Null:              []string{""},
 		Header:            true,
 		HeaderSchemaMatch: true,
 	}
@@ -549,6 +590,7 @@ func TestCsvWithWhiteSpaceLine(t *testing.T) {
 	cfg := config.CSVConfig{
 		Separator: ",",
 		Delimiter: `"`,
+		Null:      []string{""},
 	}
 	data := " \r\n\r\n0,,abc\r\n \r\n123,1999-12-31,test\r\n"
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(data), int64(config.ReadBlockSize), ioWorkers, false, nil)
@@ -777,10 +819,10 @@ func TestSpecialChars(t *testing.T) {
 func TestContinuationCSV(t *testing.T) {
 	cfg := config.MydumperRuntime{
 		CSV: config.CSVConfig{
-			Separator:       ",",
-			Delimiter:       `"`,
-			BackslashEscape: true,
-			TrimLastSep:     true,
+			Separator:   ",",
+			Delimiter:   `"`,
+			EscapedBy:   `\`,
+			TrimLastSep: true,
 		},
 	}
 
@@ -814,6 +856,7 @@ func TestBackslashAsSep(t *testing.T) {
 		CSV: config.CSVConfig{
 			Separator: `\`,
 			Delimiter: `"`,
+			Null:      []string{""},
 		},
 	}
 
@@ -841,6 +884,7 @@ func TestBackslashAsDelim(t *testing.T) {
 		CSV: config.CSVConfig{
 			Separator: ",",
 			Delimiter: `\`,
+			Null:      []string{""},
 		},
 	}
 
@@ -856,6 +900,23 @@ func TestBackslashAsDelim(t *testing.T) {
 		`"\`,
 	}
 	runFailingTestCasesCSV(t, &cfg, 1, failingInputs)
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:        ",",
+			Delimiter:        `\`,
+			Null:             []string{""},
+			QuotedNullIsText: true,
+		},
+	}
+
+	testCases = []testCase{
+		{
+			input:    `\\`,
+			expected: [][]types.Datum{{types.NewStringDatum("")}},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
 }
 
 // errorReader implements the Reader interface which always returns an error.
@@ -961,6 +1022,134 @@ func TestTerminator(t *testing.T) {
 			expected: [][]types.Datum{
 				{types.NewStringDatum("xyz"), types.NewStringDatum("+>")},
 				{types.NewStringDatum("|+|\n"), types.NewStringDatum("\r")},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+}
+
+func TestReadUntilTerminator(t *testing.T) {
+	cfg := config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  "#",
+			Terminator: "#\n",
+		},
+	}
+	parser, err := mydump.NewCSVParser(
+		context.Background(),
+		&cfg.CSV,
+		mydump.NewStringReader("xxx1#2#3#4#\n56#78"),
+		int64(config.ReadBlockSize),
+		ioWorkers,
+		false,
+		nil,
+	)
+	require.NoError(t, err)
+	content, idx, err := parser.ReadUntilTerminator()
+	require.NoError(t, err)
+	require.Equal(t, "xxx1#2#3#4#\n", string(content))
+	require.Equal(t, int64(12), idx)
+	content, idx, err = parser.ReadUntilTerminator()
+	require.ErrorIs(t, err, io.EOF)
+	require.Equal(t, "56#78", string(content))
+	require.Equal(t, int64(17), idx)
+}
+
+func TestNULL(t *testing.T) {
+	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+	// - For the default FIELDS and LINES values, NULL is written as a field value of \N for output, and a field value of \N is read as NULL for input (assuming that the ESCAPED BY character is \).
+	// - If FIELDS ENCLOSED BY is not empty, a field containing the literal word NULL as its value is read as a NULL value. This differs from the word NULL enclosed within FIELDS ENCLOSED BY characters, which is read as the string 'NULL'.
+	// - If FIELDS ESCAPED BY is empty, NULL is written as the word NULL.
+
+	cfg := config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:        ",",
+			Delimiter:        `"`,
+			Terminator:       "\n",
+			Null:             []string{`\N`, `NULL`},
+			EscapedBy:        `\`,
+			QuotedNullIsText: true,
+		},
+	}
+	testCases := []testCase{
+		{
+			input: `NULL,"NULL"
+\N,"\N"
+\\N,"\\N"`,
+			expected: [][]types.Datum{
+				{nullDatum, types.NewStringDatum("NULL")},
+				{nullDatum, nullDatum},
+				{types.NewStringDatum(`\N`), types.NewStringDatum(`\N`)},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  ",",
+			Delimiter:  ``,
+			Terminator: "\n",
+			Null:       []string{`\N`},
+			EscapedBy:  `\`,
+		},
+	}
+	testCases = []testCase{
+		{
+			input: `NULL,"NULL"
+\N,"\N"
+\\N,"\\N"`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("NULL"), types.NewStringDatum(`"NULL"`)},
+				{nullDatum, types.NewStringDatum(`"N"`)},
+				{types.NewStringDatum(`\N`), types.NewStringDatum(`"\N"`)},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:  ",",
+			Delimiter:  ``,
+			Terminator: "\n",
+			Null:       []string{`\N`},
+			EscapedBy:  `\`,
+		},
+	}
+	testCases = []testCase{
+		{
+			input: `NULL,"NULL"
+\N,"\N"
+\\N,"\\N"`,
+			expected: [][]types.Datum{
+				{types.NewStringDatum("NULL"), types.NewStringDatum(`"NULL"`)},
+				{nullDatum, types.NewStringDatum(`"N"`)},
+				{types.NewStringDatum(`\N`), types.NewStringDatum(`"\N"`)},
+			},
+		},
+	}
+	runTestCasesCSV(t, &cfg, 1, testCases)
+
+	cfg = config.MydumperRuntime{
+		CSV: config.CSVConfig{
+			Separator:        ",",
+			Delimiter:        `"`,
+			Terminator:       "\n",
+			Null:             []string{`NULL`},
+			EscapedBy:        ``,
+			QuotedNullIsText: true,
+		},
+	}
+	testCases = []testCase{
+		{
+			input: `NULL,"NULL"
+\N,"\N"
+\\N,"\\N"`,
+			expected: [][]types.Datum{
+				{nullDatum, types.NewStringDatum(`NULL`)},
+				{types.NewStringDatum(`\N`), types.NewStringDatum(`\N`)},
+				{types.NewStringDatum(`\\N`), types.NewStringDatum(`\\N`)},
 			},
 		},
 	}
