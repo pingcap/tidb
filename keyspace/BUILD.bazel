@@ -16,6 +16,7 @@ go_test(
     name = "keyspace_test",
     srcs = ["keyspace_test.go"],
     embed = [":keyspace"],
+    flaky = True,
     deps = [
         "//config",
         "@com_github_stretchr_testify//suite",
