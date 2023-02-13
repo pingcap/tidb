@@ -40,7 +40,7 @@ func MakeKeyspaceEtcdNamespace(c tikv.Codec) string {
 
 // GetKeyspaceNameBySettings is used to get Keyspace name setting.
 func GetKeyspaceNameBySettings() (keyspaceName string) {
-	keyspaceName = config.GetGlobalConfig().KeyspaceName
+	keyspaceName = config.GetGlobalKeyspaceName()
 	return keyspaceName
 }
 
