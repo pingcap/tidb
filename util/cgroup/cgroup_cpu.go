@@ -25,7 +25,16 @@ var noCPUControllerDetected = errors.New("no cpu controller detected")
 
 // Helper function for getCgroupCPU. Root is always "/", except in tests.
 func getCgroupCPU(root string) (CPUUsage, error) {
-	path, err := detectControlPath(filepath.Join(root, procPathCGroup), "cpu,cpuacct")
+	cu, err := getCgroupCPUInternal(root, "cpu,cpuacct")
+	if err == nil {
+		return cu, nil
+	}
+	return getCgroupCPUInternal(root, "cpuacct,cpu")
+}
+
+// getCgroupCPUInternal is to deal with different control keyword
+func getCgroupCPUInternal(root, controlKeyword string) (CPUUsage, error) {
+	path, err := detectControlPath(filepath.Join(root, procPathCGroup), controlKeyword)
 	if err != nil {
 		return CPUUsage{}, err
 	}
@@ -35,7 +44,7 @@ func getCgroupCPU(root string) (CPUUsage, error) {
 		return CPUUsage{}, noCPUControllerDetected
 	}
 
-	mount, ver, err := getCgroupDetails(filepath.Join(root, procPathMountInfo), path, "cpu,cpuacct")
+	mount, ver, err := getCgroupDetails(filepath.Join(root, procPathMountInfo), path, controlKeyword)
 	if err != nil {
 		return CPUUsage{}, err
 	}
