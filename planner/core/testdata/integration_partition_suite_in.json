@@ -171,6 +171,7 @@
       "explain format='brief' select a from thash use index (ia) where a > 10 and c = 10 order by a limit 10",
       "explain format='brief' select a from t use index () where b > 10 order by b limit 10",
       "explain format='brief' select a from trange use index () where b > 10 order by b limit 10",
+      "explain format='brief' select a from trange use index () where b > 100 order by b limit 10",
       "explain format='brief' select a from tlist use index () where b > 10 order by b limit 10",
       "explain format='brief' select a from thash use index () where b > 10 order by b limit 10",
       "explain format='brief' select a from t use index () where a > 10 order by b limit 10",

@@ -2080,8 +2080,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
-		// TableScan on partition table can't keep order.
-		if ds.tableInfo.GetPartitionInfo() != nil {
+		// TableScan on partition table can't keep order, except range partition.
+		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil && pi.Type != model.PartitionTypeRange {
 			return invalidTask, nil
 		}
 	}

@@ -312,7 +312,11 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return nil, err
 	}
 	kvReq.KeyRanges.SortByFunc(func(i, j kv.KeyRange) bool {
-		return bytes.Compare(i.StartKey, j.StartKey) < 0
+		cmp := bytes.Compare(i.StartKey, j.StartKey) < 0
+		if e.desc {
+			return !cmp
+		}
+		return cmp
 	})
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 

@@ -698,3 +698,35 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 		}
 	}
 }
+
+func TestPushLimit2RangePartitionTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t(id int PRIMARY KEY, val int)
+    PARTITION BY RANGE (id)
+    (PARTITION p1 VALUES LESS THAN (100),
+    PARTITION p2 VALUES LESS THAN (200),
+    PARTITION p3 VALUES LESS THAN (300))`)
+	tk.MustExec("INSERT INTO t VALUES(50, 50), (150, 150), (250, 250)")
+	tk.MustExec("ANALYZE TABLE t")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/checkKeyRangeSortedForPaging", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/checkKeyRangeSortedForPaging"))
+	}()
+
+	tk.MustQuery("SELECT * FROM t ORDER BY id ASC LIMIT 1").Check(testkit.Rows("50 50"))
+	tk.MustQuery("SELECT * FROM t ORDER BY id ASC LIMIT 2").Check(testkit.Rows("50 50", "150 150"))
+	tk.MustQuery("SELECT * FROM t ORDER BY id DESC LIMIT 1").Check(testkit.Rows("250 250"))
+	tk.MustQuery("SELECT * FROM t ORDER BY id DESC LIMIT 2").Check(testkit.Rows("250 250", "150 150"))
+	tk.MustQuery("SELECT * FROM t WHERE id > 100 ORDER BY id ASC LIMIT 1").Check(testkit.Rows("150 150"))
+	tk.MustQuery("SELECT * FROM t WHERE id > 10 ORDER BY id ASC LIMIT 2").Check(testkit.Rows("50 50", "150 150"))
+	tk.MustQuery("SELECT * FROM t WHERE id > 100 ORDER BY id ASC LIMIT 2").Check(testkit.Rows("150 150", "250 250"))
+	tk.MustQuery("SELECT * FROM t WHERE id > 100 ORDER BY id DESC LIMIT 1").Check(testkit.Rows("250 250"))
+	tk.MustQuery("SELECT * FROM t WHERE id > 100 ORDER BY id DESC LIMIT 2").Check(testkit.Rows("250 250", "150 150"))
+	tk.MustQuery("SELECT * FROM t WHERE id < 200 ORDER BY id DESC LIMIT 2").Check(testkit.Rows("150 150", "50 50"))
+	tk.MustQuery("SELECT * FROM t WHERE id < 250 ORDER BY id DESC LIMIT 2").Check(testkit.Rows("150 150", "50 50"))
+}
