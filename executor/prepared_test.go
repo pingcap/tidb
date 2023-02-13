@@ -1114,8 +1114,8 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	// Do not use the parallel apply.
 	require.False(t, strings.Contains(executionInfo, "Concurrency"))
 	tk.MustExec("execute stmt;")
-	// The subquery plan can not be cached.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	// The subquery plan can be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	// test for apply cache
 	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")

@@ -114,7 +114,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		checker.reason = "query has user-defined variables is un-cacheable"
 		return in, true
 	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
-		if !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
+		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
 			checker.cacheable = false
 			checker.reason = "query has sub-queries is un-cacheable"
 			return in, true
