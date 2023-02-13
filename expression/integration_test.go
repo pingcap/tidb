@@ -2965,6 +2965,112 @@ func TestTiDBDecodePlanFunc(t *testing.T) {
 	tk.MustQuery("select tidb_decode_plan('xxx')").Check(testkit.Rows("xxx"))
 }
 
+func TestTimeScalarFunctionPushDownResult(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(col1 datetime, col2 datetime, y int(8), m int(8), d int(8)) CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec("insert into t values ('2022-03-24 01:02:03.040506', '9999-12-31 23:59:59', 9999, 12, 31);")
+	testcases := []struct {
+		sql      string
+		function string
+	}{
+		{
+			sql:      "select now(), now() from t where sysdate()-now()<2;",
+			function: "sysdate",
+		},
+		{
+			sql:      "select col1, to_days(col1) from t where to_days(col1)=to_days('2022-03-24 01:02:03.040506');",
+			function: "to_days",
+		},
+		{
+			sql:      "select col1, hour(col1) from t where hour(col1)=hour('2022-03-24 01:02:03.040506');",
+			function: "hour",
+		},
+		{
+			sql:      "select col1, month(col1) from t where month(col1)=month('2022-03-24 01:02:03.040506');",
+			function: "month",
+		},
+		{
+			sql:      "select col1, minute(col1) from t where minute(col1)=minute('2022-03-24 01:02:03.040506');",
+			function: "minute",
+		},
+		{
+			function: "second",
+			sql:      "select col1, second(col1) from t where second(col1)=second('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "microsecond",
+			sql:      "select col1, microsecond(col1) from t where microsecond(col1)=microsecond('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "dayName",
+			sql:      "select col1, dayName(col1) from t where dayName(col1)=dayName('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "dayOfMonth",
+			sql:      "select col1, dayOfMonth(col1) from t where dayOfMonth(col1)=dayOfMonth('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "dayOfWeek",
+			sql:      "select col1, dayOfWeek(col1) from t where dayOfWeek(col1)=dayOfWeek('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "dayOfYear",
+			sql:      "select col1, dayOfYear(col1) from t where dayOfYear(col1)=dayOfYear('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "Date",
+			sql:      "select col1, Date(col1) from t where Date(col1)=Date('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "Week",
+			sql:      "select col1, Week(col1) from t where Week(col1)=Week('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "YearWeek",
+			sql:      "select col1, YearWeek(col1) from t where YearWeek(col1)=YearWeek('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "to_seconds",
+			sql:      "select col1, to_seconds(col1) from t where to_seconds(col1)=to_seconds('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "time_to_sec",
+			sql:      "select col1, time_to_sec (col1) from t where time_to_sec(col1)=time_to_sec('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "DateDiff",
+			sql:      "select col1, DateDiff(col1, col2) from t where DateDiff(col1, col2)=DateDiff('2022-03-24 01:02:03.040506', '9999-12-31 23:59:59');",
+		},
+		{
+			function: "MonthName",
+			sql:      "select col1, MonthName(col1) from t where MonthName(col1)=MonthName('2022-03-24 01:02:03.040506');",
+		},
+		{
+			function: "MakeDate",
+			sql:      "select col1, MakeDate(9999, 31) from t where MakeDate(y, d)=MakeDate(9999, 31);",
+		},
+		{
+			function: "MakeTime",
+			sql:      "select col1, MakeTime(12, 12, 31) from t where MakeTime(m, m, d)=MakeTime(12, 12, 31);",
+		},
+	}
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name != 'date_add'")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	for _, testcase := range testcases {
+		r1 := tk.MustQuery(testcase.sql).Rows()
+		tk.MustExec(fmt.Sprintf("insert into mysql.expr_pushdown_blacklist(name) values('%s');", testcase.function))
+		tk.MustExec("admin reload expr_pushdown_blacklist;")
+		r2 := tk.MustQuery(testcase.sql).Rows()
+		require.EqualValues(t, r2, r1, testcase.sql)
+	}
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name != 'date_add'")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+}
+
 func TestTiDBDecodeKeyFunc(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
