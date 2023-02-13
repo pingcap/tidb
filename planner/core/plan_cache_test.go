@@ -587,6 +587,7 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 		{"select * from t t1 where t1.a > (select 1 from t t2 where t2.b<?)", []int{1}, "0", true},                         // decorrelated
 	}
 
+	// switch on
 	for _, testCase := range testCases {
 		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", testCase.sql))
 		var using []string
@@ -606,5 +607,21 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: the plan with PhysicalApply is un-cacheable"))
 			}
 		}
+	}
+	// switch off
+	tk.MustExec("set @@session.tidb_enable_plan_cache_for_subquery = 0")
+	for _, testCase := range testCases {
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", testCase.sql))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip plan-cache: query has sub-queries is un-cacheable"))
+		var using []string
+		for i, p := range testCase.params {
+			tk.MustExec(fmt.Sprintf("set @a%d = %d", i, p))
+			using = append(using, fmt.Sprintf("@a%d", i))
+		}
+
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustExec("execute stmt using " + strings.Join(using, ", "))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
 	}
 }
