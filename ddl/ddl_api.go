@@ -4687,16 +4687,9 @@ func isClusteredPKColumn(col *table.Column, tblInfo *model.TableInfo) bool {
 }
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
-<<<<<<< HEAD
 	var oldRandBits uint64
-	if originCol.IsPKHandleColumn(tableInfo) {
-		oldRandBits = tableInfo.AutoRandomBits
-=======
-	var oldShardBits, oldRangeBits uint64
 	if isClusteredPKColumn(originCol, tableInfo) {
-		oldShardBits = tableInfo.AutoRandomBits
-		oldRangeBits = tableInfo.AutoRandomRangeBits
->>>>>>> cd531a4a98 (*: support auto_random on composite clustered primary key (#38617))
+		oldRandBits = tableInfo.AutoRandomBits
 	}
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
