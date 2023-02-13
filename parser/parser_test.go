@@ -671,6 +671,8 @@ func TestDMLStmt(t *testing.T) {
 		{"load data infile '/tmp/t.csv' into table t null defined by 'nil'", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` NULL DEFINED BY 'nil'"},
 		{"load data infile '/tmp/t.csv' into table t null defined by X'00'", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` NULL DEFINED BY '\x00'"},
 		{"load data infile '/tmp/t.csv' into table t null defined by 'NULL' optionally enclosed ignore 1 lines", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` NULL DEFINED BY 'NULL' OPTIONALLY ENCLOSED IGNORE 1 LINES"},
+		{"load data local infile '/tmp/t.sql' format 'sql' replace into table t (a,b)", true, "LOAD DATA LOCAL INFILE '/tmp/t.sql' FORMAT 'sql' REPLACE INTO TABLE `t` (`a`,`b`)"},
+		{"load data infile '/tmp/t.parquet' format 'parquet' into table t (column1, @var1) SET column2 = @var1/100", true, "LOAD DATA INFILE '/tmp/t.parquet' FORMAT 'parquet' INTO TABLE `t` (`column1`,@`var1`) SET `column2`=@`var1`/100"},
 
 		// select for update/share
 		{"select * from t for update", true, "SELECT * FROM `t` FOR UPDATE"},

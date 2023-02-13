@@ -937,6 +937,7 @@ import (
 	IndexAdviseStmt            "INDEX ADVISE statement"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
+	LoadDataWithFormatStmt     "Load data with format statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockStatsStmt              "Lock statistic statement"
 	UnlockStatsStmt            "Unlock statistic statement"
@@ -11508,6 +11509,7 @@ Statement:
 |	IndexAdviseStmt
 |	KillStmt
 |	LoadDataStmt
+|	LoadDataWithFormatStmt
 |	LoadStatsStmt
 |	LockStatsStmt
 |	UnlockStatsStmt
@@ -11581,6 +11583,7 @@ TraceableStmt:
 		$$ = sel
 	}
 |	LoadDataStmt
+|	LoadDataWithFormatStmt
 |	BeginTransactionStmt
 |	CommitStmt
 |	SavepointStmt
@@ -13815,6 +13818,40 @@ LoadDataStmt:
 		$$ = x
 	}
 
+// see https://github.com/pingcap/tidb/issues/40499
+LoadDataWithFormatStmt:
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "FORMAT" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	{
+		x := &ast.LoadDataStmt{
+			FileLocRef:         ast.FileLocServerOrRemote,
+			Path:               $5,
+			Format:             $7,
+			OnDuplicate:        $8.(ast.OnDuplicateKeyHandlingType),
+			Table:              $11.(*ast.TableName),
+			ColumnsAndUserVars: $13.([]*ast.ColumnNameOrUserVar),
+		}
+		if $3 != nil {
+			x.FileLocRef = ast.FileLocClient
+			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
+			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
+			if x.OnDuplicate == ast.OnDuplicateKeyHandlingError {
+				x.OnDuplicate = ast.OnDuplicateKeyHandlingIgnore
+			}
+		}
+		if $14 != nil {
+			x.ColumnAssignments = $14.([]*ast.Assignment)
+		}
+		columns := []*ast.ColumnName{}
+		for _, v := range x.ColumnsAndUserVars {
+			if v.ColumnName != nil {
+				columns = append(columns, v.ColumnName)
+			}
+		}
+		x.Columns = columns
+
+		$$ = x
+	}
+
 IgnoreLines:
 	{
 		$$ = uint64(0)
@@ -13839,17 +13876,16 @@ LocalOpt:
 
 Fields:
 	{
-		escape := "\\"
 		$$ = &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    escape[0],
+			Escaped:    '\\',
 		}
 	}
 |	FieldsOrColumns FieldItemList
 	{
 		fieldsClause := &ast.FieldsClause{
 			Terminated: "\t",
-			Escaped:    []byte("\\")[0],
+			Escaped:    '\\',
 		}
 		fieldItems := $2.([]*ast.FieldItem)
 		for _, item := range fieldItems {

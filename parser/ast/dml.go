@@ -1814,12 +1814,14 @@ const (
 
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
 // See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
-// in TiDB we extend the syntax to use LOAD DATA as a more general way to import data.
+// in TiDB we extend the syntax to use LOAD DATA as a more general way to import data, see
+// https://github.com/pingcap/tidb/issues/40499
 type LoadDataStmt struct {
 	dmlNode
 
 	FileLocRef        FileLocRefTp
 	Path              string
+	Format            string // empty only when it's CSV-like
 	OnDuplicate       OnDuplicateKeyHandlingType
 	Table             *TableName
 	Columns           []*ColumnName
@@ -1842,6 +1844,10 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WriteKeyWord("INFILE ")
 	ctx.WriteString(n.Path)
+	if n.Format != "" {
+		ctx.WriteKeyWord(" FORMAT ")
+		ctx.WriteString(n.Format)
+	}
 	if n.OnDuplicate == OnDuplicateKeyHandlingReplace {
 		ctx.WriteKeyWord(" REPLACE")
 	} else if n.OnDuplicate == OnDuplicateKeyHandlingIgnore {
@@ -1851,8 +1857,12 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore LoadDataStmt.Table")
 	}
-	n.FieldsInfo.Restore(ctx)
-	n.LinesInfo.Restore(ctx)
+	if n.FieldsInfo != nil {
+		n.FieldsInfo.Restore(ctx)
+	}
+	if n.LinesInfo != nil {
+		n.LinesInfo.Restore(ctx)
+	}
 	if n.NullInfo != nil {
 		n.NullInfo.Restore(ctx)
 	}
