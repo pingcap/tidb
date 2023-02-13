@@ -132,7 +132,7 @@ const (
 	BaseDDLTableVersion DDLTableVersion = 1
 	// MDLTableVersion is for support MDL tables.
 	MDLTableVersion DDLTableVersion = 2
-	// BackfillTableVersion is for support distributed reorg stage, it added tidb_ddl_backfill, tidb_ddl_backfill_history.
+	// BackfillTableVersion is for support distributed reorg stage, it added tidb_background_subtask, tidb_background_subtask_history.
 	BackfillTableVersion DDLTableVersion = 3
 )
 
@@ -539,8 +539,8 @@ func (m *Meta) UpdatePolicy(policy *model.PolicyInfo) error {
 	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
-// CreateResourceGroup creates a resource group.
-func (m *Meta) CreateResourceGroup(group *model.ResourceGroupInfo) error {
+// AddResourceGroup creates a resource group.
+func (m *Meta) AddResourceGroup(group *model.ResourceGroupInfo) error {
 	if group.ID == 0 {
 		return errors.New("group.ID is invalid")
 	}

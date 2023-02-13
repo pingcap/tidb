@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -2490,6 +2491,13 @@ func doDMLWorks(s Session) {
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
 		}
+
+		failpoint.Inject("enableAggressiveLockingOnBootstrap", func() {
+			if v.Name == variable.TiDBPessimisticTransactionAggressiveLocking {
+				vVal = variable.On
+			}
+		})
+
 		// sanitize k and vVal
 		value := fmt.Sprintf(`("%s", "%s")`, sqlexec.EscapeString(k), sqlexec.EscapeString(vVal))
 		values = append(values, value)
@@ -2555,7 +2563,7 @@ func oldPasswordUpgrade(pass string) (string, error) {
 // rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
 func rebuildAllPartitionValueMapAndSorted(s *session) {
 	type partitionExpr interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
+		PartitionExpr() *tables.PartitionExpr
 	}
 
 	p := parser.New()
@@ -2567,12 +2575,9 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 				continue
 			}
 
-			pe, err := t.(partitionExpr).PartitionExpr()
-			if err != nil {
-				panic("partition table gets partition expression failed")
-			}
+			pe := t.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
-				if err = cp.RebuildPartitionValueMapAndSorted(p); err != nil {
+				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
 					logutil.BgLogger().Warn("build list column partition value map and sorted failed")
 					break
 				}

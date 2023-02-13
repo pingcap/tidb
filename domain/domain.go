@@ -208,6 +208,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
 				zap.Duration("start time", time.Since(startTime)),
+				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes))
 			return is, false, currentSchemaVersion, relatedChanges, nil
@@ -471,6 +472,18 @@ func (do *Domain) GetScope(status string) variable.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 
+func getFlashbackStartTSFromErrorMsg(err error) uint64 {
+	slices := strings.Split(err.Error(), "is in flashback progress, FlashbackStartTS is ")
+	if len(slices) != 2 {
+		return 0
+	}
+	version, err := strconv.ParseUint(slices[1], 10, 0)
+	if err != nil {
+		return 0
+	}
+	return version
+}
+
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (do *Domain) Reload() error {
@@ -490,7 +503,15 @@ func (do *Domain) Reload() error {
 		return err
 	}
 
-	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(ver.Ver)
+	version := ver.Ver
+	is, hitCache, oldSchemaVersion, changes, err := do.loadInfoSchema(version)
+	if err != nil {
+		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
+			// use the lastest available version to create domain
+			version -= 1
+			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
+		}
+	}
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
@@ -519,7 +540,7 @@ func (do *Domain) Reload() error {
 	}
 
 	// lease renew, so it must be executed despite it is cache or not
-	do.SchemaValidator.Update(ver.Ver, oldSchemaVersion, is.SchemaMetaVersion(), changes)
+	do.SchemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
@@ -1047,18 +1068,15 @@ func (do *Domain) Init(
 	}
 
 	// step 1: prepare the info/schema syncer which domain reload needed.
+	pdCli := do.GetPDClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, do.unprefixedEtcdCli, skipRegisterToDashboard)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
+		do.etcdClient, do.unprefixedEtcdCli, pdCli, do.Store().GetCodec(),
+		skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
-
-	var pdClient pd.Client
-	if store, ok := do.store.(kv.StorageWithPD); ok {
-		pdClient = store.GetPDClient()
-	}
-	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdClient)
-
+	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
@@ -1089,12 +1107,12 @@ func (do *Domain) Init(
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
-	if pdClient != nil {
+	if pdCli != nil {
 		do.wg.Run(func() {
-			do.closestReplicaReadCheckLoop(ctx, pdClient)
+			do.closestReplicaReadCheckLoop(ctx, pdCli)
 		}, "closestReplicaReadCheckLoop")
 	}
-	err = do.initLogBackup(ctx, pdClient)
+	err = do.initLogBackup(ctx, pdCli)
 	if err != nil {
 		return err
 	}
@@ -1337,6 +1355,14 @@ func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
 // GetEtcdClient returns the etcd client.
 func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
+}
+
+// GetPDClient returns the PD client.
+func (do *Domain) GetPDClient() pd.Client {
+	if store, ok := do.store.(kv.StorageWithPD); ok {
+		return store.GetPDClient()
+	}
+	return nil
 }
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it

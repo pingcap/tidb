@@ -1266,6 +1266,33 @@ func TestGroupStreamAggOnTiFlash(t *testing.T) {
 	}
 }
 
+// TestIssue41014 test issue that can't find proper physical plan
+func TestIssue41014(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE `tai1` (\n  `aid` int(11) DEFAULT NULL,\n  `rid` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("CREATE TABLE `tai2` (\n  `rid` int(11) DEFAULT NULL,\n  `prilan` varchar(20) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("alter table tai1 set tiflash replica 1")
+	tk.MustExec("alter table tai2 set tiflash replica 1")
+	tk.MustExec("alter table tai2 add index idx((lower(prilan)));")
+	tk.MustExec("set @@tidb_opt_distinct_agg_push_down = 1;")
+
+	tk.MustQuery("explain select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
+		testkit.Rows("HashAgg_11 1.00 root  funcs:count(distinct test.tai1.aid)->Column#8",
+			"└─HashJoin_15 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
+			"  ├─Selection_20(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
+			"  │ └─Projection_19 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
+			"  │   └─TableReader_18 9990.00 root  data:Selection_17",
+			"  │     └─Selection_17 9990.00 cop[tikv]  not(isnull(test.tai2.rid))",
+			"  │       └─TableFullScan_16 10000.00 cop[tikv] table:tai2 keep order:false, stats:pseudo",
+			"  └─TableReader_23(Probe) 9990.00 root  data:Selection_22",
+			"    └─Selection_22 9990.00 cop[tikv]  not(isnull(test.tai1.rid))",
+			"      └─TableFullScan_21 10000.00 cop[tikv] table:tai1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
+		testkit.Rows("0"))
+}
+
 func TestTiflashEmptyDynamicPruneResult(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
