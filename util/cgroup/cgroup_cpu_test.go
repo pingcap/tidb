@@ -41,6 +41,7 @@ func TestGetCgroupCPU(t *testing.T) {
 			}
 		}()
 	}
+	require.True(t, InContainer())
 	cpu, err := GetCgroupCPU()
 	require.NoError(t, err)
 	require.NotZero(t, cpu.Period)
