@@ -388,7 +388,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		return invalidTask, 0, nil
 	}
 
-	bestTask = invalidTask
 	cntPlan = 0
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
