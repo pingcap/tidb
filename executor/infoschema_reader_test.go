@@ -471,10 +471,21 @@ func TestPartitionsTable(t *testing.T) {
 
 	tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 	tk.MustExec(`CREATE TABLE test_partitions1 (id int, b int, c varchar(5), primary key(id), index idx(c)) PARTITION BY RANGE COLUMNS(id) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
-	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions1';").Check(testkit.Rows("p0 RANGE COLUMNS id", "p1 RANGE COLUMNS id", "p2 RANGE COLUMNS id"))
+	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions1';").Check(testkit.Rows("p0 RANGE COLUMNS `id`", "p1 RANGE COLUMNS `id`", "p2 RANGE COLUMNS `id`"))
 	tk.MustExec("DROP TABLE test_partitions1")
 
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec(`CREATE TABLE test_partitions (id int, b int, c varchar(5), primary key(id,b), index idx(c)) PARTITION BY RANGE COLUMNS(id,b) (PARTITION p0 VALUES LESS THAN (6,1), PARTITION p1 VALUES LESS THAN (11,9), PARTITION p2 VALUES LESS THAN (16,MAXVALUE))`)
+	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions';").Check(testkit.Rows("p0 RANGE COLUMNS `id`,`b`", "p1 RANGE COLUMNS `id`,`b`", "p2 RANGE COLUMNS `id`,`b`"))
+	tk.MustExec("DROP TABLE test_partitions")
+
+	tk.MustExec(`create table test_partitions (a varchar(255), b int, c datetime) partition by list columns (b,a) (partition p0 values in ((1,"1"), (3,"3")), partition p1 values in ((2, "2")))`)
+	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions'").Check(testkit.Rows("p0 LIST COLUMNS `b`,`a`", "p1 LIST COLUMNS `b`,`a`"))
+	tk.MustExec("drop table test_partitions")
+
+	tk.MustExec("create table test_partitions (a varchar(3)) partition by list columns (a) (partition p0 values in ('1'), partition p1 values in ('2'))")
+	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions'").Check(testkit.Rows("p0 LIST COLUMNS `a`", "p1 LIST COLUMNS `a`"))
+	tk.MustExec("drop table test_partitions")
+
 	tk.MustExec("create table test_partitions (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));")
 	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions';").Check(testkit.Rows("p0 LIST `a`", "p1 LIST `a`"))
 	tk.MustExec("drop table test_partitions")
@@ -484,7 +495,7 @@ func TestPartitionsTable(t *testing.T) {
 	tk.MustExec("drop table test_partitions")
 
 	tk.MustExec("create table test_partitions (a bigint, b date) partition by list columns (a,b) (partition p0 values in ((1,'2020-09-28'),(1,'2020-09-29')));")
-	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions';").Check(testkit.Rows("p0 LIST COLUMNS a,b"))
+	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions';").Check(testkit.Rows("p0 LIST COLUMNS `a`,`b`"))
 	pid, err := strconv.Atoi(tk.MustQuery("select TIDB_PARTITION_ID from information_schema.partitions where table_name = 'test_partitions';").Rows()[0][0].(string))
 	require.NoError(t, err)
 	require.Greater(t, pid, 0)
