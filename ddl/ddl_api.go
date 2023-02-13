@@ -500,7 +500,9 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, err
 }
 
 // OverwriteCollationWithBinaryFlag is used to handle the case like
-//   CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
+//
+//	CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
+//
 // The 'BINARY' sets the column collation to *_bin according to the table charset.
 func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
 	ignoreBinFlag := colDef.Tp.Charset != "" && (colDef.Tp.Collate != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
@@ -1480,29 +1482,23 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return ErrInvalidAutoRandom.GenWithStackByArgs(
 					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.Tp)))
 			}
-<<<<<<< HEAD
-			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
-				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
-				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
-=======
 			switch {
 			case tbInfo.PKIsHandle:
 				if tbInfo.GetPkName().L != col.Name.Name.L {
 					errMsg := fmt.Sprintf(autoid.AutoRandomMustFirstColumnInPK, col.Name.Name.O)
-					return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+					return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 				}
 			case tbInfo.IsCommonHandle:
 				pk := tables.FindPrimaryIndex(tbInfo)
 				if pk == nil {
-					return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNoClusteredPKErrMsg)
+					return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNoClusteredPKErrMsg)
 				}
 				if col.Name.Name.L != pk.Columns[0].Name.L {
 					errMsg := fmt.Sprintf(autoid.AutoRandomMustFirstColumnInPK, col.Name.Name.O)
-					return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+					return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 				}
 			default:
-				return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNoClusteredPKErrMsg)
->>>>>>> cd531a4a98 (*: support auto_random on composite clustered primary key (#38617))
+				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNoClusteredPKErrMsg)
 			}
 
 			if containsColumnOption(col, ast.ColumnOptionAutoIncrement) {
@@ -4304,7 +4300,6 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 // checkColumnWithIndexConstraint is used to check the related index constraint of the modified column.
 // Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
 // will cause index idx to break the max-prefix-length constraint.
-//
 func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
 	columns := make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
 	columns = append(columns, tbInfo.Columns...)
@@ -4402,16 +4397,9 @@ func isClusteredPKColumn(col *table.Column, tblInfo *model.TableInfo) bool {
 }
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
-<<<<<<< HEAD
 	var oldRandBits uint64
-	if originCol.IsPKHandleColumn(tableInfo) {
-		oldRandBits = tableInfo.AutoRandomBits
-=======
-	var oldShardBits, oldRangeBits uint64
 	if isClusteredPKColumn(originCol, tableInfo) {
-		oldShardBits = tableInfo.AutoRandomBits
-		oldRangeBits = tableInfo.AutoRandomRangeBits
->>>>>>> cd531a4a98 (*: support auto_random on composite clustered primary key (#38617))
+		oldRandBits = tableInfo.AutoRandomBits
 	}
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
