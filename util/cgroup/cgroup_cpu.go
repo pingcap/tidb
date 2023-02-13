@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-const noCPUControllerDetected = errors.New("no cpu controller detected")
+var noCPUControllerDetected = errors.New("no cpu controller detected")
 
 // Helper function for getCgroupCPU. Root is always "/", except in tests.
 func getCgroupCPU(root string) (CPUUsage, error) {
