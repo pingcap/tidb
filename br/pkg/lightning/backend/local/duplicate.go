@@ -40,13 +40,16 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/ranger"
+	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -394,6 +397,9 @@ type DuplicateManager struct {
 	concurrency int
 	hasDupe     *atomic.Bool
 	indexID     int64
+
+	deleteDuplicateRowsFunc func(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error)
+	errLimiter              *rate.Limiter
 }
 
 // NewDuplicateManager creates a new DuplicateManager.
@@ -407,6 +413,7 @@ func NewDuplicateManager(
 	concurrency int,
 	hasDupe *atomic.Bool,
 	logger log.Logger,
+	deleteDuplicateRowsFunc func(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error),
 ) (*DuplicateManager, error) {
 	logger = logger.With(zap.String("tableName", tableName))
 	decoder, err := kv.NewTableKVDecoder(tbl, tableName, sessOpts, logger)
@@ -414,16 +421,18 @@ func NewDuplicateManager(
 		return nil, errors.Trace(err)
 	}
 	return &DuplicateManager{
-		tbl:         tbl,
-		tableName:   tableName,
-		splitCli:    splitCli,
-		tikvCli:     tikvCli,
-		errorMgr:    errMgr,
-		decoder:     decoder,
-		logger:      logger,
-		concurrency: concurrency,
-		hasDupe:     hasDupe,
-		indexID:     sessOpts.IndexID,
+		tbl:                     tbl,
+		tableName:               tableName,
+		splitCli:                splitCli,
+		tikvCli:                 tikvCli,
+		errorMgr:                errMgr,
+		decoder:                 decoder,
+		logger:                  logger,
+		concurrency:             concurrency,
+		hasDupe:                 hasDupe,
+		indexID:                 sessOpts.IndexID,
+		deleteDuplicateRowsFunc: deleteDuplicateRowsFunc,
+		errLimiter:              rate.NewLimiter(1, 1),
 	}, nil
 }
 
@@ -921,10 +930,126 @@ func (m *DuplicateManager) ResolveLocalDuplicateRows(ctx context.Context, dupDB 
 	return m.iterDuplicateRowsFromDupDB(ctx, dupDB, keyAdapter, m.ResolveDataConflictError, m.ResolveIndexConflictError)
 }
 
-func (m *DuplicateManager) ResolveDataConflictError(ctx context.Context, stream DupKVStream) error {
+func (m *DuplicateManager) ResolveDataConflictError(ctx context.Context, stream DupKVStream) (err error) {
+	logger := log.FromContext(ctx).With(zap.String("table", m.tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate data rows")
+	defer func() {
+		logger.End(zap.ErrorLevel, err)
+	}()
+
+	//nolint: errcheck
+	defer stream.Close()
+	var handleRows [][2][]byte
+	for {
+		key, val, err := stream.Next()
+		if errors.Cause(err) == io.EOF {
+			break
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		m.hasDupe.Store(true)
+
+		handleRows = append(handleRows, [2][]byte{key, val})
+		if len(handleRows) >= defaultRecordConflictErrorBatch {
+			if err = m.ResolveDuplicateRows(ctx, logger, m.tableName, handleRows); err != nil {
+				return errors.Trace(err)
+			}
+			handleRows = handleRows[:0]
+		}
+	}
+	if len(handleRows) > 0 {
+		if err = m.ResolveDuplicateRows(ctx, logger, m.tableName, handleRows); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
-func (m *DuplicateManager) ResolveIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo) error {
+func (m *DuplicateManager) ResolveIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo) (err error) {
+	logger := log.FromContext(ctx).With(zap.String("table", m.tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate index rows")
+	defer func() {
+		logger.End(zap.ErrorLevel, err)
+	}()
+
+	//nolint: errcheck
+	defer stream.Close()
+	rawHandles := make([][]byte, 0)
+	for {
+		key, val, err := stream.Next()
+		if errors.Cause(err) == io.EOF {
+			break
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		m.hasDupe.Store(true)
+
+		h, err := m.decoder.DecodeHandleFromIndex(indexInfo, key, val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rawHandles = append(rawHandles, tablecodec.EncodeRowKeyWithHandle(tableID, h))
+
+		if len(rawHandles) >= defaultRecordConflictErrorBatch {
+			if err := m.resolveIndexHandles(ctx, rawHandles, logger); err != nil {
+				return errors.Trace(err)
+			}
+			rawHandles = rawHandles[:0]
+		}
+	}
+	if len(rawHandles) > 0 {
+		if err := m.resolveIndexHandles(ctx, rawHandles, logger); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
+}
+
+func (m *DuplicateManager) resolveIndexHandles(ctx context.Context, rawHandles [][]byte, logger *log.Task) error {
+	snapshot := m.tikvCli.GetSnapshot(math.MaxUint64)
+	batchGetMap, err := snapshot.BatchGet(ctx, rawHandles)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	handleRows := make([][2][]byte, len(rawHandles))
+	for i, rawHandle := range rawHandles {
+		rawValue, ok := batchGetMap[string(hack.String(rawHandle))]
+		handleRows[i][0] = rawHandle
+		if ok {
+			handleRows[i][1] = rawValue
+		} else {
+			m.logger.Warn("[detect-dupe] can not found row data corresponding to the handle",
+				logutil.Key("rawHandle", rawHandle))
+		}
+	}
+
+	err = m.ResolveDuplicateRows(ctx, logger, m.tableName, handleRows)
+	return errors.Trace(err)
+}
+
+func (m *DuplicateManager) ResolveDuplicateRows(ctx context.Context, logger *log.Task, tableName string, handleRows [][2][]byte) error {
+	if len(handleRows) == 0 {
+		return nil
+	}
+
+	for {
+		err := m.deleteDuplicateRowsFunc(ctx, logger, handleRows, m.decoder)
+		if err == nil {
+			return nil
+		}
+		if types.ErrBadNumber.Equal(err) {
+			logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+			return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+		}
+		if log.IsContextCanceledError(err) {
+			return err
+		}
+		if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
+			logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+		}
+		if err = m.errLimiter.Wait(ctx); err != nil {
+			return err
+		}
+	}
 }
