@@ -424,10 +424,6 @@ type MockGlue struct {
 	GlobalVars map[string]string
 }
 
-func (m *MockGlue) SetSession(se session.Session) {
-	m.se = se
-}
-
 // GetDomain implements glue.Glue.
 func (*MockGlue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return nil, nil
