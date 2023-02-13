@@ -21,13 +21,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
-<<<<<<< HEAD:ddl/index_merge_tmp_test.go
 	"github.com/pingcap/tidb/domain"
-=======
-	"github.com/pingcap/tidb/ddl/internal/callback"
-	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/errno"
->>>>>>> c6e6d621e2 (ddl: check the key existence on original index (#40749)):ddl/indexmergetest/merge_test.go
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
@@ -561,7 +556,7 @@ func TestAddIndexMergeInsertOnMerging(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -639,7 +634,7 @@ func TestAddIndexMergeInsertToDeletedTempIndex(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -682,7 +677,7 @@ func TestAddIndexMergeReplaceDelete(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() {
 			return
@@ -723,7 +718,7 @@ func TestAddIndexMergeDeleteDifferentHandle(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{}
 	runDML := false
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() || runDML {
@@ -770,7 +765,7 @@ func TestAddIndexDecodeTempIndexCommonHandle(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{}
 	runDML := false
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() || runDML {
@@ -809,7 +804,7 @@ func TestAddIndexInsertIgnoreOnBackfill(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{}
 	runDML := false
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() || runDML {
@@ -848,7 +843,7 @@ func TestAddIndexMultipleDelete(t *testing.T) {
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if t.Failed() {
 			return
