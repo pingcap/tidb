@@ -165,6 +165,11 @@ func (gs *tidbSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
 }
 
+// SetSession implements for Unit Test
+func (gs *tidbSession) SetSession(session session.Session) {
+	gs.se = session
+}
+
 // Execute implements glue.Session.
 func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return gs.ExecuteInternal(ctx, sql)
@@ -226,11 +231,11 @@ func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, info []*model.T
 			return err
 		}
 		mid := len(info) / 2
-		err = gs.SplitBatchCreateTable(schema, info[:mid])
+		err = gs.SplitBatchCreateTable(schema, info[:mid], cs...)
 		if err != nil {
 			return err
 		}
-		err = gs.SplitBatchCreateTable(schema, info[mid:])
+		err = gs.SplitBatchCreateTable(schema, info[mid:], cs...)
 		if err != nil {
 			return err
 		}
@@ -268,7 +273,7 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 			cloneTables = append(cloneTables, table)
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-		if err := gs.SplitBatchCreateTable(dbName, cloneTables); err != nil {
+		if err := gs.SplitBatchCreateTable(dbName, cloneTables, cs...); err != nil {
 			//It is possible to failure when TiDB does not support model.ActionCreateTables.
 			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
 			//we fall back to old way that creating table one by one
