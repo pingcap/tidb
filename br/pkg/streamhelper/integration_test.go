@@ -14,12 +14,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-	backup "github.com/pingcap/kvproto/pkg/brpb"
-=======
 	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
->>>>>>> 93c6492418 (log-backup: added more robust error handling for log backup advancer (#41083))
+	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -149,11 +145,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("testGetGlobalCheckPointTS", func(t *testing.T) { testGetGlobalCheckPointTS(t, metaCli) })
 	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 	t.Run("TestStreamCheckpoint", func(t *testing.T) { testStreamCheckpoint(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
-<<<<<<< HEAD
-=======
-	t.Run("testStoptask", func(t *testing.T) { testStoptask(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 	t.Run("TestStreamClose", func(t *testing.T) { testStreamClose(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
->>>>>>> 93c6492418 (log-backup: added more robust error handling for log backup advancer (#41083))
 }
 
 func TestChecking(t *testing.T) {
