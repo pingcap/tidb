@@ -23,6 +23,7 @@ go_test(
     srcs = ["cpuprofile_test.go"],
     embed = [":cpuprofile"],
     flaky = True,
+    shard_count = 10,
     deps = [
         "//testkit/testsetup",
         "//util/cpuprofile/testutil",
