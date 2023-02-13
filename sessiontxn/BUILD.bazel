@@ -20,7 +20,7 @@ go_library(
 
 go_test(
     name = "sessiontxn_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "txn_context_test.go",
         "txn_manager_test.go",

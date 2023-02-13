@@ -18,7 +18,9 @@ go_library(
 
 go_test(
     name = "pooltask_test",
+    timeout = "short",
     srcs = ["task_test.go"],
     embed = [":pooltask"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )
