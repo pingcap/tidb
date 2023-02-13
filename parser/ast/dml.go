@@ -1825,6 +1825,7 @@ type LoadDataStmt struct {
 	Columns           []*ColumnName
 	FieldsInfo        *FieldsClause
 	LinesInfo         *LinesClause
+	NullInfo          *NullDefinedBy
 	IgnoreLines       uint64
 	ColumnAssignments []*Assignment
 
@@ -1852,6 +1853,9 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	n.FieldsInfo.Restore(ctx)
 	n.LinesInfo.Restore(ctx)
+	if n.NullInfo != nil {
+		n.NullInfo.Restore(ctx)
+	}
 	if n.IgnoreLines != 0 {
 		ctx.WriteKeyWord(" IGNORE ")
 		ctx.WritePlainf("%d", n.IgnoreLines)
@@ -1991,6 +1995,21 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+// NullDefinedBy represent a syntax that extends MySQL's standard
+type NullDefinedBy struct {
+	NullDef     string
+	OptEnclosed bool
+}
+
+// Restore for NullDefinedBy
+func (n *NullDefinedBy) Restore(ctx *format.RestoreCtx) {
+	ctx.WriteKeyWord(" NULL DEFINED BY ")
+	ctx.WriteString(n.NullDef)
+	if n.OptEnclosed {
+		ctx.WriteKeyWord(" OPTIONALLY ENCLOSED")
+	}
 }
 
 // CallStmt represents a call procedure query node.

@@ -661,6 +661,7 @@ import (
 	curDate               "CURDATE"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
+	defined               "DEFINED"
 	dotType               "DOT"
 	dump                  "DUMP"
 	exact                 "EXACT"
@@ -1120,6 +1121,7 @@ import (
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	MaxValPartOpt                          "MAXVALUE partition option"
+	NullDefinedByClause                    "NULL DEFINED BY clause in LOAD DATA statement"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt                "NO_WRITE_TO_BINLOG alias LOCAL or empty"
@@ -1446,6 +1448,7 @@ import (
 	HashString                      "Hashed string"
 	LikeEscapeOpt                   "like escape option"
 	LinesTerminated                 "Lines terminated by"
+	NullDef                         "NULL definition in LOAD DATA statement"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
@@ -1600,19 +1603,19 @@ ResourceGroupOptionList:
 |	ResourceGroupOptionList DirectResourceGroupOption
 	{
 		if $1.([]*ast.ResourceGroupOption)[0].Tp == $2.(*ast.ResourceGroupOption).Tp ||
-		   (len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $2.(*ast.ResourceGroupOption).Tp) {
 			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
-            return 1
+			return 1
 		}
 		$$ = append($1.([]*ast.ResourceGroupOption), $2.(*ast.ResourceGroupOption))
 	}
 |	ResourceGroupOptionList ',' DirectResourceGroupOption
 	{
 		if $1.([]*ast.ResourceGroupOption)[0].Tp == $3.(*ast.ResourceGroupOption).Tp ||
-    	   (len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
-    		 yylex.AppendError(yylex.Errorf("Dupliated options specified"))
-             return 1
-    	}
+			(len($1.([]*ast.ResourceGroupOption)) > 1 && $1.([]*ast.ResourceGroupOption)[1].Tp == $3.(*ast.ResourceGroupOption).Tp) {
+			yylex.AppendError(yylex.Errorf("Dupliated options specified"))
+			return 1
+		}
 		$$ = append($1.([]*ast.ResourceGroupOption), $3.(*ast.ResourceGroupOption))
 	}
 
@@ -1622,9 +1625,9 @@ DirectResourceGroupOption:
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
 	}
 |	"BURSTABLE"
-    {
-    	$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
-    }
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+	}
 
 PlacementOptionList:
 	DirectPlacementOption
@@ -6555,6 +6558,7 @@ NotKeywordToken:
 |	"CURDATE"
 |	"DATE_ADD"
 |	"DATE_SUB"
+|	"DEFINED"
 |	"DOT"
 |	"DUMP"
 |	"EXTRACT"
@@ -13770,15 +13774,15 @@ RevokeRoleStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines NullDefinedByClause IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt
 	{
 		x := &ast.LoadDataStmt{
 			FileLocRef:         ast.FileLocServerOrRemote,
 			Path:               $5,
 			OnDuplicate:        $6.(ast.OnDuplicateKeyHandlingType),
 			Table:              $9.(*ast.TableName),
-			ColumnsAndUserVars: $14.([]*ast.ColumnNameOrUserVar),
-			IgnoreLines:        $13.(uint64),
+			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
+			IgnoreLines:        $14.(uint64),
 		}
 		if $3 != nil {
 			x.FileLocRef = ast.FileLocClient
@@ -13794,8 +13798,11 @@ LoadDataStmt:
 		if $12 != nil {
 			x.LinesInfo = $12.(*ast.LinesClause)
 		}
-		if $15 != nil {
-			x.ColumnAssignments = $15.([]*ast.Assignment)
+		if $13 != nil {
+			x.NullInfo = $13.(*ast.NullDefinedBy)
+		}
+		if $16 != nil {
+			x.ColumnAssignments = $16.([]*ast.Assignment)
 		}
 		columns := []*ast.ColumnName{}
 		for _, v := range x.ColumnsAndUserVars {
@@ -13968,6 +13975,30 @@ LinesTerminated:
 |	"TERMINATED" "BY" FieldTerminator
 	{
 		$$ = $3
+	}
+
+NullDef:
+	stringLit
+|	hexLit
+	{
+		$$ = $1.(ast.BinaryLiteral).ToString()
+	}
+|	bitLit
+	{
+		$$ = $1.(ast.BinaryLiteral).ToString()
+	}
+
+NullDefinedByClause:
+	{
+		$$ = nil
+	}
+|	"NULL" "DEFINED" "BY" NullDef
+	{
+		$$ = &ast.NullDefinedBy{NullDef: $4}
+	}
+|	"NULL" "DEFINED" "BY" NullDef "OPTIONALLY" "ENCLOSED"
+	{
+		$$ = &ast.NullDefinedBy{NullDef: $4, OptEnclosed: true}
 	}
 
 LoadDataSetSpecOpt:
