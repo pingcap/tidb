@@ -862,8 +862,6 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult(ctx, mixedAggFuncs, groupByItems)
 }
 
-<<<<<<< HEAD
-=======
 func TestIssue34863(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -942,7 +940,6 @@ func TestTableDualAsSubQuery(t *testing.T) {
 	tk.MustQuery("SELECT v0.c0 FROM (SELECT null as c0) v0 WHERE (v0.c0 IS NULL) like (NULL);").Check(testkit.Rows())
 }
 
->>>>>>> 288c2dd490 (planner: fix a bug when pushing streamAgg down (#41056))
 // https://github.com/pingcap/tidb/issues/38310
 func TestNullEQConditionPlan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
