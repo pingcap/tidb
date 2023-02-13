@@ -352,6 +352,12 @@ func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int, limitP
 	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the switch 'tidb_enable_plan_cache_for_param_limit' is off"))
 	}
+
+	// we won't cache the plan with PhysicalApply, which has low profit and high risk
+	if containApplyOperator(pp) {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the plan with PhysicalApply is un-cacheable"))
+		return
+	}
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
@@ -840,4 +846,19 @@ func IsPointPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, s
 		ok = false
 	}
 	return ok, err
+}
+
+func containApplyOperator(p PhysicalPlan) bool {
+	if _, isApply := p.(*PhysicalApply); isApply {
+		return true
+	}
+
+	hashApply := false
+	for _, child := range p.Children() {
+		hashApply = hashApply || containApplyOperator(child)
+		if hashApply {
+			return true
+		}
+	}
+	return hashApply
 }
