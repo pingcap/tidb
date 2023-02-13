@@ -4379,7 +4379,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 func isClusteredPKColumn(col *table.Column, tblInfo *model.TableInfo) bool {
 	switch {
 	case tblInfo.PKIsHandle:
-		return mysql.HasPriKeyFlag(col.GetFlag())
+		return mysql.HasPriKeyFlag(col.Flag)
 	case tblInfo.IsCommonHandle:
 		pk := tables.FindPrimaryIndex(tblInfo)
 		for _, c := range pk.Columns {
