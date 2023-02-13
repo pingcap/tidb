@@ -16,6 +16,7 @@ package restore
 
 import (
 	"context"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -777,9 +778,10 @@ func (tr *TableRestore) postProcess(
 		// 4.5. do duplicate detection.
 		hasDupe := false
 
-		canResolveDirectly := !rc.cfg.TikvImporter.IncrementalImport && rc.cfg.TikvImporter.DuplicateResolution == config.DupeResAlgRemove
+		// For non-incremental import, we can skip collecting duplicate rows and resolve them directly.
+		resolveDirectly := !rc.cfg.TikvImporter.IncrementalImport && rc.cfg.TikvImporter.DuplicateResolution == config.DupeResAlgRemove
 
-		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone && !canResolveDirectly {
+		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone && !resolveDirectly {
 			opts := &kv.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
@@ -803,16 +805,37 @@ func (tr *TableRestore) postProcess(
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
-			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
-			if e != nil {
-				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
-				return false, e
-			}
-			hasDupe = hasDupe || hasRemoteDupe
 
-			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
-				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
-				return false, err
+			if resolveDirectly {
+				hasLocalDupe, err := rc.backend.ResolveLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+				if err != nil {
+					return false, err
+				}
+				hasDupe = hasDupe || hasLocalDupe
+
+				diskQuotaEnabled := rc.cfg.TikvImporter.DiskQuota != math.MaxInt64
+				hasMultipleDataEngines := len(cp.Engines) > 2
+				if diskQuotaEnabled || hasMultipleDataEngines {
+					hasRemoteDupe, err := rc.backend.ResolveRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+					if err != nil {
+						return false, err
+					}
+					hasDupe = hasDupe || hasRemoteDupe
+				} else {
+					tr.logger.Info("skip remote duplicate detection, because disk quota is disabled and there is only one data engine")
+				}
+			} else {
+				hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+				if e != nil {
+					tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
+					return false, e
+				}
+				hasDupe = hasDupe || hasRemoteDupe
+
+				if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
+					return false, err
+				}
 			}
 		}
 

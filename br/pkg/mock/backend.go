@@ -282,6 +282,36 @@ func (mr *MockBackendMockRecorder) ResolveDuplicateRows(arg0, arg1, arg2, arg3 i
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveDuplicateRows", reflect.TypeOf((*MockBackend)(nil).ResolveDuplicateRows), arg0, arg1, arg2, arg3)
 }
 
+// ResolveLocalDuplicateRows mocks base method.
+func (m *MockBackend) ResolveLocalDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *kv.SessionOptions) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveLocalDuplicateRows", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolveLocalDuplicateRows indicates an expected call of ResolveLocalDuplicateRows.
+func (mr *MockBackendMockRecorder) ResolveLocalDuplicateRows(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveLocalDuplicateRows", reflect.TypeOf((*MockBackend)(nil).ResolveLocalDuplicateRows), arg0, arg1, arg2, arg3)
+}
+
+// ResolveRemoteDuplicateRows mocks base method.
+func (m *MockBackend) ResolveRemoteDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 *kv.SessionOptions) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveRemoteDuplicateRows", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ResolveRemoteDuplicateRows indicates an expected call of ResolveRemoteDuplicateRows.
+func (mr *MockBackendMockRecorder) ResolveRemoteDuplicateRows(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveRemoteDuplicateRows", reflect.TypeOf((*MockBackend)(nil).ResolveRemoteDuplicateRows), arg0, arg1, arg2, arg3)
+}
+
 // RetryImportDelay mocks base method.
 func (m *MockBackend) RetryImportDelay() time.Duration {
 	m.ctrl.T.Helper()
@@ -308,6 +338,20 @@ func (m *MockBackend) ShouldPostProcess() bool {
 func (mr *MockBackendMockRecorder) ShouldPostProcess() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ShouldPostProcess", reflect.TypeOf((*MockBackend)(nil).ShouldPostProcess))
+}
+
+// TotalMemoryConsume mocks base method.
+func (m *MockBackend) TotalMemoryConsume() int64 {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TotalMemoryConsume")
+	ret0, _ := ret[0].(int64)
+	return ret0
+}
+
+// TotalMemoryConsume indicates an expected call of TotalMemoryConsume.
+func (mr *MockBackendMockRecorder) TotalMemoryConsume() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TotalMemoryConsume", reflect.TypeOf((*MockBackend)(nil).TotalMemoryConsume))
 }
 
 // MockEngineWriter is a mock of EngineWriter interface.
@@ -374,17 +418,4 @@ func (m *MockEngineWriter) IsSynced() bool {
 func (mr *MockEngineWriterMockRecorder) IsSynced() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSynced", reflect.TypeOf((*MockEngineWriter)(nil).IsSynced))
-}
-
-func (m *MockBackend) TotalMemoryConsume() int64 {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TotalMemoryConsume")
-	ret0, _ := ret[0].(int64)
-	return ret0
-}
-
-// LocalWriter indicates an expected call of LocalWriter.
-func (mr *MockBackendMockRecorder) TotalMemoryConsume() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TotalMemoryConsume", reflect.TypeOf((*MockBackend)(nil).OpenEngine))
 }

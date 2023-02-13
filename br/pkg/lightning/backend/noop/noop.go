@@ -143,6 +143,14 @@ func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uu
 	return Writer{}, nil
 }
 
+func (b noopBackend) ResolveLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+	panic("Unsupported Operation")
+}
+
+func (b noopBackend) ResolveRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+	panic("Unsupported Operation")
+}
+
 func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
