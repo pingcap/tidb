@@ -403,7 +403,7 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, ctx sessionctx.Co
 				// In the test, the server cannot start up because the port is occupied.
 				// Although the port is random. so we need to quickly return when to
 				// fail to get tiflash sync.
-				//https://github.com/pingcap/tidb/issues/39949
+				// https://github.com/pingcap/tidb/issues/39949
 				panic(err)
 			}
 			continue
