@@ -463,10 +463,10 @@ var defaultSysVars = []*SysVar{
 			oldVal, newVal := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load(), TiDBOptOn(val)
 			if oldVal != newVal {
 				err := switchDDL(newVal)
-				if err == nil {
-					config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(newVal)
+				if err != nil {
+					return err
 				}
-				return err
+				config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(newVal)
 			}
 			return nil
 		},
