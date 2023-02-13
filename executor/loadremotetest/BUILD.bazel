@@ -2,11 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "loadremotetest_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "one_csv_test.go",
         "util_test.go",
     ],
+    flaky = True,
     deps = [
         "//executor",
         "//kv",
