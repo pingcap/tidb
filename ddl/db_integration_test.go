@@ -4387,7 +4387,8 @@ PARTITION BY LIST (level) (
 	tk.MustContainErrMsg(`ALTER TABLE member_level REORGANIZE PARTITION lEven INTO (PARTITION lEven VALUES IN (2,4))`, "[table:1526]Table has no partition for value 6")
 }
 
-func TestIssue41277(t *testing.T) {
+func TestDisableDDL(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/41277
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
