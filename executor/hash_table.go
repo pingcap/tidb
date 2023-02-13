@@ -214,8 +214,8 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 	return matched, nil
 }
 
-// signalCheckpointForJoin indicates the times of row probe that a signal detection will be triggered.
-const signalCheckpointForJoin int = 1 << 14
+// signalCheckpointForJoinMask indicates the times of row probe that a signal detection will be triggered.
+const signalCheckpointForJoinMask int = 1<<14 - 1
 
 // rowSize is the size of Row.
 const rowSize = int64(unsafe.Sizeof(chunk.Row{}))
@@ -241,7 +241,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 		matchedDataSize                  = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
 		lastChunkBufPointer *chunk.Chunk = nil
 		memDelta            int64        = 0
-		needTrackMemUsage                = cap(innerPtrs) > signalCheckpointForJoin
+		needTrackMemUsage                = cap(innerPtrs) > signalCheckpointForJoinMask
 	)
 	c.chkBuf = nil
 	c.memTracker.Consume(-c.chkBufSizeForOneProbe)
@@ -267,7 +267,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			memDelta += lastChunkSize
 		}
 		lastChunkBufPointer = c.chkBuf
-		if needTrackMemUsage && (i&signalCheckpointForJoin == (signalCheckpointForJoin - 1)) {
+		if needTrackMemUsage && (i&signalCheckpointForJoinMask == signalCheckpointForJoinMask) {
 			// Trigger Consume for checking the OOM Action signal
 			memDelta += int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize - matchedDataSize
 			matchedDataSize = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
