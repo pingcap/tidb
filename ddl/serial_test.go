@@ -838,8 +838,11 @@ func TestAutoRandom(t *testing.T) {
 		require.EqualError(t, err, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
 	}
 
-	assertPKIsNotHandle := func(sql, errCol string) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomPKisNotHandleErrMsg, errCol)
+	assertNotFirstColPK := func(sql, errCol string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomMustFirstColumnInPK, errCol)
+	}
+	assertNoClusteredPK := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomNoClusteredPKErrMsg)
 	}
 	assertAlterValue := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
@@ -882,36 +885,36 @@ func TestAutoRandom(t *testing.T) {
 		tk.MustExec("drop table t")
 	}
 
-	// Only bigint column can set auto_random
+	// Only bigint column can set auto_random.
 	assertBigIntOnly("create table t (a char primary key auto_random(3), b int)", "char")
 	assertBigIntOnly("create table t (a varchar(255) primary key auto_random(3), b int)", "varchar")
 	assertBigIntOnly("create table t (a timestamp primary key auto_random(3), b int)", "timestamp")
+	assertBigIntOnly("create table t (a timestamp auto_random(3), b int, primary key (a, b) clustered)", "timestamp")
 
-	// PKIsHandle, but auto_random is defined on non-primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random (3) primary key, b bigint auto_random (3))", "b")
-	assertPKIsNotHandle("create table t (a bigint auto_random (3), b bigint auto_random(3), primary key(a))", "b")
-	assertPKIsNotHandle("create table t (a bigint auto_random (3), b bigint auto_random(3) primary key)", "a")
+	// Clustered, but auto_random is defined on non-primary key.
+	assertNotFirstColPK("create table t (a bigint auto_random (3) primary key, b bigint auto_random (3))", "b")
+	assertNotFirstColPK("create table t (a bigint auto_random (3), b bigint auto_random(3), primary key(a))", "b")
+	assertNotFirstColPK("create table t (a bigint auto_random (3), b bigint auto_random(3) primary key)", "a")
+	assertNotFirstColPK("create table t (a bigint auto_random, b bigint, primary key (b, a) clustered);", "a")
 
-	// PKIsNotHandle: no primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int)", "a")
-	// PKIsNotHandle: primary key is not a single column.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b bigint, primary key (a, b))", "a")
-	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
+	// No primary key.
+	assertNoClusteredPK("create table t (a bigint auto_random(3), b int)")
 
-	// PKIsNotHandle: nonclustered integer primary key.
-	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key nonclustered, b int)", "a")
-	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key nonclustered, b int)", "a")
-	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key nonclustered)", "b")
+	// No clustered primary key.
+	assertNoClusteredPK("create table t (a bigint auto_random(3) primary key nonclustered, b int)")
+	assertNoClusteredPK("create table t (a int, b bigint auto_random(3) primary key nonclustered)")
 
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
 	assertWithAutoInc("create table t (a bigint primary key auto_increment auto_random(3))")
 	assertWithAutoInc("create table t (a bigint auto_increment primary key auto_random(3))")
 	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, primary key (a))")
+	assertWithAutoInc("create table t (a bigint auto_random(3) auto_increment, b int, primary key (a, b) clustered)")
 
 	// Can not set auto_random along with default.
 	assertDefault("create table t (a bigint auto_random primary key default 3)")
 	assertDefault("create table t (a bigint auto_random(2) primary key default 5)")
+	assertDefault("create table t (a bigint auto_random(2) default 5, b int, primary key (a, b) clustered)")
 	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
 		assertDefault("alter table t modify column a bigint auto_random default 3")
 		assertDefault("alter table t alter column a set default 3")
@@ -920,12 +923,14 @@ func TestAutoRandom(t *testing.T) {
 	// Overflow data type max length.
 	assertMaxOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
 	assertMaxOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	assertMaxOverflow("create table t (a bigint auto_random(16), b int, primary key (a, b) clustered)", "a", 16)
 	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
 		assertMaxOverflow("alter table t modify a bigint auto_random(64)", "a", 64)
 		assertMaxOverflow("alter table t modify a bigint auto_random(16)", "a", 16)
 	})
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
+	assertNonPositive("create table t (a bigint auto_random(0), b int, primary key (a, b) clustered)")
 	tk.MustGetErrMsg("create table t (a bigint auto_random(-1) primary key)",
 		`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "-1) primary key)" `)
 
@@ -935,9 +940,16 @@ func TestAutoRandom(t *testing.T) {
 	mustExecAndDrop("create table t (a bigint auto_random(15) primary key)")
 	mustExecAndDrop("create table t (a bigint primary key auto_random(4))")
 	mustExecAndDrop("create table t (a bigint auto_random(4), primary key (a))")
+	mustExecAndDrop("create table t (a bigint auto_random(3), b bigint, primary key (a, b) clustered)")
+	mustExecAndDrop("create table t (a bigint auto_random(3), b int, c char, primary key (a, c) clustered)")
 
 	// Increase auto_random bits.
 	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		tk.MustExec("alter table t modify a bigint auto_random(8)")
+		tk.MustExec("alter table t modify a bigint auto_random(10)")
+		tk.MustExec("alter table t modify a bigint auto_random(12)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(5), b char(255), primary key (a, b) clustered)", func() {
 		tk.MustExec("alter table t modify a bigint auto_random(8)")
 		tk.MustExec("alter table t modify a bigint auto_random(10)")
 		tk.MustExec("alter table t modify a bigint auto_random(12)")
@@ -947,6 +959,7 @@ func TestAutoRandom(t *testing.T) {
 	mustExecAndDrop("create table t (a bigint auto_random(3) auto_random(2) primary key)")
 	mustExecAndDrop("create table t (a bigint, b bigint auto_random(3) primary key auto_random(2))")
 	mustExecAndDrop("create table t (a bigint auto_random(1) auto_random(2) auto_random(3), primary key (a))")
+	mustExecAndDrop("create table t (a bigint auto_random(1) auto_random(2) auto_random(3), b int, primary key (a, b) clustered)")
 
 	// Add/drop the auto_random attribute is not allowed.
 	mustExecAndDrop("create table t (a bigint auto_random(3) primary key)", func() {
@@ -955,6 +968,10 @@ func TestAutoRandom(t *testing.T) {
 		assertAlterValue("alter table t change column a b bigint")
 	})
 	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c))", func() {
+		assertAlterValue("alter table t modify column c bigint")
+		assertAlterValue("alter table t change column c d bigint")
+	})
+	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c, a) clustered)", func() {
 		assertAlterValue("alter table t modify column c bigint")
 		assertAlterValue("alter table t change column c d bigint")
 	})
@@ -984,6 +1001,9 @@ func TestAutoRandom(t *testing.T) {
 	})
 	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
 		assertDecreaseBitErr("alter table t modify column a bigint auto_random(1)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(10), b int, primary key (a, b) clustered)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(6)")
 	})
 
 	originStep := autoid.GetStep()
