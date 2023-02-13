@@ -64,6 +64,7 @@ go_test(
     embed = [":distsql"],
     flaky = True,
     race = "on",
+    shard_count = 2,
     deps = [
         "//kv",
         "//parser/charset",

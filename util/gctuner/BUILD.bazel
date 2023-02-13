@@ -20,6 +20,7 @@ go_library(
 
 go_test(
     name = "gctuner_test",
+    timeout = "short",
     srcs = [
         "finalizer_test.go",
         "mem_test.go",

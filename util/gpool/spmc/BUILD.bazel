@@ -27,6 +27,7 @@ go_library(
 
 go_test(
     name = "spmc_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "spmcpool_benchmark_test.go",

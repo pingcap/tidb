@@ -13,6 +13,7 @@ go_library(
 
 go_test(
     name = "prealloc_table_id_test",
+    timeout = "short",
     srcs = ["alloc_test.go"],
     flaky = True,
     race = "on",

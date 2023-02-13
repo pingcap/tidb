@@ -2,6 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "autoidtest_test",
+    timeout = "short",
     srcs = [
         "autoid_test.go",
         "main_test.go",

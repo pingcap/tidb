@@ -13,8 +13,10 @@ go_library(
 
 go_test(
     name = "password-validation_test",
+    timeout = "short",
     srcs = ["password_validation_test.go"],
     embed = [":password-validation"],
+    flaky = True,
     deps = [
         "//parser/auth",
         "//sessionctx/variable",

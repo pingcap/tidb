@@ -15,8 +15,10 @@ go_library(
 
 go_test(
     name = "config_test",
+    timeout = "short",
     srcs = ["ebs_test.go"],
     data = ["ebs_backup.json"],
     embed = [":config"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

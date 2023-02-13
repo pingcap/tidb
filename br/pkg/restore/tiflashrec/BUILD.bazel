@@ -19,6 +19,7 @@ go_library(
 
 go_test(
     name = "tiflashrec_test",
+    timeout = "short",
     srcs = ["tiflash_recorder_test.go"],
     flaky = True,
     deps = [

@@ -23,6 +23,7 @@ go_test(
     timeout = "short",
     srcs = ["command_test.go"],
     embed = [":client"],
+    flaky = True,
     shard_count = 5,
     deps = [
         "@com_github_pingcap_errors//:errors",

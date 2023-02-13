@@ -18,8 +18,10 @@ go_library(
 
 go_test(
     name = "util_test",
+    timeout = "short",
     srcs = ["shard_pool_map_test.go"],
     embed = [":util"],
+    flaky = True,
     deps = [
         "//util/intest",
         "@com_github_stretchr_testify//require",

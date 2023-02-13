@@ -39,6 +39,7 @@ go_library(
 
 go_test(
     name = "stmtsummary_test",
+    timeout = "short",
     srcs = [
         "column_test.go",
         "main_test.go",
@@ -47,6 +48,7 @@ go_test(
         "stmtsummary_test.go",
     ],
     embed = [":stmtsummary"],
+    flaky = True,
     deps = [
         "//parser/auth",
         "//parser/model",

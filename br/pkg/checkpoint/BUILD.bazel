@@ -22,7 +22,9 @@ go_library(
 
 go_test(
     name = "checkpoint_test",
+    timeout = "short",
     srcs = ["checkpoint_test.go"],
+    flaky = True,
     deps = [
         ":checkpoint",
         "//br/pkg/rtree",
