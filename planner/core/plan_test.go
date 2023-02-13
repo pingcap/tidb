@@ -863,8 +863,8 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 }
 
 func TestIssue34863(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists c")
@@ -890,7 +890,8 @@ func TestIssue34863(t *testing.T) {
 }
 
 func TestIssue40857(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
@@ -900,39 +901,10 @@ func TestIssue40857(t *testing.T) {
 	require.Empty(t, tk.Session().LastMessage())
 }
 
-func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
-	window := &core.PhysicalWindow{}
-	newPlan, err := window.Clone()
-	require.NoError(t, err)
-	newWindow, ok := newPlan.(*core.PhysicalWindow)
-	require.Equal(t, ok, true)
-	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
-
-	window.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = window.Clone()
-	require.NoError(t, err)
-	newWindow, ok = newPlan.(*core.PhysicalWindow)
-	require.Equal(t, ok, true)
-	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
-
-	sort := &core.PhysicalSort{}
-	newPlan, err = sort.Clone()
-	require.NoError(t, err)
-	newSort, ok := newPlan.(*core.PhysicalSort)
-	require.Equal(t, ok, true)
-	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
-
-	sort.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = sort.Clone()
-	require.NoError(t, err)
-	newSort, ok = newPlan.(*core.PhysicalSort)
-	require.Equal(t, ok, true)
-	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
-}
-
 // https://github.com/pingcap/tidb/issues/35527.
 func TestTableDualAsSubQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
