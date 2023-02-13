@@ -1,0 +1,13 @@
+[lightning]
+task-info-schema-name = 'lightning_task_info'
+
+[tikv-importer]
+backend = 'local'
+duplicate-resolution = 'remove'
+incremental-import = true
+
+[checkpoint]
+enable = false
+
+[mydumper.csv]
+header = true

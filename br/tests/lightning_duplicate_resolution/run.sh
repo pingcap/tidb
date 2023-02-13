@@ -18,48 +18,58 @@ set -eux
 
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
-run_lightning
+verify_result() {
+  # Ensure all tables are consistent.
+  run_sql 'admin check table dup_resolve.a'
+  run_sql 'admin check table dup_resolve.b'
+  run_sql 'admin check table dup_resolve.c'
 
-# Ensure all tables are consistent.
-run_sql 'admin check table dup_resolve.a'
-run_sql 'admin check table dup_resolve.b'
-run_sql 'admin check table dup_resolve.c'
+  ## Table "a" has a clustered integer key and generated column.
 
-## Table "a" has a clustered integer key and generated column.
+  # only one row remains (2, 1, 4.csv). all others are duplicates 🤷
+  run_sql 'select count(*) from dup_resolve.a'
+  check_contains 'count(*): 1'
 
-# only one row remains (2, 1, 4.csv). all others are duplicates 🤷
-run_sql 'select count(*) from dup_resolve.a'
-check_contains 'count(*): 1'
+  run_sql 'select * from dup_resolve.a'
+  check_contains 'a: 2'
+  check_contains 'b: 1'
+  check_contains 'c: 4.csv'
+  check_contains 'd: 3'
 
-run_sql 'select * from dup_resolve.a'
-check_contains 'a: 2'
-check_contains 'b: 1'
-check_contains 'c: 4.csv'
-check_contains 'd: 3'
+  ## Table "b" has a nonclustered integer key and nullable unique column.
+  run_sql 'select count(*) from dup_resolve.b'
+  check_contains 'count(*): 3'
 
-## Table "b" has a nonclustered integer key and nullable unique column.
-run_sql 'select count(*) from dup_resolve.b'
-check_contains 'count(*): 3'
+  run_sql 'select * from dup_resolve.b where a = 2'
+  check_contains 'b: 1'
+  check_contains 'c: 4.csv'
+  run_sql 'select * from dup_resolve.b where a = 7'
+  check_contains 'b: NULL'
+  check_contains 'c: 8.csv#2'
+  run_sql 'select * from dup_resolve.b where a = 8'
+  check_contains 'b: NULL'
+  check_contains 'c: 8.csv#3'
 
-run_sql 'select * from dup_resolve.b where a = 2'
-check_contains 'b: 1'
-check_contains 'c: 4.csv'
-run_sql 'select * from dup_resolve.b where a = 7'
-check_contains 'b: NULL'
-check_contains 'c: 8.csv#2'
-run_sql 'select * from dup_resolve.b where a = 8'
-check_contains 'b: NULL'
-check_contains 'c: 8.csv#3'
+  ## Table "c" has a clustered non-integer key.
+  run_sql 'select count(*) from dup_resolve.c'
+  check_contains 'count(*): 4'
 
-## Table "c" has a clustered non-integer key.
-run_sql 'select count(*) from dup_resolve.c'
-check_contains 'count(*): 4'
+  run_sql 'select c from dup_resolve.c where a = 2 and b = 1'
+  check_contains 'c: 1.csv#1'
+  run_sql 'select c from dup_resolve.c where a = 7 and b = 0'
+  check_contains 'c: 1.csv#4'
+  run_sql 'select c from dup_resolve.c where a = 7 and b = 1'
+  check_contains 'c: 1.csv#7'
+  run_sql 'select c from dup_resolve.c where a = 9 and b = 0'
+  check_contains 'c: 1.csv#8'
+}
 
-run_sql 'select c from dup_resolve.c where a = 2 and b = 1'
-check_contains 'c: 1.csv#1'
-run_sql 'select c from dup_resolve.c where a = 7 and b = 0'
-check_contains 'c: 1.csv#4'
-run_sql 'select c from dup_resolve.c where a = 7 and b = 1'
-check_contains 'c: 1.csv#7'
-run_sql 'select c from dup_resolve.c where a = 9 and b = 0'
-check_contains 'c: 1.csv#8'
+run_lightning --config "$TEST_DIR/config1.toml"
+verify_result
+
+run_sql 'drop database if exists dup_resolve'
+run_lightning --config "$TEST_DIR/config2.toml"
+verify_result
+
+run_sql 'drop database if exists dup_resolve'
+run_lightning --config "$TEST_DIR/config3.toml"
