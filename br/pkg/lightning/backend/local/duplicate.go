@@ -710,9 +710,9 @@ func (m *DuplicateManager) iterDuplicateRowsFromDupDB(
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
 				var err error
 				if task.indexInfo == nil {
-					err = m.RecordDataConflictError(gCtx, stream)
+					err = dataConflictErrorHandler(gCtx, stream)
 				} else {
-					err = m.RecordIndexConflictError(gCtx, stream, task.tableID, task.indexInfo)
+					err = indexConflictErrorHandler(gCtx, stream, task.tableID, task.indexInfo)
 				}
 				return errors.Trace(err)
 			}); err != nil {

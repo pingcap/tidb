@@ -64,12 +64,14 @@ verify_result() {
   check_contains 'c: 1.csv#8'
 }
 
-run_lightning --config "$TEST_DIR/config1.toml"
+run_lightning --config "tests/$TEST_NAME/config1.toml"
 verify_result
 
-run_sql 'drop database if exists dup_resolve'
-run_lightning --config "$TEST_DIR/config2.toml"
+run_sql 'drop database dup_resolve'
+run_sql 'drop database lightning_task_info'
+run_lightning --config "tests/$TEST_NAME/config2.toml"
 verify_result
 
-run_sql 'drop database if exists dup_resolve'
-run_lightning --config "$TEST_DIR/config3.toml"
+run_sql 'drop database dup_resolve'
+run_sql 'drop database lightning_task_info'
+run_lightning --config "tests/$TEST_NAME/config3.toml"
