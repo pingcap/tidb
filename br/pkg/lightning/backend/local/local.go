@@ -1646,6 +1646,42 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
+func (local *local) ResolveLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] resolve local duplicate keys")
+	defer func() {
+		logger.End(zap.ErrorLevel, err)
+	}()
+
+	atomicHasDupe := atomic.NewBool(false)
+	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if err := duplicateManager.ResolveLocalDuplicateRows(ctx, local.duplicateDB, local.keyAdapter); err != nil {
+		return false, errors.Trace(err)
+	}
+	return atomicHasDupe.Load(), nil
+}
+
+func (local *local) ResolveRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
+	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] resolve remote duplicate keys")
+	defer func() {
+		logger.End(zap.ErrorLevel, err)
+	}()
+
+	atomicHasDupe := atomic.NewBool(false)
+	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe, log.FromContext(ctx))
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if err := duplicateManager.ResolveRemoteDuplicateRows(ctx, local.importClientFactory); err != nil {
+		return false, errors.Trace(err)
+	}
+	return atomicHasDupe.Load(), nil
+}
+
 func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect local duplicate keys")
 	defer func() {

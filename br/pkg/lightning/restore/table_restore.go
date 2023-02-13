@@ -776,7 +776,10 @@ func (tr *TableRestore) postProcess(
 
 		// 4.5. do duplicate detection.
 		hasDupe := false
-		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+
+		canResolveDirectly := !rc.cfg.TikvImporter.IncrementalImport && rc.cfg.TikvImporter.DuplicateResolution == config.DupeResAlgRemove
+
+		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone && !canResolveDirectly {
 			opts := &kv.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,

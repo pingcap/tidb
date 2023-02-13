@@ -50,8 +50,9 @@ import (
 )
 
 const (
-	maxDupCollectAttemptTimes       = 5
-	defaultRecordConflictErrorBatch = 1024
+	maxDupCollectAttemptTimes        = 5
+	defaultRecordConflictErrorBatch  = 1024
+	defaultResolveConflictErrorBatch = 1024
 )
 
 type pendingIndexHandles struct {
@@ -535,16 +536,26 @@ func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream 
 
 // BuildDuplicateTaskForTest is only used for test.
 var BuildDuplicateTaskForTest = func(m *DuplicateManager) ([]dupTask, error) {
-	return m.buildDupTasks()
+	return m.buildDupTasks(m.RecordDataConflictError, m.RecordIndexConflictError)
 }
+
+type (
+	DataConflictErrorHandler  func(ctx context.Context, stream DupKVStream) error
+	IndexConflictErrorHandler func(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo) error
+)
 
 type dupTask struct {
 	tidbkv.KeyRange
-	tableID   int64
-	indexInfo *model.IndexInfo
+	tableID                   int64
+	indexInfo                 *model.IndexInfo
+	dataConflictErrorHandler  DataConflictErrorHandler
+	indexConflictErrorHandler IndexConflictErrorHandler
 }
 
-func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
+func (m *DuplicateManager) buildDupTasks(
+	dataConflictHandler DataConflictErrorHandler,
+	indexConflictHandler IndexConflictErrorHandler,
+) ([]dupTask, error) {
 	if m.indexID != 0 {
 		return m.buildIndexDupTasks()
 	}
@@ -560,9 +571,11 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 		tid := tablecodec.DecodeTableID(ranges[0].StartKey)
 		for _, r := range ranges {
 			tasks = append(tasks, dupTask{
-				KeyRange:  r,
-				tableID:   tid,
-				indexInfo: indexInfo,
+				KeyRange:                  r,
+				tableID:                   tid,
+				indexInfo:                 indexInfo,
+				dataConflictErrorHandler:  dataConflictHandler,
+				indexConflictErrorHandler: indexConflictHandler,
 			})
 		}
 	}
@@ -630,15 +643,22 @@ func (m *DuplicateManager) splitLocalDupTaskByKeys(
 				StartKey: r.start,
 				EndKey:   r.end,
 			},
-			tableID:   task.tableID,
-			indexInfo: task.indexInfo,
+			tableID:                   task.tableID,
+			indexInfo:                 task.indexInfo,
+			indexConflictErrorHandler: task.indexConflictErrorHandler,
+			dataConflictErrorHandler:  task.dataConflictErrorHandler,
 		})
 	}
 	return newDupTasks, nil
 }
 
-func (m *DuplicateManager) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter KeyAdapter) ([]dupTask, error) {
-	tasks, err := m.buildDupTasks()
+func (m *DuplicateManager) buildLocalDupTasks(
+	dupDB *pebble.DB,
+	keyAdapter KeyAdapter,
+	dataConflictErrorHandler DataConflictErrorHandler,
+	indexConflictErrorHandler IndexConflictErrorHandler,
+) ([]dupTask, error) {
+	tasks, err := m.buildDupTasks(dataConflictErrorHandler, indexConflictErrorHandler)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -657,19 +677,27 @@ func (m *DuplicateManager) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter KeyAd
 
 // CollectDuplicateRowsFromDupDB collects duplicates from the duplicate DB and records all duplicate row info into errorMgr.
 func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB *pebble.DB, keyAdapter KeyAdapter) error {
-	tasks, err := m.buildLocalDupTasks(dupDB, keyAdapter)
+	return m.iterDuplicateRowsFromDupDB(ctx, dupDB, keyAdapter, m.RecordDataConflictError, m.RecordIndexConflictError)
+}
+
+func (m *DuplicateManager) iterDuplicateRowsFromDupDB(
+	ctx context.Context,
+	dupDB *pebble.DB,
+	keyAdapter KeyAdapter,
+	dataConflictErrorHandler DataConflictErrorHandler,
+	indexConflictErrorHandler IndexConflictErrorHandler,
+) error {
+	tasks, err := m.buildLocalDupTasks(dupDB, keyAdapter, dataConflictErrorHandler, indexConflictErrorHandler)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logger := m.logger
-	logger.Info("[detect-dupe] collect duplicate rows from local duplicate db", zap.Int("tasks", len(tasks)))
 
-	pool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from duplicate db")
+	pool := utils.NewWorkerPool(uint(m.concurrency), "iterate duplicate rows from duplicate db")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task
 		pool.ApplyOnErrorGroup(g, func() error {
-			if err := common.Retry("collect local duplicate rows", logger, func() error {
+			if err := common.Retry("collect local duplicate rows", m.logger, func() error {
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
 				var err error
 				if task.indexInfo == nil {
@@ -782,9 +810,9 @@ func (m *DuplicateManager) processRemoteDupTaskOnce(
 					return errors.Annotatef(err, "failed to create remote duplicate kv stream")
 				}
 				if task.indexInfo == nil {
-					err = m.RecordDataConflictError(ctx, stream)
+					err = task.dataConflictErrorHandler(ctx, stream)
 				} else {
-					err = m.RecordIndexConflictError(ctx, stream, task.tableID, task.indexInfo)
+					err = task.indexConflictErrorHandler(ctx, stream, task.tableID, task.indexInfo)
 				}
 				if err != nil {
 					return errors.Annotatef(err, "failed to record conflict errors")
@@ -848,20 +876,26 @@ func (m *DuplicateManager) processRemoteDupTask(
 
 // CollectDuplicateRowsFromTiKV collects duplicates from the remote TiKV and records all duplicate row info into errorMgr.
 func (m *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, importClientFactory ImportClientFactory) error {
-	tasks, err := m.buildDupTasks()
+	return m.iterDuplicateRowsFromTiKV(ctx, importClientFactory, m.RecordDataConflictError, m.RecordIndexConflictError)
+}
+
+func (m *DuplicateManager) iterDuplicateRowsFromTiKV(
+	ctx context.Context,
+	importClientFactory ImportClientFactory,
+	dataConflictErrorHandler DataConflictErrorHandler,
+	indexConflictErrorHandler IndexConflictErrorHandler,
+) error {
+	tasks, err := m.buildDupTasks(dataConflictErrorHandler, indexConflictErrorHandler)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logger := m.logger
-	logger.Info("[detect-dupe] collect duplicate rows from tikv", zap.Int("tasks", len(tasks)))
-
-	taskPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv")
-	regionPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
+	taskPool := utils.NewWorkerPool(uint(m.concurrency), "iterate duplicate rows from tikv")
+	regionPool := utils.NewWorkerPool(uint(m.concurrency), "iterate duplicate rows from tikv by region")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task
 		taskPool.ApplyOnErrorGroup(g, func() error {
-			taskLogger := logger.With(
+			taskLogger := m.logger.With(
 				logutil.Key("startKey", task.StartKey),
 				logutil.Key("endKey", task.EndKey),
 				zap.Int64("tableID", task.tableID),
@@ -877,4 +911,20 @@ func (m *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, imp
 		})
 	}
 	return errors.Trace(g.Wait())
+}
+
+func (m *DuplicateManager) ResolveRemoteDuplicateRows(ctx context.Context, importClientFactory ImportClientFactory) error {
+	return m.iterDuplicateRowsFromTiKV(ctx, importClientFactory, m.ResolveDataConflictError, m.ResolveIndexConflictError)
+}
+
+func (m *DuplicateManager) ResolveLocalDuplicateRows(ctx context.Context, dupDB *pebble.DB, keyAdapter KeyAdapter) error {
+	return m.iterDuplicateRowsFromDupDB(ctx, dupDB, keyAdapter, m.ResolveDataConflictError, m.ResolveIndexConflictError)
+}
+
+func (m *DuplicateManager) ResolveDataConflictError(ctx context.Context, stream DupKVStream) error {
+	return nil
+}
+
+func (m *DuplicateManager) ResolveIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo) error {
+	return nil
 }
