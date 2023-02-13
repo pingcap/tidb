@@ -515,7 +515,7 @@ type CSVConfig struct {
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
 	StartingBy string `toml:"-" json:"-"`
-	// for non-empty Delimiter (for example quotes), Null elements inside quotes are not considered as null except for
+	// For non-empty Delimiter (for example quotes), null elements inside quotes are not considered as null except for
 	// `\N` (when escape-by is `\`). That is to say, `\N` is special for null because it always means null.
 	QuotedNullIsText bool
 }
