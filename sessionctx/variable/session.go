@@ -1319,6 +1319,57 @@ type SessionVars struct {
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
+<<<<<<< HEAD
+=======
+
+	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
+	shardRand *rand.Rand
+
+	// Resource group name
+	ResourceGroupName string
+
+	// ProtectedTSList holds a list of timestamps that should delay GC.
+	ProtectedTSList protectedTSList
+
+	// PessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// is enabled.
+	PessimisticTransactionAggressiveLocking bool
+
+	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
+	// For now it is not public to user
+	EnableINLJoinInnerMultiPattern bool
+}
+
+// planReplayerSessionFinishedTaskKeyLen is used to control the max size for the finished plan replayer task key in session
+// in order to control the used memory
+const planReplayerSessionFinishedTaskKeyLen = 128
+
+// AddPlanReplayerFinishedTaskKey record finished task key in session
+func (s *SessionVars) AddPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) {
+	if len(s.PlanReplayerFinishedTaskKey) >= planReplayerSessionFinishedTaskKeyLen {
+		s.initializePlanReplayerFinishedTaskKey()
+	}
+	s.PlanReplayerFinishedTaskKey[key] = struct{}{}
+}
+
+func (s *SessionVars) initializePlanReplayerFinishedTaskKey() {
+	s.PlanReplayerFinishedTaskKey = make(map[replayer.PlanReplayerTaskKey]struct{}, planReplayerSessionFinishedTaskKeyLen)
+}
+
+// CheckPlanReplayerFinishedTaskKey check whether the key exists
+func (s *SessionVars) CheckPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) bool {
+	if s.PlanReplayerFinishedTaskKey == nil {
+		s.initializePlanReplayerFinishedTaskKey()
+		return false
+	}
+	_, ok := s.PlanReplayerFinishedTaskKey[key]
+	return ok
+}
+
+// IsPlanReplayerCaptureEnabled indicates whether capture or continues capture enabled
+func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
+	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
+>>>>>>> 982a6163a1 (sysvar: introduce variable tidb_enable_inl_join_inner_multi_pattern (#41319))
 }
 
 // GetNewChunkWithCapacity Attempt to request memory from the chunk pool

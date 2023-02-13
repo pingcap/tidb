@@ -786,6 +786,25 @@ const (
 
 	// TiDBStoreBatchSize indicates the batch size of coprocessor in the same store.
 	TiDBStoreBatchSize = "tidb_store_batch_size"
+<<<<<<< HEAD
+=======
+
+	// MppExchangeCompressionMode indicates the data compression method in mpp exchange operator
+	MppExchangeCompressionMode = "mpp_exchange_compression_mode"
+
+	// MppVersion indicates the mpp-version used to build mpp plan
+	MppVersion = "mpp_version"
+
+	// TiDBPessimisticTransactionAggressiveLocking controls whether aggressive locking for pessimistic transaction
+	// is enabled.
+	TiDBPessimisticTransactionAggressiveLocking = "tidb_pessimistic_txn_aggressive_locking"
+
+	// TiDBEnablePlanCacheForParamLimit controls whether prepare statement with parameterized limit can be cached
+	TiDBEnablePlanCacheForParamLimit = "tidb_enable_plan_cache_for_param_limit"
+
+	// TiDBEnableINLJoinInnerMultiPattern indicates whether enable multi pattern for inner side of inl join
+	TiDBEnableINLJoinInnerMultiPattern = "tidb_enable_inl_join_inner_multi_pattern"
+>>>>>>> 982a6163a1 (sysvar: introduce variable tidb_enable_inl_join_inner_multi_pattern (#41319))
 )
 
 // TiDB vars that have only global scope

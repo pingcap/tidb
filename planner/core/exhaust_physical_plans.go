@@ -734,6 +734,35 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 				return nil
 			}
 		}
+<<<<<<< HEAD
+=======
+	case *LogicalProjection:
+		if !p.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return nil
+		}
+		// For now, we only allow proj with all Column expression can be the inner side of index join
+		for _, expr := range child.Exprs {
+			if _, ok := expr.(*expression.Column); !ok {
+				return nil
+			}
+		}
+		wrapper.proj = child
+		ds, isDataSource := wrapper.proj.Children()[0].(*DataSource)
+		if !isDataSource {
+			return nil
+		}
+		wrapper.ds = ds
+	case *LogicalSelection:
+		if !p.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return nil
+		}
+		wrapper.sel = child
+		ds, isDataSource := wrapper.sel.Children()[0].(*DataSource)
+		if !isDataSource {
+			return nil
+		}
+		wrapper.ds = ds
+>>>>>>> 982a6163a1 (sysvar: introduce variable tidb_enable_inl_join_inner_multi_pattern (#41319))
 	}
 	var avgInnerRowCnt float64
 	if outerChild.statsInfo().RowCount > 0 {
@@ -1042,6 +1071,50 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	return t
 }
 
+<<<<<<< HEAD
+=======
+func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrapper, child PhysicalPlan) PhysicalPlan {
+	if !p.ctx.GetSessionVars().EnableINLJoinInnerMultiPattern {
+		if wrapper.us != nil {
+			return p.constructInnerUnionScan(wrapper.us, child)
+		}
+		return child
+	}
+	if wrapper.us != nil {
+		return p.constructInnerUnionScan(wrapper.us, child)
+	} else if wrapper.proj != nil {
+		return p.constructInnerProj(wrapper.proj, child)
+	} else if wrapper.sel != nil {
+		return p.constructInnerSel(wrapper.sel, child)
+	}
+	return child
+}
+
+func (p *LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan) PhysicalPlan {
+	if sel == nil {
+		return child
+	}
+	physicalSel := PhysicalSelection{
+		Conditions: sel.Conditions,
+	}.Init(sel.ctx, sel.stats, sel.blockOffset, nil)
+	physicalSel.SetChildren(child)
+	return physicalSel
+}
+
+func (p *LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPlan) PhysicalPlan {
+	if proj == nil {
+		return child
+	}
+	physicalProj := PhysicalProjection{
+		Exprs:                proj.Exprs,
+		CalculateNoDelay:     proj.CalculateNoDelay,
+		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
+	}.Init(proj.ctx, proj.stats, proj.blockOffset, nil)
+	physicalProj.SetChildren(child)
+	return physicalProj
+}
+
+>>>>>>> 982a6163a1 (sysvar: introduce variable tidb_enable_inl_join_inner_multi_pattern (#41319))
 func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
 	if us == nil {
 		return reader
