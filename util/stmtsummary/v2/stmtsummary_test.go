@@ -15,9 +15,7 @@
 package stmtsummary
 
 import (
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +45,6 @@ func TestStmtSummary(t *testing.T) {
 	ss := NewStmtSummary4Test(3)
 	defer ss.Close()
 
-	ss.storage = &waitableMockStmtStorage{mockStmtStorage: ss.storage.(*mockStmtStorage)}
 	w := ss.window
 	ss.Add(GenerateStmtExecInfo4Test("digest1"))
 	ss.Add(GenerateStmtExecInfo4Test("digest2"))
@@ -57,14 +54,8 @@ func TestStmtSummary(t *testing.T) {
 	require.Equal(t, 3, w.lru.Size())
 	require.Equal(t, 2, w.evicted.count())
 
-	ss.storage.(*waitableMockStmtStorage).Add(1)
-	newEnd := w.begin.Add(time.Duration(ss.RefreshInterval()+1) * time.Second)
-	timeNow = func() time.Time {
-		return newEnd
-	}
-	ss.storage.(*waitableMockStmtStorage).Wait()
+	ss.rotate(timeNow())
 
-	timeNow = time.Now
 	ss.Add(GenerateStmtExecInfo4Test("digest6"))
 	ss.Add(GenerateStmtExecInfo4Test("digest7"))
 	w = ss.window
@@ -73,14 +64,4 @@ func TestStmtSummary(t *testing.T) {
 
 	ss.Clear()
 	require.Equal(t, 0, w.lru.Size())
-}
-
-type waitableMockStmtStorage struct {
-	sync.WaitGroup
-	*mockStmtStorage
-}
-
-func (s *waitableMockStmtStorage) persist(w *stmtWindow, end time.Time) {
-	defer s.Done()
-	s.mockStmtStorage.persist(w, end)
 }
