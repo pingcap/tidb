@@ -94,6 +94,15 @@ func NewExtendedStatsColl() *ExtendedStatsColl {
 	return &ExtendedStatsColl{Stats: make(map[string]*ExtendedStatsItem)}
 }
 
+const (
+	// ExtendedStatsInited is the status for extended stats which are just registered but have not been analyzed yet.
+	ExtendedStatsInited uint8 = iota
+	// ExtendedStatsAnalyzed is the status for extended stats which have been collected in analyze.
+	ExtendedStatsAnalyzed
+	// ExtendedStatsDeleted is the status for extended stats which were dropped. These "deleted" records would be removed from storage by GCStats().
+	ExtendedStatsDeleted
+)
+
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
 	PhysicalID int64
@@ -377,19 +386,19 @@ func (t *Table) ColumnByName(colName string) *Column {
 }
 
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
-func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch) {
+func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch, bool) {
 	if isIndex {
 		if idxStatsInfo, ok := t.Indices[ID]; ok {
-			return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
+			return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
 		}
 		// newly added index which is not analyzed yet
-		return 0, nil, nil, nil, nil
+		return 0, nil, nil, nil, nil, false
 	}
 	if colStatsInfo, ok := t.Columns[ID]; ok {
-		return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
+		return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
 	}
 	// newly added column which is not analyzed yet
-	return 0, nil, nil, nil, nil
+	return 0, nil, nil, nil, nil, false
 }
 
 // GetColRowCount tries to get the row count of the a column if possible.
@@ -418,8 +427,12 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 		return 0, false
 	}
 	var healthy int64
-	if t.ModifyCount < t.Count {
-		healthy = int64((1.0 - float64(t.ModifyCount)/float64(t.Count)) * 100.0)
+	count := float64(t.Count)
+	if histCount := t.GetColRowCount(); histCount > 0 {
+		count = histCount
+	}
+	if float64(t.ModifyCount) < count {
+		healthy = int64((1.0 - float64(t.ModifyCount)/count) * 100.0)
 	} else if t.ModifyCount == 0 {
 		healthy = 100
 	}
@@ -566,7 +579,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sctx sessionctx.Context, colI
 		}
 		return result, nil
 	}
-	result, err = c.GetColumnRowCount(sctx, intRanges, coll.Count, true)
+	result, err = c.GetColumnRowCount(sctx, intRanges, coll.Count, coll.ModifyCount, true)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
@@ -587,7 +600,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sctx sessionctx.Context, colID i
 		}
 		return result, err
 	}
-	result, err := c.GetColumnRowCount(sctx, colRanges, coll.Count, false)
+	result, err := c.GetColumnRowCount(sctx, colRanges, coll.Count, coll.ModifyCount, false)
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
 	}
@@ -623,7 +636,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sctx sessionctx.Context, idxID in
 	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sctx, idxID, indexRanges)
 	} else {
-		result, err = idx.GetRowCount(sctx, coll, indexRanges, coll.Count)
+		result, err = idx.GetRowCount(sctx, coll, indexRanges, coll.Count, coll.ModifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
 		CETraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
@@ -959,7 +972,7 @@ func (coll *HistColl) crossValidationSelectivity(sctx sessionctx.Context, idx *I
 				Collators:   []collate.Collator{idxPointRange.Collators[i]},
 			}
 
-			rowCount, err := col.GetColumnRowCount(sctx, []*ranger.Range{&rang}, coll.Count, col.IsHandle)
+			rowCount, err := col.GetColumnRowCount(sctx, []*ranger.Range{&rang}, coll.Count, coll.ModifyCount, col.IsHandle)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -1031,7 +1044,7 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := idx.GetRowCount(sctx, nil, []*ranger.Range{ran}, coll.Count)
+			count, err := idx.GetRowCount(sctx, nil, []*ranger.Range{ran}, coll.Count, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}

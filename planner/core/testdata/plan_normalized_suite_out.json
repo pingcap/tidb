@@ -231,6 +231,52 @@
           " ├─IndexRangeScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
           " └─TableRowIDScan cop  table:t4, partition:?, keep order:false"
         ]
+      },
+      {
+        "SQL": "update t6 set id=id+1, id3=id2+1 where id = 1",
+        "Plan": [
+          " IndexLookUp      root ",
+          " ├─IndexRangeScan cop  table:t6, index:idx_id(id), range:[?,?], keep order:false",
+          " └─TableRowIDScan cop  table:t6, keep order:false"
+        ]
+      },
+      {
+        "SQL": "insert into t6 values (1,1,1)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "delete from t6",
+        "Plan": [
+          " TableReader     root ",
+          " └─TableFullScan cop  table:t6, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "delete from t5 where id > 1",
+        "Plan": [
+          " TableReader      root ",
+          " └─TableRangeScan cop  table:t5, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "update t5 set id=id+1, id2=id2+1 where id = 1",
+        "Plan": [
+          " Point_Get root table:t5, handle:?"
+        ]
+      },
+      {
+        "SQL": "update t5 set id=id+1, id2=id2+1, id3=id3+1 where id = 1",
+        "Plan": [
+          " Point_Get root table:t5, handle:?"
+        ]
+      },
+      {
+        "SQL": "insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100",
+        "Plan": [
+          ""
+        ]
       }
     ]
   },

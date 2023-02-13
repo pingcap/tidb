@@ -38,6 +38,7 @@ go_library(
         "//util",
         "//util/sqlexec",
         "@com_github_cheggaaa_pb_v3//:pb",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -50,6 +51,7 @@ go_library(
         "@org_golang_google_grpc//backoff",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//keepalive",
         "@org_golang_google_grpc//status",
         "@org_golang_x_net//http/httpproxy",
@@ -79,6 +81,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
+    shard_count = 30,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",

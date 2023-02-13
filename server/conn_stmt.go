@@ -158,7 +158,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
-	if !useCursor {
+	if useCursor {
+		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+		defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
+	} else {
 		// not using streaming ,can reuse chunk
 		cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
 	}
@@ -251,7 +254,8 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt interface{}
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []expression.Expression, useCursor bool) (bool, error) {
-	prepStmt, err := (&cc.ctx).GetSessionVars().GetPreparedStmtByID(uint32(stmt.ID()))
+	vars := (&cc.ctx).GetSessionVars()
+	prepStmt, err := vars.GetPreparedStmtByID(uint32(stmt.ID()))
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -259,14 +263,29 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		BinaryArgs: args,
 		PrepStmt:   prepStmt,
 	}
+
+	// For the combination of `ComPrepare` and `ComExecute`, the statement name is stored in the client side, and the
+	// TiDB only has the ID, so don't try to construct an `EXECUTE SOMETHING`. Use the original prepared statement here
+	// instead.
+	sql := ""
+	planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
+	if ok {
+		sql = planCacheStmt.StmtText
+	}
+	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
+		if useCursor {
+			vars.SetStatusFlag(mysql.ServerStatusCursorExists, false)
+		}
 		return false, cc.writeOK(ctx)
 	}
-	if result, ok := rs.(*tidbResultSet); ok {
+	// since there are multiple implementations of ResultSet (the rs might be wrapped), we have to unwrap the rs before
+	// casting it to *tidbResultSet.
+	if result, ok := unwrapResultSet(rs).(*tidbResultSet); ok {
 		if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
 			result.preparedStmt = planCacheStmt
 		}
@@ -278,6 +297,12 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if useCursor {
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
+		// fix https://github.com/pingcap/tidb/issues/39447. we need to hold the start-ts here because the process info
+		// will be set to sleep after fetch returned.
+		if pi := cc.ctx.ShowProcess(); pi != nil && pi.ProtectedTSList != nil && pi.CurTxnStartTS > 0 {
+			unhold := pi.HoldTS(pi.CurTxnStartTS)
+			rs = &rsWithHooks{ResultSet: rs, onClosed: unhold}
+		}
 		stmt.StoreResultSet(rs)
 		if err = cc.writeColumnInfo(rs.Columns()); err != nil {
 			return false, err
@@ -286,7 +311,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.
-		err = cc.writeEOF(ctx, cc.ctx.Status()|mysql.ServerStatusCursorExists)
+		err = cc.writeEOF(ctx, cc.ctx.Status())
 		if err != nil {
 			return false, err
 		}
@@ -308,6 +333,8 @@ const (
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	cc.ctx.GetSessionVars().StartTime = time.Now()
 	cc.ctx.GetSessionVars().ClearAlloc(nil, false)
+	cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {
@@ -336,7 +363,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status()|mysql.ServerStatusCursorExists, int(fetchSize))
+	_, err = cc.writeResultset(ctx, rs, true, cc.ctx.Status(), int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}

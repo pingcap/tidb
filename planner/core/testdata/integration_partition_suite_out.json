@@ -1157,5 +1157,260 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestEstimationForTopNPushToDynamicPartition",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select a from t use index (ia) where a > 10 order by a limit 10",
+        "Plan": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexReader 10.00 root  index:Limit",
+          "  └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:ia(a) range:(10,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from trange use index (ia) where a > 10 order by a limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.trange.a, offset:0, count:10",
+          "└─IndexReader 10.00 root partition:all index:Limit",
+          "  └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:trange, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from tlist use index (ia) where a > 10 order by a limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.tlist.a, offset:0, count:10",
+          "└─IndexReader 10.00 root partition:all index:Limit",
+          "  └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:tlist, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from thash use index (ia) where a > 10 order by a limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.thash.a, offset:0, count:10",
+          "└─IndexReader 10.00 root partition:all index:Limit",
+          "  └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:thash, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t use index (ia) where a > 10 order by a limit 10",
+        "Plan": [
+          "IndexLookUp 10.00 root  limit embedded(offset:0, count:10)",
+          "├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
+          "│ └─IndexRangeScan 10.00 cop[tikv] table:t, index:ia(a) range:(10,+inf], keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from trange use index (ia) where a > 10 order by a limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.trange.a, offset:0, count:10",
+          "└─IndexLookUp 10.00 root partition:all ",
+          "  ├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:trange, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:trange keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from tlist use index (ia) where a > 10 order by a limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.tlist.a, offset:0, count:10",
+          "└─IndexLookUp 10.00 root partition:all ",
+          "  ├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:tlist, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from thash use index (ia) where a > 10 order by a limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.thash.a, offset:0, count:10",
+          "└─IndexLookUp 10.00 root partition:all ",
+          "  ├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
+          "  │ └─IndexRangeScan 10.00 cop[tikv] table:thash, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:thash keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t use index (ia) where a + 1 > 10 order by a limit 10",
+        "Plan": [
+          "IndexLookUp 10.00 root  limit embedded(offset:0, count:10)",
+          "├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
+          "│ └─Selection 10.00 cop[tikv]  gt(plus(test.t.a, 1), 10)",
+          "│   └─IndexFullScan 12.50 cop[tikv] table:t, index:ia(a) keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from trange use index (ia) where a + 1 > 10 order by a limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.trange.a, offset:0, count:10",
+          "└─IndexLookUp 10.00 root partition:all ",
+          "  ├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
+          "  │ └─Selection 10.00 cop[tikv]  gt(plus(test.trange.a, 1), 10)",
+          "  │   └─IndexFullScan 12.50 cop[tikv] table:trange, index:ia(a) keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:trange keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from tlist use index (ia) where a + 1 > 10 order by a limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.tlist.a, offset:0, count:10",
+          "└─IndexLookUp 10.00 root partition:all ",
+          "  ├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
+          "  │ └─Selection 10.00 cop[tikv]  gt(plus(test.tlist.a, 1), 10)",
+          "  │   └─IndexFullScan 12.50 cop[tikv] table:tlist, index:ia(a) keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from thash use index (ia) where a + 1 > 10 order by a limit 10",
+        "Plan": [
+          "TopN 10.00 root  test.thash.a, offset:0, count:10",
+          "└─IndexLookUp 10.00 root partition:all ",
+          "  ├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
+          "  │ └─Selection 10.00 cop[tikv]  gt(plus(test.thash.a, 1), 10)",
+          "  │   └─IndexFullScan 12.50 cop[tikv] table:thash, index:ia(a) keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:thash keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from t use index (ia) where a > 10 and c = 10 order by a limit 10",
+        "Plan": [
+          "Projection 3.33 root  test.t.a",
+          "└─Limit 3.33 root  offset:0, count:10",
+          "  └─Projection 3.33 root  test.t.a, test.t.c",
+          "    └─IndexLookUp 3.33 root  ",
+          "      ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:ia(a) range:(10,+inf], keep order:true, stats:pseudo",
+          "      └─Selection(Probe) 3.33 cop[tikv]  eq(test.t.c, 10)",
+          "        └─TableRowIDScan 3333.33 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from trange use index (ia) where a > 10 and c = 10 order by a limit 10",
+        "Plan": [
+          "Projection 3.33 root  test.trange.a",
+          "└─TopN 3.33 root  test.trange.a, offset:0, count:10",
+          "  └─IndexLookUp 3.33 root partition:all ",
+          "    ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:trange, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo",
+          "    └─TopN(Probe) 3.33 cop[tikv]  test.trange.a, offset:0, count:10",
+          "      └─Selection 3.33 cop[tikv]  eq(test.trange.c, 10)",
+          "        └─TableRowIDScan 3333.33 cop[tikv] table:trange keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from tlist use index (ia) where a > 10 and c = 10 order by a limit 10",
+        "Plan": [
+          "Projection 3.33 root  test.tlist.a",
+          "└─TopN 3.33 root  test.tlist.a, offset:0, count:10",
+          "  └─IndexLookUp 3.33 root partition:all ",
+          "    ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:tlist, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo",
+          "    └─TopN(Probe) 3.33 cop[tikv]  test.tlist.a, offset:0, count:10",
+          "      └─Selection 3.33 cop[tikv]  eq(test.tlist.c, 10)",
+          "        └─TableRowIDScan 3333.33 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from thash use index (ia) where a > 10 and c = 10 order by a limit 10",
+        "Plan": [
+          "Projection 3.33 root  test.thash.a",
+          "└─TopN 3.33 root  test.thash.a, offset:0, count:10",
+          "  └─IndexLookUp 3.33 root partition:all ",
+          "    ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:thash, index:ia(a) range:(10,+inf], keep order:false, stats:pseudo",
+          "    └─TopN(Probe) 3.33 cop[tikv]  test.thash.a, offset:0, count:10",
+          "      └─Selection 3.33 cop[tikv]  eq(test.thash.c, 10)",
+          "        └─TableRowIDScan 3333.33 cop[tikv] table:thash keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from t use index () where b > 10 order by b limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t.a",
+          "└─Limit 10.00 root  offset:0, count:10",
+          "  └─TableReader 10.00 root  data:Limit",
+          "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:(10,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from trange use index () where b > 10 order by b limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.trange.a",
+          "└─TopN 10.00 root  test.trange.b, offset:0, count:10",
+          "  └─TableReader 10.00 root partition:all data:Limit",
+          "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "      └─TableRangeScan 10.00 cop[tikv] table:trange range:(10,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from tlist use index () where b > 10 order by b limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.tlist.a",
+          "└─TopN 10.00 root  test.tlist.b, offset:0, count:10",
+          "  └─TableReader 10.00 root partition:all data:Limit",
+          "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "      └─TableRangeScan 10.00 cop[tikv] table:tlist range:(10,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from thash use index () where b > 10 order by b limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.thash.a",
+          "└─TopN 10.00 root  test.thash.b, offset:0, count:10",
+          "  └─TableReader 10.00 root partition:all data:Limit",
+          "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "      └─TableRangeScan 10.00 cop[tikv] table:thash range:(10,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from t use index () where a > 10 order by b limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.t.a",
+          "└─Limit 10.00 root  offset:0, count:10",
+          "  └─TableReader 10.00 root  data:Limit",
+          "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "      └─Selection 10.00 cop[tikv]  gt(test.t.a, 10)",
+          "        └─TableFullScan 30.00 cop[tikv] table:t keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from trange use index () where a > 10 order by b limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.trange.a",
+          "└─TopN 10.00 root  test.trange.b, offset:0, count:10",
+          "  └─TableReader 10.00 root partition:all data:Limit",
+          "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "      └─Selection 10.00 cop[tikv]  gt(test.trange.a, 10)",
+          "        └─TableFullScan 30.00 cop[tikv] table:trange keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from tlist use index () where a > 10 order by b limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.tlist.a",
+          "└─TopN 10.00 root  test.tlist.b, offset:0, count:10",
+          "  └─TableReader 10.00 root partition:all data:Limit",
+          "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "      └─Selection 10.00 cop[tikv]  gt(test.tlist.a, 10)",
+          "        └─TableFullScan 30.00 cop[tikv] table:tlist keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select a from thash use index () where a > 10 order by b limit 10",
+        "Plan": [
+          "Projection 10.00 root  test.thash.a",
+          "└─TopN 10.00 root  test.thash.b, offset:0, count:10",
+          "  └─TableReader 10.00 root partition:all data:Limit",
+          "    └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "      └─Selection 10.00 cop[tikv]  gt(test.thash.a, 10)",
+          "        └─TableFullScan 30.00 cop[tikv] table:thash keep order:true, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

@@ -654,11 +654,65 @@
     ]
   },
   {
+    "name": "TestKeepOrderHint",
+    "cases": [
+      "explain select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 limit 1;",
+      "explain select /*+ no_order_index(t, primary) */ * from t where a<10 limit 1;",
+
+      // The index doesn't exist
+      "explain select /*+ order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;",
+      "explain select /*+ order_index(t, idx_b) */ * from t where b<10 order by b limit 1;",
+      "explain select /*+ no_order_index(t1, idx_b) */ * from t1 where b<10 order by b limit 1;",
+      "explain select /*+ no_order_index(t, idx_b) */ * from t where b<10 order by b limit 1;",
+
+      // Use the order_index/ no_order_index with the use_index/ ignore_index/ force_index hint at the same time
+      "explain select /*+ order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+
+      "explain select /*+ order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
+
+      "explain select /*+ no_order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;",
+
+      "explain select /*+ no_order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;",
+      "explain select /*+ no_order_index(t1, idx_a) ignore_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;",
+
+      // Use the order_index/ no_order_index with the use_view hint at the same time
+      "explain select /*+ qb_name(qb, v) order_index(t1@qb, idx_a) */ * from v",
+      "explain select /*+ qb_name(qb, v1) order_index(t@qb, primary) */ * from v1",
+      "explain select /*+ qb_name(qb, v) no_order_index(t1@qb, idx_a) */ * from v",
+      "explain select /*+ qb_name(qb, v1) no_order_index(t@qb, primary) */ * from v1",
+
+      // Use the order_index/ no_order_index with CTE at the same time
+      "explain WITH CTE AS (select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "explain WITH CTE AS (select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "explain WITH CTE AS (select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
+      "explain WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;"
+    ]
+  },
+  {
     "name": "TestViewHint",
     "cases": [
       // Hint for view v
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v;",
-      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel_1), merge_join(t@qb_v_1) */ * from v;",
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;",
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1;",
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v2;",
@@ -667,12 +721,12 @@
       // Hint for view v1
       "explain format = 'brief' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;",
       "explain format = 'brief' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v1@sel_1 .@sel_1), merge_join(t@qb_v1_1) */ * from v1;",
-      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;",
-      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_1 .@sel_1), merge_join(t@qb_v1_1) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t@qb_v1_1) */ * from v2;",
 
       // Hint for view v2
       "explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2;",
-      "explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2), stream_agg(@qb_v2_2), qb_name(qb_v2_1, v1@sel_1 .@sel_1), merge_join(t@qb_v2_1) */ * from v2;"
+      "explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2), stream_agg(@qb_v2_2), qb_name(qb_v2_1, v2), merge_join(t@qb_v2_1) */ * from v2;"
     ]
   },
   {
@@ -684,7 +738,6 @@
       "explain format = 'brief' select /*+ qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_2), qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v2;",
 
       // Set the unappeared view name
-      // TODO: add the warning for the unused the view hints
       "explain format = 'brief' select /*+ qb_name(qb_v1_2, v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;",
       "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;",
 
@@ -694,18 +747,17 @@
 
       // Tht view hint isn't set in the first query block.
       "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v) t;",
-      "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v) t;",
+      "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v.@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v) t;",
       "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1) t;",
-      "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1) t;",
+      "explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1.v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1) t;",
 
-      // TODO: add the warning when the view hints don't set in the first query block
-      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v) t;",
-      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v) t;",
-      "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v1) t;",
-      "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v1) t;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v) t;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2), qb_name(qb_v_1, v@sel_2 .@sel1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v) t;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v1) t;",
+      "explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v1@sel_2 . v@sel_2 .@sel_1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v1) t;",
 
       // Define more tables in one view hint
-      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_1 .@sel_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_1 .@sel_1), merge_join(t1@qb_v1_2, t@qb_v1_1) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1_2, v2. v1@sel_2 .@sel_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t1@qb_v1_2, t@qb_v1_1), merge_join(t1@qb_v1_2) */ * from v2;",
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t1@qb_v_2, t3@qb_v_2) */ * from v2;",
       "explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(@qb_v_2 t1, t3) */ * from v2;",
 
@@ -717,7 +769,85 @@
 
       // Use the query block before define it
       "explain format = 'brief' select /*+ merge_join(t1@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2) */ * from v;",
-      "explain format = 'brief' select /*+ merge_join(t@qb_v_1), stream_agg(@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel1) */ * from v;"
+      "explain format = 'brief' select /*+ merge_join(t@qb_v_1), stream_agg(@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel_1) */ * from v;",
+
+      // The view contains the hint when creation
+      "explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2), hash_agg(@qb_v3_2), qb_name(qb_v3_1, v3@sel_1 .@sel_1), hash_join(t@qb_v3_1) */ * from v3;",
+
+      // The view is in the CTE
+      "explain with d1 as (\n    select a from (\n        select a from (\n            select /*+ qb_name(qb, v4) use_index(t4@qb, idx_a) */ a from v4 where a < 10\n        ) as t0 where a < 9\n    ) as t1 where a < 8\n), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)\n\nselect * from (select * from d1) as t0 join (select * from d2) as t1;",
+      "explain with d1 as (\n    select a from (\n        select a from (\n            select a from v4 where a < 10\n        ) as t0 where a < 9\n    ) as t1 where a < 8\n), d2 as (select a from v4 where b < 10)\n\nselect /*+ qb_name(qb, v4@sel_4) use_index(t4@qb, idx_a)   qb_name(qb2, v4@sel_5) use_index(t4@qb, idx_b) */ * from (select * from d1) as t0 join (select * from d2) as t1;",
+      "explain with d1 as (\n    select a from (\n        select a from (\n            select /*+ qb_name(qb, v5) use_index(t4@qb, idx_a) */ a from v4 where a < 10\n        ) as t0 where a < 9\n    ) as t1 where a < 8\n), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)\n\nselect * from (select * from d1) as t0 join (select * from d2) as t1;"
+    ]
+  },
+  {
+    "name": "TestAllViewHintType",
+    "cases": [
+      // leading hint
+      // join nodes in the same view
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), leading(@qb_v1 v, t2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), leading(v@qb_v1, t2@qb_v1) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), leading(@qb_v1 t3, t2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), leading(t3@qb_v1, t2@qb_v1) */ * from v1;",
+
+      // join node across view
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), qb_name(qb_v, v1.v), leading(t2@qb_v1, t@qb_v) */ * from v1;",
+
+      // hash_join hint
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join(@qb_v1 v, t2) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join(t2@qb_v1, t3@qb_v1) */ * from v1;",
+
+      // hash join build hint
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join_build(@qb_v1 v) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join_build(t2@qb_v1) */ * from v1;",
+
+      // hash join probe hint
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join_build(@qb_v1 v) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), hash_join_build(t2@qb_v1) */ * from v1;",
+
+      // merge join hint
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), merge_join(@qb_v1 v) */ * from v1;",
+      "explain format = 'brief' select /*+ qb_name(qb_v1, v1), merge_join(t2@qb_v1) */ * from v1;",
+
+      // index join hint
+      "explain format = 'brief' select /*+ qb_name(qb_v, v), INL_JOIN(@qb_v t) */ * from v;",
+      "explain format = 'brief' select /*+ qb_name(qb_v, v), INL_JOIN(t@qb_v) */ * from v;",
+
+      // agg hint
+      "explain format = 'brief' select /*+ qb_name(qb_v2, v2.@sel_2), hash_agg(@qb_v2) */ * from v2;",
+      "explain format = 'brief' select /*+ qb_name(qb_v2, v2.@sel_2), stream_agg(@qb_v2) */ * from v2;",
+
+      // index hint
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), use_index(t5@qb_v3, idx_a) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), use_index(@qb_v3 t5, idx_b) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), force_index(t5@qb_v3, idx_a) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), force_index(@qb_v3 t5, idx_b) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), ignore_index(t5@qb_v3, idx_a) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v3, v3), ignore_index(@qb_v3 t5, idx_b) */ * from v3;",
+      "explain format = 'brief' select /*+ qb_name(qb_v4, v4), use_index_merge(t5@qb_v4, idx_a, idx_b) */ * from v4;",
+      "explain format = 'brief' select /*+ qb_name(qb_v4, v4), use_index_merge(@qb_v4 t5, idx_b, idx_a) */ * from v4;",
+
+      // read from storage
+      "explain format = 'brief' select /*+ qb_name(qb_v, v), READ_FROM_STORAGE(TIFLASH[t@qb_v], TIKV[t1@qb_v]) */ * from v;",
+
+      // subquery hint
+      "explain format = 'brief' select /*+ qb_name(qb_v5, v5.@sel_2), SEMI_JOIN_REWRITE(@qb_v5) */ * from v5;",
+      "explain format = 'brief' select /*+ qb_name(qb_v6, v6.@sel_2), NO_DECORRELATE(@qb_v6) */ * from v6;",
+
+      // cte hint
+      "explain format = 'brief' select /*+ qb_name(qb_v7, v7), merge(@qb_v7) */ * from v7;",
+      "explain format = 'brief' select /*+ qb_name(qb_v8, v8), merge(@qb_v8) */ * from v8;",
+
+      // agg to cop hint
+      "explain format = 'brief' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
+      "explain format = 'brief' select /*+ qb_name(qb_v10, v10), LIMIT_TO_COP(@qb_v10) */ * from v10;",
+
+      // MPP hint
+      "explain format = 'brief' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_1PHASE_AGG(@qb) */ * from v11;",
+      "explain format = 'brief' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_2PHASE_AGG(@qb) */ * from v11;",
+      "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), shuffle_join(t1@qb, t@qb) */ * from v12;",
+      "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), broadcast_join(t1@qb, t@qb) */ * from v12;"
     ]
   },
   {
@@ -882,6 +1012,27 @@
     "name": "TestMppJoinExchangeColumnPrune",
     "cases": [
       "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)"
+    ]
+  },
+  {
+    "name": "TestMppFineGrainedJoinAndAgg",
+    "cases": [
+      "desc format = 'brief' select * from tt t1 where exists (select * from t t2 where t1.b1 = t2.c3 and t2.c1 < t2.c2)",
+      "desc format = 'brief' select count(*) from tt group by b1"
+    ]
+  },
+  {
+    "name": "TestMppVersion",
+    "cases": [
+      "desc format = 'brief' select count(*) as cnt from t group by a, b",
+      "set mpp_exchange_compression_mode = UNSPECIFIED",
+      "desc format = 'brief' select count(*) as cnt from t group by a, b",
+      "set mpp_version = 0",
+      "set mpp_exchange_compression_mode = fast",
+      "desc format = 'brief' select count(*) as cnt from t group by a, b",
+      "set mpp_version = -1",
+      "set mpp_exchange_compression_mode = high_compression",
+      "desc format = 'brief' select count(*) as cnt from t group by a, b"
     ]
   },
   {

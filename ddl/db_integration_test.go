@@ -26,8 +26,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/internal/callback"
 	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -686,7 +687,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2.MustExec("use test")
 
 	d := dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: dom}
+	hook := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
@@ -1214,14 +1215,14 @@ func TestBitDefaultValue(t *testing.T) {
 	);`)
 }
 
-func backgroundExec(s kv.Storage, sql string, done chan error) {
+func backgroundExec(s kv.Storage, schema, sql string, done chan error) {
 	se, err := session.CreateSession4Test(s)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
 	}
 	defer se.Close()
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use "+schema)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
@@ -2373,11 +2374,49 @@ func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
 	tk.MustExec("create table t (a int, b int as ((a)))")
 }
 
+func TestSchemaNameAndTableNameInGeneratedExpr(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t(a int, b int as (lower(test.t.a)))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("alter table t add column b int as (lower(test.t.a))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) GENERATED ALWAYS AS (lower(`a`)) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustGetErrCode("alter table t add index idx((lower(test.t1.a)))", errno.ErrBadField)
+
+	tk.MustExec("drop table t")
+	tk.MustGetErrCode("create table t(a int, b int as (lower(test1.t.a)))", errno.ErrWrongDBName)
+
+	tk.MustExec("create table t(a int)")
+	tk.MustGetErrCode("alter table t add column b int as (lower(test.t1.a))", errno.ErrWrongTableName)
+
+	tk.MustExec("alter table t add column c int")
+	tk.MustGetErrCode("alter table t modify column c int as (test.t1.a + 1) stored", errno.ErrWrongTableName)
+
+	tk.MustExec("alter table t add column d int as (lower(test.T.a))")
+	tk.MustExec("alter table t add column e int as (lower(Test.t.a))")
+}
+
 func TestParserIssue284(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=0")
 	tk.MustExec("create table test.t_parser_issue_284(c1 int not null primary key)")
 	_, err := tk.Exec("create table test.t_parser_issue_284_2(id int not null primary key, c1 int not null, constraint foreign key (c1) references t_parser_issue_284(c1))")
 	require.NoError(t, err)
@@ -2894,17 +2933,23 @@ func TestAutoIncrementTableOption(t *testing.T) {
 	tk.MustExec("create database test_auto_inc_table_opt;")
 	tk.MustExec("use test_auto_inc_table_opt;")
 
-	// Empty auto_inc allocator should not cause error.
-	tk.MustExec("create table t (a bigint primary key clustered) auto_increment = 10;")
-	tk.MustExec("alter table t auto_increment = 10;")
-	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+	for _, str := range []string{"", " AUTO_ID_CACHE 1"} {
+		// Empty auto_inc allocator should not cause error.
+		tk.MustExec("create table t (a bigint primary key clustered) auto_increment = 10" + str)
+		tk.MustExec("alter table t auto_increment = 10;")
+		tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+		tk.MustExec("drop table t;")
 
-	// Rebase the auto_inc allocator to a large integer should work.
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (a bigint unsigned auto_increment, unique key idx(a));")
-	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
-	tk.MustExec("insert into t values ();")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+		// Rebase the auto_inc allocator to a large integer should work.
+		tk.MustExec("create table t (a bigint unsigned auto_increment, unique key idx(a))" + str)
+		// Set auto_inc to negative is not supported
+		err := tk.ExecToErr("alter table t auto_increment = -1;")
+		require.Error(t, err)
+		tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+		tk.MustExec("insert into t values ();")
+		tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+		tk.MustExec("drop table t;")
+	}
 }
 
 func TestAutoIncrementForce(t *testing.T) {
@@ -2919,8 +2964,9 @@ func TestAutoIncrementForce(t *testing.T) {
 		require.NoError(t, err)
 		return gid
 	}
+
 	// Rebase _tidb_row_id.
-	tk.MustExec("create table t (a int);")
+	tk.MustExec("create table t (a int)")
 	tk.MustExec("alter table t force auto_increment = 2;")
 	tk.MustExec("insert into t values (1),(2);")
 	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 2", "2 3"))
@@ -2932,10 +2978,10 @@ func TestAutoIncrementForce(t *testing.T) {
 	tk.MustExec("insert into t values (3);")
 	require.Equal(t, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'", tk.ExecToErr("insert into t values (3);").Error())
 	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "1 2", "2 3"))
+	tk.MustExec("drop table if exists t;")
 
 	// Rebase auto_increment.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int primary key auto_increment, b int);")
+	tk.MustExec("create table t (a int primary key auto_increment, b int)")
 	tk.MustExec("insert into t values (1, 1);")
 	tk.MustExec("insert into t values (100000000, 1);")
 	tk.MustExec("delete from t where a = 100000000;")
@@ -2946,10 +2992,10 @@ func TestAutoIncrementForce(t *testing.T) {
 	require.Equal(t, uint64(2), getNextGlobalID())
 	tk.MustExec("insert into t(b) values (2);")
 	tk.MustQuery("select a, b from t;").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustExec("drop table if exists t;")
 
 	// Rebase auto_random.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint primary key auto_random(5));")
+	tk.MustExec("create table t (a bigint primary key auto_random(5))")
 	tk.MustExec("insert into t values ();")
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("insert into t values (100000000);")
@@ -2961,14 +3007,15 @@ func TestAutoIncrementForce(t *testing.T) {
 	require.Equal(t, uint64(2), getNextGlobalID())
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select (a & 3) from t order by 1;").Check(testkit.Rows("1", "2"))
+	tk.MustExec("drop table if exists t;")
 
 	// Change next global ID.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint primary key auto_increment);")
+	tk.MustExec("create table t (a bigint primary key auto_increment)")
 	tk.MustExec("insert into t values (1);")
 	bases := []uint64{1, 65535, 10, math.MaxUint64, math.MaxInt64 + 1, 1, math.MaxUint64, math.MaxInt64, 2}
 	lastBase := fmt.Sprintf("%d", bases[len(bases)-1])
 	for _, b := range bases {
+		fmt.Println("execute alter table force increment to ==", b)
 		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
 		require.Equal(t, b, getNextGlobalID())
 	}
@@ -2976,7 +3023,7 @@ func TestAutoIncrementForce(t *testing.T) {
 	tk.MustQuery("select a from t;").Check(testkit.Rows("1", lastBase))
 	// Force alter unsigned int auto_increment column.
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint unsigned primary key auto_increment);")
+	tk.MustExec("create table t (a bigint unsigned primary key auto_increment)")
 	for _, b := range bases {
 		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
 		require.Equal(t, b, getNextGlobalID())
@@ -2984,10 +3031,10 @@ func TestAutoIncrementForce(t *testing.T) {
 		tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
 		tk.MustExec("delete from t;")
 	}
+	tk.MustExec("drop table if exists t;")
 
 	// Force alter with @@auto_increment_increment and @@auto_increment_offset.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int key auto_increment);")
+	tk.MustExec("create table t(a int key auto_increment)")
 	tk.MustExec("set @@auto_increment_offset=2;")
 	tk.MustExec("set @@auto_increment_increment = 11;")
 	tk.MustExec("insert into t values (500);")
@@ -3012,6 +3059,135 @@ func TestAutoIncrementForce(t *testing.T) {
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+	tk.MustExec("drop table t")
+}
+
+func TestAutoIncrementForceAutoIDCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists auto_inc_force;")
+	tk.MustExec("create database auto_inc_force;")
+	tk.MustExec("use auto_inc_force;")
+	getNextGlobalID := func() uint64 {
+		gidStr := tk.MustQuery("show table t next_row_id").Rows()[0][3]
+		gid, err := strconv.ParseUint(gidStr.(string), 10, 64)
+		require.NoError(t, err)
+		return gid
+	}
+
+	// When AUTO_ID_CACHE is 1, row id and auto increment id use separate allocator, so the behaviour differs.
+	// "Alter table t force auto_increment" has no effect on row id.
+	tk.MustExec("create table t (a int) AUTO_ID_CACHE 1")
+	tk.MustExec("alter table t force auto_increment = 2;")
+	tk.MustExec("insert into t values (1),(2);")
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2"))
+	// Cannot set next global ID to 0.
+	tk.MustExec("alter table t force auto_increment = 0;")
+	tk.MustExec("alter table t force auto_increment = 1;")
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
+		"auto_inc_force t _tidb_rowid 5001 _TIDB_ROWID",
+	))
+
+	// inserting new rows can overwrite the existing data.
+	tk.MustExec("insert into t values (3);")
+	tk.MustExec("insert into t values (3);")
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2", "3 5001", "3 5002"))
+	tk.MustExec("drop table if exists t;")
+
+	// Rebase auto_increment.
+	tk.MustExec("create table t (a int primary key auto_increment, b int) AUTO_ID_CACHE 1")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (100000000, 1);")
+	tk.MustExec("delete from t where a = 100000000;")
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
+		"auto_inc_force t a 1 _TIDB_ROWID",
+		"auto_inc_force t a 100000001 AUTO_INCREMENT",
+	))
+	// Cannot set next global ID to 0.
+	tk.MustGetErrCode("alter table t /*T![force_inc] force */ auto_increment = 0;", errno.ErrAutoincReadFailed)
+	tk.MustExec("alter table t /*T![force_inc] force */ auto_increment = 2;")
+	tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
+		"auto_inc_force t a 1 _TIDB_ROWID",
+		"auto_inc_force t a 2 AUTO_INCREMENT",
+	))
+
+	tk.MustExec("insert into t(b) values (2);")
+	tk.MustQuery("select a, b from t;").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustExec("drop table if exists t;")
+
+	// Rebase auto_random.
+	tk.MustExec("create table t (a bigint primary key auto_random(5)) AUTO_ID_CACHE 1")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	tk.MustExec("insert into t values (100000000);")
+	tk.MustExec("delete from t where a = 100000000;")
+	require.Greater(t, getNextGlobalID(), uint64(100000000))
+	// Cannot set next global ID to 0.
+	tk.MustGetErrCode("alter table t force auto_random_base = 0;", errno.ErrAutoincReadFailed)
+	tk.MustExec("alter table t force auto_random_base = 2;")
+	require.Equal(t, uint64(2), getNextGlobalID())
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery("select (a & 3) from t order by 1;").Check(testkit.Rows("1", "2"))
+	tk.MustExec("drop table if exists t;")
+
+	// Change next global ID.
+	tk.MustExec("create table t (a bigint primary key auto_increment) AUTO_ID_CACHE 1")
+	tk.MustExec("insert into t values (1);")
+	bases := []uint64{1, 65535, 10, math.MaxUint64, math.MaxInt64 + 1, 1, math.MaxUint64, math.MaxInt64, 2}
+	lastBase := fmt.Sprintf("%d", bases[len(bases)-1])
+	for _, b := range bases {
+		fmt.Println("execute alter table force increment to ==", b)
+		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
+		tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
+			"auto_inc_force t a 1 _TIDB_ROWID",
+			fmt.Sprintf("auto_inc_force t a %d AUTO_INCREMENT", b),
+		))
+	}
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1", lastBase))
+	// Force alter unsigned int auto_increment column.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint unsigned primary key auto_increment) AUTO_ID_CACHE 1")
+	for _, b := range bases {
+		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
+		tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
+			"auto_inc_force t a 1 _TIDB_ROWID",
+			fmt.Sprintf("auto_inc_force t a %d AUTO_INCREMENT", b),
+		))
+		tk.MustExec("insert into t values ();")
+		tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
+		tk.MustExec("delete from t;")
+	}
+	tk.MustExec("drop table if exists t;")
+
+	// Force alter with @@auto_increment_increment and @@auto_increment_offset.
+	tk.MustExec("create table t(a int key auto_increment) AUTO_ID_CACHE 1")
+	tk.MustExec("set @@auto_increment_offset=2;")
+	tk.MustExec("set @@auto_increment_increment = 11;")
+	tk.MustExec("insert into t values (500);")
+	tk.MustExec("alter table t force auto_increment=100;")
+	tk.MustExec("insert into t values (), ();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("101", "112", "500"))
+	tk.MustQuery("select * from t order by a;").Check(testkit.Rows("101", "112", "500"))
+	tk.MustExec("drop table if exists t;")
+
+	// Check for warning in case we can't set the auto_increment to the desired value
+	tk.MustExec("create table t(a int primary key auto_increment) AUTO_ID_CACHE 1")
+	tk.MustExec("insert into t values (200)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
+	tk.MustExec("alter table t auto_increment=100;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 201 instead"))
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("200", "211"))
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
 	tk.MustExec("drop table t")
 }
 
@@ -4134,4 +4310,79 @@ func TestRegexpFunctionsGeneratedColumn(t *testing.T) {
 	tk.MustQuery("select * from reg_replace").Check(testkit.Rows("abcd bc. xzx axzx", "1234 23. xzx 1xzx"))
 
 	tk.MustExec("drop table if exists reg_like")
+}
+
+func TestReorgPartitionRangeFailure(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create schema reorgfail`)
+	tk.MustExec("use reorgfail")
+
+	tk.MustExec("CREATE TABLE t (id int, d varchar(255)) partition by range (id) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition p2 values less than (3000000))")
+	tk.MustContainErrMsg(`ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (1000000))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions")
+	tk.MustContainErrMsg(`ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (4000000))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions")
+}
+
+func TestReorgPartitionDocs(t *testing.T) {
+	// To test what is added as partition management in the docs
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create schema reorgdocs`)
+	tk.MustExec("use reorgdocs")
+	tk.MustExec(`CREATE TABLE members (
+    id int,
+    fname varchar(255),
+    lname varchar(255),
+    dob date,
+    data json
+)
+PARTITION BY RANGE (YEAR(dob)) (
+ PARTITION pBefore1950 VALUES LESS THAN (1950),
+ PARTITION p1950 VALUES LESS THAN (1960),
+ PARTITION p1960 VALUES LESS THAN (1970),
+ PARTITION p1970 VALUES LESS THAN (1980),
+ PARTITION p1980 VALUES LESS THAN (1990),
+ PARTITION p1990 VALUES LESS THAN (2000))`)
+	tk.MustExec(`CREATE TABLE member_level (
+ id int,
+ level int,
+ achievements json
+)
+PARTITION BY LIST (level) (
+ PARTITION l1 VALUES IN (1),
+ PARTITION l2 VALUES IN (2),
+ PARTITION l3 VALUES IN (3),
+ PARTITION l4 VALUES IN (4),
+ PARTITION l5 VALUES IN (5));`)
+	tk.MustExec(`ALTER TABLE members DROP PARTITION p1990`)
+	tk.MustExec(`ALTER TABLE member_level DROP PARTITION l5`)
+	tk.MustExec(`ALTER TABLE members TRUNCATE PARTITION p1980`)
+	tk.MustExec(`ALTER TABLE member_level TRUNCATE PARTITION l4`)
+	tk.MustExec("ALTER TABLE members ADD PARTITION (PARTITION `p1990to2010` VALUES LESS THAN (2010))")
+	tk.MustExec(`ALTER TABLE member_level ADD PARTITION (PARTITION l5_6 VALUES IN (5,6))`)
+	tk.MustContainErrMsg(`ALTER TABLE members ADD PARTITION (PARTITION p1990 VALUES LESS THAN (2000))`, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+	tk.MustExec(`ALTER TABLE members REORGANIZE PARTITION p1990to2010 INTO
+(PARTITION p1990 VALUES LESS THAN (2000),
+ PARTITION p2000 VALUES LESS THAN (2010),
+ PARTITION p2010 VALUES LESS THAN (2020),
+ PARTITION p2020 VALUES LESS THAN (2030),
+ PARTITION pMax VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec(`ALTER TABLE member_level REORGANIZE PARTITION l5_6 INTO
+(PARTITION l5 VALUES IN (5),
+ PARTITION l6 VALUES IN (6))`)
+	tk.MustExec(`ALTER TABLE members REORGANIZE PARTITION pBefore1950,p1950 INTO (PARTITION pBefore1960 VALUES LESS THAN (1960))`)
+	tk.MustExec(`ALTER TABLE member_level REORGANIZE PARTITION l1,l2 INTO (PARTITION l1_2 VALUES IN (1,2))`)
+	tk.MustExec(`ALTER TABLE members REORGANIZE PARTITION pBefore1960,p1960,p1970,p1980,p1990,p2000,p2010,p2020,pMax INTO
+(PARTITION p1800 VALUES LESS THAN (1900),
+ PARTITION p1900 VALUES LESS THAN (2000),
+ PARTITION p2000 VALUES LESS THAN (2100))`)
+	tk.MustExec(`ALTER TABLE member_level REORGANIZE PARTITION l1_2,l3,l4,l5,l6 INTO
+(PARTITION lOdd VALUES IN (1,3,5),
+ PARTITION lEven VALUES IN (2,4,6))`)
+	tk.MustContainErrMsg(`ALTER TABLE members REORGANIZE PARTITION p1800,p2000 INTO (PARTITION p2000 VALUES LESS THAN (2100))`, "[ddl:8200]Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions")
+	tk.MustExec(`INSERT INTO members VALUES (313, "John", "Doe", "2022-11-22", NULL)`)
+	tk.MustExec(`ALTER TABLE members REORGANIZE PARTITION p2000 INTO (PARTITION p2000 VALUES LESS THAN (2050))`)
+	tk.MustContainErrMsg(`ALTER TABLE members REORGANIZE PARTITION p2000 INTO (PARTITION p2000 VALUES LESS THAN (2020))`, "[table:1526]Table has no partition for value 2022")
+	tk.MustExec(`INSERT INTO member_level (id, level) values (313, 6)`)
+	tk.MustContainErrMsg(`ALTER TABLE member_level REORGANIZE PARTITION lEven INTO (PARTITION lEven VALUES IN (2,4))`, "[table:1526]Table has no partition for value 6")
 }

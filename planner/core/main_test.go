@@ -50,6 +50,8 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
 	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "binary_plan_suite")
+	testDataMap.LoadTestSuiteData("testdata", "json_plan_suite")
+	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -129,4 +131,16 @@ func GetFlatPlanSuiteData() testdata.TestData {
 
 func GetBinaryPlanSuiteData() testdata.TestData {
 	return testDataMap["binary_plan_suite"]
+}
+
+func GetIndexMergeSuiteData() testdata.TestData {
+	return testDataMap["index_merge_suite"]
+}
+
+func GetJSONPlanSuiteData() testdata.TestData {
+	return testDataMap["json_plan_suite"]
+}
+
+func GetDerivedTopNSuiteData() testdata.TestData {
+	return testDataMap["derive_topn_from_window"]
 }

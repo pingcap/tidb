@@ -284,7 +284,7 @@ func (db *DB) tableIDAllocFilter() ddl.AllocTableIDIf {
 		if db.preallocedIDs == nil {
 			return true
 		}
-		prealloced := db.preallocedIDs.Prealloced(ti.ID)
+		prealloced := db.preallocedIDs.PreallocedFor(ti)
 		if prealloced {
 			log.Info("reusing table ID", zap.Stringer("table", ti.Name))
 		}
@@ -307,6 +307,10 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 				if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
 					return errors.Trace(err)
 				}
+			}
+
+			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+				ttlInfo.Enable = false
 			}
 		}
 		if err := batchSession.CreateTables(ctx, m, db.tableIDAllocFilter()); err != nil {
@@ -334,6 +338,10 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+		ttlInfo.Enable = false
 	}
 
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, db.tableIDAllocFilter())

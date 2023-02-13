@@ -417,3 +417,24 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'").CheckAt([]int{5, 6}, expected)
 	}
 }
+
+func TestMergeGlobalStatsWithUnAnalyzedPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_partition_prune_mode=dynamic;")
+	tk.MustExec("CREATE TABLE `t` (   `id` int(11) DEFAULT NULL,   `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL ) PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (3),  PARTITION `p1` VALUES LESS THAN (7),  PARTITION `p2` VALUES LESS THAN (11));")
+	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(4,4,4,4),(5,5,5,5),(6,6,6,6),(8,8,8,8),(9,9,9,9);")
+	tk.MustExec("create index idxa on t (a);")
+	tk.MustExec("create index idxb on t (b);")
+	tk.MustExec("create index idxc on t (c);")
+	tk.MustExec("analyze table t partition p0 index idxa;")
+	tk.MustExec("analyze table t partition p1 index idxb;")
+	tk.MustExec("analyze table t partition p2 index idxc;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p2"))
+	tk.MustExec("analyze table t partition p0;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0"))
+}

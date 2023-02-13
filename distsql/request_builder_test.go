@@ -61,10 +61,11 @@ func TestTableHandlesToKVRanges(t *testing.T) {
 
 	// Build key ranges.
 	expect := getExpectedRanges(1, hrs)
-	actual, _ := TableHandlesToKVRanges(1, handles)
+	actual, hints := TableHandlesToKVRanges(1, handles)
 
 	// Compare key ranges and expected key ranges.
 	require.Equal(t, len(expect), len(actual))
+	require.Equal(t, hints, []int{1, 4, 2, 1, 2})
 	for i := range actual {
 		require.Equal(t, expect[i].StartKey, actual[i].StartKey)
 		require.Equal(t, expect[i].EndKey, actual[i].EndKey)
@@ -192,8 +193,8 @@ func TestIndexRangesToKVRanges(t *testing.T) {
 
 	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 12, 15, ranges, nil)
 	require.NoError(t, err)
-	for i := range actual {
-		require.Equal(t, expect[i], actual[i])
+	for i := range actual.FirstPartitionRange() {
+		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
 	}
 }
 
@@ -242,7 +243,7 @@ func TestRequestBuilder1(t *testing.T) {
 		Tp:      103,
 		StartTs: 0x0,
 		Data:    []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges: []kv.KeyRange{
+		KeyRanges: kv.NewNonParitionedKeyRanges([]kv.KeyRange{
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3},
@@ -263,7 +264,7 @@ func TestRequestBuilder1(t *testing.T) {
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 			},
-		},
+		}),
 		Cacheable:        true,
 		KeepOrder:        false,
 		Desc:             false,
@@ -325,7 +326,7 @@ func TestRequestBuilder2(t *testing.T) {
 		Tp:      103,
 		StartTs: 0x0,
 		Data:    []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges: []kv.KeyRange{
+		KeyRanges: kv.NewNonParitionedKeyRanges([]kv.KeyRange{
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3},
@@ -346,7 +347,7 @@ func TestRequestBuilder2(t *testing.T) {
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 			},
-		},
+		}),
 		Cacheable:        true,
 		KeepOrder:        false,
 		Desc:             false,
@@ -378,7 +379,7 @@ func TestRequestBuilder3(t *testing.T) {
 		Tp:      103,
 		StartTs: 0x0,
 		Data:    []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges: []kv.KeyRange{
+		KeyRanges: kv.NewNonParitionedKeyRangesWithHint([]kv.KeyRange{
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -395,17 +396,16 @@ func TestRequestBuilder3(t *testing.T) {
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x64},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x65},
 			},
-		},
-		Cacheable:         true,
-		KeepOrder:         false,
-		Desc:              false,
-		Concurrency:       variable.DefDistSQLScanConcurrency,
-		IsolationLevel:    0,
-		Priority:          0,
-		NotFillCache:      false,
-		ReplicaRead:       kv.ReplicaReadLeader,
-		ReadReplicaScope:  kv.GlobalReplicaScope,
-		FixedRowCountHint: []int{1, 4, 2, 1},
+		}, []int{1, 4, 2, 1}),
+		Cacheable:        true,
+		KeepOrder:        false,
+		Desc:             false,
+		Concurrency:      variable.DefDistSQLScanConcurrency,
+		IsolationLevel:   0,
+		Priority:         0,
+		NotFillCache:     false,
+		ReplicaRead:      kv.ReplicaReadLeader,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
@@ -444,7 +444,7 @@ func TestRequestBuilder4(t *testing.T) {
 		Tp:               103,
 		StartTs:          0x0,
 		Data:             []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges:        keyRanges,
+		KeyRanges:        kv.NewNonParitionedKeyRanges(keyRanges),
 		Cacheable:        true,
 		KeepOrder:        false,
 		Desc:             false,
@@ -491,7 +491,7 @@ func TestRequestBuilder5(t *testing.T) {
 		Tp:               104,
 		StartTs:          0x0,
 		Data:             []uint8{0x8, 0x0, 0x18, 0x0, 0x20, 0x0},
-		KeyRanges:        keyRanges,
+		KeyRanges:        kv.NewNonParitionedKeyRanges(keyRanges),
 		KeepOrder:        true,
 		Desc:             false,
 		Concurrency:      15,
@@ -520,7 +520,7 @@ func TestRequestBuilder6(t *testing.T) {
 		Tp:               105,
 		StartTs:          0x0,
 		Data:             []uint8{0x10, 0x0, 0x18, 0x0},
-		KeyRanges:        keyRanges,
+		KeyRanges:        kv.NewNonParitionedKeyRanges(keyRanges),
 		KeepOrder:        false,
 		Desc:             false,
 		Concurrency:      concurrency,
@@ -557,6 +557,7 @@ func TestRequestBuilder7(t *testing.T) {
 				Tp:               0,
 				StartTs:          0x0,
 				KeepOrder:        false,
+				KeyRanges:        kv.NewNonParitionedKeyRanges(nil),
 				Desc:             false,
 				Concurrency:      concurrency,
 				IsolationLevel:   0,
@@ -575,20 +576,23 @@ func TestRequestBuilder7(t *testing.T) {
 
 func TestRequestBuilder8(t *testing.T) {
 	sv := variable.NewSessionVars(nil)
+	sv.ResourceGroupName = "test"
 	actual, err := (&RequestBuilder{}).
 		SetFromSessionVars(sv).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
-		Tp:               0,
-		StartTs:          0x0,
-		Data:             []uint8(nil),
-		Concurrency:      variable.DefDistSQLScanConcurrency,
-		IsolationLevel:   0,
-		Priority:         0,
-		MemTracker:       (*memory.Tracker)(nil),
-		SchemaVar:        0,
-		ReadReplicaScope: kv.GlobalReplicaScope,
+		Tp:                0,
+		StartTs:           0x0,
+		Data:              []uint8(nil),
+		KeyRanges:         kv.NewNonParitionedKeyRanges(nil),
+		Concurrency:       variable.DefDistSQLScanConcurrency,
+		IsolationLevel:    0,
+		Priority:          0,
+		MemTracker:        (*memory.Tracker)(nil),
+		SchemaVar:         0,
+		ReadReplicaScope:  kv.GlobalReplicaScope,
+		ResourceGroupName: "test",
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize
@@ -635,8 +639,8 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5},
 		},
 	}
-	for i := 0; i < len(actual); i++ {
-		require.Equal(t, expect[i], actual[i])
+	for i := 0; i < len(actual.FirstPartitionRange()); i++ {
+		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
 	}
 }
 
@@ -672,6 +676,7 @@ func TestScanLimitConcurrency(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 			require.Equal(t, tt.concurrency, actual.Concurrency)
+			require.Equal(t, actual.LimitSize, tt.limit)
 		})
 	}
 }

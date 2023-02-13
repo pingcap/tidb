@@ -144,6 +144,7 @@ func TestApplyUpdate(t *testing.T) {
 		if test.setEnv {
 			require.NoError(t, os.Setenv("AWS_ACCESS_KEY_ID", "ab"))
 			require.NoError(t, os.Setenv("AWS_SECRET_ACCESS_KEY", "cd"))
+			require.NoError(t, os.Setenv("AWS_SESSION_TOKEN", "ef"))
 		}
 		u, err := ParseBackend("s3://bucket/prefix/", &BackendOptions{S3: test.options})
 		require.NoError(t, err)
@@ -260,11 +261,13 @@ func TestApplyUpdate(t *testing.T) {
 				Region:          "us-west-2",
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
+				SessionToken:    "ef",
 			},
 			s3: &backuppb.S3{
 				Region:          "us-west-2",
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
+				SessionToken:    "ef",
 				Bucket:          "bucket",
 				Prefix:          "prefix",
 			},
@@ -314,10 +317,11 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "no region",
 			s3: &backuppb.S3{
-				Region:   "",
-				Endpoint: s.URL,
-				Bucket:   "bucket",
-				Prefix:   "prefix",
+				Region:         "",
+				Endpoint:       s.URL,
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -325,10 +329,11 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "wrong region",
 			s3: &backuppb.S3{
-				Region:   "us-east-2",
-				Endpoint: s.URL,
-				Bucket:   "bucket",
-				Prefix:   "prefix",
+				Region:         "us-east-2",
+				Endpoint:       s.URL,
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      true,
 			sendCredential: true,
@@ -336,10 +341,11 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "right region",
 			s3: &backuppb.S3{
-				Region:   "us-west-2",
-				Endpoint: s.URL,
-				Bucket:   "bucket",
-				Prefix:   "prefix",
+				Region:         "us-west-2",
+				Endpoint:       s.URL,
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -351,8 +357,10 @@ func TestS3Storage(t *testing.T) {
 				Endpoint:        s.URL,
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
+				SessionToken:    "ef",
 				Bucket:          "bucket",
 				Prefix:          "prefix",
+				ForcePathStyle:  true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -365,6 +373,7 @@ func TestS3Storage(t *testing.T) {
 				SecretAccessKey: "cd",
 				Bucket:          "bucket",
 				Prefix:          "prefix",
+				ForcePathStyle:  true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -372,11 +381,12 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "no secret access key",
 			s3: &backuppb.S3{
-				Region:    "us-west-2",
-				Endpoint:  s.URL,
-				AccessKey: "ab",
-				Bucket:    "bucket",
-				Prefix:    "prefix",
+				Region:         "us-west-2",
+				Endpoint:       s.URL,
+				AccessKey:      "ab",
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      false,
 			sendCredential: true,
@@ -384,11 +394,12 @@ func TestS3Storage(t *testing.T) {
 		{
 			name: "no secret access key",
 			s3: &backuppb.S3{
-				Region:    "us-west-2",
-				Endpoint:  s.URL,
-				AccessKey: "ab",
-				Bucket:    "bucket",
-				Prefix:    "prefix",
+				Region:         "us-west-2",
+				Endpoint:       s.URL,
+				AccessKey:      "ab",
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				ForcePathStyle: true,
 			},
 			errReturn:      false,
 			sendCredential: false,
@@ -1105,10 +1116,12 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 func TestSendCreds(t *testing.T) {
 	accessKey := "ab"
 	secretAccessKey := "cd"
+	sessionToken := "ef"
 	backendOpt := BackendOptions{
 		S3: S3BackendOptions{
 			AccessKey:       accessKey,
 			SecretAccessKey: secretAccessKey,
+			SessionToken:    sessionToken,
 		},
 	}
 	backend, err := ParseBackend("s3://bucket/prefix/", &backendOpt)
@@ -1121,12 +1134,15 @@ func TestSendCreds(t *testing.T) {
 	sentAccessKey := backend.GetS3().AccessKey
 	require.Equal(t, accessKey, sentAccessKey)
 	sentSecretAccessKey := backend.GetS3().SecretAccessKey
-	require.Equal(t, sentSecretAccessKey, sentSecretAccessKey)
+	require.Equal(t, secretAccessKey, sentSecretAccessKey)
+	sentSessionToken := backend.GetS3().SessionToken
+	require.Equal(t, sessionToken, sentSessionToken)
 
 	backendOpt = BackendOptions{
 		S3: S3BackendOptions{
 			AccessKey:       accessKey,
 			SecretAccessKey: secretAccessKey,
+			SessionToken:    sessionToken,
 		},
 	}
 	backend, err = ParseBackend("s3://bucket/prefix/", &backendOpt)
@@ -1140,4 +1156,51 @@ func TestSendCreds(t *testing.T) {
 	require.Equal(t, "", sentAccessKey)
 	sentSecretAccessKey = backend.GetS3().SecretAccessKey
 	require.Equal(t, "", sentSecretAccessKey)
+	sentSessionToken = backend.GetS3().SessionToken
+	require.Equal(t, "", sentSessionToken)
+}
+
+func TestObjectLock(t *testing.T) {
+	s := createS3Suite(t)
+	// resp is nil
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(nil, nil)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp is not nil, but resp.ObjectLockConfiguration is nil
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: nil,
+		}, nil,
+	)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp.ObjectLockConfiguration is not nil, but resp.ObjectLockConfiguration.ObjectLockEnabled is nil
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
+				ObjectLockEnabled: nil,
+			},
+		}, nil,
+	)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp.ObjectLockConfiguration.ObjectLockEnabled is illegal string
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
+				ObjectLockEnabled: aws.String("EnaBled"),
+			},
+		}, nil,
+	)
+	require.Equal(t, false, s.storage.IsObjectLockEnabled())
+
+	// resp.ObjectLockConfiguration.ObjectLockEnabled is enabled
+	s.s3.EXPECT().GetObjectLockConfiguration(gomock.Any()).Return(
+		&s3.GetObjectLockConfigurationOutput{
+			ObjectLockConfiguration: &s3.ObjectLockConfiguration{
+				ObjectLockEnabled: aws.String("Enabled"),
+			},
+		}, nil,
+	)
+	require.Equal(t, true, s.storage.IsObjectLockEnabled())
 }

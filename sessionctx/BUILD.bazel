@@ -26,13 +26,14 @@ go_library(
 
 go_test(
     name = "sessionctx_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "context_test.go",
         "main_test.go",
     ],
     embed = [":sessionctx"],
     flaky = True,
+    race = "on",
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

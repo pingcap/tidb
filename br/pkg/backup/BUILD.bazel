@@ -12,6 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/backup",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/checkpoint",
         "//br/pkg/checksum",
         "//br/pkg/conn",
         "//br/pkg/conn/util",
@@ -28,7 +29,6 @@ go_library(
         "//distsql",
         "//kv",
         "//meta",
-        "//meta/autoid",
         "//parser/model",
         "//statistics/handle",
         "//util",

@@ -43,7 +43,7 @@ const (
 	TypeLongBlob   byte = 0xfb
 	TypeBlob       byte = 0xfc
 	TypeVarString  byte = 0xfd
-	TypeString     byte = 0xfe
+	TypeString     byte = 0xfe /* TypeString is char type */
 	TypeGeometry   byte = 0xff
 )
 
@@ -74,6 +74,7 @@ const (
 	PreventNullInsertFlag uint = 1 << 20 /* Prevent this Field from inserting NULL values */
 	EnumSetAsIntFlag      uint = 1 << 21 /* Internal: Used for inferring enum eval type. */
 	DropColumnIndexFlag   uint = 1 << 22 /* Internal: Used for indicate the column is being dropped with index */
+	GeneratedColumnFlag   uint = 1 << 23 /* Internal: TiFlash will check this flag and add a placeholder for this column */
 )
 
 // TypeInt24 bounds.

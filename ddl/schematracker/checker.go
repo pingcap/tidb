@@ -433,6 +433,22 @@ func (d Checker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPla
 	panic("implement me")
 }
 
+// AddResourceGroup implements the DDL interface.
+// ResourceGroup do not affect the transaction.
+func (d Checker) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) error {
+	return nil
+}
+
+// DropResourceGroup implements the DDL interface.
+func (d Checker) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) error {
+	return nil
+}
+
+// AlterResourceGroup implements the DDL interface.
+func (d Checker) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) error {
+	return nil
+}
+
 // CreateSchemaWithInfo implements the DDL interface.
 func (d Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInfo, onExist ddl.OnExist) error {
 	err := d.realDDL.CreateSchemaWithInfo(ctx, info, onExist)
@@ -539,16 +555,6 @@ func (d Checker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema
 // DoDDLJob implements the DDL interface.
 func (d Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return d.realDDL.DoDDLJob(ctx, job)
-}
-
-// MoveJobFromQueue2Table implements the DDL interface.
-func (d Checker) MoveJobFromQueue2Table(bool) error {
-	panic("implement me")
-}
-
-// MoveJobFromTable2Queue implements the DDL interface.
-func (d Checker) MoveJobFromTable2Queue() error {
-	panic("implement me")
 }
 
 // StorageDDLInjector wraps kv.Storage to inject checker to domain's DDL in bootstrap time.

@@ -678,3 +678,40 @@ func initializeRepeatableReadProvider(t *testing.T, tk *testkit.TestKit, active 
 	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
 	return assert.CheckAndGetProvider(t)
 }
+
+func TestRRWaitTSTimeInSlowLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("begin pessimistic")
+	waitTS1 := se.GetSessionVars().DurationWaitTS
+	tk.MustExec("update t set v = v + 10 where id = 1")
+	waitTS2 := se.GetSessionVars().DurationWaitTS
+	tk.MustExec("delete from t")
+	waitTS3 := se.GetSessionVars().DurationWaitTS
+	tk.MustExec("commit")
+	require.NotEqual(t, waitTS1, waitTS2)
+	require.NotEqual(t, waitTS1, waitTS3)
+	require.NotEqual(t, waitTS2, waitTS3)
+}
+
+func TestIssue41194(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/enableAggressiveLockingOnBootstrap", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/enableAggressiveLockingOnBootstrap"))
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("analyze table t")
+}

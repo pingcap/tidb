@@ -286,7 +286,7 @@
     "Name": "TestTiFlashCostModel",
     "Cases": [
       [
-        "TableReader_11 10000.00 root  data:ExchangeSender_10",
+        "TableReader_11 10000.00 root  MppVersion: 1, data:ExchangeSender_10",
         "└─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
         "  └─TableFullScan_9 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
       ],
@@ -298,7 +298,7 @@
         "Batch_Point_Get_5 2.00 root table:t handle:[1 2], keep order:false, desc:false"
       ],
       [
-        "TableReader_10 2.00 root  data:ExchangeSender_9",
+        "TableReader_10 2.00 root  MppVersion: 1, data:ExchangeSender_9",
         "└─ExchangeSender_9 2.00 mpp[tiflash]  ExchangeType: PassThrough",
         "  └─TableRangeScan_8 2.00 mpp[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
       ]
@@ -383,7 +383,7 @@
         "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
         "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
         "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
-        "  └─HashAgg(Probe) 10.00 root  funcs:count(1)->Column#21",
+        "  └─StreamAgg(Probe) 10.00 root  funcs:count(1)->Column#21",
         "    └─HashJoin 10.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
         "      ├─IndexReader(Build) 10.00 root  index:Selection",
         "      │ └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
@@ -411,7 +411,7 @@
       {
         "SQL": "explain format = 'brief' select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
         "Plan": [
-          "HashAgg 1.00 root  funcs:max(test.t.e)->Column#7",
+          "StreamAgg 1.00 root  funcs:max(test.t.e)->Column#7",
           "└─TopN 0.00 root  test.t.e:desc, offset:0, count:1",
           "  └─IndexLookUp 0.00 root  ",
           "    ├─IndexRangeScan(Build) 0.01 cop[tikv] table:t, index:idx1(d, a) range:[\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\",\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\"], keep order:false",
@@ -435,7 +435,7 @@
     "Cases": [
       "IndexReader(Index(t.e)[[NULL,+inf]]->StreamAgg)->StreamAgg",
       "IndexReader(Index(t.e)[[-inf,10]]->StreamAgg)->StreamAgg",
-      "IndexReader(Index(t.e)[[-inf,50]]->HashAgg)->HashAgg",
+      "IndexReader(Index(t.e)[[-inf,50]]->StreamAgg)->StreamAgg",
       "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(test.t.c, 1)])->StreamAgg)->StreamAgg",
       "IndexLookUp(Index(t.e)[[1,1]], Table(t))->HashAgg",
       "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",

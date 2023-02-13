@@ -28,6 +28,10 @@ const (
 	FeatureIDForceAutoInc = "force_inc"
 	// FeatureIDPlacement is the `placement rule` feature.
 	FeatureIDPlacement = "placement"
+	// FeatureIDTTL is the `ttl` feature
+	FeatureIDTTL = "ttl"
+	// FeatureIDResourceGroup is the `resource group` feature.
+	FeatureIDResourceGroup = "resource_group"
 )
 
 var featureIDs = map[string]struct{}{
@@ -37,6 +41,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDClusteredIndex: {},
 	FeatureIDForceAutoInc:   {},
 	FeatureIDPlacement:      {},
+	FeatureIDTTL:            {},
 }
 
 // CanParseFeature is used to check if a feature can be parsed.

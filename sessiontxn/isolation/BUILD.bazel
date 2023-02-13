@@ -27,7 +27,7 @@ go_library(
         "//sessiontxn/staleread",
         "//table/temptable",
         "//util/logutil",
-        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "//util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//error",
@@ -38,7 +38,7 @@ go_library(
 
 go_test(
     name = "isolation_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "optimistic_test.go",

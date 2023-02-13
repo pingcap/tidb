@@ -18,12 +18,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/logutil"
@@ -66,7 +64,10 @@ func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *l
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
-	_, err := SyncWaitStatsLoad(plan)
+	if plan.SCtx().GetSessionVars().StmtCtx.IsSyncStatsFailed {
+		return plan, nil
+	}
+	err := SyncWaitStatsLoad(plan)
 	return plan, err
 }
 
@@ -91,37 +92,36 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	var timeout = time.Duration(waitTime)
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
-		logutil.BgLogger().Warn("SendLoadRequests failed", zap.Error(err))
 		stmtCtx.IsSyncStatsFailed = true
-		return handleTimeout(stmtCtx)
+		if variable.StatsLoadPseudoTimeout.Load() {
+			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
+			stmtCtx.AppendWarning(err)
+			return nil
+		}
+		logutil.BgLogger().Error("RequestLoadStats failed", zap.Error(err))
+		return err
 	}
 	return nil
 }
 
 // SyncWaitStatsLoad sync-wait for stats load until timeout
-func SyncWaitStatsLoad(plan LogicalPlan) (bool, error) {
+func SyncWaitStatsLoad(plan LogicalPlan) error {
 	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
-	if stmtCtx.StatsLoad.Fallback {
-		return false, nil
-	}
-	success := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
-	if success {
-		return true, nil
-	}
-	logutil.BgLogger().Warn("SyncWaitStatsLoad failed")
-	stmtCtx.IsSyncStatsFailed = true
-	err := handleTimeout(stmtCtx)
-	return false, err
-}
-
-func handleTimeout(stmtCtx *stmtctx.StatementContext) error {
-	err := errors.New("Timeout when sync-load full stats for needed columns")
-	if variable.StatsLoadPseudoTimeout.Load() {
-		stmtCtx.AppendWarning(err)
-		stmtCtx.StatsLoad.Fallback = true
+	if len(stmtCtx.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
-	return err
+	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
+	if err != nil {
+		stmtCtx.IsSyncStatsFailed = true
+		if variable.StatsLoadPseudoTimeout.Load() {
+			logutil.BgLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
+			stmtCtx.AppendWarning(err)
+			return nil
+		}
+		logutil.BgLogger().Error("SyncWaitStatsLoad failed", zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 // collectSyncIndices will collect the indices which includes following conditions:

@@ -85,6 +85,7 @@ const (
 // Global config name list.
 const (
 	GlobalConfigEnableTopSQL = "enable_resource_metering"
+	GlobalConfigSourceID     = "source_id"
 )
 
 func (s ScopeFlag) String() string {
@@ -255,7 +256,7 @@ func (sv *SysVar) SetGlobalFromHook(ctx context.Context, s *SessionVars, val str
 
 	if !skipAliases && sv.Aliases != nil {
 		for _, aliasName := range sv.Aliases {
-			if err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(ctx, aliasName, val); err != nil {
+			if err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(ctx, aliasName, val, true); err != nil {
 				return err
 			}
 		}
@@ -382,6 +383,10 @@ func (sv *SysVar) checkTimeSystemVar(value string, vars *SessionVars) (string, e
 	if err != nil {
 		return "", err
 	}
+	// Add a modern date to it, as the timezone shift can differ across the history
+	// For example, the Asia/Shanghai refers to +08:05 before 1900
+	now := time.Now()
+	t = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
 	return t.Format(FullDayTimeFormat), nil
 }
 
@@ -626,7 +631,7 @@ type GlobalVarAccessor interface {
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
 	// SetGlobalSysVarOnly sets the global system variable without calling the validation function or updating aliases.
-	SetGlobalSysVarOnly(ctx context.Context, name string, value string) error
+	SetGlobalSysVarOnly(ctx context.Context, name string, value string, updateLocal bool) error
 	// GetTiDBTableValue gets a value from mysql.tidb for the key 'name'
 	GetTiDBTableValue(name string) (string, error)
 	// SetTiDBTableValue sets a value+comment for the mysql.tidb key 'name'

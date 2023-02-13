@@ -16,6 +16,7 @@ package common
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -47,14 +48,16 @@ const (
 
 // MySQLConnectParam records the parameters needed to connect to a MySQL database.
 type MySQLConnectParam struct {
-	Host             string
-	Port             int
-	User             string
-	Password         string
-	SQLMode          string
-	MaxAllowedPacket uint64
-	TLS              string
-	Vars             map[string]string
+	Host                     string
+	Port                     int
+	User                     string
+	Password                 string
+	SQLMode                  string
+	MaxAllowedPacket         uint64
+	TLSConfig                *tls.Config
+	AllowFallbackToPlaintext bool
+	Net                      string
+	Vars                     map[string]string
 }
 
 func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
@@ -64,11 +67,16 @@ func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 	cfg.User = param.User
 	cfg.Passwd = param.Password
 	cfg.Net = "tcp"
+	if param.Net != "" {
+		cfg.Net = param.Net
+	}
 	cfg.Addr = net.JoinHostPort(param.Host, strconv.Itoa(param.Port))
 	cfg.Params["charset"] = "utf8mb4"
 	cfg.Params["sql_mode"] = fmt.Sprintf("'%s'", param.SQLMode)
 	cfg.MaxAllowedPacket = int(param.MaxAllowedPacket)
-	cfg.TLSConfig = param.TLS
+
+	cfg.TLS = param.TLSConfig
+	cfg.AllowFallbackToPlaintext = param.AllowFallbackToPlaintext
 
 	for k, v := range param.Vars {
 		cfg.Params[k] = fmt.Sprintf("'%s'", v)

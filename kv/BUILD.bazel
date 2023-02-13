@@ -30,6 +30,7 @@ go_library(
         "//types",
         "//util/codec",
         "//util/dbterror",
+        "//util/intest",
         "//util/logutil",
         "//util/memory",
         "//util/set",
@@ -48,6 +49,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -82,6 +84,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",

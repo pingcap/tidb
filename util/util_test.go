@@ -15,12 +15,16 @@
 package util
 
 import (
+	"bufio"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLogFormat(t *testing.T) {
@@ -28,6 +32,7 @@ func TestLogFormat(t *testing.T) {
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
 	mockTooLongQuery := make([]byte, 1024*9)
 
+	var refCount stmtctx.ReferenceCount = 0
 	info := &ProcessInfo{
 		ID:            233,
 		User:          "PingCAP",
@@ -38,9 +43,10 @@ func TestLogFormat(t *testing.T) {
 		StatsInfo: func(interface{}) map[string]uint64 {
 			return nil
 		},
-		StmtCtx:    &stmtctx.StatementContext{},
-		MemTracker: mem,
-		RedactSQL:  false,
+		StmtCtx:           &stmtctx.StatementContext{},
+		RefCountOfStmtCtx: &refCount,
+		MemTracker:        mem,
+		RedactSQL:         false,
 	}
 	costTime := time.Second * 233
 	logSQLTruncateLen := 1024 * 8
@@ -69,4 +75,22 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, len(logFields[6].String), logSQLTruncateLen+10)
 	logFields = GenLogFields(costTime, info, false)
 	assert.Equal(t, len(logFields[6].String), len(mockTooLongQuery))
+}
+
+func TestReadLine(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader(`line1
+line2
+line3`))
+	line, err := ReadLine(reader, 1024)
+	require.NoError(t, err)
+	require.Equal(t, "line1", string(line))
+	line, err = ReadLine(reader, 1024)
+	require.NoError(t, err)
+	require.Equal(t, "line2", string(line))
+	line, err = ReadLine(reader, 1024)
+	require.NoError(t, err)
+	require.Equal(t, "line3", string(line))
+	line, err = ReadLine(reader, 1024)
+	require.Equal(t, io.EOF, err)
+	require.Len(t, line, 0)
 }

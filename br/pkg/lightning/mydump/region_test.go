@@ -174,13 +174,14 @@ func TestMakeSourceFileRegion(t *testing.T) {
 			ReadBlockSize: config.ReadBlockSize,
 			MaxRegionSize: 1,
 			CSV: config.CSVConfig{
-				Separator:       ",",
-				Delimiter:       "",
-				Header:          true,
-				TrimLastSep:     false,
-				NotNull:         false,
-				Null:            "NULL",
-				BackslashEscape: true,
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              "NULL",
+				BackslashEscape:   true,
 			},
 			StrictFormat: true,
 			Filter:       []string{"*.*"},
@@ -199,7 +200,6 @@ func TestMakeSourceFileRegion(t *testing.T) {
 	store, err := storage.NewLocalStorage(".")
 	assert.NoError(t, err)
 
-	// test - no compression
 	fileInfo.FileMeta.Compression = CompressionNone
 	regions, _, err := MakeSourceFileRegion(ctx, meta, fileInfo, colCnt, cfg, ioWorkers, store)
 	assert.NoError(t, err)
@@ -217,8 +217,64 @@ func TestMakeSourceFileRegion(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, regions, 1)
 	assert.Equal(t, int64(0), regions[0].Chunk.Offset)
-	assert.Equal(t, fileInfo.FileMeta.FileSize, regions[0].Chunk.EndOffset)
+	assert.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
 	assert.Len(t, regions[0].Chunk.Columns, 0)
+}
+
+func TestCompressedMakeSourceFileRegion(t *testing.T) {
+	meta := &MDTableMeta{
+		DB:   "csv",
+		Name: "large_csv_file",
+	}
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			MaxRegionSize: 1,
+			CSV: config.CSVConfig{
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              "NULL",
+				BackslashEscape:   true,
+			},
+			StrictFormat: true,
+			Filter:       []string{"*.*"},
+		},
+	}
+	filePath := "./csv/split_large_file.csv.zst"
+	dataFileInfo, err := os.Stat(filePath)
+	require.NoError(t, err)
+	fileSize := dataFileInfo.Size()
+
+	fileInfo := FileInfo{FileMeta: SourceFileMeta{
+		Path:        filePath,
+		Type:        SourceTypeCSV,
+		Compression: CompressionZStd,
+		FileSize:    fileSize,
+	}}
+	colCnt := 3
+
+	ctx := context.Background()
+	ioWorkers := worker.NewPool(ctx, 4, "io")
+	store, err := storage.NewLocalStorage(".")
+	assert.NoError(t, err)
+	compressRatio, err := SampleFileCompressRatio(ctx, fileInfo.FileMeta, store)
+	require.NoError(t, err)
+	fileInfo.FileMeta.RealSize = int64(compressRatio * float64(fileInfo.FileMeta.FileSize))
+
+	regions, sizes, err := MakeSourceFileRegion(ctx, meta, fileInfo, colCnt, cfg, ioWorkers, store)
+	assert.NoError(t, err)
+	assert.Len(t, regions, 1)
+	assert.Equal(t, int64(0), regions[0].Chunk.Offset)
+	assert.Equal(t, int64(0), regions[0].Chunk.RealOffset)
+	assert.Equal(t, TableFileSizeINF, regions[0].Chunk.EndOffset)
+	rowIDMax := fileInfo.FileMeta.RealSize * CompressSizeFactor / int64(colCnt)
+	assert.Equal(t, rowIDMax, regions[0].Chunk.RowIDMax)
+	assert.Len(t, regions[0].Chunk.Columns, 0)
+	assert.Equal(t, fileInfo.FileMeta.RealSize, int64(sizes[0]))
 }
 
 func TestSplitLargeFile(t *testing.T) {
@@ -230,13 +286,14 @@ func TestSplitLargeFile(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:       ",",
-				Delimiter:       "",
-				Header:          true,
-				TrimLastSep:     false,
-				NotNull:         false,
-				Null:            "NULL",
-				BackslashEscape: true,
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              "NULL",
+				BackslashEscape:   true,
 			},
 			StrictFormat: true,
 			Filter:       []string{"*.*"},
@@ -288,13 +345,14 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:       ",",
-				Delimiter:       "",
-				Header:          true,
-				TrimLastSep:     false,
-				NotNull:         false,
-				Null:            "NULL",
-				BackslashEscape: true,
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              "NULL",
+				BackslashEscape:   true,
 			},
 			StrictFormat:  true,
 			Filter:        []string{"*.*"},
@@ -393,13 +451,14 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:       ",",
-				Delimiter:       "",
-				Header:          true,
-				TrimLastSep:     false,
-				NotNull:         false,
-				Null:            "NULL",
-				BackslashEscape: true,
+				Separator:         ",",
+				Delimiter:         "",
+				Header:            true,
+				HeaderSchemaMatch: true,
+				TrimLastSep:       false,
+				NotNull:           false,
+				Null:              "NULL",
+				BackslashEscape:   true,
 			},
 			StrictFormat:  true,
 			Filter:        []string{"*.*"},

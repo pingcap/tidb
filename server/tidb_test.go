@@ -2781,11 +2781,11 @@ func (l *connEventLogs) check(fn func()) {
 	fn()
 }
 
-func (l *connEventLogs) waitConnDisconnected() error {
+func (l *connEventLogs) waitEvent(tp extension.ConnEventTp) error {
 	totalSleep := 0
 	for {
 		l.Lock()
-		if l.types[len(l.types)-1] == extension.ConnDisconnected {
+		if l.types[len(l.types)-1] == tp {
 			l.Unlock()
 			return nil
 		}
@@ -2812,6 +2812,8 @@ func TestExtensionConnEvent(t *testing.T) {
 	require.NoError(t, extension.Setup())
 
 	ts := createTidbTestSuite(t)
+	// createTidbTestSuite create an inner connection, so wait the previous connection closed
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
 
 	// test for login success
 	logs.reset()
@@ -2828,6 +2830,7 @@ func TestExtensionConnEvent(t *testing.T) {
 	}()
 
 	var expectedConn2 variable.ConnectionInfo
+	require.NoError(t, logs.waitEvent(extension.ConnHandshakeAccepted))
 	logs.check(func() {
 		require.Equal(t, []extension.ConnEventTp{
 			extension.ConnConnected,
@@ -2861,7 +2864,7 @@ func TestExtensionConnEvent(t *testing.T) {
 
 	require.NoError(t, conn.Close())
 	require.NoError(t, db.Close())
-	require.NoError(t, logs.waitConnDisconnected())
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
 	logs.check(func() {
 		require.Equal(t, 3, len(logs.infos))
 		require.Equal(t, 1, len(logs.infos[2].ActiveRoles))
@@ -2889,6 +2892,7 @@ func TestExtensionConnEvent(t *testing.T) {
 
 	_, err = db.Conn(context.Background())
 	require.Error(t, err)
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
 	logs.check(func() {
 		require.Equal(t, []extension.ConnEventTp{
 			extension.ConnConnected,
@@ -2913,4 +2917,73 @@ func TestExtensionConnEvent(t *testing.T) {
 		require.EqualError(t, logs.infos[1].Error, "[server:1045]Access denied for user 'noexist'@'127.0.0.1' (using password: NO)")
 		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
 	})
+}
+
+func TestSandBoxMode(t *testing.T) {
+	ts := createTidbTestSuite(t)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
+	require.NoError(t, err)
+	_, err = Execute(context.Background(), qctx, "create user testuser;")
+	require.NoError(t, err)
+	qctx.Session.GetSessionVars().User = &auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}
+
+	alterPwdStmts := []string{
+		"set password = '1234';",
+		"alter user testuser identified by '1234';",
+		"alter user current_user() identified by '1234';",
+	}
+
+	for _, alterPwdStmt := range alterPwdStmts {
+		require.False(t, qctx.Session.InSandBoxMode())
+		_, err = Execute(context.Background(), qctx, "select 1;")
+		require.NoError(t, err)
+
+		qctx.Session.EnableSandBoxMode()
+		require.True(t, qctx.Session.InSandBoxMode())
+		_, err = Execute(context.Background(), qctx, "select 1;")
+		require.Error(t, err)
+		_, err = Execute(context.Background(), qctx, "alter user testuser identified with 'mysql_native_password';")
+		require.Error(t, err)
+		_, err = Execute(context.Background(), qctx, alterPwdStmt)
+		require.NoError(t, err)
+		_, err = Execute(context.Background(), qctx, "select 1;")
+		require.NoError(t, err)
+	}
+}
+
+// See: https://github.com/pingcap/tidb/issues/40979
+// Reusing memory of `chunk.Chunk` may cause some systems variable's memory value to be modified unexpectedly.
+func TestChunkReuseCorruptSysVarString(t *testing.T) {
+	ts := createTidbTestSuite(t)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
+
+	rs, err := conn.QueryContext(context.Background(), "show tables in test")
+	ts.Rows(t, rs)
+
+	_, err = conn.ExecContext(context.Background(), "set @@time_zone=(select 'Asia/Shanghai')")
+	require.NoError(t, err)
+
+	rs, err = conn.QueryContext(context.Background(), "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='aaaa'")
+	ts.Rows(t, rs)
+
+	rs, err = conn.QueryContext(context.Background(), "select @@time_zone")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rs.Close())
+	}()
+
+	rows := ts.Rows(t, rs)
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "Asia/Shanghai", rows[0])
 }

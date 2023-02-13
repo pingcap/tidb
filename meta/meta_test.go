@@ -17,18 +17,15 @@ package meta_test
 import (
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
@@ -102,6 +99,45 @@ func TestPlacementPolicy(t *testing.T) {
 	require.Equal(t, policy, val)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
+}
+
+func TestResourceGroup(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	// test the independent policy ID allocation.
+	m := meta.NewMeta(txn)
+
+	checkResourceGroup := func(ru uint64) {
+		rg, err := m.GetResourceGroup(1)
+		require.NoError(t, err)
+		require.Equal(t, rg.RURate, ru)
+	}
+
+	rg := &model.ResourceGroupInfo{
+		ID:   1,
+		Name: model.NewCIStr("aa"),
+		ResourceGroupSettings: &model.ResourceGroupSettings{
+			RURate: 100,
+		},
+	}
+	require.NoError(t, m.AddResourceGroup(rg))
+	checkResourceGroup(100)
+
+	rg.RURate = 200
+	require.NoError(t, m.UpdateResourceGroup(rg))
+	checkResourceGroup(200)
+
+	m.DropResourceGroup(1)
+	_, err = m.GetResourceGroup(1)
+	require.Error(t, err)
 }
 
 func TestBackupAndRestoreAutoIDs(t *testing.T) {
@@ -252,10 +288,16 @@ func TestMeta(t *testing.T) {
 	table, err := m.GetTable(1, 1)
 	require.NoError(t, err)
 	require.Equal(t, tbInfo, table)
+	tblExist, err := m.CheckTableExists(1, 1)
+	require.NoError(t, err)
+	require.Equal(t, true, tblExist)
 
 	table, err = m.GetTable(1, 2)
 	require.NoError(t, err)
 	require.Nil(t, table)
+	tblExist, err = m.CheckTableExists(1, 2)
+	require.NoError(t, err)
+	require.Equal(t, false, tblExist)
 
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
@@ -442,202 +484,6 @@ func TestElement(t *testing.T) {
 	require.EqualError(t, err, `invalid encoded element "_col_" length 5`)
 }
 
-func TestDDL(t *testing.T) {
-	testCases := []struct {
-		desc        string
-		startHandle kv.Handle
-		endHandle   kv.Handle
-	}{
-		{
-			"kv.IntHandle",
-			kv.IntHandle(1),
-			kv.IntHandle(2),
-		},
-		{
-			"kv.CommonHandle",
-			testutil.MustNewCommonHandle(t, "abc", 1222, "string"),
-			testutil.MustNewCommonHandle(t, "dddd", 1222, "string"),
-		},
-	}
-
-	for _, tc := range testCases {
-		// copy iterator variable into a new variable, see issue #27779
-		tc := tc
-		t.Run(tc.desc, func(t *testing.T) {
-			store, err := mockstore.NewMockStore()
-			require.NoError(t, err)
-			defer func() {
-				err := store.Close()
-				require.NoError(t, err)
-			}()
-
-			txn, err := store.Begin()
-			require.NoError(t, err)
-
-			m := meta.NewMeta(txn)
-
-			job := &model.Job{ID: 1}
-			err = m.EnQueueDDLJob(job)
-			require.NoError(t, err)
-			n, err := m.DDLJobQueueLen()
-			require.NoError(t, err)
-			require.Equal(t, int64(1), n)
-
-			v, err := m.GetDDLJobByIdx(0)
-			require.NoError(t, err)
-			require.Equal(t, job, v)
-			v, err = m.GetDDLJobByIdx(1)
-			require.NoError(t, err)
-			require.Nil(t, v)
-
-			job.ID = 2
-			err = m.UpdateDDLJob(0, job, true)
-			require.NoError(t, err)
-
-			element := &meta.Element{ID: 123, TypeKey: meta.IndexElementKey}
-			// There are 3 meta key relate to index reorganization:
-			// start_handle, end_handle and physical_table_id.
-			// Only start_handle is initialized.
-			err = m.UpdateDDLReorgStartHandle(job, element, kv.IntHandle(1).Encoded())
-			require.NoError(t, err)
-
-			// Since physical_table_id is uninitialized, we simulate older TiDB version that doesn't store them.
-			// In this case GetDDLReorgHandle always return maxInt64 as end_handle.
-			e, i, j, k, err := m.GetDDLReorgHandle(job)
-			require.NoError(t, err)
-			require.Equal(t, element, e)
-			require.Equal(t, kv.Key(kv.IntHandle(1).Encoded()), i)
-			require.Equal(t, kv.Key(kv.IntHandle(math.MaxInt64).Encoded()), j)
-			require.Equal(t, int64(0), k)
-
-			element = &meta.Element{ID: 222, TypeKey: meta.ColumnElementKey}
-			err = m.UpdateDDLReorgHandle(job.ID, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element)
-			require.NoError(t, err)
-			element1 := &meta.Element{ID: 223, TypeKey: meta.IndexElementKey}
-			err = m.UpdateDDLReorgHandle(job.ID, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element1)
-			require.NoError(t, err)
-
-			e, i, j, k, err = m.GetDDLReorgHandle(job)
-			require.NoError(t, err)
-			require.Equal(t, element1, e)
-			require.Equal(t, kv.Key(tc.startHandle.Encoded()), i)
-			require.Equal(t, kv.Key(tc.endHandle.Encoded()), j)
-			require.Equal(t, int64(3), k)
-
-			err = m.RemoveDDLReorgHandle(job, []*meta.Element{element, element1})
-			require.NoError(t, err)
-			e, i, j, k, err = m.GetDDLReorgHandle(job)
-			require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
-			require.Nil(t, e)
-			require.Nil(t, i)
-			require.Nil(t, j)
-			require.Equal(t, k, int64(0))
-
-			// new TiDB binary running on old TiDB DDL reorg data.
-			e, i, j, k, err = m.GetDDLReorgHandle(job)
-			require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
-			require.Nil(t, e)
-			require.Nil(t, i)
-			require.Nil(t, j)
-			require.Equal(t, k, int64(0))
-
-			// Test GetDDLReorgHandle failed.
-			_, _, _, _, err = m.GetDDLReorgHandle(job)
-			require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
-
-			v, err = m.DeQueueDDLJob()
-			require.NoError(t, err)
-			require.Equal(t, job, v)
-
-			err = m.AddHistoryDDLJob(job, true)
-			require.NoError(t, err)
-			v, err = m.GetHistoryDDLJob(2)
-			require.NoError(t, err)
-			require.Equal(t, job, v)
-
-			// Add multiple history jobs.
-			arg := "test arg"
-			historyJob1 := &model.Job{ID: 1234}
-			historyJob1.Args = append(job.Args, arg)
-			err = m.AddHistoryDDLJob(historyJob1, true)
-			require.NoError(t, err)
-			historyJob2 := &model.Job{ID: 123}
-			historyJob2.Args = append(job.Args, arg)
-			err = m.AddHistoryDDLJob(historyJob2, false)
-			require.NoError(t, err)
-			all, err := ddl.GetAllHistoryDDLJobs(m)
-			require.NoError(t, err)
-			var lastID int64
-			for _, job := range all {
-				require.Greater(t, job.ID, lastID)
-				lastID = job.ID
-				arg1 := ""
-				err := job.DecodeArgs(&arg1)
-				require.NoError(t, err)
-				if job.ID == historyJob1.ID {
-					require.Equal(t, historyJob1.Args[0], *(job.Args[0].(*string)))
-				} else {
-					require.Len(t, job.Args, 0)
-				}
-			}
-
-			// Test for get last N history ddl jobs.
-			historyJobs, err := ddl.GetLastNHistoryDDLJobs(m, 2)
-			require.NoError(t, err)
-			require.Len(t, historyJobs, 2)
-			require.Equal(t, int64(1234), historyJobs[0].ID)
-			require.Equal(t, int64(123), historyJobs[1].ID)
-
-			// Test GetAllDDLJobsInQueue.
-			err = m.EnQueueDDLJob(job)
-			require.NoError(t, err)
-			job1 := &model.Job{ID: 2}
-			err = m.EnQueueDDLJob(job1)
-			require.NoError(t, err)
-			jobs, err := m.GetAllDDLJobsInQueue()
-			require.NoError(t, err)
-			expectJobs := []*model.Job{job, job1}
-			require.Equal(t, expectJobs, jobs)
-
-			err = txn.Commit(context.Background())
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestAddIndexJob(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-
-	txn1, err := store.Begin()
-	require.NoError(t, err)
-
-	m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
-	job := &model.Job{ID: 1}
-	err = m.EnQueueDDLJob(job)
-	require.NoError(t, err)
-	job.ID = 123
-	err = m.UpdateDDLJob(0, job, true, meta.AddIndexJobListKey)
-	require.NoError(t, err)
-	v, err := m.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
-	require.NoError(t, err)
-	require.Equal(t, job, v)
-	l, err := m.DDLJobQueueLen(meta.AddIndexJobListKey)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), l)
-	jobs, err := m.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
-	require.NoError(t, err)
-	expectJobs := []*model.Job{job}
-	require.Equal(t, expectJobs, jobs)
-
-	err = txn1.Commit(context.Background())
-	require.NoError(t, err)
-}
-
 func BenchmarkGenGlobalIDs(b *testing.B) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(b, err)
@@ -767,45 +613,6 @@ func TestSequenceKey(b *testing.T) {
 	require.Equal(b, tableID, id)
 }
 
-func TestClearJob(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
-	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
-	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
-
-	m := meta.NewMeta(txn)
-
-	require.NoError(t, m.EnQueueDDLJob(job1))
-	require.NoError(t, m.EnQueueDDLJob(job2))
-	require.NoError(t, m.EnQueueDDLJob(job3))
-
-	require.NoError(t, m.AddHistoryDDLJob(job1, false))
-	require.NoError(t, m.AddHistoryDDLJob(job2, false))
-
-	jobs, err := m.GetAllDDLJobsInQueue()
-	require.NoError(t, err)
-	require.Len(t, jobs, 3)
-	require.NoError(t, m.ClearALLDDLJob())
-	jobs, err = m.GetAllDDLJobsInQueue()
-	require.NoError(t, err)
-	require.Len(t, jobs, 0)
-
-	count, err := m.GetHistoryDDLCount()
-	require.NoError(t, err)
-	require.Equal(t, count, uint64(2))
-
-	err = txn.Rollback()
-	require.NoError(t, err)
-}
-
 func TestCreateMySQLDatabase(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -825,44 +632,6 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
 	require.Equal(t, dbID, anotherDBID)
-
-	err = txn.Rollback()
-	require.NoError(t, err)
-}
-
-func TestDDLTable(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	m := meta.NewMeta(txn)
-
-	exists, err := m.CheckDDLTableExists()
-	require.NoError(t, err)
-	require.False(t, exists)
-
-	err = m.SetDDLTables()
-	require.NoError(t, err)
-
-	exists, err = m.CheckDDLTableExists()
-	require.NoError(t, err)
-	require.True(t, exists)
-
-	err = m.SetConcurrentDDL(true)
-	require.NoError(t, err)
-	b, err := m.IsConcurrentDDL()
-	require.NoError(t, err)
-	require.True(t, b)
-	err = m.SetConcurrentDDL(false)
-	require.NoError(t, err)
-	b, err = m.IsConcurrentDDL()
-	require.NoError(t, err)
-	require.False(t, b)
 
 	err = txn.Rollback()
 	require.NoError(t, err)

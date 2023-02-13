@@ -17,10 +17,12 @@ package copr
 import (
 	"context"
 	"math/rand"
+	"runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	tidb_config "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -75,6 +77,7 @@ type Store struct {
 	*kvStore
 	coprCache       *coprCache
 	replicaReadSeed uint32
+	numcpu          int
 }
 
 // NewStore creates a new store instance.
@@ -83,11 +86,13 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	/* #nosec G404 */
 	return &Store{
 		kvStore:         &kvStore{store: s},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
+		numcpu:          runtime.GOMAXPROCS(0),
 	}, nil
 }
 
@@ -122,6 +127,9 @@ func getEndPointType(t kv.StoreType) tikvrpc.EndpointType {
 	case kv.TiKV:
 		return tikvrpc.TiKV
 	case kv.TiFlash:
+		if tidb_config.GetGlobalConfig().DisaggregatedTiFlash {
+			return tikvrpc.TiFlashCompute
+		}
 		return tikvrpc.TiFlash
 	case kv.TiDB:
 		return tikvrpc.TiDB

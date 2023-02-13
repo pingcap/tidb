@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	tidbconfig "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 )
@@ -33,16 +34,23 @@ var (
 	errUnterminatedQuotedField = errors.NewNoStackError("syntax error: unterminated quoted field")
 	errDanglingBackslash       = errors.NewNoStackError("syntax error: no character after backslash")
 	errUnexpectedQuoteField    = errors.NewNoStackError("syntax error: cannot have consecutive fields without separator")
+	// LargestEntryLimit is the max size for reading file to buf
+	LargestEntryLimit int
 )
+
+func init() {
+	LargestEntryLimit = tidbconfig.MaxTxnEntrySizeLimit
+}
 
 // CSVParser is basically a copy of encoding/csv, but special-cased for MySQL-like input.
 type CSVParser struct {
 	blockParser
 	cfg *config.CSVConfig
 
-	comma   []byte
-	quote   []byte
-	newLine []byte
+	comma      []byte
+	quote      []byte
+	newLine    []byte
+	startingBy []byte
 
 	charsetConvertor *CharsetConvertor
 	// These variables are used with IndexAnyByte to search a byte slice for the
@@ -113,6 +121,12 @@ func NewCSVParser(
 	}
 	unquoteStopSet = append(unquoteStopSet, newLineStopSet...)
 
+	if len(cfg.StartingBy) > 0 {
+		if strings.Contains(cfg.StartingBy, terminator) {
+			return nil, errors.New("starting-by cannot contain (line) terminator")
+		}
+	}
+
 	escFlavor := backslashEscapeFlavorNone
 	if cfg.BackslashEscape {
 		escFlavor = backslashEscapeFlavorMySQL
@@ -131,6 +145,7 @@ func NewCSVParser(
 		comma:             []byte(separator),
 		quote:             []byte(delimiter),
 		newLine:           []byte(terminator),
+		startingBy:        []byte(cfg.StartingBy),
 		escFlavor:         escFlavor,
 		quoteByteSet:      makeByteSet(quoteStopSet),
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
@@ -336,6 +351,9 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
+		if len(buf) > LargestEntryLimit {
+			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
+		}
 		parser.buf = nil
 		if err := parser.readBlock(); err != nil || len(parser.buf) == 0 {
 			if err == nil {
@@ -360,11 +378,43 @@ func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
 
 	isEmptyLine := true
 	whitespaceLine := true
+	foundStartingByThisLine := false
 	prevToken := csvTokenNewLine
 	var firstToken csvToken
 
 outside:
 	for {
+		// we should drop
+		// 1. the whole line if it does not contain startingBy
+		// 2. any character before startingBy
+		// since we have checked startingBy does not contain terminator, we can
+		// split at terminator to check the substring contains startingBy. Even
+		// if the terminator is inside a quoted field which means it's not the
+		// end of a line, the substring can still be dropped by rule 2.
+		if len(parser.startingBy) > 0 && !foundStartingByThisLine {
+			oldPos := parser.pos
+			content, _, err := parser.ReadUntilTerminator()
+			if err != nil {
+				if !(errors.Cause(err) == io.EOF) {
+					return nil, err
+				}
+				if len(content) == 0 {
+					return nil, err
+				}
+				// if we reached EOF, we should still check the content contains
+				// startingBy and try to put back and parse it.
+			}
+			idx := bytes.Index(content, parser.startingBy)
+			if idx == -1 {
+				continue
+			}
+			foundStartingByThisLine = true
+			content = content[idx+len(parser.startingBy):]
+			content = append(content, parser.newLine...)
+			parser.buf = append(content, parser.buf...)
+			parser.pos = oldPos + int64(idx+len(parser.startingBy))
+		}
+
 		content, firstByte, err := parser.readUntil(&parser.unquoteByteSet)
 
 		if len(content) > 0 {
@@ -405,6 +455,7 @@ outside:
 			}
 			whitespaceLine = false
 		case csvTokenNewLine:
+			foundStartingByThisLine = false
 			// new line = end of record (ignore empty lines)
 			prevToken = firstToken
 			if isEmptyLine {
@@ -447,9 +498,18 @@ outside:
 
 func (parser *CSVParser) readQuotedField() error {
 	for {
+		prevPos := parser.pos
 		content, terminator, err := parser.readUntil(&parser.quoteByteSet)
-		err = parser.replaceEOF(err, errUnterminatedQuotedField)
 		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				// return the position of quote to the caller.
+				// because we return an error here, the parser won't
+				// use the `pos` again, so it's safe to modify it here.
+				parser.pos = prevPos - 1
+				// set buf to parser.buf in order to print err log
+				parser.buf = content
+				err = parser.replaceEOF(err, errUnterminatedQuotedField)
+			}
 			return err
 		}
 		parser.recordBuffer = append(parser.recordBuffer, content...)
@@ -547,6 +607,9 @@ func (parser *CSVParser) ReadColumns() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if !parser.cfg.HeaderSchemaMatch {
+		return nil
+	}
 	parser.columns = make([]string, 0, len(columns))
 	for _, colName := range columns {
 		colName, _, err = parser.unescapeString(colName)
@@ -559,17 +622,21 @@ func (parser *CSVParser) ReadColumns() error {
 }
 
 // ReadUntilTerminator seeks the file until the terminator token is found, and
-// returns the file offset beyond the terminator.
-// This function is used in strict-format dividing a CSV file.
-func (parser *CSVParser) ReadUntilTerminator() (int64, error) {
+// returns
+// - the content before terminator
+// - the file offset beyond the terminator
+// - error
+// Note that the terminator string pattern may be the content of a field, which
+// means it's inside quotes. Caller should make sure to handle this case.
+func (parser *CSVParser) ReadUntilTerminator() ([]byte, int64, error) {
 	for {
-		_, firstByte, err := parser.readUntil(&parser.newLineByteSet)
+		content, firstByte, err := parser.readUntil(&parser.newLineByteSet)
 		if err != nil {
-			return 0, err
+			return content, 0, err
 		}
 		parser.skipBytes(1)
 		if ok, err := parser.tryReadNewLine(firstByte); ok || err != nil {
-			return parser.pos, err
+			return content, parser.pos, err
 		}
 	}
 }

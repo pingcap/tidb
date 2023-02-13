@@ -15,6 +15,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -105,18 +106,18 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	defer se.Close()
-
-	dumpPartitionStats := true
-	if len(params[pDumpPartitionStats]) > 0 {
-		dumpPartitionStats, err = strconv.ParseBool(params[pDumpPartitionStats])
-		if err != nil {
-			writeError(w, err)
-			return
-		}
+	enabeld, err := sh.do.StatsHandle().CheckHistoricalStatsEnable()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !enabeld {
+		writeError(w, fmt.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats))
+		return
 	}
 
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
-	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[pSnapshot], mysql.TypeTimestamp, 6)
+	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[pSnapshot], mysql.TypeTimestamp, 6, nil)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -127,12 +128,6 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	snapshot := oracle.GoTimeToTS(t1)
-	err = gcutil.ValidateSnapshot(se, snapshot)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-
 	is, err := sh.do.GetSnapshotInfoSchema(snapshot)
 	if err != nil {
 		writeError(w, err)
@@ -144,7 +139,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
-	js, err := h.DumpStatsToJSONBySnapshot(params[pDBName], tbl.Meta(), snapshot, dumpPartitionStats)
+	js, err := h.DumpHistoricalStatsBySnapshot(params[pDBName], tbl.Meta(), snapshot)
 	if err != nil {
 		writeError(w, err)
 	} else {

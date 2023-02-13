@@ -23,7 +23,13 @@ go_library(
 
 go_test(
     name = "aws_test",
+    timeout = "short",
     srcs = ["ebs_test.go"],
     embed = [":aws"],
-    deps = ["@com_github_stretchr_testify//require"],
+    flaky = True,
+    deps = [
+        "@com_github_aws_aws_sdk_go//aws",
+        "@com_github_aws_aws_sdk_go//service/ec2",
+        "@com_github_stretchr_testify//require",
+    ],
 )

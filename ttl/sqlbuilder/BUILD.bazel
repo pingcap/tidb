@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sqlbuilder",
+    srcs = ["sql.go"],
+    importpath = "github.com/pingcap/tidb/ttl/sqlbuilder",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/ast",
+        "//parser/format",
+        "//parser/model",
+        "//parser/mysql",
+        "//ttl/cache",
+        "//types",
+        "//util/sqlexec",
+        "@com_github_pkg_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "sqlbuilder_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "sql_test.go",
+    ],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        ":sqlbuilder",
+        "//kv",
+        "//parser",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/terror",
+        "//testkit",
+        "//testkit/testsetup",
+        "//ttl/cache",
+        "//types",
+        "//util/dbterror",
+        "//util/sqlexec",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

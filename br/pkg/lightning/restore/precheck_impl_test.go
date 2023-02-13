@@ -24,7 +24,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/restore/opts"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/stretchr/testify/suite"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 type precheckImplSuite struct {
@@ -377,7 +381,7 @@ func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 	defer cancel()
 
 	s.cfg.TikvImporter.SortedKVDir = "/tmp/"
-	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter)
+	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
 	s.Require().Equal(CheckLocalTempKVDir, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
@@ -396,7 +400,7 @@ func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
 		},
 	)
 	s.Require().NoError(s.setMockImportData(testMockSrcData))
-	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter)
+	ci = NewLocalTempKVDirCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas())
 	s.Require().Equal(CheckLocalTempKVDir, ci.GetCheckItemID())
 	result, err = ci.Check(ctx)
 	s.Require().NoError(err)
@@ -580,4 +584,100 @@ func (s *precheckImplSuite) TestTableEmptyCheckBasic() {
 	s.Require().Equal(Critical, result.Severity)
 	s.T().Logf("check result message: %s", result.Message)
 	s.Require().False(result.Passed)
+}
+
+func (s *precheckImplSuite) TestCDCPITRCheckItem() {
+	integration.BeforeTestExternal(s.T())
+	testEtcdCluster := integration.NewClusterV3(s.T(), &integration.ClusterConfig{Size: 1})
+	defer testEtcdCluster.Terminate(s.T())
+
+	ctx := context.Background()
+	cfg := &config.Config{
+		TikvImporter: config.TikvImporter{
+			Backend: config.BackendLocal,
+		},
+	}
+	ci := NewCDCPITRCheckItem(cfg)
+	checker := ci.(*CDCPITRCheckItem)
+	checker.etcdCli = testEtcdCluster.RandClient()
+	result, err := ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().NotNil(result)
+	s.Require().Equal(ci.GetCheckItemID(), result.Item)
+	s.Require().Equal(Critical, result.Severity)
+	s.Require().True(result.Passed)
+	s.Require().Equal("no CDC or PiTR task found", result.Message)
+
+	cli := testEtcdCluster.RandClient()
+	brCli := streamhelper.NewMetaDataClient(cli)
+	backend, _ := storage.ParseBackend("noop://", nil)
+	taskInfo, err := streamhelper.NewTaskInfo("br_name").
+		FromTS(1).
+		UntilTS(1000).
+		WithTableFilter("*.*", "!mysql").
+		ToStorage(backend).
+		Check()
+	s.Require().NoError(err)
+	err = brCli.PutTask(ctx, *taskInfo)
+	s.Require().NoError(err)
+	checkEtcdPut := func(key string, vals ...string) {
+		val := ""
+		if len(vals) == 1 {
+			val = vals[0]
+		}
+		_, err := cli.Put(ctx, key, val)
+		s.Require().NoError(err)
+	}
+	// TiCDC >= v6.2
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/capture/3ecd5c98-0148-4086-adfd-17641995e71f")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/meta-version")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/ticdc-delete-etcd-key-count")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/owner/22318498f4dd6639")
+	checkEtcdPut(
+		"/tidb/cdc/default/default/changefeed/info/test",
+		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"normal","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+	)
+	checkEtcdPut(
+		"/tidb/cdc/default/default/changefeed/info/test-1",
+		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"failed","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+	)
+	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test")
+	checkEtcdPut("/tidb/cdc/default/default/changefeed/status/test-1")
+	checkEtcdPut("/tidb/cdc/default/default/task/position/3ecd5c98-0148-4086-adfd-17641995e71f/test-1")
+	checkEtcdPut("/tidb/cdc/default/default/upstream/7168358383033671922")
+
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().False(result.Passed)
+	s.Require().Equal("found PiTR log streaming task(s): [br_name],\n"+
+		"found CDC changefeed(s): cluster/namespace: default/default changefeed(s): [test],\n"+
+		"local backend is not compatible with them. Please switch to tidb backend then try again.",
+		result.Message)
+
+	_, err = cli.Delete(ctx, "/tidb/cdc/", clientv3.WithPrefix())
+	s.Require().NoError(err)
+
+	// TiCDC <= v6.1
+	checkEtcdPut("/tidb/cdc/capture/f14cb04d-5ba1-410e-a59b-ccd796920e9d")
+	checkEtcdPut(
+		"/tidb/cdc/changefeed/info/test",
+		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"stopped","error":null,"creator-version":"v6.5.0-master-dirty"}`,
+	)
+	checkEtcdPut("/tidb/cdc/job/test")
+	checkEtcdPut("/tidb/cdc/owner/223184ad80a88b0b")
+	checkEtcdPut("/tidb/cdc/task/position/f14cb04d-5ba1-410e-a59b-ccd796920e9d/test")
+
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().False(result.Passed)
+	s.Require().Equal("found PiTR log streaming task(s): [br_name],\n"+
+		"found CDC changefeed(s): cluster/namespace: <nil> changefeed(s): [test],\n"+
+		"local backend is not compatible with them. Please switch to tidb backend then try again.",
+		result.Message)
+
+	checker.cfg.TikvImporter.Backend = config.BackendTiDB
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().True(result.Passed)
+	s.Require().Equal("TiDB Lightning is not using local backend, skip this check", result.Message)
 }

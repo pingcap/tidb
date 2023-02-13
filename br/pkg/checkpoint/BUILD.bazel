@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "checkpoint",
+    srcs = ["checkpoint.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/checkpoint",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/logutil",
+        "//br/pkg/metautil",
+        "//br/pkg/rtree",
+        "//br/pkg/storage",
+        "//br/pkg/summary",
+        "//br/pkg/utils",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "checkpoint_test",
+    timeout = "short",
+    srcs = ["checkpoint_test.go"],
+    flaky = True,
+    deps = [
+        ":checkpoint",
+        "//br/pkg/rtree",
+        "//br/pkg/storage",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+    ],
+)

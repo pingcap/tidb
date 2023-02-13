@@ -825,6 +825,7 @@ const (
 	ErrMaxExecTimeExceeded                                   = 1907
 	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
+	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrInvalidArgumentForLogarithm                           = 3020
 	ErrAggregateOrderNonAggQuery                             = 3029
 	ErrUserLockWrongName                                     = 3057
@@ -892,6 +893,7 @@ const (
 	ErrIllegalPrivilegeLevel                                 = 3619
 	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
+	ErrExistsInHistoryPassword                               = 3638
 	ErrForeignKeyCannotDropParent                            = 3730
 	ErrForeignKeyCannotUseVirtualColumn                      = 3733
 	ErrForeignKeyNoColumnInParent                            = 3734
@@ -913,11 +915,14 @@ const (
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
 	ErrCannotConvertString                                   = 3854
+	ErrDependentByPartitionFunctional                        = 3855
 	ErrInvalidJSONValueForFuncIndex                          = 3903
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
 	ErrDynamicPrivilegeNotRegistered                         = 3929
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
+	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
@@ -1034,6 +1039,12 @@ const (
 	ErrGettingNoopVariable                 = 8145
 	ErrCannotMigrateSession                = 8146
 	ErrLazyUniquenessCheckFailure          = 8147
+	ErrUnsupportedColumnInTTLConfig        = 8148
+	ErrTTLColumnCannotDrop                 = 8149
+	ErrSetTTLOptionForNonTTLTable          = 8150
+	ErrTempTableNotAllowedWithTTL          = 8151
+	ErrUnsupportedTTLReferencedByFK        = 8152
+	ErrUnsupportedPrimaryKeyTypeWithTTL    = 8153
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1082,6 +1093,10 @@ const (
 	ErrPartitionColumnStatsMissing        = 8244
 	ErrColumnInChange                     = 8245
 	ErrDDLSetting                         = 8246
+	ErrIngestFailed                       = 8247
+	ErrResourceGroupExists                = 8248
+	ErrResourceGroupNotExists             = 8249
+	ErrResourceGroupSupportDisabled       = 8250
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

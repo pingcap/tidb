@@ -4,7 +4,6 @@ package restore
 import (
 	"context"
 	"io"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -57,7 +56,7 @@ func RecoverData(ctx context.Context, resolveTS uint64, allStores []*metapb.Stor
 		return totalRegions, errors.Trace(err)
 	}
 
-	if err := recovery.PrepareFlashbackToVersion(ctx); err != nil {
+	if err := recovery.PrepareFlashbackToVersion(ctx, resolveTS, restoreTS-1); err != nil {
 		return totalRegions, errors.Trace(err)
 	}
 
@@ -80,14 +79,13 @@ func NewStoreMeta(storeId uint64) StoreMeta {
 
 // for test
 type Recovery struct {
-	allStores             []*metapb.Store
-	StoreMetas            []StoreMeta
-	RecoveryPlan          map[uint64][]*recovpb.RecoverRegionRequest
-	MaxAllocID            uint64
-	mgr                   *conn.Mgr
-	progress              glue.Progress
-	concurrency           uint32
-	totalFlashbackRegions uint64
+	allStores    []*metapb.Store
+	StoreMetas   []StoreMeta
+	RecoveryPlan map[uint64][]*recovpb.RecoverRegionRequest
+	MaxAllocID   uint64
+	mgr          *conn.Mgr
+	progress     glue.Progress
+	concurrency  uint32
 }
 
 func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progress, concurrency uint32) Recovery {
@@ -95,14 +93,13 @@ func NewRecovery(allStores []*metapb.Store, mgr *conn.Mgr, progress glue.Progres
 	var StoreMetas = make([]StoreMeta, totalStores)
 	var regionRecovers = make(map[uint64][]*recovpb.RecoverRegionRequest, totalStores)
 	return Recovery{
-		allStores:             allStores,
-		StoreMetas:            StoreMetas,
-		RecoveryPlan:          regionRecovers,
-		MaxAllocID:            0,
-		mgr:                   mgr,
-		progress:              progress,
-		concurrency:           concurrency,
-		totalFlashbackRegions: 0}
+		allStores:    allStores,
+		StoreMetas:   StoreMetas,
+		RecoveryPlan: regionRecovers,
+		MaxAllocID:   0,
+		mgr:          mgr,
+		progress:     progress,
+		concurrency:  concurrency}
 }
 
 func (recovery *Recovery) newRecoveryClient(ctx context.Context, storeAddr string) (recovpb.RecoverDataClient, *grpc.ClientConn, error) {
@@ -304,40 +301,36 @@ func (recovery *Recovery) WaitApply(ctx context.Context) (err error) {
 }
 
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
-func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context) (err error) {
-	var totalRegions atomic.Uint64
-	totalRegions.Store(0)
+func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolveTS uint64, startTS uint64) (err error) {
+	retryErr := utils.WithRetry(
+		ctx,
+		func() error {
+			handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+				stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolveTS, startTS, r)
+				return stats, err
+			}
 
-	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		stats, err := ddl.SendPrepareFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), r)
-		totalRegions.Add(uint64(stats.CompletedRegions))
-		return stats, err
-	}
+			runner := rangetask.NewRangeTaskRunner("br-flashback-prepare-runner", recovery.mgr.GetStorage().(tikv.Storage), int(recovery.concurrency), handler)
+			// Run prepare flashback on the entire TiKV cluster. Empty keys means the range is unbounded.
+			err = runner.RunOnRange(ctx, []byte(""), []byte(""))
+			if err != nil {
+				log.Warn("region flashback prepare get error")
+				return errors.Trace(err)
+			}
+			log.Info("region flashback prepare complete", zap.Int("regions", runner.CompletedRegions()))
+			return nil
+		},
+		utils.NewFlashBackBackoffer(),
+	)
 
-	runner := rangetask.NewRangeTaskRunner("br-flashback-prepare-runner", recovery.mgr.GetStorage().(tikv.Storage), int(recovery.concurrency), handler)
-	// Run prepare flashback on the entire TiKV cluster. Empty keys means the range is unbounded.
-	err = runner.RunOnRange(ctx, []byte(""), []byte(""))
-	if err != nil {
-		log.Error("region flashback prepare get error")
-		return errors.Trace(err)
-	}
-
-	recovery.totalFlashbackRegions = totalRegions.Load()
-	log.Info("region flashback prepare complete", zap.Int("regions", runner.CompletedRegions()))
-
-	return nil
+	recovery.progress.Inc()
+	return retryErr
 }
 
 // flashback the region data to version resolveTS
 func (recovery *Recovery) FlashbackToVersion(ctx context.Context, resolveTS uint64, commitTS uint64) (err error) {
-	var completedRegions atomic.Uint64
-
-	// only know the total progress of tikv, progress is total state of the whole restore flow.
-	ratio := int(recovery.totalFlashbackRegions) / len(recovery.allStores)
-
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 		stats, err := ddl.SendFlashbackToVersionRPC(ctx, recovery.mgr.GetStorage().(tikv.Storage), resolveTS, commitTS-1, commitTS, r)
-		completedRegions.Add(uint64(stats.CompletedRegions))
 		return stats, err
 	}
 
@@ -352,13 +345,12 @@ func (recovery *Recovery) FlashbackToVersion(ctx context.Context, resolveTS uint
 		return errors.Trace(err)
 	}
 
-	recovery.progress.IncBy(int64(completedRegions.Load()) / int64(ratio))
-
 	log.Info("region flashback complete",
 		zap.Uint64("resolveTS", resolveTS),
 		zap.Uint64("commitTS", commitTS),
 		zap.Int("regions", runner.CompletedRegions()))
 
+	recovery.progress.Inc()
 	return nil
 }
 
@@ -372,6 +364,7 @@ type RecoverRegion struct {
 // 2. build a leader list for all region during the tikv startup
 // 3. get max allocate id
 func (recovery *Recovery) MakeRecoveryPlan() error {
+	storeBalanceScore := make(map[uint64]int, len(recovery.allStores))
 	// Group region peer info by region id. find the max allocateId
 	// region [id] [peer[0-n]]
 	var regions = make(map[uint64][]*RecoverRegion, 0)
@@ -410,16 +403,20 @@ func (recovery *Recovery) MakeRecoveryPlan() error {
 			}
 		} else {
 			// Generate normal commands.
-			log.Debug("detected valid peer", zap.Uint64("region id", regionId))
-			for i, peer := range peers {
-				log.Debug("make plan", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId))
-				plan := &recovpb.RecoverRegionRequest{RegionId: peer.RegionId, AsLeader: i == 0}
-				// sorted by log term -> last index -> commit index in a region
-				if plan.AsLeader {
-					log.Debug("as leader peer", zap.Uint64("store id", peer.StoreId), zap.Uint64("region id", peer.RegionId))
-					recovery.RecoveryPlan[peer.StoreId] = append(recovery.RecoveryPlan[peer.StoreId], plan)
-				}
+			log.Debug("detected valid region", zap.Uint64("region id", regionId))
+			// calc the leader candidates
+			leaderCandidates, err := LeaderCandidates(peers)
+			if err != nil {
+				log.Warn("region without peer", zap.Uint64("region id", regionId))
+				return errors.Trace(err)
 			}
+
+			// select the leader base on tikv storeBalanceScore
+			leader := SelectRegionLeader(storeBalanceScore, leaderCandidates)
+			log.Debug("as leader peer", zap.Uint64("store id", leader.StoreId), zap.Uint64("region id", leader.RegionId))
+			plan := &recovpb.RecoverRegionRequest{RegionId: leader.RegionId, AsLeader: true}
+			recovery.RecoveryPlan[leader.StoreId] = append(recovery.RecoveryPlan[leader.StoreId], plan)
+			storeBalanceScore[leader.StoreId] += 1
 		}
 	}
 	return nil

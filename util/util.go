@@ -15,9 +15,12 @@
 package util
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -60,6 +64,8 @@ func StringsToInterfaces(strs []string) []interface{} {
 //		return errors.Trace(err)
 //	}
 //	fmt.Println(resp.IP)
+//
+// nolint:unused
 func GetJSON(client *http.Client, url string, v interface{}) error {
 	resp, err := client.Get(url)
 	if err != nil {
@@ -68,7 +74,7 @@ func GetJSON(client *http.Client, url string, v interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, err := ioutil.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -106,6 +112,11 @@ func Str2Int64Map(str string) map[int64]struct{} {
 
 // GenLogFields generate log fields.
 func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL bool) []zap.Field {
+	if info.RefCountOfStmtCtx != nil && !info.RefCountOfStmtCtx.TryIncrease() {
+		return nil
+	}
+	defer info.RefCountOfStmtCtx.Decrease()
+
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
@@ -168,4 +179,107 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	}
 	logFields = append(logFields, zap.String("sql", sql))
 	return logFields
+}
+
+// PrintableASCII detects if b is a printable ASCII character.
+// Ref to:http://facweb.cs.depaul.edu/sjost/it212/documents/ascii-pr.htm
+func PrintableASCII(b byte) bool {
+	if b < 32 || b > 127 {
+		return false
+	}
+
+	return true
+}
+
+// FmtNonASCIIPrintableCharToHex turns non-printable-ASCII characters into Hex
+func FmtNonASCIIPrintableCharToHex(str string) string {
+	var b bytes.Buffer
+	b.Grow(len(str) * 2)
+	for i := 0; i < len(str); i++ {
+		if PrintableASCII(str[i]) {
+			b.WriteByte(str[i])
+			continue
+		}
+
+		b.WriteString(`\x`)
+		// turns non-printable-ASCII character into hex-string
+		b.WriteString(fmt.Sprintf("%02X", str[i]))
+	}
+	return b.String()
+}
+
+// TCPConnWithIOCounter is a wrapper of net.TCPConn with counter that accumulates
+// the bytes this connection reads/writes.
+type TCPConnWithIOCounter struct {
+	*net.TCPConn
+	c *atomic.Uint64
+}
+
+// NewTCPConnWithIOCounter creates a new TCPConnWithIOCounter.
+func NewTCPConnWithIOCounter(conn *net.TCPConn, c *atomic.Uint64) net.Conn {
+	return &TCPConnWithIOCounter{
+		TCPConn: conn,
+		c:       c,
+	}
+}
+
+func (t *TCPConnWithIOCounter) Read(b []byte) (n int, err error) {
+	n, err = t.TCPConn.Read(b)
+	t.c.Add(uint64(n))
+	return n, err
+}
+
+func (t *TCPConnWithIOCounter) Write(b []byte) (n int, err error) {
+	n, err = t.TCPConn.Write(b)
+	t.c.Add(uint64(n))
+	return n, err
+}
+
+// ReadLine tries to read a complete line from bufio.Reader.
+// maxLineSize specifies the maximum size of a single line.
+func ReadLine(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
+	var resByte []byte
+	lineByte, isPrefix, err := reader.ReadLine()
+	if isPrefix {
+		// Need to read more data.
+		resByte = make([]byte, len(lineByte), len(lineByte)*2)
+	} else {
+		resByte = make([]byte, len(lineByte))
+	}
+	// Use copy here to avoid shallow copy problem.
+	copy(resByte, lineByte)
+	if err != nil {
+		return resByte, err
+	}
+	var tempLine []byte
+	for isPrefix {
+		tempLine, isPrefix, err = reader.ReadLine()
+		resByte = append(resByte, tempLine...) // nozero
+		// Use maxLineSize to check the single line length.
+		if len(resByte) > maxLineSize {
+			return resByte, errors.Errorf("single line length exceeds limit: %v", maxLineSize)
+		}
+		if err != nil {
+			return resByte, err
+		}
+	}
+	return resByte, err
+}
+
+// ReadLines tries to read lines from bufio.Reader.
+// count specifies the number of lines.
+// maxLineSize specifies the maximum size of a single line.
+func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, error) {
+	lines := make([][]byte, 0, count)
+	for i := 0; i < count; i++ {
+		line, err := ReadLine(reader, maxLineSize)
+		if err == io.EOF && len(lines) > 0 {
+			return lines, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, nil
 }

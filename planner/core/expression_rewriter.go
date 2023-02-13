@@ -55,7 +55,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil)
+	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -63,13 +63,14 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 }
 
 // rewriteAstExpr rewrites ast expression directly.
-func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
+func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
 	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
+	b.allowBuildCastArray = allowCastArray
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.schema = schema
@@ -1183,6 +1184,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
+		if v.Tp.IsArray() && !er.b.allowBuildCastArray {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
+			return retNode, false
+		}
 		arg := er.ctxStack[len(er.ctxStack)-1]
 		er.err = expression.CheckArgsNotMultiColumnRow(arg)
 		if er.err != nil {
@@ -1195,7 +1200,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
 		if v.Tp.EvalType() == types.ETString {
 			castFunction.SetCoercibility(expression.CoercibilityImplicit)
 			if v.Tp.GetCharset() == charset.CharsetASCII {
@@ -1550,16 +1559,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
 				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
-					if c.GetType().EvalType() == types.ETString {
-						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
-						// here and skip this refine operation in all other cases for safety.
-						er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
-						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
-					} else {
-						continue
+					if c.GetType().EvalType() == types.ETInt {
+						continue // no need to refine it
 					}
-				} else if er.sctx.GetSessionVars().StmtCtx.SkipPlanCache {
-					// We should remove the mutable constant for correctness, because its value may be changed.
+					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("skip plan-cache: '%v' may be converted to INT", c.String()))
 					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
@@ -2114,7 +2117,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	var val *expression.Constant
 	switch {
 	case isCurrentTimestamp && (col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp):
-		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.GetType(), col.GetDecimal())
+		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.GetType(), col.GetDecimal(), nil)
 		if err != nil {
 			return
 		}
@@ -2169,6 +2172,9 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 		return s
 	}
 	tbl, _ := is.TableByID(tableID)
+	if tbl == nil {
+		tbl, _, _ = is.FindTableByPartitionID(tableID)
+	}
 	loc := ctx.GetSessionVars().Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
@@ -2185,7 +2191,7 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 		}
 		return ret
 	} else if tablecodec.IsTableKey(key) {
-		ret, err := decodeTableKey(key, tableID)
+		ret, err := decodeTableKey(key, tableID, tbl)
 		if err != nil {
 			sc.AppendWarning(err)
 			return s
@@ -2203,6 +2209,10 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 	}
 	if handle.IsInt() {
 		ret := make(map[string]interface{})
+		if tbl != nil && tbl.Meta().Partition != nil {
+			ret["partition_id"] = tableID
+			tableID = tbl.Meta().ID
+		}
 		ret["table_id"] = strconv.FormatInt(tableID, 10)
 		// When the clustered index is enabled, we should show the PK name.
 		if tbl != nil && tbl.Meta().HasClusteredIndex() {
@@ -2239,6 +2249,10 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 			return "", errors.Trace(err)
 		}
 		ret := make(map[string]interface{})
+		if tbl.Meta().Partition != nil {
+			ret["partition_id"] = tableID
+			tableID = tbl.Meta().ID
+		}
 		ret["table_id"] = tableID
 		handleRet := make(map[string]interface{})
 		for colID := range datumMap {
@@ -2308,6 +2322,10 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 			ds = append(ds, d)
 		}
 		ret := make(map[string]interface{})
+		if tbl.Meta().Partition != nil {
+			ret["partition_id"] = tableID
+			tableID = tbl.Meta().ID
+		}
 		ret["table_id"] = tableID
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]interface{}, len(targetIndex.Columns))
@@ -2340,8 +2358,13 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	return string(retStr), nil
 }
 
-func decodeTableKey(_ []byte, tableID int64) (string, error) {
-	ret := map[string]int64{"table_id": tableID}
+func decodeTableKey(_ []byte, tableID int64, tbl table.Table) (string, error) {
+	ret := map[string]int64{}
+	if tbl != nil && tbl.Meta().GetPartitionInfo() != nil {
+		ret["partition_id"] = tableID
+		tableID = tbl.Meta().ID
+	}
+	ret["table_id"] = tableID
 	retStr, err := json.Marshal(ret)
 	if err != nil {
 		return "", errors.Trace(err)

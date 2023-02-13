@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -43,6 +44,9 @@ type ReplaceExec struct {
 // Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
 	e.setMessage()
+	if e.runtimeStats != nil && e.stats != nil {
+		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
 	}
@@ -86,6 +90,10 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 	}
 
 	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
+	if err != nil {
+		return false, err
+	}
+	err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
 	if err != nil {
 		return false, err
 	}
@@ -169,16 +177,12 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
-		val, err := txn.Get(ctx, uk.newKey)
+		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
 		if err != nil {
-			if kv.IsErrNotFound(err) {
-				continue
-			}
 			return false, false, err
 		}
-		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
-		if err != nil {
-			return false, true, err
+		if handle == nil {
+			continue
 		}
 		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 		if err != nil {
@@ -267,4 +271,19 @@ func (e *ReplaceExec) setMessage() {
 		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
+}
+
+// GetFKChecks implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKChecks() []*FKCheckExec {
+	return e.fkChecks
+}
+
+// GetFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) GetFKCascades() []*FKCascadeExec {
+	return e.fkCascades
+}
+
+// HasFKCascades implements WithForeignKeyTrigger interface.
+func (e *ReplaceExec) HasFKCascades() bool {
+	return len(e.fkCascades) > 0
 }

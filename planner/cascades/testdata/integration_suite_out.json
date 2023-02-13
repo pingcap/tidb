@@ -1093,12 +1093,12 @@
     "Name": "TestMemTableScan",
     "Cases": [
       {
-        "SQL": "select USER, HOST, DB, COMMAND, TIME, STATE, INFO, DIGEST from information_schema.processlist",
+        "SQL": "select USER, HOST, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist",
         "Plan": [
           "Projection_3 10000.00 root  Column#2, Column#3, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9",
           "└─MemTableScan_4 10000.00 root table:PROCESSLIST "
         ],
-        "Result": ["  test Sleep 0 autocommit select USER, HOST, DB, COMMAND, TIME, STATE, INFO, DIGEST from information_schema.processlist 7284ef6cf62f14bccb9fa24aff861b419e9cf59b2c098d3069c7c10bc35d0c14"]
+        "Result": ["  test Sleep 0 autocommit select USER, HOST, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist 7284ef6cf62f14bccb9fa24aff861b419e9cf59b2c098d3069c7c10bc35d0c14"]
       }
     ]
   },
@@ -1198,17 +1198,18 @@
     "Name": "TestCascadePlannerHashedPartTable",
     "Cases": [
       {
-        "SQL": "select * from pt1",
+        "SQL": "select * from pt1 order by a",
         "Plan": [
-          "TableReader_5 10000.00 root partition:all data:TableFullScan_6",
-          "└─TableFullScan_6 10000.00 cop[tikv] table:pt1 keep order:false, stats:pseudo"
+          "Sort_11 10000.00 root  test.pt1.a",
+          "└─TableReader_9 10000.00 root partition:all data:TableFullScan_10",
+          "  └─TableFullScan_10 10000.00 cop[tikv] table:pt1 keep order:false, stats:pseudo"
         ],
         "Result": [
-          "4 40",
           "1 10",
-          "5 50",
           "2 20",
-          "3 30"
+          "3 30",
+          "4 40",
+          "5 50"
         ]
       }
     ]
