@@ -1130,9 +1130,8 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	c.Assert(strings.Contains(err.Error(), autoid.AutoRandomRebaseNotApplicable), IsTrue, Commentf(err.Error()))
 }
 
-func TestAutoRandomClusteredPrimaryKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func (s *testAutoRandomSuite) TestAutoRandomClusteredPrimaryKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a bigint auto_random(5), b int, primary key (a, b) clustered);")
 	tk.MustExec("insert into t (b) values (1);")
