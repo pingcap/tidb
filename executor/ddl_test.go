@@ -1163,7 +1163,8 @@ func TestAutoRandomTableOption(t *testing.T) {
 }
 
 func TestAutoRandomClusteredPrimaryKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a bigint auto_random(5), b int, primary key (a, b) clustered);")
