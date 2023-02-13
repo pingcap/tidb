@@ -43,7 +43,7 @@ func TestGetCgroupCPU(t *testing.T) {
 	}
 	cpu, err := GetCgroupCPU()
 	if err == noCPUControllerDetected {
-		require.false(t, InContainer())
+		require.False(t, InContainer())
 	} else {
 		require.NoError(t, err)
 		require.NotZero(t, cpu.Period)
