@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 )
 
 // deriveTopNFromWindow pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
@@ -38,13 +39,37 @@ func appendDerivedTopNTrace(topN LogicalPlan, opt *logicalOptimizeOp) {
 	opt.appendStepToCurrent(topN.ID(), topN.TP(), reason, action)
 }
 
+// checkPartitionBy mainly checks if partition by of window function is a prefix of
+// data order (clustered index) of the data source. TiFlash is allowed only for empty partition by.
+func checkPartitionBy(ctx sessionctx.Context, p *LogicalWindow, d *DataSource) bool {
+	// No window partition by. We are OK.
+	if len(p.PartitionBy) == 0 {
+		return true
+	}
+
+	// Table not clustered and window has partition by. Can not do the TopN piush down.
+	if d.handleCols == nil {
+		return false
+	}
+
+	if len(p.PartitionBy) > d.handleCols.NumCols() {
+		return false
+	}
+
+	for i, col := range p.PartitionBy {
+		if !(col.Col.Equal(nil, d.handleCols.GetCol(i))) {
+			return false
+		}
+	}
+	return true
+}
+
 /*
 		Check the following pattern of filter over row number window function:
 	  - Filter is simple condition of row_number < value or row_number <= value
 	  - The window function is a simple row number
 	  - With default frame: rows between current row and current row. Check is not necessary since
 	    current row is only frame applicable to row number
-	  - No partition
 	  - Child is a data source.
 */
 func windowIsTopN(p *LogicalSelection) (bool, uint64) {
@@ -71,12 +96,13 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	}
 
 	grandChild := child.Children()[0]
-	_, isDataSource := grandChild.(*DataSource)
+	dataSource, isDataSource := grandChild.(*DataSource)
 	if !isDataSource {
 		return false, 0
 	}
-	if len(child.WindowFuncDescs) == 1 && child.WindowFuncDescs[0].Name == "row_number" && len(child.PartitionBy) == 0 &&
-		child.Frame.Type == ast.Rows && child.Frame.Start.Type == ast.CurrentRow && child.Frame.End.Type == ast.CurrentRow {
+	if len(child.WindowFuncDescs) == 1 && child.WindowFuncDescs[0].Name == "row_number" &&
+		child.Frame.Type == ast.Rows && child.Frame.Start.Type == ast.CurrentRow && child.Frame.End.Type == ast.CurrentRow &&
+		checkPartitionBy(p.ctx, child, dataSource) {
 		return true, uint64(limitValue)
 	}
 	return false, 0
@@ -107,7 +133,7 @@ func (s *LogicalSelection) deriveTopN(opt *logicalOptimizeOp) LogicalPlan {
 			byItems = append(byItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 		}
 		// Build derived Limit
-		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems}.Init(grandChild.ctx, grandChild.blockOffset)
+		derivedTopN := LogicalTopN{Count: limitValue, ByItems: byItems, PartitionBy: child.GetPartitionBy()}.Init(grandChild.ctx, grandChild.blockOffset)
 		derivedTopN.SetChildren(grandChild)
 		/* return datasource->topN->window */
 		child.SetChildren(derivedTopN)

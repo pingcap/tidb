@@ -17,23 +17,39 @@ package core_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
-// Rule should bot be applied
+func setTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName string) {
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr(dbName))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == tableName {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+}
+
+// Rule should bot be applied for TiKV.
 func TestPushDerivedTopnNegative(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists employee")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,1)")
-	tk.MustExec("insert into t values(2,1)")
-	tk.MustExec("insert into t values(3,2)")
-	tk.MustExec("insert into t values(4,2)")
-	tk.MustExec("insert into t values(5,2)")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, primary key(b,a))")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(a int, b int, c int, primary key(b,a) nonclustered)")
+	tk.MustExec("drop table if exists ti")
+	tk.MustExec("create table ti(a int, b int, c int unique)")
 	var input Input
 	var output []struct {
 		SQL  string
@@ -51,18 +67,53 @@ func TestPushDerivedTopnNegative(t *testing.T) {
 	}
 }
 
-// Rule should be applied
+// TiFlash cases. TopN pushed down to storage only when no partition by.
+func TestPushDerivedTopnFlash(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, primary key(b,a))")
+	SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustExec("set tidb_enforce_mpp=1")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+	var input Input
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	suiteData := plannercore.GetDerivedTopNSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain format = 'brief' " + sql)
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+// Rule should be applied for TiKV.
 func TestPushDerivedTopnPositive(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists employee")
-	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, primary key(b,a))")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(a int, b int, c int, primary key(b,a) nonclustered)")
+	tk.MustExec("drop table if exists ti")
+	tk.MustExec("create table ti(a int, b int, c int unique)")
 	tk.MustExec("insert into t values(1,1)")
 	tk.MustExec("insert into t values(2,1)")
 	tk.MustExec("insert into t values(3,2)")
 	tk.MustExec("insert into t values(4,2)")
 	tk.MustExec("insert into t values(5,2)")
+	tk.MustExec("insert into tt select *,55 from t")
+	tk.MustExec("insert into ti select *,a from t")
 	var input Input
 	var output []struct {
 		SQL  string
