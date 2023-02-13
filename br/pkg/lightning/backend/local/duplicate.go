@@ -49,6 +49,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -398,6 +399,7 @@ type DuplicateManager struct {
 	indexID     int64
 
 	deleteDuplicateRowsFunc func(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error)
+	errLimiter              *rate.Limiter
 }
 
 // NewDuplicateManager creates a new DuplicateManager.
@@ -430,6 +432,7 @@ func NewDuplicateManager(
 		hasDupe:                 hasDupe,
 		indexID:                 sessOpts.IndexID,
 		deleteDuplicateRowsFunc: deleteDuplicateRowsFunc,
+		errLimiter:              rate.NewLimiter(1, 1),
 	}, nil
 }
 
@@ -1030,19 +1033,23 @@ func (m *DuplicateManager) ResolveDuplicateRows(ctx context.Context, logger *log
 		return nil
 	}
 
-	err := m.deleteDuplicateRowsFunc(ctx, logger, handleRows, m.decoder)
-	if err == nil {
-		return nil
+	for {
+		err := m.deleteDuplicateRowsFunc(ctx, logger, handleRows, m.decoder)
+		if err == nil {
+			return nil
+		}
+		if types.ErrBadNumber.Equal(err) {
+			logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+			return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
+		}
+		if log.IsContextCanceledError(err) {
+			return err
+		}
+		if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
+			logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+		}
+		if err = m.errLimiter.Wait(ctx); err != nil {
+			return err
+		}
 	}
-	if types.ErrBadNumber.Equal(err) {
-		logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-		return common.ErrResolveDuplicateRows.Wrap(err).GenWithStackByArgs(tableName)
-	}
-	if log.IsContextCanceledError(err) {
-		return err
-	}
-	if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
-		logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-	}
-	return nil
 }
