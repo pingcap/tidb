@@ -343,6 +343,11 @@ func checkPlanCacheability(sctx sessionctx.Context, p Plan, paramNum int, limitP
 		return
 	}
 
+	if containShuffleOperator(pp) {
+		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: get a Shuffle plan"))
+		return
+	}
+
 	if accessMVIndexWithIndexMerge(pp) {
 		stmtCtx.SetSkipPlanCache(errors.New("skip plan-cache: the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"))
 		return
@@ -739,6 +744,16 @@ func containTableDual(p PhysicalPlan) bool {
 		childContainTableDual = childContainTableDual || containTableDual(child)
 	}
 	return childContainTableDual
+}
+
+func containShuffleOperator(p PhysicalPlan) bool {
+	if _, isShuffle := p.(*PhysicalShuffle); isShuffle {
+		return true
+	}
+	if _, isShuffleRecv := p.(*PhysicalShuffleReceiverStub); isShuffleRecv {
+		return true
+	}
+	return false
 }
 
 func accessMVIndexWithIndexMerge(p PhysicalPlan) bool {

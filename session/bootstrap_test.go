@@ -217,8 +217,8 @@ func TestBootstrapWithError(t *testing.T) {
 	require.Equal(t, []byte("True"), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
-	mustExec(t, se, "SELECT * from mysql.tidb_ddl_backfill")
-	mustExec(t, se, "SELECT * from mysql.tidb_ddl_backfill_history")
+	mustExec(t, se, "SELECT * from mysql.tidb_background_subtask")
+	mustExec(t, se, "SELECT * from mysql.tidb_background_subtask_history")
 
 	// Check tidb_ttl_table_status table
 	mustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
@@ -238,8 +238,8 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 
 	// downgrade `mDDLTableVersion`
 	m.SetDDLTables(meta.MDLTableVersion)
-	mustExec(t, se, "drop table mysql.tidb_ddl_backfill")
-	mustExec(t, se, "drop table mysql.tidb_ddl_backfill_history")
+	mustExec(t, se, "drop table mysql.tidb_background_subtask")
+	mustExec(t, se, "drop table mysql.tidb_background_subtask_history")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
@@ -249,8 +249,8 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	require.NoError(t, err)
 
 	se = createSessionAndSetID(t, store)
-	mustExec(t, se, "select * from mysql.tidb_ddl_backfill")
-	mustExec(t, se, "select * from mysql.tidb_ddl_backfill_history")
+	mustExec(t, se, "select * from mysql.tidb_background_subtask")
+	mustExec(t, se, "select * from mysql.tidb_background_subtask_history")
 	dom.Close()
 }
 

@@ -147,8 +147,8 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 }
 
 func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
-	exec := sctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf(
 		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, fail_reason, instance) values ('%s','%s','%s','%s','%s')",
 		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.FailedReason, instance))
 	if err != nil {
@@ -158,8 +158,8 @@ func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Co
 }
 
 func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
-	exec := sctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, fmt.Sprintf(
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf(
 		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, token, instance) values ('%s','%s','%s','%s','%s')",
 		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, instance))
 	if err != nil {
@@ -167,7 +167,7 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 			zap.String("sql", record.OriginSQL),
 			zap.Error(err))
 		// try insert record without original sql
-		_, err = exec.ExecuteInternal(ctx, fmt.Sprintf(
+		_, _, err = exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf(
 			"insert into mysql.plan_replayer_status (sql_digest, plan_digest, token, instance) values ('%s','%s','%s','%s')",
 			record.SQLDigest, record.PlanDigest, record.Token, instance))
 		if err != nil {

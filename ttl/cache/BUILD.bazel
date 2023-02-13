@@ -35,6 +35,7 @@ go_library(
 
 go_test(
     name = "cache_test",
+    timeout = "short",
     srcs = [
         "base_test.go",
         "infoschema_test.go",
@@ -46,6 +47,7 @@ go_test(
     ],
     embed = [":cache"],
     flaky = True,
+    shard_count = 50,
     deps = [
         "//infoschema",
         "//kv",
