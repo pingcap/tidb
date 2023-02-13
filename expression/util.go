@@ -177,6 +177,31 @@ func ExtractEquivalenceColumns(result [][]Expression, exprs []Expression) [][]Ex
 	return result
 }
 
+// FindUpperBound looks for column < constant or column <= constant and returns both the column
+// and constant. It return nil, 0 if the expression is not of this form.
+// It is used by derived Top N pattern and it is put here since it looks like
+// a general purpose routine. Similar routines can be added to find lower bound as well.
+func FindUpperBound(expr Expression) (*Column, int64) {
+	scalarFunction, scalarFunctionOk := expr.(*ScalarFunction)
+	if scalarFunctionOk {
+		args := scalarFunction.GetArgs()
+		if len(args) == 2 {
+			col, colOk := args[0].(*Column)
+			constant, constantOk := args[1].(*Constant)
+			if colOk && constantOk && (scalarFunction.FuncName.L == ast.LT || scalarFunction.FuncName.L == ast.LE) {
+				value, valueOk := constant.Value.GetValue().(int64)
+				if valueOk {
+					if scalarFunction.FuncName.L == ast.LT {
+						return col, value - 1
+					}
+					return col, value
+				}
+			}
+		}
+	}
+	return nil, 0
+}
+
 func extractEquivalenceColumns(result [][]Expression, expr Expression) [][]Expression {
 	switch v := expr.(type) {
 	case *ScalarFunction:

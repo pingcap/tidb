@@ -1120,17 +1120,23 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 
 					partitionMethod := table.Partition.Type.String()
 					partitionExpr := table.Partition.Expr
-					if table.Partition.Type == model.PartitionTypeRange && len(table.Partition.Columns) > 0 {
-						partitionMethod = "RANGE COLUMNS"
-						partitionExpr = table.Partition.Columns[0].String()
-					} else if table.Partition.Type == model.PartitionTypeList && len(table.Partition.Columns) > 0 {
-						partitionMethod = "LIST COLUMNS"
+					if len(table.Partition.Columns) > 0 {
+						switch table.Partition.Type {
+						case model.PartitionTypeRange:
+							partitionMethod = "RANGE COLUMNS"
+						case model.PartitionTypeList:
+							partitionMethod = "LIST COLUMNS"
+						default:
+							return fmt.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
+						}
 						buf := bytes.NewBuffer(nil)
 						for i, col := range table.Partition.Columns {
 							if i > 0 {
 								buf.WriteString(",")
 							}
+							buf.WriteString("`")
 							buf.WriteString(col.String())
+							buf.WriteString("`")
 						}
 						partitionExpr = buf.String()
 					}

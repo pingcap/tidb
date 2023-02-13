@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/expensivequery"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
@@ -208,6 +209,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
 				zap.Duration("start time", time.Since(startTime)),
+				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes))
 			return is, false, currentSchemaVersion, relatedChanges, nil
@@ -901,6 +903,19 @@ func (do *Domain) Close() {
 	if do.info != nil {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
+	}
+	ttlJobManager := do.ttlJobManager.Load()
+	if ttlJobManager != nil {
+		ttlJobManager.Stop()
+		err := ttlJobManager.WaitStopped(context.Background(), func() time.Duration {
+			if intest.InTest {
+				return 10 * time.Second
+			}
+			return 30 * time.Second
+		}())
+		if err != nil {
+			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+		}
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
@@ -2542,12 +2557,6 @@ func (do *Domain) StartTTLJobManager() {
 		ttlJobManager.Start()
 
 		<-do.exit
-
-		ttlJobManager.Stop()
-		err := ttlJobManager.WaitStopped(context.Background(), 30*time.Second)
-		if err != nil {
-			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
-		}
 	}, "ttlJobManager")
 }
 

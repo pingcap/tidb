@@ -46,6 +46,7 @@ go_library(
 
 go_test(
     name = "ingest_test",
+    timeout = "short",
     srcs = [
         "env_test.go",
         "mem_root_test.go",
