@@ -1452,38 +1452,3 @@ func TestMPPMemoryTracker(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, strings.Contains(err.Error(), "Out Of Memory Quota!"))
 }
-
-func TestDisaggregatedTiFlashGenColumn(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = true
-	})
-	defer config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = false
-	})
-
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tt1;")
-	tk.MustExec("create table tt1(c0 int, c1 varchar(100), c2 varchar(100) AS (lower(c1))) partition by hash(c0) partitions 2;")
-	tk.MustExec("insert into tt1(c0, c1) values(1, 'ABC'), (2, 'DEF');")
-	tk.MustExec("alter table tt1 set tiflash replica 1;")
-	tb := external.GetTableByName(t, tk, "test", "tt1")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
-	tk.MustQuery("explain select sum(c0) from tt1;").Check(testkit.Rows(
-		"HashAgg_15 1.00 root  funcs:sum(Column#6)->Column#5",
-		"└─PartitionUnion_16 2.00 root  ",
-		"  ├─HashAgg_34 1.00 root  funcs:sum(Column#8)->Column#6",
-		"  │ └─TableReader_36 1.00 root  MppVersion: 1, data:ExchangeSender_35",
-		"  │   └─ExchangeSender_35 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"  │     └─HashAgg_21 1.00 mpp[tiflash]  funcs:sum(Column#15)->Column#8",
-		"  │       └─Projection_82 10000.00 mpp[tiflash]  cast(test.tt1.c0, decimal(10,0) BINARY)->Column#15",
-		"  │         └─TableFullScan_33 10000.00 mpp[tiflash] table:tt1, partition:p0 keep order:false, stats:pseudo",
-		"  └─HashAgg_62 1.00 root  funcs:sum(Column#11)->Column#6",
-		"    └─TableReader_64 1.00 root  MppVersion: 1, data:ExchangeSender_63",
-		"      └─ExchangeSender_63 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"        └─HashAgg_49 1.00 mpp[tiflash]  funcs:sum(Column#16)->Column#11",
-		"          └─Projection_83 10000.00 mpp[tiflash]  cast(test.tt1.c0, decimal(10,0) BINARY)->Column#16",
-		"            └─TableFullScan_61 10000.00 mpp[tiflash] table:tt1, partition:p1 keep order:false, stats:pseudo"))
-}

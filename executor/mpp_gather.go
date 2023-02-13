@@ -23,11 +23,8 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -69,10 +66,6 @@ type MPPGather struct {
 	respIter distsql.SelectResult
 
 	memTracker *memory.Tracker
-	columns    []*model.ColumnInfo
-
-	virtualColumnIndex         []int
-	virtualColumnRetFieldTypes []*types.FieldType
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
@@ -166,14 +159,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 // Next fills data into the chunk passed by its caller.
 func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 	err := e.respIter.Next(ctx, chk)
-	if err != nil {
-		return err
-	}
-	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema.Columns, e.columns, e.ctx, chk)
-	if err != nil {
-		return err
-	}
-	return nil
+	return errors.Trace(err)
 }
 
 // Close and release the used resources.
