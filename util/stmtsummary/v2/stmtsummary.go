@@ -367,22 +367,26 @@ func (s *StmtSummary) rotateLoop() {
 		case <-tick.C:
 			now := timeNow()
 			s.windowLock.Lock()
-			w := s.window
 			// The current window has expired and needs to be refreshed and persisted.
-			if now.After(w.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
-				s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
-				size := w.lru.Size()
-				if size > 0 {
-					// Persist window asynchronously.
-					s.closeWg.Add(1)
-					go func() {
-						defer s.closeWg.Done()
-						s.storage.persist(w, now)
-					}()
-				}
+			if now.After(s.window.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
+				s.rotate(now)
 			}
 			s.windowLock.Unlock()
 		}
+	}
+}
+
+func (s *StmtSummary) rotate(now time.Time) {
+	w := s.window
+	s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
+	size := w.lru.Size()
+	if size > 0 {
+		// Persist window asynchronously.
+		s.closeWg.Add(1)
+		go func() {
+			defer s.closeWg.Done()
+			s.storage.persist(w, now)
+		}()
 	}
 }
 
