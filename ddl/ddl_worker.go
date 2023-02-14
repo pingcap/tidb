@@ -752,15 +752,15 @@ var DDLBackfillers = map[model.ActionType]string{
 	model.ActionDropIndex:    "drop_index",
 }
 
-func getDDLRequestSource(job *model.Job) string {
-	if tp, ok := DDLBackfillers[job.Type]; ok {
+func getDDLRequestSource(actionType model.ActionType) string {
+	if tp, ok := DDLBackfillers[actionType]; ok {
 		return kv.InternalTxnBackfillDDLPrefix + tp
 	}
 	return kv.InternalTxnDDL
 }
 
 func (w *JobContext) setDDLLabelForDiagnosis(job *model.Job) {
-	w.tp = getDDLRequestSource(job)
+	w.tp = getDDLRequestSource(job.Type)
 	w.ddlJobCtx = kv.WithInternalSourceType(w.ddlJobCtx, w.ddlJobSourceType())
 }
 
