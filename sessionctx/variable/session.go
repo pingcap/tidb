@@ -1428,7 +1428,7 @@ func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
 }
 
 // CheckAlloc check if alloc is enable
-func (s *SessionVars) CheckAlloc() bool {
+func (s *SessionVars) IsAllocValid() bool {
 	if !s.EnableReuseCheck {
 		return false
 	}
