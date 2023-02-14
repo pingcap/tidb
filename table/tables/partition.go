@@ -307,13 +307,13 @@ func (pe *PartitionExpr) LocateKeyPartition(pi *model.PartitionInfo,
 		nr1, nr2 = types.CalcBytesHash(data, nr1, nr2)
 	}
 
-	partId := nr1 & (uint64)(pi.HashMask)
-	if partId > pi.Num {
+	partID := nr1 & pi.HashMask
+	if partID > pi.Num {
 		newmask := ((pi.HashMask + 1) >> 1) - 1
-		partId = nr1 & (uint64)(newmask)
+		partID = nr1 & newmask
 	}
 
-	return int(partId), nil
+	return int(partID), nil
 }
 
 func initEvalBufferType(t *partitionedTable) {

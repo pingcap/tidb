@@ -248,10 +248,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 func (s *partitionProcessor) findUsedKeyPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
 	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, []expression.Expression, error) {
 	pi := tbl.Meta().Partition
-	partExpr, err := tbl.(partitionTable).PartitionExpr()
-	if err != nil {
-		return nil, nil, err
-	}
+	partExpr := tbl.(partitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {

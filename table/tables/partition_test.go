@@ -703,7 +703,7 @@ func TestIssue31629(t *testing.T) {
 }
 
 type compoundSQL struct {
-	selectSql        string
+	selectSQL        string
 	point            bool
 	batchPoint       bool
 	pruned           bool
@@ -715,7 +715,7 @@ type compoundSQL struct {
 
 type partTableCase struct {
 	partitionbySQL string
-	SelectSql      []compoundSQL
+	selectInfo     []compoundSQL
 }
 
 func executePartTableCase(t *testing.T, tk *testkit.TestKit, testCases []partTableCase,
@@ -730,11 +730,11 @@ func executePartTableCase(t *testing.T, tk *testkit.TestKit, testCases []partTab
 			executeSQLWrapper(t, tk, insertsql)
 		}
 		// execute testcases
-		for j, selInfo := range testCase.SelectSql {
-			fmt.Println(j, ":", selInfo.selectSql)
-			tk.MustQuery(selInfo.selectSql).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
+		for j, selInfo := range testCase.selectInfo {
+			fmt.Println(j, ":", selInfo.selectSQL)
+			tk.MustQuery(selInfo.selectSQL).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
 			if selInfo.executeExplain {
-				result := tk.MustQuery("EXPLAIN " + selInfo.selectSql)
+				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
 				if selInfo.point {
 					result.CheckContains("Point_Get")
 				}
@@ -770,14 +770,14 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 	defer tk.MustExec("drop database partitiondb")
 	tk.MustExec("use partitiondb")
 	testCases := []struct {
-		createSQL string
-		dropSQL   string
-		insertSQL string
-		SelectSql []compoundSQL
+		createSQL  string
+		dropSQL    string
+		insertSQL  string
+		selectInfo []compoundSQL
 	}{
 		{
 			createSQL: "CREATE TABLE tkey0 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3)) PARTITION BY KEY(col3) PARTITIONS 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey0",
 					false, false, false, false, []string{}, []string{}, 4,
@@ -816,7 +816,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey7 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3,col1)) PARTITION BY KEY(col3,col1) PARTITIONS 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey7",
 					false, false, false, false, []string{}, []string{}, 6,
@@ -863,7 +863,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey8 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 INT NOT NULL, col4 INT NOT NULL,PRIMARY KEY (col3,col1)) PARTITION BY KEY(col3,col1) PARTITIONS 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey8",
 					false, false, false, false, []string{}, []string{}, 16,
@@ -910,7 +910,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey6 (col1 INT NOT NULL, col2 DATE NOT NULL, col3 VARCHAR(12) NOT NULL, col4 INT NOT NULL,UNIQUE KEY (col3)) PARTITION BY KEY(col3) PARTITIONS 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey6",
 					false, false, false, false, []string{}, []string{}, 8,
@@ -949,7 +949,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey2 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(KHH) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey2",
 					false, false, false, false, []string{}, []string{}, 17,
@@ -988,7 +988,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey5 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (KHH, JYRQ, ZJZH))PARTITION BY KEY(KHH) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey5",
 					false, false, false, false, []string{}, []string{}, 17,
@@ -1027,7 +1027,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey4 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(JYRQ, KHH) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey4",
 					false, false, false, false, []string{}, []string{}, 20,
@@ -1094,7 +1094,7 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		},
 		{
 			createSQL: "CREATE TABLE tkey9 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY KEY(JYRQ, KHH, ZJZH) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey9",
 					false, false, false, false, []string{}, []string{}, 20,
@@ -1165,11 +1165,11 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 		fmt.Println(i, ":", testCase.createSQL)
 		executeSQLWrapper(t, tk, testCase.createSQL)
 		executeSQLWrapper(t, tk, testCase.insertSQL)
-		for j, selInfo := range testCase.SelectSql {
-			fmt.Println(j, ":", selInfo.selectSql)
-			tk.MustQuery(selInfo.selectSql).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
+		for j, selInfo := range testCase.selectInfo {
+			fmt.Println(j, ":", selInfo.selectSQL)
+			tk.MustQuery(selInfo.selectSQL).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
 			if selInfo.executeExplain {
-				result := tk.MustQuery("EXPLAIN " + selInfo.selectSql)
+				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
 				if selInfo.point {
 					result.CheckContains("Point_Get")
 				}
@@ -1220,7 +1220,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 	testCases := []partTableCase{
 		{
 			partitionbySQL: "PARTITION BY KEY(id1) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1257,7 +1257,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id2) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1294,7 +1294,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id3) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1331,7 +1331,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id4) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1368,7 +1368,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id5) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1405,7 +1405,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id6) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1442,7 +1442,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id7) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1479,7 +1479,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id8) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1516,7 +1516,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id9) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1553,7 +1553,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id10) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_numeric",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 12,
@@ -1617,7 +1617,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 	testCases2 := []partTableCase{
 		{
 			partitionbySQL: "PARTITION BY KEY(id1) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_datetime",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 10,
@@ -1654,7 +1654,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id3) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_datetime",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 10,
@@ -1691,7 +1691,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id4) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_datetime",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 10,
@@ -1728,7 +1728,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id5) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_datetime",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 10,
@@ -1790,7 +1790,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 	testCases3 := []partTableCase{
 		{
 			partitionbySQL: "PARTITION BY KEY(id1) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
@@ -1827,7 +1827,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id2) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
@@ -1864,7 +1864,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id3) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
@@ -1901,7 +1901,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id4) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
@@ -1938,7 +1938,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id7) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
@@ -1975,7 +1975,7 @@ func TestKeyPartitionTableAllFeildType(t *testing.T) {
 		},
 		{
 			partitionbySQL: "PARTITION BY KEY(id8) partitions 4",
-			SelectSql: []compoundSQL{
+			selectInfo: []compoundSQL{
 				{
 					"SELECT count(*) FROM tkey_string",
 					false, false, true, true, []string{"partition:p0", "partition:p1", "partition:p2", "partition:p3"}, []string{}, 5,
