@@ -230,32 +230,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
-<<<<<<< HEAD
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
 	rs, err := stmt.Execute(ctx, args)
-=======
-func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []expression.Expression, useCursor bool) (bool, error) {
-	vars := (&cc.ctx).GetSessionVars()
-	prepStmt, err := vars.GetPreparedStmtByID(uint32(stmt.ID()))
-	if err != nil {
-		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
-	}
-	execStmt := &ast.ExecuteStmt{
-		BinaryArgs: args,
-		PrepStmt:   prepStmt,
-	}
-
-	// For the combination of `ComPrepare` and `ComExecute`, the statement name is stored in the client side, and the
-	// TiDB only has the ID, so don't try to construct an `EXECUTE SOMETHING`. Use the original prepared statement here
-	// instead.
-	sql := ""
-	planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt)
-	if ok {
-		sql = planCacheStmt.StmtText
-	}
-	execStmt.SetText(charset.EncodingUTF8Impl, sql)
-	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
->>>>>>> be740110f4 (server, execute: set text for execute command (#41340))
 	if err != nil {
 		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
