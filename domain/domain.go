@@ -98,6 +98,37 @@ type Domain struct {
 	renewLeaseCh         chan func()       // It is used to call the renewLease function of the cache table.
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+<<<<<<< HEAD
+=======
+
+	sysProcesses SysProcesses
+
+	mdlCheckTableInfo *mdlCheckTableInfo
+
+	analyzeMu struct {
+		sync.Mutex
+		sctxs map[sessionctx.Context]bool
+	}
+
+	stopAutoAnalyze atomicutil.Bool
+}
+
+type mdlCheckTableInfo struct {
+	mu         sync.Mutex
+	newestVer  int64
+	jobsVerMap map[int64]int64
+	jobsIdsMap map[int64]string
+}
+
+// InfoCache export for test.
+func (do *Domain) InfoCache() *infoschema.InfoCache {
+	return do.infoCache
+}
+
+// EtcdClient export for test.
+func (do *Domain) EtcdClient() *clientv3.Client {
+	return do.etcdClient
+>>>>>>> af7fe50b3d (domain, tidb-server: stop launching new auto analyze job when shutting down (#41346))
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -734,7 +765,12 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		renewLeaseCh:        make(chan func(), 10),
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
+<<<<<<< HEAD
 
+=======
+	do.stopAutoAnalyze.Store(false)
+	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
+>>>>>>> af7fe50b3d (domain, tidb-server: stop launching new auto analyze job when shutting down (#41346))
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	return do
@@ -1475,6 +1511,30 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	for {
 		select {
 		case <-analyzeTicker.C:
+<<<<<<< HEAD
+=======
+			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && owner.IsOwner() {
+				statsHandle.HandleAutoAnalyze(do.InfoSchema())
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
+	const gcInterval = time.Hour
+	statsHandle := do.StatsHandle()
+	gcTicker := time.NewTicker(gcInterval)
+	defer func() {
+		gcTicker.Stop()
+		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+	}()
+	for {
+		select {
+		case <-gcTicker.C:
+>>>>>>> af7fe50b3d (domain, tidb-server: stop launching new auto analyze job when shutting down (#41346))
 			if owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
@@ -1794,6 +1854,11 @@ func (do *Domain) renewLease() {
 			op()
 		}
 	}
+}
+
+// StopAutoAnalyze stops (*Domain).autoAnalyzeWorker to launch new auto analyze jobs.
+func (do *Domain) StopAutoAnalyze() {
+	do.stopAutoAnalyze.Store(true)
 }
 
 func init() {
